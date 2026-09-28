@@ -54,7 +54,6 @@ rsa = { workspace = true }
 tokio = { workspace = true }
 uuid = { workspace = true }
 mc-data = { path = "../mc-data" }
-mc-test-harness = { path = "../mc-test-harness" }
 mc-nbt = { path = "../mc-nbt" }
 # The component-deployment tests build the SDK's example plugin and encode it the
 # way a published package is built, so what they deploy is a real component.
