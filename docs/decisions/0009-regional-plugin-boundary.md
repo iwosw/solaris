@@ -3,6 +3,16 @@
 **Date:** 2026-07-22
 **Status:** Accepted, staged implementation
 
+**Historical note (added 2026-09-26, CP-REFACTOR-000).** This ADR was written for
+the Luau plugin runtime. Luau is retired: `mc-plugin-host` no longer contains the
+`legacy_luau` module or the `legacy-luau` feature, and production plugins are
+Wasmtime components over the WIT contract `solaris:plugin@0.7.0`
+([PLUGINS.md](../PLUGINS.md)). The ownership, admission, routing and commit
+decisions below still bind the current runtime; the Luau-specific implementation,
+reload and `solaris.d.luau` paragraphs are history, not current behavior. Actual
+runtime state is in [`MEMORY.md`](../MEMORY.md) and
+[`ARCHITECTURE.md`](../ARCHITECTURE.md).
+
 ## Problem
 
 Solaris is moving mutable world and entity simulation to regional single-writer

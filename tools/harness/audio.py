@@ -104,9 +104,11 @@ def exercise_sounds(
 ) -> dict[str, Any]:
     evidence: dict[str, Any] = {"format": "48000 Hz stereo float32le", "path": str(capture.path)}
 
+    # Loader sounds are capped at two decoded seconds, and the multi-owner phase
+    # takes three windows from one Sapphire tone, so each window stays short.
     def record(name: str) -> dict[str, Any]:
-        capture.sample(0.25)  # Consume actual pipeline samples before the measurement window.
-        result = capture.sample()
+        capture.sample(0.1)  # Consume actual pipeline samples before the measurement window.
+        result = capture.sample(0.25)
         evidence[name] = result
         return result
 

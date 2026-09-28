@@ -439,7 +439,7 @@ fn agent_driver_writes_passed_observation_from_loopback_bridge() {
         "solaris.real_client_observations.v1"
     );
     assert_eq!(observations["client_gate"], "agent-run-real-client");
-    assert_eq!(observations["quality_label"], "stabilization");
+    assert_eq!(observations["quality_label"], "draft");
     assert_eq!(observations["result"], "passed");
     assert_eq!(
         observations["scenarios"][0]["id"],
@@ -760,8 +760,13 @@ import sys
 driver_path = pathlib.Path(sys.argv[1])
 spec = importlib.util.spec_from_file_location("solaris_real_client_driver", driver_path)
 driver = importlib.util.module_from_spec(spec)
+sys.modules["solaris_real_client_driver"] = driver
 spec.loader.exec_module(driver)
-
+client_path = driver_path.parent / "driver_client.py"
+client_spec = importlib.util.spec_from_file_location("solaris_real_client_client", client_path)
+client_mod = importlib.util.module_from_spec(client_spec)
+sys.modules["solaris_real_client_client"] = client_mod
+client_spec.loader.exec_module(client_mod)
 driver.time.monotonic = lambda: 0.0
 calls = []
 
@@ -779,8 +784,8 @@ def call_and_record(client, transcript, command, payload, timeout_seconds, actor
         }
     raise AssertionError(f"unexpected command {command}")
 
-driver.call_and_record = call_and_record
-result = driver.wait_for_interactive_play(
+client_mod.call_and_record = call_and_record
+result = client_mod.wait_for_interactive_play(
     object(),
     [],
     {
@@ -986,7 +991,7 @@ fn agent_driver_appends_phase_observations_and_recomputes_blocked_result() {
         serde_json::to_vec_pretty(&json!({
             "schema": "solaris.real_client_observations.v1",
             "client_gate": "agent-run-real-client",
-            "quality_label": "stabilization",
+            "quality_label": "draft",
             "result": "passed",
             "server_addr": "127.0.0.1:25565",
             "generated_at": "2026-06-22T00:00:00Z",

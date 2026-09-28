@@ -932,8 +932,9 @@ Benchmark reproduction happens at that feature boundary, not after every edit:
   exists. Current lists, ownership, and evidence boundaries are recorded in
   [`evidence/cargo-feature-gated-test-inventory.md`](../evidence/cargo-feature-gated-test-inventory.md).
   These counts and the `mc-script/lua-runtime` name describe the historical
-  inventory. WASM migration P1 moved retained Luau and its tests into
-  `mc-plugin-host/legacy-luau`; `mc-script` now has no VM feature and `mc-net`
+  inventory. WASM migration P1 first moved retained Luau and its tests into
+  `mc-plugin-host/legacy_luau`; that module and its `legacy-luau` feature are
+  now deleted as well, so `mc-script` has no VM feature and `mc-net`
   `load-bench` no longer selects one. See the current
   [plugin ownership](../PLUGINS.md) and [live cursor](../MEMORY.md).
 - [x] Classify three `mc-worldgen::structures` tests whose local blocks-report

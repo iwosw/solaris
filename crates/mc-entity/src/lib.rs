@@ -69,23 +69,24 @@ pub use group_orders::{
 pub use lock_policy::{
     LockPoisonMetricsSnapshot, authoritative_lock_poison_from_panic, lock_poison_metrics_snapshot,
 };
+pub use regional::ownership::{RegionOwnership, RegionOwnershipError};
 pub use regional::{
     CompactEntityKinematicsFence, ItemPickupClaimResolution, LaneCommitTimings,
     PreparedSnapshotMutation, REGION_SIZE_CHUNKS, RegionEntityStoreError, RegionEpoch, RegionKey,
     RegionLease, RegionOwnerBatch, RegionOwnerCompletion, RegionOwnerLaneError,
-    RegionOwnerLaneStartError, RegionOwnerMutation, RegionOwnership, RegionOwnershipError,
-    RegionPhase, RegionalCommitDecision, RegionalDecisionJournal, RegionalDecisionJournalError,
-    RegionalEntityAuthority, RegionalEntityPhysicsOutput, RegionalEntityStore,
-    RegionalEntityTickInput, RegionalEntityTickOutput, RegionalGoalTickInputs,
-    RegionalKinematicsApply, RegionalOwnerCoordinator, RegionalOwnerCutoverError,
-    RegionalOwnerHandle, RegionalOwnerLane, RegionalOwnerRuntime,
-    RegionalOwnerRuntimeShutdownError, RegionalOwnerSaveSnapshot, RegionalOwnerShutdownError,
-    RegionalOwnerStatus, RegionalPreparedEntityPhysics, RegionalPreparedGoalTick,
-    RegionalResolvedGoalTick, RegionalTickWorld, RegionalVillagerGoalTickInputs,
-    RegionalVillagerProfessionOffer, SequencedRegionMutation, TransferApply, TransferDecision,
-    TransferId, VersionedEntityKinematics, VersionedEntitySnapshots, VersionedKinematicsCommit,
-    VillagerBirthCommit, VillagerCourtshipCommit, VillagerFoodShareCommit,
-    VillagerInventoryPickupCommit, VillagerNoBedCommit, warm_physics_caches,
+    RegionOwnerLaneStartError, RegionOwnerMutation, RegionPhase, RegionalCommitDecision,
+    RegionalDecisionJournal, RegionalDecisionJournalError, RegionalEntityAuthority,
+    RegionalEntityPhysicsOutput, RegionalEntityStore, RegionalEntityTickInput,
+    RegionalEntityTickOutput, RegionalGoalTickInputs, RegionalKinematicsApply,
+    RegionalOwnerCoordinator, RegionalOwnerCutoverError, RegionalOwnerHandle, RegionalOwnerLane,
+    RegionalOwnerRuntime, RegionalOwnerRuntimeShutdownError, RegionalOwnerSaveSnapshot,
+    RegionalOwnerShutdownError, RegionalOwnerStatus, RegionalPreparedEntityPhysics,
+    RegionalPreparedGoalTick, RegionalResolvedGoalTick, RegionalTickWorld,
+    RegionalVillagerGoalTickInputs, RegionalVillagerProfessionOffer, SequencedRegionMutation,
+    TransferApply, TransferDecision, TransferId, VersionedEntityKinematics,
+    VersionedEntitySnapshots, VersionedKinematicsCommit, VillagerBirthCommit,
+    VillagerCourtshipCommit, VillagerFoodShareCommit, VillagerInventoryPickupCommit,
+    VillagerNoBedCommit, warm_physics_caches,
 };
 
 pub use runtime::{

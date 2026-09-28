@@ -253,8 +253,45 @@ def cmd_list() -> int:
     return 0
 
 
+def cmd_explain(argv: list[str]) -> int:
+    """Describe an existing scenario. Never runs anything or writes an artifact."""
+    from . import scenarios as scenario_catalog
+
+    if not argv:
+        for scenario in sorted(scenario_catalog.SCENARIOS.values(), key=lambda entry: entry.id):
+            print(f"{scenario.id:32} {scenario.evidence:12} {scenario.summary}")
+        return 0
+    scenario_id = argv[0]
+    scenario = scenario_catalog.SCENARIOS.get(scenario_id)
+    if scenario is None:
+        known = ", ".join(sorted(scenario_catalog.SCENARIOS))
+        print(f"harness explain: unknown scenario {scenario_id!r}; known: {known}", file=sys.stderr)
+        return 2
+    if len(argv) > 1:
+        print(f"harness explain: unexpected argument {argv[1]!r}", file=sys.stderr)
+        return 2
+    print(scenario_catalog.describe(scenario))
+    return 0
+
+
 def cmd_run(argv: list[str]) -> int:
     from . import profiles as catalog
+    from . import scenarios as scenario_catalog
+
+    # `run scenario <id>` resolves to an existing profile plus its exact
+    # selector and then uses the one shared run path below: same artifact
+    # directory, same bounded scope, same receipt writer.
+    scenario = None
+    scenario_error: str | None = None
+    if argv and argv[0] == "scenario":
+        if len(argv) < 2:
+            scenario_error = "run scenario: expected a scenario id"
+        else:
+            scenario = scenario_catalog.SCENARIOS.get(argv[1])
+            if scenario is None:
+                known = ", ".join(sorted(scenario_catalog.SCENARIOS))
+                scenario_error = f"unknown scenario {argv[1]!r}; known: {known}"
+        argv = ([] if scenario is None else [scenario.profile, *argv[2:]])
     # The harness captures stdout into per-run server.log and observes readiness
     # there. Ordinary server launches keep tracing exclusively in log files.
     os.environ["SOLARIS_HARNESS_LOG_STDOUT"] = "1"
@@ -264,11 +301,45 @@ def cmd_run(argv: list[str]) -> int:
     parser.add_argument("--release", action="store_true")
     parser.add_argument("--timeout-seconds", type=float, default=None)
     parser.add_argument("--platform", default=None)
-    args, extra = parser.parse_known_args(argv)
-    profile = args.profile
+    if scenario_error is None:
+        args, extra = parser.parse_known_args(argv)
+        profile = args.profile
+        release, timeout_seconds, platform = args.release, args.timeout_seconds, args.platform
+    else:
+        profile, extra = "scenario", []
+        release, timeout_seconds, platform = False, None, None
+    if scenario is not None and scenario_error is None:
+        # The catalog owns the exact selector; only the typed options above and
+        # no free-form trailing arguments are accepted for a named scenario.
+        if extra:
+            scenario_error = (
+                f"named scenario {scenario.id!r} takes no extra arguments; got {extra!r}"
+            )
+        else:
+            extra = list(scenario.selector)
     spec = catalog.PROFILES.get(profile)
     started_at = _utc_now()
     start_epoch = time.time()
+    named_scenario: dict[str, Any] | None = None
+    if scenario is not None:
+        # Never `details["scenario"]`: the graphical profiles already use that
+        # key for their own client result.
+        named_scenario = {
+            "id": scenario.id,
+            "evidence": scenario.evidence,
+            "profile": profile,
+            "selector": list(scenario.selector),
+            "scenario_id": scenario.scenario_id,
+            "manifest": scenario.manifest,
+            "seed": scenario.seed,
+            "fixture": scenario.fixture,
+            "prerequisites": list(scenario.requires),
+            "sources": list(scenario.sources),
+            "proves": scenario.proves,
+            "does_not_prove": scenario.limits,
+            "expected_tests": list(scenario.tests),
+            "repo_revisions": scenario_catalog.repo_revisions(),
+        }
 
     def finish(
         status: str,
@@ -283,6 +354,10 @@ def cmd_run(argv: list[str]) -> int:
         commands = [list(c) for c in (evidence.commands if evidence else [])]
         exits = list(evidence.exits if evidence else [])
         logs = list(evidence.logs if evidence else [])
+        if named_scenario is not None:
+            details = dict(details)
+            named_scenario["commands_cwd"] = list(evidence.cwds) if evidence else []
+            details["named_scenario"] = dict(named_scenario)
         receipt = {
             "profile": profile,
             "status": status,
@@ -310,6 +385,10 @@ def cmd_run(argv: list[str]) -> int:
             print(f"[harness] error: {error}", file=sys.stderr)
         return exit_code
 
+    if scenario_error is not None:
+        ARTIFACT_ROOT.mkdir(parents=True, exist_ok=True)
+        artifact_dir = _new_artifact_dir("scenario")
+        return finish("failed", "harness", {}, scenario_error, artifact_dir, 2)
     if spec is None:
         ARTIFACT_ROOT.mkdir(parents=True, exist_ok=True)
         artifact_dir = _new_artifact_dir("unknown-profile")
@@ -319,14 +398,22 @@ def cmd_run(argv: list[str]) -> int:
                       f"unknown profile {profile!r}; known: {known}",
                       artifact_dir, 2)
     ARTIFACT_ROOT.mkdir(parents=True, exist_ok=True)
-    artifact_dir = _new_artifact_dir(profile)
-    print(f"[harness] run profile={profile} artifact={artifact_dir}")
+    artifact_dir = _new_artifact_dir(scenario.id if scenario is not None else profile)
+    if scenario is not None:
+        print(
+            f"[harness] run scenario={scenario.id} profile={profile} "
+            f"evidence={scenario.evidence} artifact={artifact_dir}"
+        )
+    else:
+        print(f"[harness] run profile={profile} artifact={artifact_dir}")
     ctx = ProfileContext(
         artifact_dir=artifact_dir,
         extra_args=extra,
-        release=args.release,
-        timeout_seconds=args.timeout_seconds,
-        platform=args.platform,
+        release=release,
+        timeout_seconds=timeout_seconds,
+        platform=platform,
+        scenario_id=None if scenario is None else scenario.scenario_id,
+        manifest=None if scenario is None else scenario.manifest,
     )
     try:
         details = spec["run"](ctx)
@@ -335,6 +422,25 @@ def cmd_run(argv: list[str]) -> int:
                       artifact_dir, 130, ctx)
     except Exception as error:
         return finish("failed", spec["scope"], {}, str(error), artifact_dir, 1, ctx)
+    if scenario is not None and isinstance(details, dict):
+        if scenario.tests:
+            evidence_text = scenario_catalog.log_text(ctx)
+            missing = scenario_catalog.verify_native_evidence(evidence_text, scenario.tests)
+            counts = scenario_catalog.cargo_counts(evidence_text)
+            named_scenario["missing_tests"] = missing
+            named_scenario["engine_counts"] = counts
+            reasons = [f"missing test: {name}" for name in missing]
+            reasons.extend(scenario_catalog.count_failures(counts))
+            if reasons:
+                return finish(
+                    "failed",
+                    spec["scope"],
+                    details,
+                    "scenario evidence: " + "; ".join(reasons),
+                    artifact_dir,
+                    1,
+                    ctx,
+                )
     status = _status_for(details)
     if status == "prepared":
         return finish(status, spec["scope"], details, None, artifact_dir, 0, ctx)
@@ -348,7 +454,7 @@ MEMORY_MAX_ENV = "SOLARIS_HARNESS_MEMORY_MAX"
 MEMORY_SWAP_ENV = "SOLARIS_HARNESS_MEMORY_SWAP_MAX"
 """What one harness run may use, as systemd cgroup properties. A workspace test
 run starts about a dozen test binaries at once, each with its own in-process
-server and Lua host; unbounded, that evicts the desktop into swap and the run
+server and component host; unbounded, that evicts the desktop into swap and the run
 stalls on page-in instead of on CPU, so every ``run``/``client`` invocation is
 placed in one bounded scope first. Every knob takes a systemd value or ``off``:
 ``SOLARIS_HARNESS_CPU_QUOTA`` (default: every physical core),
@@ -538,11 +644,13 @@ def _exec_in_scope() -> int | None:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python3 -m tools.harness")
-    parser.add_argument("command", nargs="?", choices=["list", "run", "client", "mcp"])
+    parser.add_argument("command", nargs="?", choices=["list", "explain", "run", "client", "mcp"])
     parser.add_argument("rest", nargs=argparse.REMAINDER)
     args = parser.parse_args(argv)
     if args.command == "list":
         return cmd_list()
+    if args.command == "explain":
+        return cmd_explain(args.rest)
     if args.command in {"run", "client"}:
         scoped = _exec_in_scope()
         if scoped is not None:

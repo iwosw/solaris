@@ -189,7 +189,6 @@ impl LoaderViewRegistry {
 
     /// Record that `owner` declared a view of `kind`; the host populates this
     /// from each loaded plugin's verified bundle declaration.
-    #[allow(dead_code)]
     pub(crate) fn declare_owner_kind(
         &mut self,
         owner: &str,
@@ -387,22 +386,6 @@ impl LoaderViewRegistry {
             Some(_) => Err(LoaderViewError::ForeignOwner),
             None => Err(LoaderViewError::UnknownInstance),
         }
-    }
-
-    /// Drop every view and context owned by one plugin (permission revocation).
-    #[allow(dead_code)]
-    pub(crate) fn revoke_owner(&mut self, owner: &str) {
-        let instances = self
-            .views
-            .values()
-            .filter(|instance| instance.owner == owner)
-            .map(|instance| instance.instance_id.clone())
-            .collect::<Vec<_>>();
-        for instance_id in instances {
-            self.views.remove(&instance_id);
-            self.retired.insert(instance_id.clone());
-        }
-        self.selections.retain(|_, context| context.owner != owner);
     }
 
     /// Drop every view and context of one disconnecting session.

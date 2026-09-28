@@ -355,7 +355,7 @@ use containers::{
     StonecutterClickInput, StonecutterWindow,
     can_place_in_enchanting_menu_slot as can_place_in_enchanting_menu_slot_with_data,
     chest_menu_state_change_count, chest_menu_title_nbt, chest_slot_stacks, chest_wire_items,
-    client_close_matches, count_valid_enchanting_bookshelves, crafting_menu_title_nbt,
+    count_valid_enchanting_bookshelves, crafting_menu_title_nbt,
     crafting_table_input_from_projection, crafting_table_input_projection, crafting_wire_items,
     enchant_item_candidate, enchanting_data_values, enchanting_menu_stack,
     enchanting_menu_title_nbt, enchanting_offer, enchanting_player_slot,
@@ -14168,17 +14168,6 @@ where
                             pending_teleport: &mut pending_teleport,
                         },
                         frame,
-                    )
-                    .await?;
-                } else if frame.id == ServerboundSetCreativeModeSlot::ID {
-                    let mut body = frame.body;
-                    let packet = ServerboundSetCreativeModeSlot::decode(&mut body)?;
-                    session::handle_creative_mode_slot(
-                        interaction.as_deref_mut(),
-                        writer,
-                        game_mode,
-                        player_pose,
-                        packet,
                     )
                     .await?;
                 } else if is_serverbound_use_interaction_packet(frame.id) {

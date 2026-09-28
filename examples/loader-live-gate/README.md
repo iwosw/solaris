@@ -50,7 +50,7 @@ Fixture generation requires `ffmpeg` with `libvorbis` for the tones and
 tools/build-loader-live-gate-fixture.sh --audio
 ```
 
-That regenerates the tracked mono OGG sources deterministically: eight-second
+That regenerates the tracked mono OGG sources deterministically: 1.9-second
 440 Hz Ruby and 660 Hz Sapphire tones, 48 kHz. The audio phase measures the
 440/660 Hz amplitudes of a real stereo capture, so a tone that is not the one the
 index pins cannot pass.

@@ -472,7 +472,7 @@ fn a_malformed_roster_is_refused_and_leaves_the_live_one_alone() {
             registration("second", HookKind::Build, 10, HookFailurePolicy::Keep),
         ])
         .expect("a roster of two");
-    let generation = boundary.precommit.generation();
+    let generation = boundary.precommit_generation_for_test();
 
     assert_eq!(
         boundary.set_precommit_hooks(vec![
@@ -498,7 +498,7 @@ fn a_malformed_roster_is_refused_and_leaves_the_live_one_alone() {
     // generation is the one every ticket admitted under it was created with.
     assert!(boundary.has_precommit_hooks(HookKind::Build));
     assert!(!boundary.has_precommit_hooks(HookKind::Damage));
-    assert_eq!(boundary.precommit.generation(), generation);
+    assert_eq!(boundary.precommit_generation_for_test(), generation);
 }
 
 #[tokio::test]

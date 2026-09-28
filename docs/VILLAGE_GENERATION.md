@@ -466,7 +466,7 @@ What to expect as an operator:
   `solaris/world.json` is not a migration and mixes incompatible terrain.
 - Back up the whole world directory before upgrading an alpha, then start a
   fresh `world_dir` for the new generation.
-- Deploying, removing, or editing a Luau settlement plan changes the recorded
+- Deploying, removing, or editing a settlement plugin package changes the recorded
   settlement descriptor and therefore the identity in the same way.
 - An unversioned vanilla Anvil import still opens without Solaris fallback
   generation: Solaris does not generate villages into missing chunks of an

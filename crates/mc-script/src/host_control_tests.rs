@@ -289,12 +289,7 @@ fn a_poisoned_admission_ledger_refuses_the_next_batch() {
     // A poisoned ledger is the one state that refuses an issue, and only a panic
     // while its lock is held can poison it. The fault is injected here, against
     // the boundary's own internals, so no host-facing API exists just for it.
-    let ledger = Arc::clone(&boundary.host_admissions);
-    let poisoned = std::thread::spawn(move || {
-        let _guard = ledger.pending.lock().unwrap();
-        panic!("poison host admission ledger");
-    });
-    assert!(poisoned.join().is_err());
+    boundary.poison_host_admissions_for_test();
 
     let mut batch = CommandBatch::new(nonzero(2));
     batch.try_push(chat("unadmittable")).unwrap();

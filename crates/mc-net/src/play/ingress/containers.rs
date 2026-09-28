@@ -1,4 +1,5 @@
 use super::super::*;
+use crate::play::containers::handle_client_close;
 
 pub(crate) struct ContainerIngressContext<'a, W> {
     pub(in crate::play) writer: &'a mut W,
@@ -16,14 +17,12 @@ pub(crate) struct ContainerIngressContext<'a, W> {
 }
 
 pub(crate) fn is_serverbound_container_packet(id: i32) -> bool {
-    matches!(
-        id,
-        ServerboundPlaceRecipe::ID
-            | ServerboundSelectTrade::ID
-            | ServerboundContainerButtonClick::ID
-            | ServerboundContainerClick::ID
-            | ServerboundContainerClose::ID
-    )
+    id == ServerboundPlaceRecipe::ID
+        || id == ServerboundSelectTrade::ID
+        || id == ServerboundContainerButtonClick::ID
+        || id == ServerboundContainerClick::ID
+        || id == ServerboundContainerClose::ID
+        || id == ServerboundSetCreativeModeSlot::ID
 }
 
 pub(crate) async fn handle_serverbound_container<W>(
@@ -137,36 +136,17 @@ where
         ServerboundContainerClose::ID => {
             let close = ServerboundContainerClose::decode(&mut body)?;
             if let Some(state) = interaction {
-                let script_close = state.active_container.as_ref().and_then(|active| {
-                    let ActiveContainer::Script(window) = active else {
-                        return None;
-                    };
-                    Some(client_close_matches(
-                        window.container_id,
-                        close.container_id,
-                    ))
-                });
-                let should_store = state
-                    .active_container
-                    .as_ref()
-                    .is_some_and(|active| active.container_id() == close.container_id);
-                if script_close == Some(true) || (script_close.is_none() && should_store) {
-                    store_active_container(state, player_pose).await?;
-                } else if script_close == Some(false) {
-                    let Some(ActiveContainer::Script(window)) = state.active_container.take()
-                    else {
-                        unreachable!("script close classification requires a script window")
-                    };
-                    write_script_menu_content(state, writer, &window).await?;
-                    state.active_container = Some(ActiveContainer::Script(window));
-                } else if close.container_id == 0 {
-                    store_inventory_crafting_inputs(state, player_pose).await?;
-                }
+                handle_client_close(state, writer, close.container_id, player_pose).await?;
             }
             debug!(
                 container_id = close.container_id,
                 "container close acknowledged"
             );
+        }
+        ServerboundSetCreativeModeSlot::ID => {
+            let packet = ServerboundSetCreativeModeSlot::decode(&mut body)?;
+            session::handle_creative_mode_slot(interaction, writer, game_mode, player_pose, packet)
+                .await?;
         }
         _ => unreachable!("container helper only accepts container packet ids"),
     }

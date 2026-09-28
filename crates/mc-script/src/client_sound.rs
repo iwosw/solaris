@@ -71,19 +71,14 @@ impl AdmittedScriptCommand {
     pub fn into_client_sound(
         self,
     ) -> Result<(ScriptPluginTarget, ScriptPlayerId, ScriptClientSound), ScriptDtoError> {
+        let (target, admitted_request) = self.into_target_and_request();
         let request =
-            Arc::try_unwrap(self.request).unwrap_or_else(|request| request.as_ref().clone());
+            Arc::try_unwrap(admitted_request).unwrap_or_else(|request| request.as_ref().clone());
         let ScriptCommand::ClientSound { player_id, sound } = request else {
             return Err(ScriptDtoError::InconsistentResult {
                 field: "client sound admission",
             });
         };
-        Ok((
-            ScriptPluginTarget {
-                plugin_id: self.plugin_id,
-            },
-            player_id,
-            sound,
-        ))
+        Ok((target, player_id, sound))
     }
 }

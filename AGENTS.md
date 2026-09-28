@@ -89,7 +89,7 @@ Validation identity is `(command, tree fingerprint, environment, covered
 scope)`. Never rerun an unchanged successful gate for the same identity.
 
 The canonical entrypoint is `python3 -m tools.harness` from the repository
-root. `python3 -m tools.harness list` enumerates the 23 named profiles;
+root. `python3 -m tools.harness list` enumerates the 25 named profiles;
 `python3 -m tools.harness run PROFILE [--release] [--timeout-seconds N]
 [--platform fabric|neoforge|forge]` runs one. Wiring lives in
 `docs/AGENT_TOOLING.md`.
@@ -251,7 +251,8 @@ cursor with one next action. Revalidate it after restart.
 - Core Rust/runtime and canonical harness: this repository.
 - Loader/Java/client scenarios: sibling `../solaris-loader`; harness override
   `SOLARIS_LOADER_ROOT` is allowed. No duplicate `client-mod` source tree.
-- First-party Luau packages: sibling `../solaris-default-plugins`; deploy chosen
+- First-party plugin packages (Wasmtime components, WIT `solaris:plugin@0.7.0`):
+  sibling `../solaris-default-plugins`; deploy chosen
   package directories through `[plugins].directory`. No compiled-in first-party
   package list or `plugins.bundled` compatibility path.
 - Core production builds must not require either sibling. Integration gates
@@ -269,7 +270,7 @@ not establish survival acceptance.
 Apply Pareto delivery in this owner-defined order:
 
 1. common vanilla-client gameplay and multiplayer behavior;
-2. production Luau plugin API and gameplay adapters;
+2. production plugin API (Wasmtime components over `solaris:plugin@0.7.0`) and gameplay adapters;
 3. measured optimization, regional ownership, ECS, and autoscaling;
 4. rare error interleavings and uncommon parity edges.
 

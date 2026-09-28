@@ -4,9 +4,12 @@ use mc_nbt::Tag;
 
 use crate::error::ConnectionError;
 use crate::play::recipes::ingredient_accepts_item;
+use tokio::io::AsyncWriteExt;
+
 use crate::play::{
     FURNACE_CONTAINER_ID_MAX, FURNACE_CONTAINER_ID_MIN, InteractionState, InventoryReturnPlan,
-    PlayerPose, settle_player_inventory_returns,
+    PlayerPose, settle_player_inventory_returns, store_inventory_crafting_inputs,
+    write_script_menu_content,
 };
 
 mod chest;
@@ -306,6 +309,45 @@ pub(super) fn next_container_id(state: &mut InteractionState) -> i32 {
         state.next_container_id = FURNACE_CONTAINER_ID_MIN;
     }
     id
+}
+
+/// Close one container the client asked to close.
+///
+/// This is the close policy owner: it decides whether the active container is
+/// stored (returning its inputs and cursor), re-sent when a script window refused
+/// this close, or whether a window-0 close only returns the inventory crafting
+/// grid. The ingress decodes the packet and calls this.
+pub(super) async fn handle_client_close<W>(
+    state: &mut InteractionState,
+    writer: &mut W,
+    container_id: i32,
+    player_pose: PlayerPose,
+) -> Result<(), ConnectionError>
+where
+    W: AsyncWriteExt + Unpin,
+{
+    let script_close = state.active_container.as_ref().and_then(|active| {
+        let ActiveContainer::Script(window) = active else {
+            return None;
+        };
+        Some(client_close_matches(window.container_id, container_id))
+    });
+    let should_store = state
+        .active_container
+        .as_ref()
+        .is_some_and(|active| active.container_id() == container_id);
+    if script_close == Some(true) || (script_close.is_none() && should_store) {
+        store_active_container(state, player_pose).await?;
+    } else if script_close == Some(false) {
+        let Some(ActiveContainer::Script(window)) = state.active_container.take() else {
+            unreachable!("script close classification requires a script window")
+        };
+        write_script_menu_content(state, writer, &window).await?;
+        state.active_container = Some(ActiveContainer::Script(window));
+    } else if container_id == 0 {
+        store_inventory_crafting_inputs(state, player_pose).await?;
+    }
+    Ok(())
 }
 
 pub(super) async fn store_active_container(

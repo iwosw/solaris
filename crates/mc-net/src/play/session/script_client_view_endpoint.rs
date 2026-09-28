@@ -121,18 +121,6 @@ impl SessionRegistry {
         }
     }
 
-    /// Drop every view and selection context of one plugin.
-    ///
-    /// Nothing revokes a live Loader grant yet: a session's accepted
-    /// permissions are fixed by its Configuration acknowledgement, so the
-    /// production hook has no caller. The contract path is implemented and
-    /// unit-tested through the registry.
-    #[allow(dead_code)]
-    pub(crate) fn revoke_loader_views(&self, owner: &str) {
-        let mut inner = self.lock_inner("revoke loader views");
-        inner.loader_views.revoke_owner(owner);
-    }
-
     /// Resolve which plugin (if any) must be told about one key-driven request.
     /// No declared view of that kind, an ambiguous owner, or a missing
     /// present_views grant all resolve to `None`, so nothing opens and no event

@@ -27,7 +27,8 @@ The repository validation entrypoint is `python3 -m tools.harness`, run from the
 repository root. Profiles reuse the existing Cargo, Gradle and scenario engines;
 they do not lower the acceptance bar or turn preparation into gameplay evidence.
 Never invoke `tools/harness/backends/` directly: those engines are private, and
-only a profile run leaves a canonical receipt. There are 24 profiles; `list`
+only a profile run leaves a canonical receipt. There are 25 profiles (`list` was
+verified against the executable catalog on 2026-09-26); `list`
 is authoritative if this table drifts:
 
 ```sh
@@ -163,7 +164,41 @@ own result either way.
 Fractional values fail explicitly. Unknown profiles, nonzero commands,
 exceptions, and prepared-only runs never pass.
 
-### Preparation versus execution
+### Scenario catalog: `explain` and `run scenario`
+
+The catalog in `tools/harness/scenarios.py` is data over the profiles above — it names,
+for each discoverable scenario, the existing profile plus the exact selector (or the
+profile's own scenario id), the tests it requires, its declared prerequisites, the source
+of its assertions, what it proves and what it does not. It is not a second runner: a
+`run scenario` dispatch uses the same artifact directory, bounded scope, cleanup and
+receipt writer as `run PROFILE`.
+
+```sh
+python3 -m tools.harness explain                       # list scenario ids
+python3 -m tools.harness explain warehouse-bind-refusals
+python3 -m tools.harness run scenario warehouse-bind-refusals
+python3 -m tools.harness run scenario inventory-storage-recovery
+```
+
+`explain` reads nothing but the catalog: it starts no server or client, downloads nothing,
+needs no credentials and writes no run artifact. Its "declared prerequisites" line is a
+description; the owning profile/backend stays the only authority that enforces them.
+
+`run scenario` adds one fail-closed check the raw profiles cannot express: the receipt must
+show that the selected check actually ran. `details.named_scenario` records the id, evidence
+kind, resolved profile and selector, the required test paths, the bound `scenario_id`/manifest/
+seed/fixture, the declared prerequisites, the assertion sources, what the scenario proves and
+does not prove, the revisions of the participating repositories, the effective cwd of every
+command, the engine counts (`selected`/`executed`/`passed`/`failed`/`ignored`/`filtered_out`)
+and any missing tests. When a named entry declares a `scenario_id`/manifest, `run_replay`
+binds exactly those values instead of its `setdefault` defaults; a bare `run replay` keeps the
+documented environment overrides unchanged.
+
+A named run fails when the id is unknown, when free-form trailing arguments are passed, when a
+required test is absent from the log, when the engine reports no counts, when nothing was
+selected or executed, or when a selected test failed. A profile that reports `prepared`
+(preparation only) keeps that status and exit 0 — it is still never `passed`. Graphical entries
+never fall back to TCP evidence.
 
 `regression`, `playable` and `replay` append `--run` unless a mode token is
 already present (`--check`, `--prepare`, `--run`, `--validate-run`). `--check`

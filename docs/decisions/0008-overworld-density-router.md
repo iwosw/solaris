@@ -219,8 +219,8 @@ generation: the `minecraft:villages` structure set, its five biome-gated
 structures, the jigsaw assembler with its processors, the closure's
 `feature_pool_element` decor, and `terrain_adaptation = beard_thin` applied as
 the column-height analogue. `plains_village_prototype` is the explicit opt-in to
-the bounded prototype above and is retained only while a deployed Luau settlement
-plan materializes its buildings through it; it is not vanilla village
+the bounded prototype above and is retained only while a deployed settlement
+component materializes its buildings through it; it is not vanilla village
 generation.
 
 The revision-6 router replaced the revision-5 router instead of tuning it.

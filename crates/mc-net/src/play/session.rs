@@ -113,6 +113,8 @@ mod player_state_adapter;
 #[cfg(test)]
 mod position_sync_tests;
 mod prepared_chunks;
+#[cfg(test)]
+mod prepared_chunks_tests;
 mod projectiles;
 #[cfg(test)]
 #[path = "session/projectiles_tests.rs"]
@@ -208,11 +210,9 @@ use entity_lifecycle::{
 use entity_owner::*;
 use entity_spawn_facts::apply_entity_facts;
 use entity_tracking::EntityMovementTrackers;
-#[allow(unused_imports)]
-pub(super) use explosion_authority::{
-    EXPLOSIONS_PER_TICK, ExpiredPrimedTnt, ExplosionEntityTarget, ExplosionPlayerTarget,
-    ServerEntityExplosionImpact,
-};
+#[cfg(test)]
+pub(super) use explosion_authority::EXPLOSIONS_PER_TICK;
+pub(super) use explosion_authority::ServerEntityExplosionImpact;
 pub(super) use herd_spawn_authority::HerdSpawnOutcome;
 #[cfg(test)]
 use herd_spawn_authority::{
@@ -295,8 +295,6 @@ pub(in crate::play) use script_teleport_endpoint::{
 };
 use simulation_input_publication::SimulationInputPublication;
 pub(super) use sleep::SleepOutcome;
-#[cfg(test)]
-use sleep::{DEEP_SLEEP_TICKS, sleepers_needed};
 use sleep::{DEFAULT_PLAYERS_SLEEPING_PERCENTAGE, SleepingState};
 pub(super) use transactions::*;
 use visibility::EntityPositionUpdate;

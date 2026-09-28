@@ -31,27 +31,30 @@ async fn survival_container_click_moves_stack_through_server_cursor() {
         .id_of(&mc_data::Identifier::parse("minecraft:dirt").unwrap())
         .expect("dirt item");
 
-    let cfg = mc_net::ServerConfig { tab_list: mc_net::TabListConfig::default(), bind_address: "127.0.0.1:0".parse().unwrap(),
-    motd: "M23 container click".into(),
-    max_players: 8,
-    view_distance: VIEW_DISTANCE,
-    data,
-    blocks,
-    world,
-    tags,
-    recipes: Arc::new(Vec::new()),
-    loot: Arc::new(mc_data::loot::LootTables::default()),
-    block_light: None,
-    items,
-    item_facts: Arc::new(mc_data::item_components::ItemFactsTable::default()),
-    block_facts: Arc::new(mc_data::block_facts::BlockFactsTable::default()),
-    entity_types: std::sync::Arc::new(mc_data::entity_types::solaris_required_entity_types()),
-    biome_spawns: std::sync::Arc::new(mc_data::biomes::BiomeSpawnRules::default()),
-    chunk_pipeline: mc_net::ChunkPipelinePolicy::default(),
-    random_tick: mc_net::RandomTickPolicy::default(),
-    command_permissions: mc_net::CommandPermissionConfig::new(Vec::<String>::new(), true),
-    loader_manifest: None,
-    shutdown: mc_net::ShutdownHandle::default(), };
+    let cfg = mc_net::ServerConfig {
+        tab_list: mc_net::TabListConfig::default(),
+        bind_address: "127.0.0.1:0".parse().unwrap(),
+        motd: "M23 container click".into(),
+        max_players: 8,
+        view_distance: VIEW_DISTANCE,
+        data,
+        blocks,
+        world,
+        tags,
+        recipes: Arc::new(Vec::new()),
+        loot: Arc::new(mc_data::loot::LootTables::default()),
+        block_light: None,
+        items,
+        item_facts: Arc::new(mc_data::item_components::ItemFactsTable::default()),
+        block_facts: Arc::new(mc_data::block_facts::BlockFactsTable::default()),
+        entity_types: std::sync::Arc::new(mc_data::entity_types::solaris_required_entity_types()),
+        biome_spawns: std::sync::Arc::new(mc_data::biomes::BiomeSpawnRules::default()),
+        chunk_pipeline: mc_net::ChunkPipelinePolicy::default(),
+        random_tick: mc_net::RandomTickPolicy::default(),
+        command_permissions: mc_net::CommandPermissionConfig::new(Vec::<String>::new(), true),
+        loader_manifest: None,
+        shutdown: mc_net::ShutdownHandle::default(),
+    };
     let bound = mc_net::bind(cfg).await.expect("bind");
     let addr = bound.local_addr().expect("local_addr");
     tokio::spawn(async move {
@@ -144,27 +147,30 @@ async fn malformed_inventory_click_resyncs_and_next_valid_click_succeeds() {
         .id_of(&mc_data::Identifier::parse("minecraft:dirt").unwrap())
         .expect("dirt item");
 
-    let cfg = mc_net::ServerConfig { tab_list: mc_net::TabListConfig::default(), bind_address: "127.0.0.1:0".parse().unwrap(),
-    motd: "M100 malformed inventory click".into(),
-    max_players: 8,
-    view_distance: VIEW_DISTANCE,
-    data,
-    blocks,
-    world,
-    tags,
-    recipes: Arc::new(Vec::new()),
-    loot: Arc::new(mc_data::loot::LootTables::default()),
-    block_light: None,
-    items,
-    item_facts: Arc::new(mc_data::item_components::ItemFactsTable::default()),
-    block_facts: Arc::new(mc_data::block_facts::BlockFactsTable::default()),
-    entity_types: std::sync::Arc::new(mc_data::entity_types::solaris_required_entity_types()),
-    biome_spawns: std::sync::Arc::new(mc_data::biomes::BiomeSpawnRules::default()),
-    chunk_pipeline: mc_net::ChunkPipelinePolicy::default(),
-    random_tick: mc_net::RandomTickPolicy::default(),
-    command_permissions: mc_net::CommandPermissionConfig::new(Vec::<String>::new(), true),
-    loader_manifest: None,
-    shutdown: mc_net::ShutdownHandle::default(), };
+    let cfg = mc_net::ServerConfig {
+        tab_list: mc_net::TabListConfig::default(),
+        bind_address: "127.0.0.1:0".parse().unwrap(),
+        motd: "M100 malformed inventory click".into(),
+        max_players: 8,
+        view_distance: VIEW_DISTANCE,
+        data,
+        blocks,
+        world,
+        tags,
+        recipes: Arc::new(Vec::new()),
+        loot: Arc::new(mc_data::loot::LootTables::default()),
+        block_light: None,
+        items,
+        item_facts: Arc::new(mc_data::item_components::ItemFactsTable::default()),
+        block_facts: Arc::new(mc_data::block_facts::BlockFactsTable::default()),
+        entity_types: std::sync::Arc::new(mc_data::entity_types::solaris_required_entity_types()),
+        biome_spawns: std::sync::Arc::new(mc_data::biomes::BiomeSpawnRules::default()),
+        chunk_pipeline: mc_net::ChunkPipelinePolicy::default(),
+        random_tick: mc_net::RandomTickPolicy::default(),
+        command_permissions: mc_net::CommandPermissionConfig::new(Vec::<String>::new(), true),
+        loader_manifest: None,
+        shutdown: mc_net::ShutdownHandle::default(),
+    };
     let bound = mc_net::bind(cfg).await.expect("bind");
     let addr = bound.local_addr().expect("local_addr");
     tokio::spawn(async move {
@@ -261,4 +267,96 @@ async fn malformed_inventory_click_resyncs_and_next_valid_click_succeeds() {
             && pkt.carried_item.is_empty()
     })
     .await;
+}
+
+#[test]
+fn embedded_creative_slot_round_trip_and_survival_refusal() {
+    let test = std::thread::Builder::new()
+        .name("embedded_creative_slot_round_trip_and_survival_refusal".to_owned())
+        .stack_size(4 * 1024 * 1024)
+        .spawn(|| {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("build creative inventory runtime")
+                .block_on(async {
+                    let data = embedded_play_data();
+                    let dirt = embedded_item_id(&data, "minecraft:dirt");
+                    let world = embedded_world(&data);
+                    let bound = mc_net::bind(embedded_playable_config(
+                        &data,
+                        world,
+                        "creative inventory packet",
+                    ))
+                    .await
+                    .expect("bind");
+                    let addr = bound.local_addr().expect("local_addr");
+                    tokio::spawn(async move {
+                        let _ = bound.serve().await;
+                    });
+
+                    let (mut client, _) = connect_to_play(addr, "CreativeSlotTcp").await;
+                    drain_until_chunk(&mut client, (0, 0)).await;
+                    client
+                        .write_packet(&ServerboundChatCommand {
+                            command: "gamemode creative".into(),
+                        })
+                        .await
+                        .expect("enter creative");
+                    wait_for_game_mode(&mut client, GameMode::Creative).await;
+
+                    client
+                        .write_packet(
+                            &mc_protocol::packets::play::ServerboundSetCreativeModeSlot {
+                                slot: 36,
+                                item_stack: ItemStack::new(dirt, 5),
+                            },
+                        )
+                        .await
+                        .expect("set creative inventory slot");
+                    wait_for_container_slot(&mut client, 0, 36, |stack| {
+                        stack.item_id == dirt && stack.count == 5
+                    })
+                    .await;
+
+                    client
+                        .write_packet(
+                            &mc_protocol::packets::play::ServerboundSetCreativeModeSlot {
+                                slot: 0,
+                                item_stack: ItemStack::EMPTY,
+                            },
+                        )
+                        .await
+                        .expect("request creative result-slot resync");
+                    wait_for_inventory_content(&mut client, |content| {
+                        content.items[36].item_id == dirt && content.items[36].count == 5
+                    })
+                    .await;
+
+                    client
+                        .write_packet(&ServerboundChatCommand {
+                            command: "gamemode survival".into(),
+                        })
+                        .await
+                        .expect("enter survival");
+                    wait_for_game_mode(&mut client, GameMode::Survival).await;
+                    client
+                        .write_packet(
+                            &mc_protocol::packets::play::ServerboundSetCreativeModeSlot {
+                                slot: 36,
+                                item_stack: ItemStack::EMPTY,
+                            },
+                        )
+                        .await
+                        .expect("attempt survival creative-slot deletion");
+                    wait_for_inventory_content(&mut client, |content| {
+                        content.items[36].item_id == dirt && content.items[36].count == 5
+                    })
+                    .await;
+                });
+        })
+        .expect("spawn creative inventory runtime");
+    if let Err(panic) = test.join() {
+        std::panic::resume_unwind(panic);
+    }
 }

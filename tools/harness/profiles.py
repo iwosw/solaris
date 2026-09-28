@@ -35,11 +35,16 @@ class ProfileContext:
     release: bool = False
     timeout_seconds: float | None = None
     platform: str | None = None
+    # A named scenario's identity, set by `cmd_run` when the catalog entry
+    # declares it. `None` keeps every profile's own default/override semantics.
+    scenario_id: str | None = None
+    manifest: str | None = None
     # Command evidence accumulated as the profile runs, so failure and
     # interruption receipts keep every command, exit code, and log.
     commands: list[list[str]] = field(default_factory=list)
     exits: list[int | None] = field(default_factory=list)
     logs: list[str] = field(default_factory=list)
+    cwds: list[str] = field(default_factory=list)
 
 
 def _run_command(
@@ -55,6 +60,7 @@ def _run_command(
     log_path.parent.mkdir(parents=True, exist_ok=True)
     started = time.time()
     ctx.commands.append([str(part) for part in argv])
+    ctx.cwds.append(str(cwd or REPO_ROOT))
     ctx.exits.append(None)
     try:
         ctx.logs.append(log_path.relative_to(REPO_ROOT).as_posix())
@@ -371,11 +377,19 @@ def run_playable(ctx: ProfileContext) -> dict[str, Any]:
 
 def run_replay(ctx: ProfileContext) -> dict[str, Any]:
     env = _regression_env(ctx)
-    env.setdefault(
-        "SOLARIS_REAL_CLIENT_MANIFEST",
-        "docs/real-client-regression/manifests/core-replay-seed-81.json",
-    )
-    env.setdefault("SOLARIS_REAL_CLIENT_AGENT_SCENARIO", "core-actions-seed-81")
+    # A named scenario binds its declared identity; a bare profile run keeps the
+    # documented environment overrides (setdefault, not assignment).
+    if ctx.manifest is not None:
+        env["SOLARIS_REAL_CLIENT_MANIFEST"] = ctx.manifest
+    else:
+        env.setdefault(
+            "SOLARIS_REAL_CLIENT_MANIFEST",
+            "docs/real-client-regression/manifests/core-replay-seed-81.json",
+        )
+    if ctx.scenario_id is not None:
+        env["SOLARIS_REAL_CLIENT_AGENT_SCENARIO"] = ctx.scenario_id
+    else:
+        env.setdefault("SOLARIS_REAL_CLIENT_AGENT_SCENARIO", "core-actions-seed-81")
     env.setdefault("SOLARIS_REAL_CLIENT_FRESH_WORLD", "1")
     env.setdefault("SOLARIS_REAL_CLIENT_TIMEOUT_SECONDS", "180")
     argv = _with_backend_mode(

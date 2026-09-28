@@ -98,8 +98,6 @@ mod save_barrier;
 /// and the one ticket it spends at the commit.
 pub(in crate::play) mod precommit;
 
-#[allow(unused_imports)]
-pub(crate) use queue::SIMULATION_COMMAND_QUEUE_CAPACITY;
 pub(in crate::play) use queue::SimulationResponseSender;
 #[cfg(test)]
 pub(crate) use queue::simulation_channel;
@@ -2888,7 +2886,7 @@ impl SimulationHandle {
         Ok(preconditions)
     }
 
-    pub(crate) async fn place_loader_block_server_owned(
+    pub(crate) async fn apply_server_owned_block_edit(
         &self,
         plugin_id: &str,
         position: BlockPos,

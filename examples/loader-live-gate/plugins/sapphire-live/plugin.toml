@@ -12,14 +12,15 @@ schema = 2
 id = "rich-content"
 version = "1"
 artifact = "client/rich-content.zip"
-sha256 = "bafe60381e4d10126e56b37e03deae69d3b8bd5dc4be0a3a38aa9e0d09b79721"
-size_bytes = 1183
+sha256 = "090f82d28980b1ba33627041817e5a439170601007e4492ab29516b10531d6af"
+size_bytes = 5850
 loaders = ["fabric", "neoforge", "forge"]
-content = ["blocks", "items", "views", "view_actions", "assets"]
+content = ["blocks", "items", "views", "view_actions", "assets", "sounds"]
 permissions = [
   "register_blocks",
   "register_items",
   "present_views",
   "send_view_actions",
   "load_assets",
+  "play_sounds",
 ]

@@ -47,7 +47,9 @@ Priority order:
 
 Use one package identity, capability/permission model, schema and SDK for server
 and client functionality. Reuse the common Loader behind thin platform adapters.
-Keep strict Luau unless a measured requirement justifies changing the runtime.
+Server plugins are Wasmtime components over the versioned WIT contract
+(`docs/PLUGINS.md`); the retired Luau runtime is not a compatibility surface and
+carries no design weight.
 
 Expose owned values, opaque handles, immutable observations, bounded requests
 and explicit completion/rejection. Addon authors do not manage engine threads,

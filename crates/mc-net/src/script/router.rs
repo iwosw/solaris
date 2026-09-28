@@ -1,8 +1,7 @@
 use mc_script::{
     AdmittedScriptCommand, ScriptCommand, ScriptEntityDamageFailure, ScriptEntitySpawnFailure,
-    ScriptLoaderBlockPlacementFailure, ScriptLoaderItemGrantFailure, ScriptPlayerInventoryFailure,
-    ScriptPluginStorageFailure, ScriptWorldBlockSetFailure, ScriptWorldBlockSetRequest,
-    ScriptWorldTimeSetFailure,
+    ScriptLoaderItemGrantFailure, ScriptPlayerInventoryFailure, ScriptPluginStorageFailure,
+    ScriptWorldBlockSetFailure, ScriptWorldBlockSetRequest, ScriptWorldTimeSetFailure,
 };
 use tracing::{debug, warn};
 
@@ -118,7 +117,6 @@ impl ScriptRouter {
             | ScriptCommand::CloseInventoryMenu { .. }
             | ScriptCommand::InventoryStorageTransaction { .. }
             | ScriptCommand::PlayerInventoryTransaction { .. }
-            | ScriptCommand::PlaceLoaderBlock { .. }
             | ScriptCommand::GrantLoaderBlockItem { .. }
             | ScriptCommand::UpsertZone { .. }
             | ScriptCommand::RemoveZone { .. }
@@ -264,10 +262,6 @@ impl ScriptRouter {
                 }
                 ScriptRouterExit::Continue
             }
-            ScriptCommand::PlaceLoaderBlock { .. } => {
-                self.route_loader_block_admitted(admitted, context.config, context.simulation)
-                    .await
-            }
             ScriptCommand::GrantLoaderBlockItem { .. } => {
                 self.route_loader_item_grant_admitted(admitted, context.config, context.sessions)
                     .await
@@ -402,76 +396,6 @@ impl ScriptRouter {
         }
     }
 
-    pub(super) async fn route_loader_block_admitted(
-        &self,
-        admitted: AdmittedScriptCommand,
-        config: &ServerConfig,
-        simulation: &play::SimulationHandle,
-    ) -> ScriptRouterExit {
-        let ScriptCommand::PlaceLoaderBlock { request } = admitted.request() else {
-            debug!("invalid admitted Loader block command rejected");
-            return ScriptRouterExit::Continue;
-        };
-        let failure = if config.loader_manifest.is_none() {
-            Some(ScriptLoaderBlockPlacementFailure::LoaderUnavailable)
-        } else if !(mc_world::MIN_Y..mc_world::MAX_Y).contains(&request.y())
-            || f64::from(request.x()).abs() > mc_script::SCRIPT_HORIZONTAL_COORDINATE_LIMIT
-            || f64::from(request.z()).abs() > mc_script::SCRIPT_HORIZONTAL_COORDINATE_LIMIT
-        {
-            Some(ScriptLoaderBlockPlacementFailure::OutOfWorld)
-        } else {
-            let manifest = config
-                .loader_manifest
-                .as_deref()
-                .expect("checked Loader manifest");
-            match manifest.world_block_state(
-                admitted.plugin_id(),
-                request.block_id(),
-                &config.blocks,
-            ) {
-                None => Some(ScriptLoaderBlockPlacementFailure::NotOwned),
-                Some(state) => {
-                    let position = mc_world::BlockPos {
-                        x: request.x(),
-                        y: request.y(),
-                        z: request.z(),
-                    };
-                    let zone_fence = self.zones.capture_protection_fence();
-                    if !zone_fence.allows("minecraft:overworld", position) {
-                        Some(ScriptLoaderBlockPlacementFailure::Rejected)
-                    } else {
-                        match simulation
-                            .place_loader_block_server_owned(
-                                admitted.plugin_id(),
-                                position,
-                                state,
-                                Some(zone_fence),
-                            )
-                            .await
-                        {
-                            Ok(true) => None,
-                            Ok(false) => Some(ScriptLoaderBlockPlacementFailure::Rejected),
-                            Err(error) => Some(script_loader_block_failure(error)),
-                        }
-                    }
-                }
-            }
-        };
-        let event = match admitted.loader_block_placement_result(failure) {
-            Ok(event) => event,
-            Err(error) => {
-                warn!(?error, "Loader block placement result construction failed");
-                return ScriptRouterExit::Stop;
-            }
-        };
-        match deliver_required_targeted_event(&self.scripts, event).await {
-            TargetedEventDelivery::Delivered => ScriptRouterExit::Continue,
-            TargetedEventDelivery::Closed | TargetedEventDelivery::Shutdown => {
-                ScriptRouterExit::Stop
-            }
-        }
-    }
-
     pub(super) async fn route_loader_item_grant_admitted(
         &self,
         admitted: AdmittedScriptCommand,
@@ -573,7 +497,7 @@ impl ScriptRouter {
                     (false, Some(ScriptWorldBlockSetFailure::Rejected))
                 } else {
                     match simulation
-                        .place_loader_block_server_owned(
+                        .apply_server_owned_block_edit(
                             admitted.plugin_id(),
                             position,
                             state,
@@ -717,25 +641,6 @@ fn resolve_world_block_request(
     ))
 }
 
-fn script_loader_block_failure(
-    error: play::SimulationRequestError,
-) -> ScriptLoaderBlockPlacementFailure {
-    match error {
-        play::SimulationRequestError::Full
-        | play::SimulationRequestError::QueueAdmissionTimeout => {
-            ScriptLoaderBlockPlacementFailure::Busy
-        }
-        play::SimulationRequestError::Closed
-        | play::SimulationRequestError::OwnerStopped
-        | play::SimulationRequestError::ResponseTimeout
-        | play::SimulationRequestError::ShuttingDown
-        | play::SimulationRequestError::WorldUnavailable => {
-            ScriptLoaderBlockPlacementFailure::RuntimeUnavailable
-        }
-        _ => ScriptLoaderBlockPlacementFailure::Rejected,
-    }
-}
-
 fn script_loader_item_grant_failure(
     failure: ScriptPlayerInventoryFailure,
 ) -> ScriptLoaderItemGrantFailure {
@@ -832,28 +737,7 @@ mod loader_mutation_tests {
     use super::*;
 
     #[test]
-    fn loader_failure_categories_are_stable() {
-        for error in [
-            play::SimulationRequestError::Full,
-            play::SimulationRequestError::QueueAdmissionTimeout,
-        ] {
-            assert_eq!(
-                script_loader_block_failure(error),
-                ScriptLoaderBlockPlacementFailure::Busy
-            );
-        }
-        for error in [
-            play::SimulationRequestError::Closed,
-            play::SimulationRequestError::OwnerStopped,
-            play::SimulationRequestError::ResponseTimeout,
-            play::SimulationRequestError::ShuttingDown,
-            play::SimulationRequestError::WorldUnavailable,
-        ] {
-            assert_eq!(
-                script_loader_block_failure(error),
-                ScriptLoaderBlockPlacementFailure::RuntimeUnavailable
-            );
-        }
+    fn loader_item_grant_failure_categories_are_stable() {
         assert_eq!(
             script_loader_item_grant_failure(ScriptPlayerInventoryFailure::InventoryFull),
             ScriptLoaderItemGrantFailure::InventoryFull

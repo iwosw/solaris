@@ -3,8 +3,9 @@
 **Date:** 2026-07-23
 **Status:** Accepted, staged implementation
 **Current wire contract:** Loader wire **3** with artifact index schema **2**
-(`crates/mc-net/src/loader.rs`). The server's Luau 0.6.0 and WASM component
-0.7.0 frontends share this contract; neither runs guest code on the client.
+(`crates/mc-net/src/loader.rs`). The server plugin frontend is the Wasmtime
+component contract `solaris:plugin@0.7.0`; the Luau 0.6.0 frontend is retired
+(see the historical note below). Neither runs guest code on the client.
 
 ## Problem
 
@@ -236,25 +237,29 @@ exact session's acknowledged carrier id.
 Projected chunk frames bypass the cross-session prepared-frame cache, so one
 client's runtime id cannot leak to another.
 
-The owning host-attested Luau plugin may call
-`solaris.place_loader_block(request_id, block_id, x, y, z)` for its exact
-verified block identity. The server rejects unattested, foreign-owner, unknown,
-and out-of-world requests before mutation, then commits the canonical state
-through the existing server-owned block-edit transaction. Only after that owner
-outcome does the host publish required targeted `loader.block_placement_result`.
-Publication includes every loaded session and applies each recipient's
-connection-scoped projection.
+**Historical (removed CP-REFACTOR-070).** The Luau-era guest call
+`solaris.place_loader_block(request_id, block_id, x, y, z)` was never part of
+the current WIT contract and had no component-export producer: nothing
+constructed `ScriptCommand::PlaceLoaderBlock` from a guest request. CP-REFACTOR-070
+established the origin does not exist and deleted the dead command/result route
+(`ScriptCommand::PlaceLoaderBlock`, `ScriptLoaderBlockPlacementRequest`,
+`ScriptLoaderBlockPlacementFailure`, `ScriptEventKind::LoaderBlockPlacementResult`,
+`route_loader_block_admitted`, `script_loader_block_failure`). The shared
+simulation helper survives under the neutral name
+`apply_server_owned_block_edit`, used by the live `SetWorldBlock` route and its
+test. The live Loader block path is `grant-loader-block-item` plus ordinary
+survival `UseItemOn` placement below.
 
-The same exact owner may call
-`solaris.grant_loader_block_item(request_id, player_id, block_id, count)` for a
+The same exact owner may call the WIT command
+`grant-loader-block-item(request, session, block, count)` for a
 player whose current Play session acknowledged that block carrier. Solaris
 represents the item canonically as the known vanilla `minecraft:paper` protocol
 id plus the verified block name and its deterministic
 `minecraft:item_model = solaris_loader:loader_block[_N]` component. The session
 owner merges it under the existing inventory transaction gate, persists the
 updated canonical inventory before publishing it, rejects a full inventory
-without mutation, and returns required targeted `loader.item_grant_result` with
-the exact semantic outcome. The vanilla item registry and client runtime ids
+without mutation, and returns the required targeted `loader-item-grant-result`
+with the exact semantic outcome. The vanilla item registry and client runtime ids
 remain out of persistence.
 
 For `UseItemOn`, Solaris recognizes only a non-empty `minecraft:paper` stack

@@ -37,6 +37,15 @@ The coordinator owns only shared topology and exceptions:
 Session visibility, tracker state, chunk indexes, and outbound queues are
 post-commit publication state. They do not authorize entity mutation.
 
+Source ownership follows the same boundary: `regional/ownership.rs` owns
+lease/phase transitions, `regional/owner_lane.rs` executes local ECS work,
+`regional/handle.rs` sends and receives owner commands,
+`regional/coordinator.rs` owns ordered multi-owner transactions and save
+fences, and `regional/store.rs` owns retained-state mutation and transfers.
+`regional.rs` keeps shared keys, messages, recovery helpers, and actor
+orchestration. These are module moves, not new writers or a changed
+prepare/decision/commit order.
+
 ## CPU work admission
 
 `ChunkPipelineResources` keeps one fixed shared CPU-worker semaphore, sized

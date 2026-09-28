@@ -420,24 +420,6 @@ impl LoaderManifest {
     }
 
     #[must_use]
-    pub(crate) fn world_block_state(
-        &self,
-        plugin_id: &str,
-        block_id: &str,
-        blocks: &mc_world::BlockRegistry,
-    ) -> Option<mc_world::BlockStateId> {
-        self.bundles.iter().find(|bundle| {
-            bundle.owner == plugin_id
-                && bundle.block_id.as_deref() == Some(block_id)
-                && bundle
-                    .permissions
-                    .contains(&LoaderPermission::RegisterBlocks)
-        })?;
-        let id = Identifier::parse(block_id.to_owned()).ok()?;
-        blocks.block(&id).map(|block| block.default)
-    }
-
-    #[must_use]
     pub(crate) fn world_block_item(
         &self,
         plugin_id: &str,
@@ -1435,14 +1417,6 @@ mod tests {
             projection.project(mc_world::BlockStateId(42)),
             mc_world::BlockStateId(42)
         );
-        assert_eq!(
-            manifest.world_block_state("example", "example:ruby_block", &blocks),
-            Some(mc_world::BlockStateId(1))
-        );
-        assert_eq!(
-            manifest.world_block_state("other", "example:ruby_block", &blocks),
-            None
-        );
         let items = mc_data::items::ItemRegistry::from_report(&[mc_data::items::ItemReport {
             id: Identifier::parse("minecraft:paper").unwrap(),
             protocol_id: 777,
@@ -1463,10 +1437,6 @@ mod tests {
         missing_permission.bundles[0]
             .permissions
             .retain(|permission| *permission != LoaderPermission::RegisterBlocks);
-        assert_eq!(
-            missing_permission.world_block_state("example", "example:ruby_block", &blocks),
-            None
-        );
         assert_eq!(
             missing_permission.world_block_item("example", "example:ruby_block", 1, &items),
             None

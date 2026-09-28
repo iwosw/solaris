@@ -331,10 +331,6 @@ fn selection_contexts_are_single_use_expiring_and_revocable() {
         ),
         Err(LoaderViewError::SelectionExpired)
     );
-
-    // Revoking the owner drops its views and contexts entirely.
-    registry.revoke_owner(OWNER);
-    assert!(registry.instance(&opened.instance_id).is_none());
 }
 
 #[test]

@@ -21,8 +21,10 @@ use super::visibility::{
 pub(super) const RESIDENT_DIMENSION: &str = "minecraft:overworld";
 
 impl SessionRegistry {
-    /// Bounded owner lookup for resident snapshots. The result keeps the caller's
-    /// ordering and length; an UUID that is not resident resolves to `None`.
+    /// Bounded owner lookup for resident snapshots. On success the result keeps the
+    /// caller's ordering and length, and an UUID that is not resident resolves to
+    /// `None`. An unavailable owner or a short answer yields an empty `Vec`; callers
+    /// that must tell "unavailable" from "absent" match on the slice shape.
     pub(crate) async fn resident_entity_snapshots(
         &self,
         uuids: &[Uuid],

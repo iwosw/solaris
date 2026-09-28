@@ -43,6 +43,14 @@ commands. An outbound queue or socket never decides whether gameplay committed.
 - `mc-entity` owns entity ECS behavior and transaction semantics;
   `mc-physics` owns collision/movement kernels; `mc-world` owns world storage and
   immutable read snapshots; `mc-data` owns registry-derived gameplay facts.
+- `play/chunk_stream.rs` keeps one `ChunkStreamState` and step/drop
+  orchestration; `SessionRegistry::prepared_chunks` remains the only prepared
+  cache authority. Its `planning.rs` owns demand/replans and worker admission
+  (including generation invalidation and pressure shedding); `inflight.rs`
+  owns claim leases, worker results and release; `prepare.rs` owns world
+  snapshots, dirty flush, light and packet building; `publication.rs` owns
+  ready-result validation, requeue, socket write and loaded-state accounting.
+  This source split adds no cache, worker limit or publication fence.
 - Embedded contextual block-drop facts are normalized in `mc-data::loot::embedded`
   and evaluated by the same `BlockLootContext` path as loaded loot. Tool-preserved
   drops and Fortune probability tables belong there, not in packet handlers.

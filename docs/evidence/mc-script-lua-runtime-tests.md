@@ -3,23 +3,23 @@
 Scope: Phase 1 feature-gated test inventory for `crates/mc-script`.
 
 Historical inventory: the counts and reproduction commands below refer to the
-pre-WASM-migration layout. P1 moved this runtime and its retained tests into
-`mc-plugin-host::legacy_luau` behind `legacy-luau`; `mc-script` no longer has a
-VM feature. Current commands are `cargo test -p mc-script` and
-`cargo test -p mc-plugin-host --features legacy-luau`; the latter also runs the
-component-host integration suite. Current acceptance evidence lives in
-[`MEMORY.md`](../MEMORY.md). The historical counts below are not refreshed.
+pre-WASM-migration layout and are not refreshed. The Luau runtime is retired:
+`mc-script` has no VM feature, the intermediate `mc-plugin-host::legacy_luau`
+module and its `legacy-luau` feature are deleted, and production plugins are
+Wasmtime components over `solaris:plugin@0.7.0` ([PLUGINS.md](../PLUGINS.md)).
+Current commands are `cargo test -p mc-script` and `cargo test -p mc-plugin-host`;
+no command in this file that mentions `lua-runtime` or `legacy-luau` still works.
+Current acceptance evidence lives in [`MEMORY.md`](../MEMORY.md).
 
 `mc-script` deliberately has an empty default feature set. Its default build
 owns the runtime-independent event, command, validation, queue, and capability
-contracts. The `lua-runtime` feature adds the production Luau VM, plugin
+contracts. The removed `lua-runtime` feature added the production Luau VM, plugin
 discovery/configuration, loader manifests, timers, and startup worldgen
 declarations together with their optional dependencies.
 
-`mc-server` enables `mc-script/lua-runtime` for production, and
-`mc-test-harness` enables it for integration coverage. The feature gate is
-therefore a dependency/build boundary, not a parked implementation or a manual
-test prerequisite.
+`mc-server` used to enable `mc-script/lua-runtime` for production and
+`mc-test-harness` used to enable it for integration coverage; that feature no
+longer exists.
 
 ## Inventory
 
@@ -46,17 +46,19 @@ No test in this class is ignored, self-skipping, graphical, network-dependent,
 or dependent on local Mojang data. The feature suite uses in-process VMs,
 temporary directories, and checked-in plugin fixtures.
 
-## Current disposition
+## Current disposition (of the pre-removal tree)
 
-The current tree produced:
+That tree produced:
 
 - default: `85 passed; 0 failed; 0 ignored`;
 - `--features lua-runtime`: `165 passed; 0 failed; 0 ignored`.
 
-The 165-test feature result contains the 85 runtime-independent tests plus the
-80 feature-only tests above. Running the default suite alone is not sufficient
-evidence for a change to `lua.rs` or another VM-only test path; the explicit
-feature command is the owning gate.
+The 165-test feature result contained the 85 runtime-independent tests plus the
+80 feature-only tests above. While that feature existed, running the default
+suite alone was not sufficient evidence for a change to `lua.rs` or another
+VM-only test path; the explicit feature command was the owning gate. Both the VM
+path and its gate are now removed, so the surviving expectation is plain
+`cargo test -p mc-script` for the runtime-independent contracts.
 
 These package tests prove the in-process `mc-script` contract only. They do not
 close the production server adapter, persistence, vanilla-client/server-only,
@@ -66,17 +68,17 @@ client-required Loader, or end-to-end gameplay-plugin release gates.
 feature-gated correctness class; it changes no measured runtime path and has no
 mapped performance contract.
 
-## Reproduction
+## Reproduction (historical — these commands no longer resolve)
 
-List and run both configurations explicitly:
+The retired layout was listed and run as:
 
 ```sh
 cargo test -p mc-script -- --list
 cargo test -p mc-script
 
-cargo test -p mc-script --features lua-runtime -- --list
-cargo test -p mc-script --features lua-runtime
+cargo test -p mc-script --features lua-runtime -- --list   # feature removed
+cargo test -p mc-script --features lua-runtime             # feature removed
 ```
 
-The feature-only inventory is the sorted set difference between the two
+The feature-only inventory was the sorted set difference between the two
 `--list` outputs.

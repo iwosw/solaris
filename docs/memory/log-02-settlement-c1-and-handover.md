@@ -1,4 +1,4 @@
-# Archived checkpoint log — part 2 of 8
+# Archived checkpoint log — part 2 of 17
 
 Chronological checkpoint history moved out of `docs/MEMORY.md` so the live cursor
 stays small. **Not startup context** (see `AGENTS.md`); read it when a question is

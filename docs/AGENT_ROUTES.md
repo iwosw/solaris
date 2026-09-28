@@ -10,7 +10,7 @@ subagent output.
 | `plugins` | `docs/PLUGINS.md` | `crates/mc-script/`, `crates/mc-net/src/script/`, focused session endpoint, `crates/mc-test-harness/tests/plugin_*.rs` |
 | `parity` | exact `docs/PROJECT_SPEC.md` or active milestone section | ADR 0002, local protocol dump/oracle, exact harness comparison |
 | `scaling` | exact active milestone and ADR 0004/0005 | measured benchmark/profile only; metric definitions in `docs/milestones/M52-operator-performance-notes.md` |
-| `architecture` | `docs/ARCHITECTURE.md`, then the ADR owning the touched runtime constraint | exact modules/callers; new target and current implementation must remain distinct |
+| `architecture` | `docs/ARCHITECTURE.md` (target design), then `docs/architecture/runtime.md` for the actual runtime, then the ADR owning the touched runtime constraint | exact modules/callers; new target and current implementation must remain distinct. State/owner questions: `docs/architecture/state-ownership.md`; end-to-end routes: `docs/architecture/mutations.md`; warehouse pilot contract: `docs/architecture/pilot-warehouse-binding.md` |
 
 Additional exact surfaces:
 
@@ -40,6 +40,7 @@ checkpoint explicitly requests readiness.
 ## Repository Map
 
 - `crates/` - Cargo workspace members.
+- `docs/generated/` - deterministic navigation indexes (crate graph, contract index, scenario index); regenerate with `cargo run -p xtask -- architecture`, verify with `architecture --check`.
 - `crates/mc-test-harness/tests/` - wire/integration gates.
 - `../solaris-loader/` - independent reusable client MCP and scenarios.
 - `docs/` - canonical contracts, ADRs, and process documents.
