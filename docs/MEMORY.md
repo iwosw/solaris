@@ -4,32 +4,143 @@
 держим в [`docs/memory/`](memory/) — это **не** стартовый контекст (`AGENTS.md`); открывай
 часть, когда вопрос про ту эпоху.
 
-## Текущая работа — Agent Readiness Refactor (исполнение начато 2026-09-26)
+## Night-run closeout 2026-10-03 ~15:30
+Single identities: freeze-r3 snapshot (2968 files), server
+`bin/mc-server-final-r3` (`a279a67d…9d223d`), base `4865344e…` + uncommitted
+patches. Verified: stack-overflow fix (Box::pin, no recursion) + restore
+forward delta; mc-net lib 2178/0, wasm 6+2+3+2+1/0, plugin-host 140/140,
+server bin/cli/play 136/0, replay driver 28/0; clippy/code-health/fmt green
+on snapshot. Matrix non-plugin: 6 PASS / 5 TPS-or-evidence FAIL (dense,
+built-base, combat, checkpoint, long-session); hotspots worldgen/network/
+scheduled assigned, none closed by measurement. 50-client rung: TPS 20.0,
+p95 18.7ms, 28.5% CPU (only 4 bot-side water timeouts). Settlements: private
+r3 package built, `storage` grant missing (config staged, unvalidated).
+Native gates on empty-plugin fixture: nav 82/82, Loader 8/8, food 10/10.
+CP058/059/068 DECIDED 2026-10-04 (council Astra+GLM, owner may edit): recorded in
+docs/settlements/OWNER_DECISIONS.md; OPEN only mounted feed/HP/stamina/collider/seat/impulse native profile. Other blockers: no L2 `correctness` profile (4G OOM), no plugin-heavy row, no r3-pair acceptance. No commits.
 
-Владелец остановил расширение gameplay и запустил конечную программу упрощения работы с
-существующим кодом трёх репозиториев. План и очередь CP-REFACTOR-000…100:
-[AGENT_READINESS_REFACTOR_PLAN.md](AGENT_READINESS_REFACTOR_PLAN.md). Единица работы —
-законченный домен с владельцем, входом изменения и проверкой, а не «перенесено N строк».
-Порядок фаз обязателен; не создавать новый scenario DSL, второй runner, набор пустых
-crates, compatibility shims или «универсальные» buses/services.
+## Absorption correction — 2026-10-02
+
+Player additional hearts are authoritative in `SurvivalState::absorption`.
+Golden/enchanted apples and every shared Absorption application grant
+`max(existing, 4 * (amplifier + 1))`, including hidden/unchanged effect merges.
+The shared damage helper spends them after equipment reductions; effect expiry,
+hidden-level downgrade and milk cap/clear the amount. Playerdata stores vanilla
+`AbsorptionAmount`; owners and trackers receive FLOAT player metadata index 17
+(local 26.1.2 `javap`, including the Avatar parent).
+Receipts: `.analysis/codex-logs/absorption/` — original golden-apple arrow repro
+failed with health 17 instead of 20; final five scoped regressions passed,
+including partial save/reload and real loopback late-tracker metadata; strict
+Clippy on mc-net/mc-simulation passed; code-health reported 0 fail.
+
+
+## Текущая работа — Core Architecture Program (CP-ARCH, начата 2026-09-28)
+
+Владелец запросил оценку архитектуры ядра и её фиксацию. Программа CP-REFACTOR-000…100
+закрыта (файлы разрезаны, навигация построена, ownership не трогался — §5.4 старого
+плана). Аудит семи срезов нашёл одну корневую проблему: граница simulation/application
+core существует как соглашение, а не как crate — весь движок в `mc-net`, `SimulationOwner`
+зависит обратно на `SessionRegistry`, два писателя player inventory, policy в адаптерах,
+composition root в `mc-net::bind_internal`, production зависит от `mc-test-harness`, tick
+блокирует tokio worker, shutdown может отменить final save. Решение — ADR 0011: один
+новый crate `mc-simulation`, направление зависимостей защищает Cargo, tick на выделенном
+потоке. Очередь CP-ARCH-000…070: [CORE_ARCHITECTURE_PLAN.md](CORE_ARCHITECTURE_PLAN.md).
 
 ```yaml
 route: architecture
-plan: docs/AGENT_READINESS_REFACTOR_PLAN.md
-current_checkpoint: CP-049 (construction/manual building; owner go 2026-09-28)
-last_closed: CP-REFACTOR-100 (correctness L2 20260928T122923-correctness-y6kwr7bi passed; CleanupReview pass; committed 2026-09-28 by owner authorization)
+plan: docs/CORE_ARCHITECTURE_PLAN.md
+decision: docs/decisions/0011-core-crate-topology-and-threading.md
+evidence: docs/evidence/core-architecture-audit-2026-09-28.md  # findings A1..C10; raw reports .analysis/codex-logs/cparch-000/
+current_checkpoint: parallel tracks (owner 2026-10-01). TICK: main has TickGoals+EntityIdHasher+TickHash+TickPhys; living-world still over budget (worktree A/B 74/172/200 ms p50/p95/p99, receipts .analysis/codex-logs/{tick-goals,tick-hash,tick-phys}/); TickTail fixing the measured tail = startup owner-lane collapse (regional work invisible to adaptive CPU pool, mc-net server/runtime_control.rs). WORLDGEN: W0+W1+W2 integrated (docs/evidence/worldgen-w2.md; C04 deferred to W7, delta inference to W3); W3 in progress; vanilla-parity patch rides with the purge. CORE PURGE + settlements A0–A8 / CP-049…096 in solaris-settle + plugin repo. CLEANUP integrated: clean-core/world/harness/net1/sim/data/test-harness. NATIVE CLIENT: new repo ../solaris-client (spec ~/Downloads/SOLARIS_NATIVE_CLIENT_SPEC_FOR_OPUS.md), C00–C02. Knowledge log: docs/memory/log-18-2026-10-parallel-tracks.md.
+last_closed: main L2 correctness PASS on the combined tree (2026-10-01, .analysis/validation/20261001T152611-correctness-igq49dkj). Flaky farmland-trample test fixed (fixture authority mismatch, .analysis/codex-logs/flaky-trample/report.json)
 quality: draft
-base_trees:  # core base = the CP-REFACTOR-100 commit (parent of CP-049 work); no push
-  solaris: 9889036ee786dc90d2e44d7aeeb80fa62efe1a5d
+base_trees:  # core HEAD at audit; no push
+  solaris: 4865344edb3733eacd5a942cdd7b548f39a80126
   solaris-default-plugins: 9adf5aebceb7595ca75f8e93ad82ef01739d328a
   solaris-loader: bab2329c707d4bff026f22b65162e93b432ab50c
-ci_sibling_revisions:  # .github/workflows/ci.yml source pins; CI needs these commits pushed
+ci_sibling_revisions:  # .github/workflows/ci.yml source pins
   solaris-default-plugins: 9adf5aebceb7595ca75f8e93ad82ef01739d328a
   solaris-loader: bab2329c707d4bff026f22b65162e93b432ab50c
 untracked_orphans: ../solaris-default-plugins/sources/solaris-settlements/src/{command_dispatch,legacy_commands,lib_tests,registry,warehouse_policy}.rs are not wired from lib.rs (abandoned CP-040 split); excluded from commits, owner to decide
-paused: gameplay expansion beyond CP-049, CP-050–096
-next: CP-049 construction/manual-building card. Push not authorized.
+owner_dirty_preserved: WATCHDOG.yml, tools/harness/{loader,profiles,scenarios}.py (not touched by CP-ARCH-000)
+paused: CP-ARCH-040…070 queued behind the owner-ordered tracks above (freeze on CP-049–096 lifted 2026-10-01)
+next: integrate TickTail → exclusive living-world-scale + entity-scale; integrate SettlementsCP049 (purge + generic API + vanilla worldgen, 3-way vs main) → L2 + core-client + loader-live + real-client village check (seed 497625, chunk 42,-33); integrate W3. Open owner decisions from W0: cold/root SLOs, generator artifact retention, never-activated inhabitants/loot export policy, accepted import losses. Commit/push not authorized.
 ```
+
+**CP-ARCH-030 (2026-10-01, source, closed — step 6 accepted by owner).** Receipt `.analysis/codex-logs/cparch-030/receipt.md`
+(шаги 1–7, diff_hash там). Один writer: inventory (owner reservation для compound), shield
+(`PlayerStateEvent::Shield`), world time/night skip/world rules (`SetWorldRule`; sleep tick перед
+time advance), plugin teleport (`CommitScriptPlayerTeleport` + `teleport_generation` fence,
+`OutboundCommand::TeleportPlayer`; `TeleportPending` удалён по решению владельца, WIT-кейс оставлен).
+Policy → owners: menu (crafting/stonecutter/enchanting/recipes), attack costs, script world-block
+planner → `mc-simulation`; fall landings из ECS + passive/dragon/villager/hostile planners +
+`EntityClassIndex` → `mc-entity`. Гейты: L2 `correctness` `20260930T144051`; real-client inventory
+`20260930T113600`, core-client `20260930T143105`; TCP block_edit/sleep/commands/wasm_* по шагам.
+Scale fix 2026-10-01 (`.analysis/codex-logs/scale-fix/receipt.md`): entity lanes follow the CPU pool
+(physical-core ceiling); temptation reads only animals near food holders (was a full 40k snapshot copy per
+tick); connection serves outbound while one movement commit is in flight (merged samples). entity-scale
+PASS 60/60 (p95 140 / p99 192 ms); living-world-scale no disconnects, fails tick budget (p95 191 / p99 199 ms
+vs 50/60). Test-spy cleanup (24 files, −1223 lines). L2 `20261001T055505`, core-client `20261001T050354`.
+Review `CparchReview`: F1 stale movement vs teleport → generation fence; F2 shield → sequenced
+owner clear; F3 water flags после commit → принято (выбранная владельцем семантика).
+
+**CP-ARCH-020 (2026-09-29, source, closed).** Receipt `.analysis/codex-logs/cparch-020/receipt.md`
+(шаги 1–9, отклонения от pure move перечислены там). Новый crate `mc-simulation` без `mc-net`/
+`mc-protocol` (`cargo tree` = 0): lock policy/metrics, kernels, `persistence` (world/inventory/
+regional journals, player/world/entity codecs, dirty-flush), `services::{storage,residents,
+settlement}` (`PluginStorage` + ledgers). В `mc-net` остались адаптеры: `PlayerPose`/
+`InteractionState`, player runtime adapter, `resource_profile`, storage actor, `InventoryRuntime`,
+`*_runtime.rs`. C3: `StorageSlot::durable` (spawn_blocking) для всех durable append actor'а и
+стартового recovery; 6 current_thread драйверов: before 6 FAILED → after 6 passed. Тестовые seams —
+feature `test-hooks` только из dev-deps `mc-net`. Сборка focused-теста: kernel в `mc-simulation`
+~7 s (было 45–58 s через `mc-net`); `mc-net` touch 45 s (HEAD 49 s). Гейты: L2 `correctness`
+`20260929T170532` (с `SOLARIS_HARNESS_MEMORY_MAX=7G`: дефолтный scope 4G ниже пика rustc
+`mc-net` ≈4.5 GB — OOM-kill без receipt), `code-health` 42 правила + 5 bypass-проверок
+перенацелены на sim, `architecture --check` current, сценарии warehouse-bind-manual/-refusals/
+-reservation-restart, warehouse-transfer-recovery, inventory-storage-recovery,
+`settlement-cargo` `20260929T175754` — passed. Sibling `solaris-default-plugins`
+integration-tests: импорты `mc_server::wire_client::Client`, `mc_simulation::tick_policy::
+RandomTickPolicy`, dep `mc-test-harness` удалён (локально, не закоммичено). Independent review
+`CpArch020Review`: pass, 0 findings. Real-client не требовался (client-visible surface не менялась).
+
+**CP-ARCH-010 (2026-09-28, source, closed).** Receipt `.analysis/codex-logs/cparch-010/receipt.md`.
+B3: `mc-test-harness::{client, registry_capture, VanillaServerProcess, parse_java_major_version}`
+переехали в `mc-server::{wire_client, vanilla::{process, registry_capture}}` (git mv, verbatim);
+`mc-server` больше не зависит от `mc-test-harness`, harness зависит от `mc-server`; 34 test/bin
+callers переписаны, re-export'ов нет. B6: `MoveEntityRot` в `mc-protocol` + wire-layout тест.
+B7: projectile `EntityId` → `mc_entity::EntityId`, конверсии удалены; `BlockStateId`/`BlockPosition`
+оставлены с обоснованием (serde persisted state, `mc-world` без serde). C5: supervisor
+deadline и ticker drain больше не отменяют final save / simulation tail — классифицируют как
+`failed` после завершения. C6: `serve` join'ит storage actor после periodic-save drain и до save
+barrier. C7: dashboard — JoinSet + лимит 32. Review `changes` → 2 findings исправлены: 9 JSON
+manifests/README перешли на идентичность `mc_server::wire_client::Client`; слабый abort-тест
+dashboard удалён. Advisory после review: новое ребро harness→mc-server втянуло
+`#[global_allocator]` (stats_alloc) из lib в harness-бинарники (`load_scenarios`) —
+allocator перенесён в `main.rs` (binary), lib только читает счётчики; `nm` подтверждает
+(0 `StatsAlloc` в `load_scenarios`, есть в `mc-server`). Гейты: `fmt` `20260928T231128`,
+`code-health` `20260928T231044`, strict `clippy` workspace `20260928T204922` + targeted
+`mc-server`/`mc-test-harness` после allocator fix clean, `harness-check` `20260928T210025`,
+`fixture-check` `20260928T210025`, `architecture --check` ok; focused tests
+(server/protocol/harness lib+bins 532, mc-net `server::tests` 108, harness TCP `commands` 6,
+`real_client_manifest` 49, projectile 58+31, dashboard 15, shutdown 2, profile 3). L2
+`correctness` и real-client — не запускались (client-visible surface не менялась; L2 — на
+закрытие native-волны CP-ARCH-020 по §6 плана).
+
+**CP-ARCH-000 (2026-09-28, docs-only).** Написаны: audit (27 findings, каждый с
+инвариантом и `file:line`; blocking: A1 два writer'а inventory, A2 back-edge
+`simulation.rs:36-65,4561-4619`, B1 движок в `mc-net`, B2 два composition root, C1
+tick в tokio-задаче `server.rs:1758-1762` + blocking `handle.rs:2375-2385`), ADR 0011
+(топология, threading, четыре durable stream с acknowledgement), план CP-ARCH-000…070 с
+картой переездов; `ARCHITECTURE.md`, ADR 0006 status, ADR index, `AGENT_ROUTES`,
+`runtime.md` locator `bind_internal` (был ошибочно отнесён к `mc-server`) согласованы;
+старый план помечен закрытым. Независимый read-only review вернул `changes` с 4 findings
+— все исправлены: R1 CP-ARCH-020 требует dependency cut (`use super::*`, packet-типы в
+`survival.rs:34-39`, `PreparedStorageBatch`, `InventoryRuntime` в `storage.rs:65`) до
+move; R2 порядок shutdown — final save (`checkpoint.rs:557-570` зовёт `writer.flush()`)
+при живом journal writer, join после; R3 write-behind для обычных decisions (ADR
+0005:199-213, `persistence.rs:721-754`, `world_journal.rs:540-548`) не усиливать; R4
+четвёртый stream — plugin-storage journal (`storage.rs:67-69,590-607`). Cargo/клиент
+не запускались — дерево кода не менялось.
 
 **Графическая проверка по запросу владельца (2026-09-28, в обход defer).** Все real-client
 профили зелёные на текущем dirty tree: `core-client` `20260928T100623-core-client-lwzg423e`,
@@ -180,18 +291,20 @@ Manual warehouse binding и building certificates в коде **уже есть*
 **не доказан**: manual building capabilities, реальный доступ/станции, invalidation после
 разрушения, repair, unload/restart, foreign owner и объяснение отказа. Пропуск —
 `.analysis/cp049-resume-20260926.md` (локальный provenance; его прежний `next` не
-исполнять). Возврат — по CP-REFACTOR-100: карточка `construction / manual building
+исполнять). Возврат — по CP-ARCH-070: карточка `construction / manual building
 recognition` с реальными файлами, owner, gates и первым недостающим outcome.
 
 ## Границы и blockers
 
-- **Feature freeze.** Новые профессии/здания/экономика/война/технологии/UI и CP-050–096
-  приостановлены до source/tooling handback CP-REFACTOR-100. Частичная выгрузка cargo
-  остаётся частичной: перенос не превращает её в all-or-nothing правило.
-- **Graphical acceptance отложена владельцем до CP-096** (`deferred_by_owner`): `inventory`,
-  `replay`, `playable`, `loader-live --platform …`. Известный проваленный owner-сценарий
-  остаётся `blocked` до нужного rerun; зелёные Rust/TCP/Java гейты его не понижают и не
-  заменяют. Два уровня закрытия рефакторинга — §8 плана.
+- **Feature freeze снят владельцем (2026-10-01).** CP-049–096 разблокированы. Правило владельца:
+  в ядре НЕТ плагинов — ни доменного кода поселений/экономики/городов/claims, ни их тестов;
+  ядро = движок + широкий переиспользуемый plugin API, домен живёт в `../solaris-default-plugins`.
+  План расширения поселений: `/home/kaiserroman/Downloads/SOLARIS_SETTLEMENTS_LONG_TERM_ADDITION_SPEC.md`
+  (встраивается в канонические спеки плагина). Частичная выгрузка cargo остаётся частичной.
+- **Graphical acceptance.** Все real-client профили прошли 2026-09-28 (см. ниже) на
+  дереве до CP-ARCH; каждый CP-ARCH, трогающий client-visible surface, называет свой
+  реальный клиентский gate (§4 плана). Известный проваленный owner-сценарий остаётся
+  `blocked` до нужного rerun; зелёные Rust/TCP/Java гейты его не понижают и не заменяют.
 - **Commit/push не разрешены.** Работа фиксируется path-limited diff от `base_trees` выше.
 - Открытые runtime-пробелы CP-047/CP-048 (housing/food pause triggers, guardian-death
   reissue, relocation identity model) и остальной незакрытый контекст — в `log-17`/`log-16`,
@@ -200,6 +313,8 @@ recognition` с реальными файлами, owner, gates и первым 
 ## Как этим пользоваться
 
 - Маршрут выбирает `route` активного чекпоинта: [AGENT_ROUTES.md](AGENT_ROUTES.md).
+- Активная программа и очередь CP-ARCH: [CORE_ARCHITECTURE_PLAN.md](CORE_ARCHITECTURE_PLAN.md);
+  решение: [ADR 0011](decisions/0011-core-crate-topology-and-threading.md).
 - Команды, prerequisites, receipts и диагностика: [AGENT_TOOLING.md](AGENT_TOOLING.md).
 - Нормативные границы: [ARCHITECTURE.md](ARCHITECTURE.md) (target) и owning ADR в `decisions/`;
   фактическое устройство: [architecture/runtime.md](architecture/runtime.md),
