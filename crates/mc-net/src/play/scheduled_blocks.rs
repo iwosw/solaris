@@ -10,115 +10,21 @@ use mc_world::{
 };
 use tracing::warn;
 
-use super::campfire::{
-    CampfireCookingState, campfire_block_entity_id, campfire_block_entity_persistent_bytes,
-    campfire_recipe_result_stack, is_campfire_block,
-};
+use super::campfire::{campfire_block_entity_id, campfire_block_entity_persistent_bytes};
 use super::containers::{
-    ChestView, FurnaceKind, chest_slot_stacks, decrement_furnace_slot, find_campfire_recipe_in,
+    ChestView, FurnaceKind, chest_slot_stacks, decrement_furnace_slot,
     find_cooking_recipe_for_item, furnace_kind_for_block_id, furnace_slot_to_stack,
     is_fuel_item_id,
 };
-use super::random_ticks::next_leaf_distance_state;
 use super::session::SessionRegistry;
-use super::toggles::extend_adjacent_power_target_edits;
 use super::{
-    BlockEdit, BlockPlanningRead, ItemStack, SnapshotPlanningWorld, SnapshotReadPrecondition,
-    adjacent_block_positions, block_state_property, sibling_state_with_bool_property,
+    BlockEdit, ItemStack, adjacent_block_positions, block_state_property,
+    sibling_state_with_bool_property,
 };
-use crate::script::ZoneProtectionSnapshot;
-
-// The redstone planner is declared here, with the scheduled-tick queue it
-// enqueues into, rather than beside the other play modules.
-#[path = "redstone/mod.rs"]
-pub(super) mod redstone;
-
-#[derive(Debug, Default)]
-pub(super) struct ScheduledBlockTickPlan {
-    pub(super) edits: Vec<BlockEdit>,
-    pub(super) preconditions: Vec<SnapshotReadPrecondition>,
-}
-
-pub(super) struct ScheduledBlockRegionPlan {
-    pub(super) region: RegionKey,
-    pub(super) due: Vec<ScheduledBlockTick>,
-    pub(super) plan: ScheduledBlockTickPlan,
-}
-
-pub(super) fn scheduled_block_planning_chunks(ticks: &[ScheduledBlockTick]) -> Vec<ChunkPos> {
-    let mut positions = HashSet::new();
-    for tick in ticks {
-        let centre = ChunkPos {
-            x: tick.pos.x.div_euclid(SECTION_DIM as i32),
-            z: tick.pos.z.div_euclid(SECTION_DIM as i32),
-        };
-        for dz in -1..=1 {
-            for dx in -1..=1 {
-                let (Some(x), Some(z)) = (centre.x.checked_add(dx), centre.z.checked_add(dz))
-                else {
-                    continue;
-                };
-                positions.insert(ChunkPos { x, z });
-            }
-        }
-    }
-    let mut positions = positions.into_iter().collect::<Vec<_>>();
-    positions.sort_unstable_by_key(|position| (position.x, position.z));
-    positions
-}
-
-pub(super) fn plan_scheduled_block_tick_edits(
-    blocks: &BlockRegistry,
-    snapshot: &mc_world::WorldReadSnapshot,
-    ticks: &[ScheduledBlockTick],
-    protection: Option<&ZoneProtectionSnapshot>,
-) -> Option<ScheduledBlockTickPlan> {
-    let mut world = SnapshotPlanningWorld::new(snapshot);
-    let mut plan = ScheduledBlockTickPlan::default();
-    let mut redstone_budget = redstone::RedstoneBudget::new(redstone::MAX_POSITIONS_PER_TICK);
-    for tick in ticks {
-        let Some(state_id) = world.get_cached_block(tick.pos) else {
-            continue;
-        };
-        let Some(state) = blocks.by_id(state_id) else {
-            continue;
-        };
-        if state.block.id != tick.block {
-            continue;
-        }
-        if matches!(state.block.id.path(), "hopper" | "comparator") {
-            return None;
-        }
-        let Some(edits) = redstone::redstone_tick_edits(
-            blocks,
-            &world,
-            tick.pos,
-            state_id,
-            protection,
-            &mut redstone_budget,
-        )
-        .or_else(|| {
-            scheduled_simple_block_tick_edits_with_protection(
-                blocks, &world, tick.pos, state_id, protection,
-            )
-        }) else {
-            continue;
-        };
-        if edits
-            .iter()
-            .any(|edit| world.get_cached_block(edit.pos).is_none())
-        {
-            continue;
-        }
-        for edit in edits {
-            if world.apply(edit) {
-                plan.edits.push(edit);
-            }
-        }
-    }
-    plan.preconditions = world.preconditions();
-    Some(plan)
-}
+use mc_simulation::campfire::{
+    CampfireCookingState, campfire_recipe_result_stack, find_campfire_recipe_in, is_campfire_block,
+};
+use mc_simulation::scheduled_blocks::scheduled_simple_block_tick_edits_with_protection;
 
 pub(super) fn scheduled_block_tick_edits(
     blocks: &BlockRegistry,
@@ -130,41 +36,20 @@ pub(super) fn scheduled_block_tick_edits(
     if state.block.id.path() == "comparator" {
         return scheduled_comparator_tick_edits(blocks, storage, pos, state);
     }
-    let mut budget = redstone::RedstoneBudget::new(redstone::MAX_POSITIONS_PER_SETTLE);
-    if let Some(edits) =
-        redstone::redstone_tick_edits(blocks, storage, pos, state_id, None, &mut budget)
-    {
+    let mut budget = mc_simulation::redstone::RedstoneBudget::new(
+        mc_simulation::redstone::MAX_POSITIONS_PER_SETTLE,
+    );
+    if let Some(edits) = mc_simulation::redstone::redstone_tick_edits(
+        blocks,
+        storage,
+        pos,
+        state_id,
+        None,
+        &mut budget,
+    ) {
         return Some(edits);
     }
     scheduled_simple_block_tick_edits_with_protection(blocks, storage, pos, state_id, None)
-}
-
-fn scheduled_simple_block_tick_edits_with_protection(
-    blocks: &BlockRegistry,
-    storage: &impl BlockPlanningRead,
-    pos: mc_world::BlockPos,
-    state_id: BlockStateId,
-    protection: Option<&ZoneProtectionSnapshot>,
-) -> Option<Vec<BlockEdit>> {
-    let state = blocks.by_id(state_id)?;
-    if state.block.id.path().ends_with("_leaves") {
-        return Some(
-            next_leaf_distance_state(blocks, storage, pos, state_id)
-                .map(|new_state| vec![BlockEdit { pos, new_state }])
-                .unwrap_or_default(),
-        );
-    }
-    if !state.block.id.path().ends_with("_button")
-        || block_state_property(state, "powered")? != "true"
-    {
-        return None;
-    }
-    let mut edits = vec![BlockEdit {
-        pos,
-        new_state: sibling_state_with_bool_property(blocks, state, "powered", false)?,
-    }];
-    extend_adjacent_power_target_edits(blocks, storage, pos, false, protection, &mut edits);
-    Some(edits)
 }
 
 fn scheduled_comparator_tick_edits(
@@ -325,9 +210,17 @@ pub(super) fn plan_resident_hopper_transfer(
     {
         return None;
     }
-
+    // One hopper move touches at most its own cell, the cell above it, and the
+    // single facing neighbour (plus double-chest partners and comparators
+    // beside those cells). Copy only those contact chunks into scratch staging
+    // instead of the whole due-tick union; the diff below then scans the same
+    // set, so the union still bounds the outer snapshot but not this tick's
+    // work. `planning_chunks` stays in the signature so the owned tick path
+    // keeps passing the union it already built; the bound is local here.
+    let _ = planning_chunks;
+    let touched = hopper_contact_chunks(blocks, snapshot, tick.pos, state_id)?;
     let mut staged = WorldStorage::in_memory(Arc::clone(blocks));
-    for &position in planning_chunks {
+    for &position in &touched {
         let Some(chunk) = snapshot.chunk(position) else {
             continue;
         };
@@ -373,7 +266,7 @@ pub(super) fn plan_resident_hopper_transfer(
         furnaces: Vec::new(),
         scheduled_block_ticks: Vec::new(),
     };
-    for &chunk_position in planning_chunks {
+    for &chunk_position in &touched {
         let Some(before) = snapshot.chunk(chunk_position) else {
             continue;
         };
@@ -437,6 +330,53 @@ pub(super) fn plan_resident_hopper_transfer(
     Some(ResidentPlannedHopperTransfer { plan, result })
 }
 
+/// Chunks one resident hopper transfer can read or write: its own cell, the
+/// cell above it (suck source), the facing neighbour (eject target), and the
+/// blocks beside any of those cells (double-chest partners and comparators
+/// beside a touched container). The caller already fences campfires out.
+fn hopper_contact_chunks(
+    blocks: &BlockRegistry,
+    snapshot: &mc_world::WorldReadSnapshot,
+    pos: mc_world::BlockPos,
+    state_id: BlockStateId,
+) -> Option<Vec<ChunkPos>> {
+    let state = blocks.by_id(state_id)?;
+    let facing = block_state_property(state, "facing")?;
+    let source = mc_world::BlockPos {
+        y: pos.y + 1,
+        ..pos
+    };
+    let target = hopper_facing_target(pos, facing)?;
+    let mut cells = vec![pos, source, target];
+    cells.extend(adjacent_block_positions(pos));
+    cells.extend(adjacent_block_positions(source));
+    cells.extend(adjacent_block_positions(target));
+    for cell in [source, target] {
+        let partner = snapshot
+            .get_cached_block(cell)
+            .and_then(|cell_state| blocks.by_id(cell_state))
+            .and_then(|cell_state| {
+                mc_simulation::block_placement::chest::paired_position(
+                    blocks,
+                    |position| snapshot.get_cached_block(position),
+                    cell,
+                    cell_state.id,
+                )
+            });
+        cells.extend(partner);
+    }
+    let mut chunks = cells
+        .into_iter()
+        .map(|cell| ChunkPos {
+            x: cell.x.div_euclid(SECTION_DIM as i32),
+            z: cell.z.div_euclid(SECTION_DIM as i32),
+        })
+        .collect::<Vec<_>>();
+    chunks.sort_unstable_by_key(|chunk| (chunk.x, chunk.z));
+    chunks.dedup();
+    Some(chunks)
+}
+
 pub(super) fn scheduled_hopper_transfer_with_admission(
     context: &HopperTransferContext<'_>,
     storage: &mut WorldStorage,
@@ -475,7 +415,7 @@ pub(super) fn scheduled_hopper_transfer_with_admission(
         }
         let Some(guard) = context
             .sessions
-            .try_lock_warehouse_reservation_admission(position)
+            .try_lock_container_reservation_admission(position)
         else {
             return Some(HopperTickResult {
                 updates: Vec::new(),
@@ -679,7 +619,7 @@ fn suck_items_into_hopper(
         decrement_furnace_slot(&mut source.chests[source_chest].slots[source_slot]);
         if !context
             .sessions
-            .warehouse_reservation_stock_survives(&source_positions, &source.chests)
+            .container_reservation_stock_survives(&source_positions, &source.chests)
         {
             return false;
         }
@@ -756,7 +696,9 @@ fn target_hopper_inventory_slot(
                 && slot.enchantments == moving.enchantments
                 && slot.custom_name == moving.custom_name
                 && slot.item_model == moving.item_model
-                && slot.stew_effects == moving.stew_effects
+                && (slot.stew_effects == moving.stew_effects
+                    && slot.extended() == moving.extended())
+                && moving.extended().max_damage.is_none()
                 && slot.count < HOPPER_TRANSFER_MAX_STACK)
     })
 }
@@ -889,7 +831,7 @@ fn cached_storage_chest_like_positions(
     }
 
     let mut positions = vec![pos];
-    if let Some(neighbour) = super::block_placement::chest::paired_position(
+    if let Some(neighbour) = mc_simulation::block_placement::chest::paired_position(
         blocks,
         |position| storage.get_cached_block(position),
         pos,
@@ -981,7 +923,9 @@ fn target_hopper_insert_slot(target: &ChestView, moving: &FurnaceSlot) -> Option
                             && slot.enchantments == moving.enchantments
                             && slot.custom_name == moving.custom_name
                             && slot.item_model == moving.item_model
-                            && slot.stew_effects == moving.stew_effects
+                            && (slot.stew_effects == moving.stew_effects
+                                && slot.extended() == moving.extended())
+                            && moving.extended().max_damage.is_none()
                             && slot.count < HOPPER_TRANSFER_MAX_STACK)
                 })
                 .map(|slot| (chest, slot))
@@ -1014,7 +958,8 @@ fn insert_hopper_input_into_furnace(
         && target.enchantments == moving.enchantments
         && target.custom_name == moving.custom_name
         && target.item_model == moving.item_model
-        && target.stew_effects == moving.stew_effects
+        && (target.stew_effects == moving.stew_effects && target.extended() == moving.extended())
+        && moving.extended().max_damage.is_none()
         && target.count < HOPPER_TRANSFER_MAX_STACK
     {
         target.count += 1;
@@ -1045,9 +990,10 @@ pub(super) fn insert_hopper_stack_into_campfire(
         item_id: moving.item_id,
         damage: moving.damage,
         enchantments: moving.enchantments.clone(),
-        custom_name: moving.custom_name.clone(),
+        custom_name: moving.custom_name.as_deref().map(Into::into),
         item_model: moving.item_model.clone(),
         stew_effects: moving.stew_effects.clone(),
+        components: moving.components.clone(),
     };
     context.sessions.commit_campfire_cooking_insert(
         position,
@@ -1155,7 +1101,8 @@ fn insert_hopper_fuel_into_furnace(
         && target.enchantments == moving.enchantments
         && target.custom_name == moving.custom_name
         && target.item_model == moving.item_model
-        && target.stew_effects == moving.stew_effects
+        && (target.stew_effects == moving.stew_effects && target.extended() == moving.extended())
+        && moving.extended().max_damage.is_none()
         && target.count < HOPPER_TRANSFER_MAX_STACK
     {
         target.count += 1;
