@@ -1506,6 +1506,14 @@ pub(crate) async fn resolve_login_initial_state(
         return Ok(LoginInitialState::Recovered(state));
     }
     let Some(root) = world_root else {
+        // Тестовый путь без мира (ConnectionWorld::default): чанков нет и
+        // быть не может — safe-scan всегда None, а грузить нечего. Для таких
+        // login-тестов возвращаем инертный дефолт вместо отказа.
+        if config.world.is_none() {
+            return Ok(LoginInitialState::FreshDefault(
+                PlayerPersistedState::new_default(PlayerPose::new(0.5, 64.0, 0.5)),
+            ));
+        }
         let (spawn_x, spawn_y, spawn_z) =
             resolve_spawn_position(config, chunk_pipeline_resources, world_read)
                 .await
