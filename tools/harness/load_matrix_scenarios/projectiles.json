@@ -11,7 +11,8 @@
   "client_args": [
     "--no-edits",
     "--survival",
-    "--respawn"
+    "--respawn",
+    "--anchor-chunk-walk"
   ],
   "commands": {
     "setup": [
