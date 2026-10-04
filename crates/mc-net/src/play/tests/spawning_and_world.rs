@@ -1,3 +1,6 @@
+use crate::play::session::TestPause;
+use crate::play::simulation::SimulationAuthority;
+
 #[test]
 fn passive_spawn_planner_keeps_water_mobs_off_land() {
     use std::collections::BTreeMap;
@@ -55,7 +58,12 @@ fn passive_spawn_planner_keeps_water_mobs_off_land() {
             &rules,
             &entity_types,
         );
-        assert_eq!(spawns.len(), 2, "valid habitat at {:?} lost its pack", chunk.pos);
+        assert_eq!(
+            spawns.len(),
+            2,
+            "valid habitat at {:?} lost its pack",
+            chunk.pos
+        );
         assert!(
             spawns
                 .iter()
@@ -66,8 +74,7 @@ fn passive_spawn_planner_keeps_water_mobs_off_land() {
         let separation_x = (spawns[0].position.x - spawns[1].position.x).abs();
         let separation_z = (spawns[0].position.z - spawns[1].position.z).abs();
         assert!(
-            separation_x >= bounds.half_width * 2.0
-                || separation_z >= bounds.half_width * 2.0,
+            separation_x >= bounds.half_width * 2.0 || separation_z >= bounds.half_width * 2.0,
             "pack members overlap and would be rejected by collision admission"
         );
     }
@@ -139,7 +146,6 @@ fn passive_spawn_planner_keeps_water_mobs_off_land() {
         let lz = spawn.position.z.floor() as u8;
         ocean_chunk.get_block(lx, spawn.position.y as i32, lz) == Some(water)
     }));
-
 }
 
 #[test]
@@ -150,14 +156,24 @@ fn blocked_pack_sites_do_not_reuse_hostile_spawn_identities() {
     let rules = BiomeSpawnRules::from_entries(BTreeMap::from([(
         plains.clone(),
         BTreeMap::from([
-            ("creature".to_string(), vec![BiomeSpawnEntry {
-                entity_type: mc_data::Identifier::parse("minecraft:pig").unwrap(),
-                min_count: 4, max_count: 4, weight: 1,
-            }]),
-            ("monster".to_string(), vec![BiomeSpawnEntry {
-                entity_type: mc_data::Identifier::parse("minecraft:zombie").unwrap(),
-                min_count: 1, max_count: 1, weight: 1,
-            }]),
+            (
+                "creature".to_string(),
+                vec![BiomeSpawnEntry {
+                    entity_type: mc_data::Identifier::parse("minecraft:pig").unwrap(),
+                    min_count: 4,
+                    max_count: 4,
+                    weight: 1,
+                }],
+            ),
+            (
+                "monster".to_string(),
+                vec![BiomeSpawnEntry {
+                    entity_type: mc_data::Identifier::parse("minecraft:zombie").unwrap(),
+                    min_count: 1,
+                    max_count: 1,
+                    weight: 1,
+                }],
+            ),
         ]),
     )]));
     let entity_types = mc_data::entity_types::solaris_required_entity_types();
@@ -174,14 +190,26 @@ fn blocked_pack_sites_do_not_reuse_hostile_spawn_identities() {
         plan_passive_herd(chunk, Some(grass), &[], None, &[air], &rules, &entity_types)
     };
     let initial = plan(&chunk);
-    let blocked = initial.iter().filter(|spawn| !spawn.hostile).nth(1).unwrap().position;
-    chunk.set_block(blocked.x.floor() as u8, 65, blocked.z.floor() as u8, stone).unwrap();
+    let blocked = initial
+        .iter()
+        .filter(|spawn| !spawn.hostile)
+        .nth(1)
+        .unwrap()
+        .position;
+    chunk
+        .set_block(blocked.x.floor() as u8, 65, blocked.z.floor() as u8, stone)
+        .unwrap();
     let spawns = plan(&chunk);
     assert_eq!(spawns.iter().filter(|spawn| spawn.hostile).count(), 1);
-    let identities = spawns.iter().map(|spawn| {
-        mc_entity::natural_spawn_26_1_2::herd_uuid(spawn.chunk, spawn.slot)
-    }).collect::<HashSet<_>>();
-    assert_eq!(identities.len(), spawns.len(), "pack holes reused an entity identity");
+    let identities = spawns
+        .iter()
+        .map(|spawn| mc_entity::natural_spawn_26_1_2::herd_uuid(spawn.chunk, spawn.slot))
+        .collect::<HashSet<_>>();
+    assert_eq!(
+        identities.len(),
+        spawns.len(),
+        "pack holes reused an entity identity"
+    );
 }
 
 #[test]
@@ -308,7 +336,13 @@ fn hostile_spawn_planner_uses_multiple_monster_facts() {
     for x in 0..64 {
         chunk.pos.x = x;
         let spawns = plan_passive_herd(
-            &chunk, Some(grass), &[], None, &passable, &rules, &entity_types,
+            &chunk,
+            Some(grass),
+            &[],
+            None,
+            &passable,
+            &rules,
+            &entity_types,
         );
         assert!(spawns.iter().all(|spawn| spawn.hostile));
         spawned_types.extend(spawns.into_iter().map(|spawn| spawn.entity_type_name));
@@ -433,7 +467,6 @@ fn hostile_spawn_planner_surface_candidate_does_not_require_cover() {
     assert_eq!(covered_spawns[0].entity_type_name, "minecraft:zombie");
 }
 
-
 #[test]
 fn creative_and_spectator_modes_grant_client_abilities() {
     let creative = player_abilities_for_mode(GameMode::Creative);
@@ -464,7 +497,7 @@ fn survival_like_modes_revoke_client_abilities() {
 #[test]
 fn full_survival_state_maps_to_health_packet() {
     assert_eq!(
-        SurvivalState::FULL.as_packet(),
+        survival_health_packet(&SurvivalState::FULL),
         ClientboundSetHealth {
             health: 20.0,
             food: 20,
@@ -480,14 +513,23 @@ fn fall_damage_starts_after_three_blocks_on_landing() {
     let mut landing = PlayerPose::new(0.0, 65.5, 0.0);
     landing.flags = MovePlayerFlags::new(true, false);
 
-    assert_eq!(fall_damage_amount(old_pose, landing), 1.0);
+    assert_eq!(
+        fall_damage_amount(movement_state(old_pose), movement_state(landing)),
+        1.0
+    );
 
     let mut short_landing = PlayerPose::new(0.0, 67.5, 0.0);
     short_landing.flags = MovePlayerFlags::new(true, false);
-    assert_eq!(fall_damage_amount(old_pose, short_landing), 0.0);
+    assert_eq!(
+        fall_damage_amount(movement_state(old_pose), movement_state(short_landing)),
+        0.0
+    );
 
     old_pose.flags = MovePlayerFlags::new(true, false);
-    assert_eq!(fall_damage_amount(old_pose, landing), 0.0);
+    assert_eq!(
+        fall_damage_amount(movement_state(old_pose), movement_state(landing)),
+        0.0
+    );
 }
 
 #[test]
@@ -501,7 +543,10 @@ fn fall_damage_uses_accumulated_airborne_height() {
     let mut landing = PlayerPose::new(0.0, 64.0, 0.0);
     landing.flags = MovePlayerFlags::new(true, false);
 
-    assert_eq!(fall_damage_amount(mid_fall, landing), 3.0);
+    assert_eq!(
+        fall_damage_amount(movement_state(mid_fall), movement_state(landing)),
+        3.0
+    );
 }
 
 #[test]
@@ -524,6 +569,7 @@ fn survival_damage_heal_and_death_are_clamped() {
 fn survival_exhaustion_drains_saturation_before_food() {
     let mut state = SurvivalState {
         health: 20.0,
+        absorption: 0.0,
         food: 20,
         saturation: 1.0,
         exhaustion: 0.0,
@@ -549,6 +595,7 @@ fn survival_exhaustion_drains_saturation_before_food() {
 fn survival_food_addition_clamps_to_food_level() {
     let mut state = SurvivalState {
         health: 20.0,
+        absorption: 0.0,
         food: 18,
         saturation: 1.0,
         exhaustion: 0.0,
@@ -591,8 +638,13 @@ fn spawn_y_uses_chunk_heightmap_without_block_light_table() {
 }
 
 #[tokio::test]
-async fn spawn_position_reads_published_chunk_while_world_writer_is_held() {
-    let blocks = Arc::new(BlockRegistry::from_report(&[simple_block(0, "minecraft:air")]).unwrap());
+async fn spawn_position_reads_published_chunk_without_waiting_for_writer() {
+    use crate::chunk_pipeline::ChunkPipelineResources;
+
+    // fluid_test_registry: id 1 is solid ground, id 0 air body cells. The
+    // stale HEAD version of this test only set the heightmap entry without a
+    // support block, which the support check correctly rejects.
+    let blocks = Arc::new(fluid_test_registry());
     let mut world = mc_world::WorldStorage::in_memory(Arc::clone(&blocks));
     let mut chunk = Chunk::empty(
         ChunkPos { x: 0, z: 0 },
@@ -600,6 +652,7 @@ async fn spawn_position_reads_published_chunk_while_world_writer_is_held() {
         Identifier::parse("minecraft:plains").unwrap(),
     );
     let top_y = 72;
+    chunk.set_block(0, top_y, 0, mc_world::BlockStateId(1));
     chunk
         .highest_opaque
         .set(0, 0, (top_y - mc_world::MIN_Y + 1) as u32);
@@ -607,29 +660,23 @@ async fn spawn_position_reads_published_chunk_while_world_writer_is_held() {
         .commit_chunk_snapshot(ChunkPos { x: 0, z: 0 }, chunk)
         .unwrap();
     let world_read = world.read_view();
-    let config = Arc::new(simulation_tick_test_config(
+    let config = simulation_tick_test_config(
         blocks,
         world,
         RandomTickPolicy::default(),
-        Arc::new(mc_data::block_facts::BlockFactsTable::default()),
-    ));
-    let world = Arc::clone(config.world.as_ref().unwrap());
-    let writer = world.lock().await;
-    let (finished_tx, finished_rx) = tokio::sync::oneshot::channel();
-    let task = tokio::spawn({
-        let config = Arc::clone(&config);
-        async move {
-            let position = spawn_position(&config, Some(&world_read));
-            let _ = finished_tx.send(position);
-        }
-    });
+        Arc::new(fluid_test_facts()),
+    );
+    let resources = ChunkPipelineResources::with_limits(1, 1);
 
-    let position = tokio::time::timeout(Duration::from_secs(1), finished_rx)
-        .await
-        .expect("published spawn lookup waited for the world writer")
-        .expect("spawn lookup task dropped its result");
-    drop(writer);
-    task.await.expect("spawn lookup task failed");
+    // Published fast path: the baked chunk is already resident, so the
+    // resolve answers before touching the chunk-prepare pipeline.
+    let position = tokio::time::timeout(
+        Duration::from_secs(10),
+        resolve_spawn_position(&config, &resources, Some(&world_read)),
+    )
+    .await
+    .expect("published spawn lookup must not block")
+    .expect("published spawn chunk must yield a safe position");
 
     assert_eq!(position, (SPAWN_X, 74.0, SPAWN_Z));
 }
@@ -657,11 +704,73 @@ async fn spawn_position_uses_published_nonzero_world_spawn() {
         RandomTickPolicy::default(),
         Arc::new(fluid_test_facts()),
     );
+    let resources = crate::chunk_pipeline::ChunkPipelineResources::with_limits(1, 1);
 
     assert_eq!(world_read.spawn(), spawn);
     assert_eq!(
-        spawn_position(&config, Some(&world_read)),
+        resolve_spawn_position(&config, &resources, Some(&world_read))
+            .await
+            .expect("published spawn chunk must yield a safe position"),
         (160.5, 66.0, -79.5)
+    );
+}
+
+#[tokio::test]
+async fn spawn_resolve_loads_unbaked_spawn_chunk_before_falling_back() {
+    use crate::chunk_pipeline::ChunkPipelineResources;
+
+    struct SurfaceGenerator {
+        floor: mc_world::BlockStateId,
+        air: mc_world::BlockStateId,
+    }
+    impl mc_world::ChunkGenerator for SurfaceGenerator {
+        fn generate(&self, pos: ChunkPos) -> Chunk {
+            let mut chunk = Chunk::empty(
+                pos,
+                self.air,
+                Identifier::parse("minecraft:plains").unwrap(),
+            );
+            // Analytic surface top=76, one grass floor with clear body space:
+            // safe_spawn_position must confirm support + clear cells on the
+            // real committed chunk instead of trusting the number alone.
+            let _ = chunk.set_block(0, 76, 0, self.floor);
+            chunk
+                .highest_opaque
+                .set(0, 0, (76 - mc_world::MIN_Y + 1) as u32);
+            chunk
+        }
+        fn surface_height(&self, _world_x: i32, _world_z: i32) -> Option<i32> {
+            Some(76)
+        }
+    }
+
+    // No chunk committed: the spawn window is not baked yet (fresh world,
+    // post-flush eviction, or slow generation). Login must load the actual
+    // spawn chunk and re-run the safe scan on real blocks — never the stale
+    // DEFAULT_SPAWN_Y flat-world fallback (-59.0) that buries the player
+    // inside rock and starts the suffocation death chain.
+    let blocks = Arc::new(fluid_test_registry());
+    let world = mc_world::WorldStorage::in_memory(Arc::clone(&blocks)).with_generator(Arc::new(
+        SurfaceGenerator {
+            floor: mc_world::BlockStateId(1),
+            air: mc_world::BlockStateId(0),
+        },
+    )
+        as Arc<dyn mc_world::ChunkGenerator>);
+    let world_read = world.read_view();
+    let config = simulation_tick_test_config(
+        blocks,
+        world,
+        RandomTickPolicy::default(),
+        Arc::new(fluid_test_facts()),
+    );
+    let resources = ChunkPipelineResources::with_limits(1, 1);
+
+    assert_eq!(
+        resolve_spawn_position(&config, &resources, Some(&world_read))
+            .await
+            .expect("prepared spawn chunk must yield a safe position"),
+        (0.5, 78.0, 0.5)
     );
 }
 
@@ -695,8 +804,14 @@ async fn spawn_position_chooses_nearest_dry_column_instead_of_origin_water() {
         RandomTickPolicy::default(),
         Arc::new(fluid_test_facts()),
     );
+    let resources = crate::chunk_pipeline::ChunkPipelineResources::with_limits(1, 1);
 
-    assert_eq!(spawn_position(&config, Some(&world_read)), (2.5, 66.0, 0.5));
+    assert_eq!(
+        resolve_spawn_position(&config, &resources, Some(&world_read))
+            .await
+            .expect("published spawn chunk must yield a safe position"),
+        (2.5, 66.0, 0.5)
+    );
 }
 
 #[tokio::test]
@@ -739,8 +854,70 @@ async fn spawn_position_skips_collidable_body_space_and_hazardous_support() {
             &reports,
         )),
     );
+    let resources = crate::chunk_pipeline::ChunkPipelineResources::with_limits(1, 1);
 
-    assert_eq!(spawn_position(&config, Some(&world_read)), (3.5, 66.0, 0.5));
+    assert_eq!(
+        resolve_spawn_position(&config, &resources, Some(&world_read))
+            .await
+            .expect("published spawn chunk must yield a safe position"),
+        (3.5, 66.0, 0.5)
+    );
+}
+#[tokio::test]
+async fn saved_player_pose_bypasses_unsafe_common_spawn_resolve() {
+    use crate::play::persistence::{load_player_state, save_player_state};
+
+    // Регрессия на порядок резолва в `handle`: игрок с сохранённой позой
+    // обязан входить даже когда общий спавн небезопасен. Дефолт-резолв
+    // (`resolve_spawn_position`) в этом пути вообще не вызывается — поза
+    // уже на диске, чанки спавна трогать не нужно.
+    let blocks = Arc::new(fluid_test_registry());
+    let world = mc_world::WorldStorage::in_memory(Arc::clone(&blocks));
+    let world_read = world.read_view();
+    let items = mc_data::items::ItemRegistry::from_report(&[]);
+    let uuid = uuid::Uuid::from_u128(0x5eed_5a5e);
+    let saved_pose = PlayerPose::new(123.5, 70.0, -45.5);
+    let mut saved = PlayerPersistedState::new_default(saved_pose);
+    saved.pose = saved_pose;
+
+    let root = tempfile::tempdir().unwrap();
+    save_player_state(root.path(), uuid, &items, saved).unwrap();
+    assert!(
+        mc_simulation::persistence::playerdata_path(root.path(), uuid).is_file(),
+        "saved playerdata must exist before login"
+    );
+
+    // Общий спавн небезопасен: ни одного закоммиченного чанка и нет
+    // генератора — резолв дефолта обязан вернуть Err (отказ во входе).
+    let config = simulation_tick_test_config(
+        Arc::clone(&blocks),
+        mc_world::WorldStorage::in_memory(Arc::clone(&blocks)),
+        RandomTickPolicy::default(),
+        Arc::new(fluid_test_facts()),
+    );
+    let resources = crate::chunk_pipeline::ChunkPipelineResources::with_limits(1, 1);
+    assert!(
+        resolve_spawn_position(&config, &resources, Some(&world_read))
+            .await
+            .is_err(),
+        "unsafe common spawn must refuse the default resolve"
+    );
+
+    // Но сохранённая поза грузится мимо резолва и не трогается: тот же
+    // дешёвый дефолт, что `handle` подставляет до `load_player_state`,
+    // перезаписывается позой с диска.
+    let fallback = crate::play::world_read_spawn_fallback(Some(&world_read));
+    let loaded = load_player_state(
+        root.path(),
+        uuid,
+        &items,
+        PlayerPersistedState::new_default(PlayerPose::new(fallback.0, fallback.1, fallback.2)),
+    )
+    .unwrap()
+    .expect("saved playerdata must load");
+    assert_eq!(loaded.pose.x, 123.5);
+    assert_eq!(loaded.pose.y, 70.0);
+    assert_eq!(loaded.pose.z, -45.5);
 }
 
 #[test]
@@ -903,17 +1080,11 @@ fn hostile_entities_follow_nearby_player_position() {
     );
     let _ = registry.mark_loaded(session_id, (0, 0));
     let _ = registry.mark_loaded(session_id, (1, 0));
-    let _ = registry.ensure_chunk_herd_legacy_for_test(
-        (0, 0),
-        &[HerdSpawn {
-            chunk: (0, 0),
-            slot: 0,
-            entity_type_id: 1,
-            entity_type_name: "minecraft:zombie".to_string(),
-            position: Vec3::new(0.5, DEFAULT_SPAWN_Y, 0.5),
-            hostile: true,
-            sheep_color: None,
-        }],
+    let _ = registry.spawn_command_entity(
+        &SimulationAuthority::for_test(),
+        1,
+        "minecraft:zombie".to_string(),
+        Vec3::new(0.5, DEFAULT_SPAWN_Y, 0.5),
     );
 
     let queries = registry.tick_entities_and_collect_physics_queries(1);
@@ -943,103 +1114,48 @@ fn passive_herd_wander_uses_each_entity_movement_speed() {
         PlayerPose::new(0.5, DEFAULT_SPAWN_Y, 0.5),
     );
     let _ = registry.mark_loaded(session_id, (0, 0));
-    let _ = registry.ensure_chunk_herd_legacy_for_test(
-        (0, 0),
-        &[
-            HerdSpawn {
-                chunk: (0, 0),
-                slot: 0,
-                entity_type_id: 1,
-                entity_type_name: "minecraft:cow".to_string(),
-                position: Vec3::new(8.5, DEFAULT_SPAWN_Y, 8.5),
-                hostile: false,
-                sheep_color: None,
-            },
-            HerdSpawn {
-                chunk: (0, 0),
-                slot: 1,
-                entity_type_id: 2,
-                entity_type_name: "minecraft:sheep".to_string(),
-                position: Vec3::new(9.5, DEFAULT_SPAWN_Y, 8.5),
-                hostile: false,
-                sheep_color: None,
-            },
-            HerdSpawn {
-                chunk: (0, 0),
-                slot: 2,
-                entity_type_id: 3,
-                entity_type_name: "minecraft:chicken".to_string(),
-                position: Vec3::new(10.5, DEFAULT_SPAWN_Y, 8.5),
-                hostile: false,
-                sheep_color: None,
-            },
-        ],
-    );
-
-    let queries = registry.tick_entities_and_collect_physics_queries(1);
-    for (x, expected_speed) in [(8.5, 2.0), (9.5, 2.3), (10.5, 2.5)] {
-        let query = queries
-            .iter()
-            .find(|query| query.position.x == x && query.position.z == 8.5)
-            .expect("passive mob physics query");
-        assert!((query.velocity.horizontal_len() - expected_speed).abs() < 1.0e-9);
+    for (type_id, type_name, x) in [
+        (1, "minecraft:cow", 8.5),
+        (2, "minecraft:sheep", 9.5),
+        (3, "minecraft:chicken", 10.5),
+    ] {
+        registry.spawn_command_entity(
+            &SimulationAuthority::for_test(),
+            type_id,
+            type_name.to_string(),
+            Vec3::new(x, DEFAULT_SPAWN_Y, 8.5),
+        );
     }
-}
 
-#[test]
-fn natural_sheep_color_reaches_authoritative_ecs_and_spawn_snapshot() {
-    let registry = SessionRegistry::new();
-    let (tx, _rx) = mpsc::channel(1);
-    let profile = LoggedInProfile {
-        uuid: uuid::Uuid::nil(),
-        name: "observer".to_string(),
-    };
-    let (session_id, _) = registry.register(
-        &profile,
-        (0, 0),
-        0,
-        HashSet::from([(0, 0)]),
-        tx,
-        PlayerPose::new(0.5, DEFAULT_SPAWN_Y, 0.5),
-    );
-    let _ = registry.mark_loaded(session_id, (0, 0));
-
-    let dispatches = registry.ensure_chunk_herd_legacy_for_test(
-        (0, 0),
-        &[HerdSpawn {
-            chunk: (0, 0),
-            slot: 0,
-            entity_type_id: 2,
-            entity_type_name: "minecraft:sheep".to_string(),
-            position: Vec3::new(8.5, DEFAULT_SPAWN_Y, 8.5),
-            hostile: false,
-            sheep_color: Some(mc_entity::SheepColor::Brown),
-        }],
-    );
-    let spawned = dispatches
-        .iter()
-        .find_map(|dispatch| match &dispatch.command {
-            OutboundCommand::SpawnEntity(entity) => Some(entity),
-            _ => None,
-        })
-        .expect("natural sheep spawn dispatch");
-    let wool = spawned
-        .animal
-        .and_then(|animal| animal.sheep_wool)
-        .expect("spawn snapshot carries sheep wool state");
-
-    assert_eq!(wool.color, mc_entity::SheepColor::Brown);
+    // Observe each default Wander goal actually starting; RandomStroll does
+    // not promise movement on the first tick. Measure the emitted physics
+    // velocity, not the configured goal or a helper's fallback speed.
+    let expected = [(8.5, 2.0), (9.5, 2.3), (10.5, 2.5)];
+    let mut observed = [false; 3];
+    for tick in 1..=2_400 {
+        let queries = registry.tick_entities_and_collect_physics_queries(tick);
+        for (index, (x, expected_speed)) in expected.iter().copied().enumerate() {
+            let query = queries
+                .iter()
+                .find(|query| query.position.x == x && query.position.z == 8.5)
+                .expect("passive mob physics query");
+            let speed = query.velocity.horizontal_len();
+            if speed == 0.0 {
+                continue;
+            }
+            assert!(
+                (speed - expected_speed).abs() < 1.0e-9,
+                "x={x}, tick={tick}, speed={speed}"
+            );
+            observed[index] = true;
+        }
+        if observed.iter().all(|moving| *moving) {
+            break;
+        }
+    }
     assert_eq!(
-        wool.packed_metadata(),
-        i8::try_from(mc_entity::SheepColor::Brown.id()).unwrap()
-    );
-    assert_eq!(
-        registry
-            .server_entity_snapshot(spawned.id)
-            .and_then(|entity| entity.animal)
-            .and_then(|animal| animal.sheep_wool)
-            .map(|wool| wool.color),
-        Some(mc_entity::SheepColor::Brown)
+        observed, [true; 3],
+        "every passive mob must start a stroll within the bounded scenario"
     );
 }
 
@@ -1061,17 +1177,11 @@ fn hostile_pathing_keeps_the_next_tick_inside_loaded_chunk() {
         PlayerPose::new(20.5, DEFAULT_SPAWN_Y + 1.0, 0.5),
     );
     let _ = registry.mark_loaded(session_id, (0, 0));
-    let _ = registry.ensure_chunk_herd_legacy_for_test(
-        (0, 0),
-        &[HerdSpawn {
-            chunk: (0, 0),
-            slot: 0,
-            entity_type_id: 1,
-            entity_type_name: "minecraft:zombie".to_string(),
-            position: Vec3::new(15.5, DEFAULT_SPAWN_Y, 0.5),
-            hostile: true,
-            sheep_color: None,
-        }],
+    let _ = registry.spawn_command_entity(
+        &SimulationAuthority::for_test(),
+        1,
+        "minecraft:zombie".to_string(),
+        Vec3::new(15.5, DEFAULT_SPAWN_Y, 0.5),
     );
 
     let queries = registry.tick_entities_and_collect_physics_queries(1);
@@ -1102,17 +1212,11 @@ fn hostile_pathing_keeps_full_speed_while_next_tick_remains_loaded() {
         PlayerPose::new(20.5, DEFAULT_SPAWN_Y + 1.0, 0.5),
     );
     let _ = registry.mark_loaded(session_id, (0, 0));
-    let _ = registry.ensure_chunk_herd_legacy_for_test(
-        (0, 0),
-        &[HerdSpawn {
-            chunk: (0, 0),
-            slot: 0,
-            entity_type_id: 1,
-            entity_type_name: "minecraft:zombie".to_string(),
-            position: Vec3::new(14.9, DEFAULT_SPAWN_Y, 0.5),
-            hostile: true,
-            sheep_color: None,
-        }],
+    let _ = registry.spawn_command_entity(
+        &SimulationAuthority::for_test(),
+        1,
+        "minecraft:zombie".to_string(),
+        Vec3::new(14.9, DEFAULT_SPAWN_Y, 0.5),
     );
 
     let queries = registry.tick_entities_and_collect_physics_queries(1);
@@ -1124,127 +1228,6 @@ fn hostile_pathing_keeps_full_speed_while_next_tick_remains_loaded() {
     assert_ne!(zombie.velocity, Vec3::ZERO);
     assert!((zombie.velocity.x - HOSTILE_FOLLOW_SPEED).abs() < 1.0e-9);
     assert!(zombie.position.x + zombie.velocity.x * PathingBudget::TICK_SECONDS < 16.0);
-}
-
-#[test]
-fn chunk_herd_materialization_applies_caps_and_player_distance() {
-    let registry = SessionRegistry::new();
-    registry.set_world_time(NIGHT_START_TICK);
-    let (tx, _rx) = mpsc::channel(1);
-    let profile = LoggedInProfile {
-        uuid: uuid::Uuid::nil(),
-        name: "nearby".to_string(),
-    };
-    let (session_id, _) = registry.register(
-        &profile,
-        (0, 0),
-        0,
-        HashSet::from([(0, 0), (1, 0)]),
-        tx,
-        PlayerPose::new(0.5, DEFAULT_SPAWN_Y, 0.5),
-    );
-    let _ = registry.mark_loaded(session_id, (0, 0));
-    let _ = registry.mark_loaded(session_id, (1, 0));
-    let spawns = (0..10)
-        .map(|slot| HerdSpawn {
-            chunk: (0, 0),
-            slot,
-            entity_type_id: 1,
-            entity_type_name: if slot < 5 {
-                "minecraft:zombie".to_string()
-            } else {
-                "minecraft:cow".to_string()
-            },
-            position: if slot == 0 {
-                Vec3::new(0.5, DEFAULT_SPAWN_Y, 0.5)
-            } else {
-                Vec3::new(4.5 + f64::from(slot), DEFAULT_SPAWN_Y, 0.5)
-            },
-            hostile: slot < 5,
-            sheep_color: None,
-        })
-        .collect::<Vec<_>>();
-
-    let _ = registry.ensure_chunk_herd_legacy_for_test((0, 0), &spawns);
-    let queries = registry.tick_entities_and_collect_physics_queries(1);
-
-    assert_eq!(queries.len(), MAX_HOSTILE_SPAWNS_PER_CHUNK + 5);
-    assert!(queries.iter().all(|query| query.position.x != 0.5));
-}
-
-#[test]
-fn restored_herd_uuid_dedupes_without_suppressing_missing_night_spawn() {
-    let registry = SessionRegistry::new();
-    registry.set_world_time(NIGHT_START_TICK);
-    let (tx, _rx) = mpsc::channel(1);
-    let profile = LoggedInProfile {
-        uuid: uuid::Uuid::nil(),
-        name: "observer".to_string(),
-    };
-    let (session_id, _) = registry.register(
-        &profile,
-        (0, 0),
-        0,
-        HashSet::from([(0, 0), (1, 0)]),
-        tx,
-        PlayerPose::new(0.5, DEFAULT_SPAWN_Y, 0.5),
-    );
-    let _ = registry.mark_loaded(session_id, (0, 0));
-    let _ = registry.mark_loaded(session_id, (1, 0));
-    let uuid = herd_uuid((0, 0), 0);
-    let restored = mc_entity::EntitySnapshot {
-        id: EntityId(42),
-        uuid,
-        type_id: 1,
-        type_name: "minecraft:cow".to_string(),
-        position: Vec3::new(8.5, DEFAULT_SPAWN_Y, 0.5),
-        rotation: mc_entity::Rotation::ZERO,
-        velocity: Vec3::ZERO,
-        on_ground: true,
-        item_stack: None,
-        experience_value: None,
-        block_state: None,
-        lifecycle: EntityLifecycle::Alive,
-        health: 10.0,
-        attributes: mc_entity::AttributeSet::vanilla_mob_defaults(),
-        goal: GoalState::Idle,
-        vehicle: None,
-        animal: None,
-        retained: mc_entity::EntityRetainedState::default(),
-    };
-
-    assert_eq!(
-        registry.restore_persisted_entities(PersistedEntityCheckpoint::new(0, [restored])),
-        1
-    );
-    let _ = registry.ensure_chunk_herd_legacy_for_test(
-        (0, 0),
-        &[
-            HerdSpawn {
-                chunk: (0, 0),
-                slot: 0,
-                entity_type_id: 1,
-                entity_type_name: "minecraft:cow".to_string(),
-                position: Vec3::new(0.5, DEFAULT_SPAWN_Y, 0.5),
-                hostile: false,
-                sheep_color: None,
-            },
-            HerdSpawn {
-                chunk: (0, 0),
-                slot: 1,
-                entity_type_id: 2,
-                entity_type_name: "minecraft:zombie".to_string(),
-                position: Vec3::new(2.5, DEFAULT_SPAWN_Y, 0.5),
-                hostile: true,
-                sheep_color: None,
-            },
-        ],
-    );
-
-    let queries = registry.tick_entities_and_collect_physics_queries(1);
-    assert_eq!(queries.len(), 2);
-    assert!(queries.iter().any(|query| query.id == EntityId(42)));
-    assert!(queries.iter().any(|query| query.id != EntityId(42)));
 }
 
 #[test]
@@ -1272,7 +1255,13 @@ fn entity_physics_skips_persisted_entities_without_loaded_players() {
     };
 
     assert_eq!(
-        registry.restore_persisted_entities(PersistedEntityCheckpoint::new(0, [restored])),
+        registry.restore_persisted_entities(PersistedEntityCheckpoint {
+            lifecycle_clock: 0,
+            regional_sequence_watermark: 0,
+            allocation_high_water: 0,
+            records: [restored].into_iter().map(Into::into).collect(),
+            generated_entity_claims: std::collections::BTreeSet::new(),
+        }),
         1
     );
 
@@ -1343,7 +1332,13 @@ fn entity_physics_skips_loaded_entities_outside_simulation_distance() {
     };
 
     assert_eq!(
-        registry.restore_persisted_entities(PersistedEntityCheckpoint::new(0, [near, far])),
+        registry.restore_persisted_entities(PersistedEntityCheckpoint {
+            lifecycle_clock: 0,
+            regional_sequence_watermark: 0,
+            allocation_high_water: 0,
+            records: [near, far].into_iter().map(Into::into).collect(),
+            generated_entity_claims: std::collections::BTreeSet::new(),
+        }),
         2
     );
     let queries = registry.tick_entities_and_collect_physics_queries_with_simulation_distance(1, 4);
@@ -1413,7 +1408,13 @@ fn entity_physics_includes_every_active_entity_under_work_pressure() {
         .collect::<Vec<_>>();
 
     assert_eq!(
-        registry.restore_persisted_entities(PersistedEntityCheckpoint::new(0, entities)),
+        registry.restore_persisted_entities(PersistedEntityCheckpoint {
+            lifecycle_clock: 0,
+            regional_sequence_watermark: 0,
+            allocation_high_water: 0,
+            records: entities.into_iter().map(Into::into).collect(),
+            generated_entity_claims: std::collections::BTreeSet::new(),
+        }),
         49
     );
     let queries = registry.tick_entities_and_collect_physics_queries_with_pathing_budget(1, 8);
@@ -1504,30 +1505,33 @@ fn simulation_tick_test_config(
     random_tick: RandomTickPolicy,
     block_facts: Arc<mc_data::block_facts::BlockFactsTable>,
 ) -> crate::server::ServerConfig {
-    crate::server::ServerConfig { tab_list: crate::server::TabListConfig::default(), bind_address: "127.0.0.1:0".parse().unwrap(),
-    motd: "random-tick-test".into(),
-    max_players: 1,
-    view_distance: 0,
-    data: Arc::new(mc_data::testing::stub()),
-    blocks,
-    world: Some(Arc::new(tokio::sync::Mutex::new(world))),
-    tags: Arc::new(mc_data::tags::TagsData::default()),
-    recipes: Arc::new(Vec::new()),
-    loot: Arc::new(mc_data::loot::LootTables::default()),
-    block_light: None,
-    items: Arc::new(mc_data::items::ItemRegistry::from_report(&[])),
-    item_facts: Arc::new(mc_data::item_components::ItemFactsTable::default()),
-    block_facts,
-    entity_types: Arc::new(mc_data::entity_types::solaris_required_entity_types()),
-    biome_spawns: Arc::new(mc_data::biomes::BiomeSpawnRules::default()),
-    chunk_pipeline: ChunkPipelinePolicy::default(),
-    random_tick,
-    command_permissions: crate::server::CommandPermissionConfig::new(
-        Vec::<String>::new(),
-        true,
-    ),
-    loader_manifest: None,
-    shutdown: crate::server::ShutdownHandle::default(), }
+    crate::server::ServerConfig {
+        tab_list: crate::server::TabListConfig::default(),
+        bind_address: "127.0.0.1:0".parse().unwrap(),
+        motd: "random-tick-test".into(),
+        max_players: 1,
+        view_distance: 0,
+        data: Arc::new(mc_data::testing::stub()),
+        blocks,
+        world: Some(Arc::new(tokio::sync::Mutex::new(world))),
+        tags: Arc::new(mc_data::tags::TagsData::default()),
+        recipes: Arc::new(Vec::new()),
+        loot: Arc::new(mc_data::loot::LootTables::default()),
+        block_light: None,
+        items: Arc::new(mc_data::items::ItemRegistry::from_report(&[])),
+        item_facts: Arc::new(mc_data::item_components::ItemFactsTable::default()),
+        block_facts,
+        entity_types: Arc::new(mc_data::entity_types::solaris_required_entity_types()),
+        biome_spawns: Arc::new(mc_data::biomes::BiomeSpawnRules::default()),
+        chunk_pipeline: ChunkPipelinePolicy::default(),
+        random_tick,
+        command_permissions: crate::server::CommandPermissionConfig::new(
+            Vec::<String>::new(),
+            true,
+        ),
+        loader_manifest: None,
+        shutdown: crate::server::ShutdownHandle::default(),
+    }
 }
 
 #[tokio::test]
@@ -1594,7 +1598,7 @@ async fn sheep_grazing_animates_changes_grass_and_regrows_wool() {
     assert!(sessions.set_sheep_sheared_for_test(sheep_id, true));
 
     let start_tick = (1..=2_000)
-        .find(|tick| session::sheep_grazing_starts_on_tick(sheep_id, *tick, false))
+        .find(|tick| mc_entity::passive_mobs::sheep_grazing_starts_on_tick(sheep_id, *tick, false))
         .expect("adult sheep receives a deterministic grazing opportunity");
     let (_simulation, owner) = simulation_channel();
     let shared_world = Arc::clone(config.world.as_ref().unwrap());
@@ -1808,6 +1812,34 @@ async fn random_ticks_ignore_ticketed_chunks_until_loaded() {
         )
         .await;
     assert_eq!(expanded.sampled, 2);
+    for (speed, expected) in [(0, 0), (2, 4)] {
+        registry
+            .execute_owner_admin(
+                &SimulationAuthority::for_test(),
+                id,
+                &crate::play::session::command_authority::OwnerAdminCommand::Rule {
+                    name: "random_tick_speed".into(),
+                    value: Some(crate::play::commands::rules::RuleValue::Int(speed)),
+                },
+            )
+            .unwrap();
+        let overridden = owner
+            .run_random_ticks_with_budget(
+                &config,
+                &registry,
+                SimulationWorldAccess {
+                    read: Some(&world_read),
+                    mutation: None,
+                    cpu: None,
+                    light: config.block_light.as_ref(),
+                },
+                None,
+                0,
+                2,
+            )
+            .await;
+        assert_eq!(overridden.sampled, expected);
+    }
 }
 
 #[tokio::test]
@@ -1897,18 +1929,10 @@ async fn random_tick_owner_keeps_protected_fuel_while_source_fire_ages() {
     let zone = mc_script::ScriptAxisAlignedZone::try_new_with_protection(
         "claim",
         "minecraft:overworld",
-        mc_script::ScriptPosition::try_new(
-            f64::from(fuel.x),
-            f64::from(fuel.y),
-            f64::from(fuel.z),
-        )
-        .unwrap(),
-        mc_script::ScriptPosition::try_new(
-            f64::from(fuel.x),
-            f64::from(fuel.y),
-            f64::from(fuel.z),
-        )
-        .unwrap(),
+        mc_script::ScriptPosition::try_new(f64::from(fuel.x), f64::from(fuel.y), f64::from(fuel.z))
+            .unwrap(),
+        mc_script::ScriptPosition::try_new(f64::from(fuel.x), f64::from(fuel.y), f64::from(fuel.z))
+            .unwrap(),
         Some(
             mc_script::ScriptZoneProtection::try_actor_or_operator(
                 "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
@@ -1917,7 +1941,7 @@ async fn random_tick_owner_keeps_protected_fuel_while_source_fire_ages() {
         ),
     )
     .unwrap();
-    let protection = crate::script::ZoneProtectionSnapshot::from_zones(vec![zone]);
+    let protection = mc_simulation::zone_protection::ZoneProtectionSnapshot::from_zones(vec![zone]);
     let shared_world = Arc::clone(config.world.as_ref().unwrap());
     let world_read = shared_world.lock().await.read_view();
     let world_mutation = shared_world.lock().await.mutation_view();
@@ -2175,7 +2199,12 @@ async fn checkpoint_only_random_ticks_in_distinct_regions_do_not_wait_for_world_
     }
     let temp = tempfile::tempdir().unwrap();
     std::fs::create_dir_all(temp.path().join("region")).unwrap();
-    let (journal, pending) = super::world_journal::WorldChunkJournal::open_for_test(temp.path(), Arc::clone(&config.blocks), Arc::clone(&config.items))
+    let (journal, pending) = mc_simulation::persistence::world_journal::WorldChunkJournal::open(
+        temp.path(),
+        Arc::clone(&config.blocks),
+        Arc::clone(&config.items),
+        mc_simulation::persistence::world_journal::JournalWriter::open(temp.path()).unwrap(),
+    )
     .unwrap();
     assert!(pending.is_empty());
     sessions.install_world_chunk_journal(journal);
@@ -2236,7 +2265,7 @@ async fn checkpoint_only_random_ticks_in_distinct_regions_do_not_wait_for_world_
         );
     }
     let reopened = sessions.world_chunk_journal().unwrap();
-    let pending = reopened.pending_decisions_for_test();
+    let pending = crate::test_support::recovered_world_decisions(&reopened, temp.path());
     assert!(reopened.decode_pending(&pending).unwrap().is_empty());
 }
 
@@ -2246,7 +2275,12 @@ async fn resident_random_tick_uses_periodic_checkpoint_instead_of_per_tick_wal()
         mutating_random_tick_fixture("DurableRandomTick");
     let temp = tempfile::tempdir().unwrap();
     std::fs::create_dir_all(temp.path().join("region")).unwrap();
-    let (journal, pending) = super::world_journal::WorldChunkJournal::open_for_test(temp.path(), Arc::clone(&config.blocks), Arc::clone(&config.items))
+    let (journal, pending) = mc_simulation::persistence::world_journal::WorldChunkJournal::open(
+        temp.path(),
+        Arc::clone(&config.blocks),
+        Arc::clone(&config.items),
+        mc_simulation::persistence::world_journal::JournalWriter::open(temp.path()).unwrap(),
+    )
     .unwrap();
     assert!(pending.is_empty());
     sessions.install_world_chunk_journal(journal);
@@ -2278,7 +2312,7 @@ async fn resident_random_tick_uses_periodic_checkpoint_instead_of_per_tick_wal()
         Some(mc_world::BlockStateId(12))
     );
     let reopened = sessions.world_chunk_journal().unwrap();
-    let pending = reopened.pending_decisions_for_test();
+    let pending = crate::test_support::recovered_world_decisions(&reopened, temp.path());
     assert!(reopened.decode_pending(&pending).unwrap().is_empty());
 
     drop(world_writer);
@@ -2330,7 +2364,12 @@ async fn boundary_random_tick_coordinator_fallback_uses_periodic_checkpoint() {
     register_loaded_button_session(&sessions, "DurableBoundaryRandomTick");
     let temp = tempfile::tempdir().unwrap();
     std::fs::create_dir_all(temp.path().join("region")).unwrap();
-    let (journal, pending) = super::world_journal::WorldChunkJournal::open_for_test(temp.path(), Arc::clone(&config.blocks), Arc::clone(&config.items))
+    let (journal, pending) = mc_simulation::persistence::world_journal::WorldChunkJournal::open(
+        temp.path(),
+        Arc::clone(&config.blocks),
+        Arc::clone(&config.items),
+        mc_simulation::persistence::world_journal::JournalWriter::open(temp.path()).unwrap(),
+    )
     .unwrap();
     assert!(pending.is_empty());
     sessions.install_world_chunk_journal(journal);
@@ -2363,7 +2402,7 @@ async fn boundary_random_tick_coordinator_fallback_uses_periodic_checkpoint() {
         Some(BlockStateId(12))
     );
     let reopened = sessions.world_chunk_journal().unwrap();
-    let pending = reopened.pending_decisions_for_test();
+    let pending = crate::test_support::recovered_world_decisions(&reopened, temp.path());
     assert!(reopened.decode_pending(&pending).unwrap().is_empty());
 }
 
@@ -2847,7 +2886,12 @@ async fn resident_scheduled_fluid_tick_stays_off_the_synchronous_journal_path() 
     register_loaded_button_session(&sessions, "DurableFluidTick");
     let temp = tempfile::tempdir().unwrap();
     std::fs::create_dir_all(temp.path().join("region")).unwrap();
-    let (journal, pending) = super::world_journal::WorldChunkJournal::open_for_test(temp.path(), blocks, Arc::clone(&config.items))
+    let (journal, pending) = mc_simulation::persistence::world_journal::WorldChunkJournal::open(
+        temp.path(),
+        blocks,
+        Arc::clone(&config.items),
+        mc_simulation::persistence::world_journal::JournalWriter::open(temp.path()).unwrap(),
+    )
     .unwrap();
     assert!(pending.is_empty());
     sessions.install_world_chunk_journal(journal.clone());
@@ -3223,7 +3267,10 @@ fn simulation_tick_policy_normalizes_deferred_work_budgets() {
     assert_eq!(policy.chunk_budget, 1);
     assert_eq!(policy.fluid_tick_budget, 1);
     assert_eq!(policy.save_interval_ticks, 1);
-    assert_eq!(policy.simulation_distance, crate::MIN_VIEW_DISTANCE);
+    assert_eq!(
+        policy.simulation_distance,
+        mc_simulation::tick_policy::MIN_VIEW_DISTANCE
+    );
 }
 
 #[test]
@@ -3295,7 +3342,12 @@ fn light_inert_block_edits_do_not_request_full_relight() {
     );
 
     assert_eq!(outcome.light_edit_chunks, HashSet::from([(0, 0)]));
-    let updates = collect_incremental_light_updates_for_applied_edits(&mut world, &table, &outcome);
+    let updates = outbound_light_updates(collect_incremental_light_updates_for_applied_edits(
+        &mut world,
+        &table,
+        &outcome.applied,
+        &outcome.previous_light_chunks,
+    ));
     assert_eq!(updates.len(), 1);
     assert!(
         mc_world::light::ChunkLight::from_section_lights(
@@ -3355,16 +3407,24 @@ fn large_single_chunk_light_batch_encodes_only_final_chunk_state() {
     }
     assert_eq!(outcome.applied.len(), 16);
     OUTBOUND_LIGHT_UPDATE_ENCODING_COUNT.with(|count| count.set(0));
-    OUTBOUND_LIGHT_NEIGHBOURHOOD_CAPTURE_COUNT.with(|count| count.set(0));
+    assert_eq!(
+        capture_incremental_light_sources(&world, &table, &outcome.applied)
+            .chunks
+            .len(),
+        9,
+        "sixteen edits in one chunk capture one 3x3 neighbourhood"
+    );
 
-    let updates = collect_incremental_light_updates_for_applied_edits(&mut world, &table, &outcome);
+    let updates = outbound_light_updates(collect_incremental_light_updates_for_applied_edits(
+        &mut world,
+        &table,
+        &outcome.applied,
+        &outcome.previous_light_chunks,
+    ));
     let encoding_count = OUTBOUND_LIGHT_UPDATE_ENCODING_COUNT.with(std::cell::Cell::get);
-    let neighbourhood_capture_count =
-        OUTBOUND_LIGHT_NEIGHBOURHOOD_CAPTURE_COUNT.with(std::cell::Cell::get);
 
     assert_eq!(updates.len(), 1);
     assert_eq!(encoding_count, updates.len());
-    assert_eq!(neighbourhood_capture_count, 1);
     assert_eq!(updates[0].pos, chunk_pos);
     let final_chunk = world.cached_chunk_snapshot(chunk_pos).unwrap();
     let mut refs = [[None; 3]; 3];
@@ -3422,7 +3482,7 @@ fn server_origin_relight_compute_does_not_hold_world_writer() {
     let sessions = Arc::new(SessionRegistry::new());
     let (reached_tx, reached_rx) = std::sync::mpsc::channel();
     let (resume_tx, resume_rx) = std::sync::mpsc::channel();
-    sessions.install_server_relight_compute_probe(reached_tx, resume_rx);
+    sessions.install_test_pause(TestPause::ServerRelightCompute, reached_tx, resume_rx);
 
     let compute_world = Arc::clone(&world);
     let compute_sessions = Arc::clone(&sessions);
@@ -3647,8 +3707,9 @@ fn spiral_chunks_covers_every_cell_in_window() {
 
 #[test]
 fn spiral_chunks_caps_untrusted_view_distance() {
-    let chunks: Vec<_> = spiral_chunks(0, 0, crate::MAX_VIEW_DISTANCE + 1).collect();
-    let diameter = (2 * crate::MAX_VIEW_DISTANCE + 1) as usize;
+    let chunks: Vec<_> =
+        spiral_chunks(0, 0, mc_simulation::tick_policy::MAX_VIEW_DISTANCE + 1).collect();
+    let diameter = (2 * mc_simulation::tick_policy::MAX_VIEW_DISTANCE + 1) as usize;
 
     assert_eq!(chunks.len(), diameter * diameter);
     assert_eq!(

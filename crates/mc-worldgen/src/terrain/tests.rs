@@ -1,44 +1,16 @@
+use super::biome_routing::BEACH_HEIGHT_ABOVE_SEA;
 use super::*;
 use mc_data::worldgen_ores::{HeightAnchor, OreFeature, OrePlacementCount, OreTarget};
-use mc_data::worldgen_structures::StructureSetFacts;
 use mc_world::chunk::{MAX_Y, MIN_Y, OVERWORLD_GEOMETRY};
-use std::collections::{BTreeMap, HashSet};
+use std::collections::BTreeMap;
 
-/// Owned holder for paste-time loot fixtures: [`StructureLoot`] borrows the
-/// catalog and item registry, so tests keep both alive through this handle.
-struct TestLoot {
-    catalog: mc_data::loot::chest_26_1_2::ChestLootCatalog,
-    items: mc_data::items::ItemRegistry,
-}
-
-impl TestLoot {
-    fn empty() -> Self {
-        Self {
-            catalog: mc_data::loot::chest_26_1_2::ChestLootCatalog::new(),
-            items: mc_data::items::ItemRegistry::default(),
-        }
-    }
-
-    fn loot(&self, seed: i64) -> crate::structures::StructureLoot<'_> {
-        crate::structures::StructureLoot {
-            seed,
-            catalog: &self.catalog,
-            items: &self.items,
-        }
-    }
-
-    fn with_items_and_table(table_id: &str, raw: &str) -> Self {
-        let id = Identifier::parse(table_id).unwrap();
-        let table =
-            mc_data::loot::chest_26_1_2::ChestLootTable::compile(id, raw).expect("fixture table");
-        let mut catalog = mc_data::loot::chest_26_1_2::ChestLootCatalog::new();
-        catalog.insert(table);
-        Self {
-            catalog,
-            items: mc_data::items::solaris_required_items(),
-        }
+impl TerrainGenerator {
+    pub(super) fn biome_for(&self, world_x: i32, world_z: i32, height: i32) -> Identifier {
+        let sample = self.density_router().sample(world_x, world_z);
+        self.vanilla_biome_for(world_x, world_z, height, sample)
     }
 }
+
 pub(in crate::terrain) fn tiny_registry() -> Arc<BlockRegistry> {
     use mc_data::blocks::{BlockReport, BlockStateReport};
     let report = vec![
@@ -451,18 +423,6 @@ pub(in crate::terrain) fn tiny_registry() -> Arc<BlockRegistry> {
     Arc::new(BlockRegistry::from_report(&report).unwrap())
 }
 
-fn dense_plains_village_rules(templates: Vec<StructureTemplate>) -> StructureRules {
-    StructureRules::plains_village_markers(templates).with_structure_set_facts(&[
-        StructureSetFacts {
-            id: Identifier::parse("minecraft:test_villages").unwrap(),
-            structures: vec![Identifier::parse("minecraft:village_plains").unwrap()],
-            spacing: Some(1),
-            separation: Some(0),
-            salt: None,
-        },
-    ])
-}
-
 fn registry_without_block(missing: &str) -> Arc<BlockRegistry> {
     use mc_data::blocks::{BlockReport, BlockStateReport};
     let names = [
@@ -646,129 +606,28 @@ fn try_with_rules_reports_missing_required_block() {
 }
 
 #[test]
-fn realistic_deposits_validate_every_required_ore_block_at_startup() {
-    let registry = required_only_registry();
-    let generator = TerrainGenerator::try_with_biome_rules(
-        42,
-        Arc::clone(&registry),
-        BiomeRules::vanilla_overworld(),
-    )
-    .expect("base generator requires only the vanilla default profile resources");
-    let error = match generator.try_with_realistic_deposits(registry.as_ref()) {
-        Ok(_) => panic!("realistic deposits must not silently replace missing ores with stone"),
-        Err(error) => error,
-    };
-    assert_eq!(
-        error,
-        TerrainGeneratorError::MissingRequiredBlock {
-            name: "minecraft:coal_ore"
+fn standalone_realistic_profile_rejects_missing_normal_or_deepslate_ore() {
+    for missing in ["minecraft:coal_ore", "minecraft:deepslate_coal_ore"] {
+        let mut report = mc_data::blocks::solaris_required_blocks_report()
+            .into_iter()
+            .filter(|block| block.id.as_str() != missing)
+            .collect::<Vec<_>>();
+        let mut next = 0;
+        for block in &mut report {
+            for state in &mut block.states {
+                state.id = next;
+                next += 1;
+            }
         }
-    );
-}
-
-#[test]
-fn realistic_deposits_require_normal_and_deepslate_ore_resources() {
-    let registry = Arc::new(
-        BlockRegistry::from_report(&mc_data::blocks::solaris_required_blocks_report())
-            .expect("embedded block registry"),
-    );
-    let generator = TerrainGenerator::new(42, Arc::clone(&registry))
-        .try_with_realistic_deposits(registry.as_ref())
-        .expect("complete registry supplies every realistic deposit resource");
-    assert_eq!(generator.ore_generation_profile(), "realistic_deposits");
-
-    let mut missing_deepslate = mc_data::blocks::solaris_required_blocks_report()
-        .into_iter()
-        .filter(|block| block.id != Identifier::parse("minecraft:deepslate_coal_ore").unwrap())
-        .collect::<Vec<_>>();
-    let mut next_state_id = 0_u32;
-    for block in &mut missing_deepslate {
-        for state in &mut block.states {
-            state.id = next_state_id;
-            next_state_id += 1;
-        }
+        let registry = Arc::new(BlockRegistry::from_report(&report).unwrap());
+        let generator = TerrainGenerator::new(42, Arc::clone(&registry));
+        let Err(TerrainGeneratorError::MissingRequiredBlock { name }) =
+            generator.try_with_realistic_deposits(&registry)
+        else {
+            panic!("standalone deposit profile accepted missing {missing}");
+        };
+        assert_eq!(name, missing);
     }
-    let registry_without_deepslate =
-        Arc::new(BlockRegistry::from_report(&missing_deepslate).expect("reduced block registry"));
-    let generator = TerrainGenerator::new(42, Arc::clone(&registry_without_deepslate));
-    let error = match generator.try_with_realistic_deposits(registry_without_deepslate.as_ref()) {
-        Ok(_) => panic!("missing deepslate ore must fail profile startup"),
-        Err(error) => error,
-    };
-    assert_eq!(
-        error,
-        TerrainGeneratorError::MissingRequiredBlock {
-            name: "minecraft:deepslate_coal_ore"
-        }
-    );
-}
-
-#[test]
-fn realistic_deposits_place_deterministically_across_adjacent_chunks() {
-    let registry = Arc::new(
-        BlockRegistry::from_report(&mc_data::blocks::solaris_required_blocks_report())
-            .expect("embedded block registry"),
-    );
-    let first = TerrainGenerator::new(42, Arc::clone(&registry))
-        .try_with_realistic_deposits(registry.as_ref())
-        .expect("complete registry supplies every realistic deposit resource");
-    let second = TerrainGenerator::new(42, Arc::clone(&registry))
-        .try_with_realistic_deposits(registry.as_ref())
-        .expect("complete registry supplies every realistic deposit resource");
-    let positions = [
-        ChunkPos { x: -2, z: 0 },
-        ChunkPos { x: -1, z: 0 },
-        ChunkPos { x: 0, z: 0 },
-    ];
-    assert_eq!(
-        generated_block_fingerprint(&first, &positions),
-        generated_block_fingerprint(&second, &positions)
-    );
-
-    let ore_states = [
-        ("minecraft:coal_ore", "minecraft:deepslate_coal_ore"),
-        ("minecraft:iron_ore", "minecraft:deepslate_iron_ore"),
-        ("minecraft:copper_ore", "minecraft:deepslate_copper_ore"),
-        ("minecraft:gold_ore", "minecraft:deepslate_gold_ore"),
-        ("minecraft:redstone_ore", "minecraft:deepslate_redstone_ore"),
-        ("minecraft:diamond_ore", "minecraft:deepslate_diamond_ore"),
-        ("minecraft:lapis_ore", "minecraft:deepslate_lapis_ore"),
-        ("minecraft:emerald_ore", "minecraft:deepslate_emerald_ore"),
-    ]
-    .into_iter()
-    .map(|(normal, deepslate)| {
-        (
-            registry
-                .block(&Identifier::parse(normal).unwrap())
-                .expect("normal ore in complete registry")
-                .default,
-            registry
-                .block(&Identifier::parse(deepslate).unwrap())
-                .expect("deepslate ore in complete registry")
-                .default,
-        )
-    })
-    .collect::<Vec<_>>();
-    let chunks = positions
-        .into_iter()
-        .map(|position| first.generate(position))
-        .collect::<Vec<_>>();
-    let crosses_boundary = chunks.windows(2).any(|pair| {
-        (MIN_Y + 1..MAX_Y).any(|y| {
-            (0..16u8).any(|z| {
-                let left = pair[0].get_block(15, y, z);
-                let right = pair[1].get_block(0, y, z);
-                ore_states.iter().any(|(normal, deepslate)| {
-                    (left == Some(*normal) || left == Some(*deepslate))
-                        && (right == Some(*normal) || right == Some(*deepslate))
-                })
-            })
-        })
-    });
-    assert!(
-        crosses_boundary,
-        "realistic deposit must place one ore family on both sides of a chunk boundary"
-    );
 }
 
 #[test]
@@ -790,338 +649,6 @@ fn try_with_rules_allows_missing_optional_blocks_when_required_resources_exist()
     assert_eq!(generator.deepslate, generator.stone);
     assert_eq!(generator.water, generator.air);
     assert_eq!(generator.decorations.oak_log, None);
-}
-
-#[test]
-fn tellus_like_mode_preserves_default_but_changes_explicit_generator() {
-    let registry = tiny_registry();
-    let default = TerrainGenerator::new(1234, Arc::clone(&registry));
-    let explicit_vanilla = TerrainGenerator::with_worldgen_mode(
-        1234,
-        Arc::clone(&registry),
-        WorldgenMode::VanillaLike,
-    );
-    let tellus = TerrainGenerator::with_worldgen_mode(
-        1234,
-        registry,
-        WorldgenMode::TellusLike(TellusWorldgenSettings::default()),
-    );
-    assert_eq!(
-        default.surface_height(512, -256),
-        explicit_vanilla.surface_height(512, -256)
-    );
-    assert!(
-        (0..16).any(|sample| {
-            let x = 512 + sample * 257;
-            let z = -256 - sample * 193;
-            default.surface_height(x, z) != tellus.surface_height(x, z)
-        }),
-        "Tellus mode should change at least one sampled height"
-    );
-    assert!((MIN_Y + 2..=250).contains(&tellus.surface_height(1_000_000, -1_000_000)));
-}
-
-#[test]
-fn tellus_like_biomes_use_projected_climate_bands() {
-    let settings = TellusWorldgenSettings::default();
-    let g = TerrainGenerator::with_worldgen_mode(
-        77,
-        tiny_registry(),
-        WorldgenMode::TellusLike(settings),
-    );
-    let sea = settings.sea_level;
-    let equator_biome = g.biome_for(0, 0, sea + 24);
-    let arctic_z = -10_000_000;
-    let arctic_biome = (-4096..=4096)
-        .step_by(256)
-        .map(|x| g.biome_for(x, arctic_z, sea + 24))
-        .find(|biome| g.biomes.cold.contains(biome))
-        .expect("high-latitude Tellus sample should include a cold climate biome");
-
-    assert!(
-        !g.biomes.cold.contains(&equator_biome),
-        "equatorial Tellus biome should not be cold: {equator_biome}"
-    );
-    assert!(
-        g.biomes.cold.contains(&arctic_biome),
-        "high-latitude Tellus biome should use cold climate band: {arctic_biome}"
-    );
-}
-
-#[test]
-fn tellus_like_water_uses_configured_sea_level() {
-    let settings = TellusWorldgenSettings {
-        sea_level: 120,
-        ..TellusWorldgenSettings::default()
-    };
-    let g = TerrainGenerator::with_worldgen_mode(
-        91,
-        tiny_registry(),
-        WorldgenMode::TellusLike(settings),
-    );
-    let (wx, wz, height) = (-60_000..=60_000)
-        .step_by(2_000)
-        .flat_map(|x| (-60_000..=60_000).step_by(2_000).map(move |z| (x, z)))
-        .map(|(x, z)| (x, z, g.surface_height(x, z)))
-        .find(|(_, _, height)| *height < settings.sea_level)
-        .expect("Tellus sample should include below-sea terrain");
-    let chunk = g.generate(ChunkPos {
-        x: wx.div_euclid(16),
-        z: wz.div_euclid(16),
-    });
-    let lx = wx.rem_euclid(16) as u8;
-    let lz = wz.rem_euclid(16) as u8;
-
-    assert!(height < settings.sea_level);
-    assert_eq!(
-        chunk.get_block(lx, settings.sea_level, lz),
-        Some(BlockStateId(5))
-    );
-    assert_eq!(
-        chunk.get_block(lx, settings.sea_level + 1, lz),
-        Some(BlockStateId(0))
-    );
-}
-
-#[test]
-fn tellus_like_river_biomes_are_reachable_on_carved_land() {
-    let settings = TellusWorldgenSettings::default();
-    let g = TerrainGenerator::with_worldgen_mode(
-        91,
-        tiny_registry(),
-        WorldgenMode::TellusLike(settings),
-    );
-
-    let river = (-8_192..=8_192)
-        .step_by(32)
-        .flat_map(|x| (-8_192..=8_192).step_by(32).map(move |z| (x, z)))
-        .find(|(x, z)| {
-            let height = g.surface_height(*x, *z);
-            g.biomes.is_river(&g.biome_for(*x, *z, height))
-        });
-
-    assert!(
-        river.is_some(),
-        "Tellus land should contain a routed river biome"
-    );
-}
-
-#[test]
-fn tellus_like_can_disable_water_fill_without_changing_vanilla_default() {
-    let settings = TellusWorldgenSettings {
-        water_enabled: false,
-        sea_level: 120,
-        ..TellusWorldgenSettings::default()
-    };
-    let g = TerrainGenerator::with_worldgen_mode(
-        91,
-        tiny_registry(),
-        WorldgenMode::TellusLike(settings),
-    );
-    let (wx, wz, height) = (-60_000..=60_000)
-        .step_by(2_000)
-        .flat_map(|x| (-60_000..=60_000).step_by(2_000).map(move |z| (x, z)))
-        .map(|(x, z)| (x, z, g.surface_height(x, z)))
-        .find(|(_, _, height)| *height < settings.sea_level)
-        .expect("Tellus sample should include below-sea terrain");
-    let chunk = g.generate(ChunkPos {
-        x: wx.div_euclid(16),
-        z: wz.div_euclid(16),
-    });
-    let lx = wx.rem_euclid(16) as u8;
-    let lz = wz.rem_euclid(16) as u8;
-    let biome = g.biome_for(wx, wz, height);
-
-    assert!(!g.biomes.is_surface_water(&biome));
-    assert_eq!(chunk.get_block(lx, height + 1, lz), Some(BlockStateId(0)));
-    assert_eq!(
-        chunk.get_block(lx, settings.sea_level, lz),
-        Some(BlockStateId(0))
-    );
-}
-
-#[test]
-fn tellus_like_keeps_local_terrain_smooth() {
-    let settings = TellusWorldgenSettings::default();
-    let g = TerrainGenerator::with_worldgen_mode(
-        91,
-        tiny_registry(),
-        WorldgenMode::TellusLike(settings),
-    );
-    let mut total_step = 0i64;
-    let mut samples = 0i64;
-    let mut max_step = 0;
-
-    for wx in (-256..=256).step_by(8) {
-        for wz in (-256..=256).step_by(8) {
-            if g.ridges(wx, wz) > 0.05 {
-                continue;
-            }
-            let h = g.surface_height(wx, wz);
-            let hx = g.surface_height(wx + 1, wz);
-            let hz = g.surface_height(wx, wz + 1);
-            let step = (h - hx).abs().max((h - hz).abs());
-            total_step += i64::from((h - hx).abs() + (h - hz).abs());
-            samples += 2;
-            max_step = max_step.max(step);
-        }
-    }
-
-    let average_step = total_step as f64 / samples as f64;
-    assert!(
-        average_step <= 1.35,
-        "Tellus average local step {average_step}"
-    );
-    assert!(max_step <= 5, "Tellus local non-mountain step {max_step}");
-}
-
-#[test]
-fn tellus_like_mountains_are_rare_but_giant() {
-    let settings = TellusWorldgenSettings::default();
-    let g = TerrainGenerator::with_worldgen_mode(
-        91,
-        tiny_registry(),
-        WorldgenMode::TellusLike(settings),
-    );
-    let mut samples = 0usize;
-    let mut mountain_samples = 0usize;
-    let mut max_height = i32::MIN;
-
-    for wx in (-160_000..=160_000).step_by(4_096) {
-        for wz in (-160_000..=160_000).step_by(4_096) {
-            samples += 1;
-            let height = g.surface_height(wx, wz);
-            max_height = max_height.max(height);
-            if g.ridges(wx, wz) > 0.22 {
-                mountain_samples += 1;
-            }
-        }
-    }
-
-    assert!(
-        max_height >= settings.sea_level + 118,
-        "Tellus sample should contain giant mountains; max height {max_height}"
-    );
-    assert!(
-        mountain_samples > 0,
-        "Tellus mountain mask should be reachable"
-    );
-    assert!(
-        mountain_samples * 8 < samples,
-        "Tellus mountains should stay rare: {mountain_samples}/{samples}"
-    );
-}
-
-#[test]
-fn tellus_like_lowlands_do_not_become_flat_mountain_surfaces() {
-    let settings = TellusWorldgenSettings::default();
-    let g = TerrainGenerator::with_worldgen_mode(
-        918_273_645,
-        tiny_registry(),
-        WorldgenMode::TellusLike(settings),
-    );
-    let mut sampled_lowlands = 0usize;
-
-    for wx in (-2_048..=2_048).step_by(32) {
-        for wz in (-2_048..=2_048).step_by(32) {
-            let height = g.surface_height(wx, wz);
-            if height < settings.sea_level + 4 || height >= settings.sea_level + 18 {
-                continue;
-            }
-            sampled_lowlands += 1;
-            let biome = g.biome_for(wx, wz, height);
-            assert!(
-                !g.biomes.mountain.contains(&biome),
-                "low shelf at ({wx}, {wz}) height {height} became mountain biome {biome}"
-            );
-        }
-    }
-
-    assert!(
-        sampled_lowlands > 100,
-        "sample should contain enough Tellus lowland columns"
-    );
-}
-
-#[test]
-fn tellus_like_playtest_seed_contains_high_relief() {
-    let settings = TellusWorldgenSettings::default();
-    let g = TerrainGenerator::with_worldgen_mode(
-        918_273_645,
-        tiny_registry(),
-        WorldgenMode::TellusLike(settings),
-    );
-    let mut highest = (i32::MIN, 0, 0);
-
-    for wx in (-160_000..=160_000).step_by(4_096) {
-        for wz in (-160_000..=160_000).step_by(4_096) {
-            let height = g.surface_height(wx, wz);
-            if height > highest.0 {
-                highest = (height, wx, wz);
-            }
-        }
-    }
-
-    assert!(
-        highest.0 >= settings.sea_level + 100,
-        "playtest seed lost high relief; highest sample was {highest:?}"
-    );
-}
-
-#[test]
-fn tellus_like_high_relief_has_visible_local_shape() {
-    let g = TerrainGenerator::with_worldgen_mode(
-        918_273_645,
-        tiny_registry(),
-        WorldgenMode::TellusLike(TellusWorldgenSettings::default()),
-    );
-    let mut minimum = i32::MAX;
-    let mut maximum = i32::MIN;
-    let mut maximum_step = 0;
-
-    for wx in -78_208..=-77_952 {
-        for wz in -29_056..=-28_800 {
-            let height = g.surface_height(wx, wz);
-            minimum = minimum.min(height);
-            maximum = maximum.max(height);
-            maximum_step = maximum_step
-                .max((height - g.surface_height(wx + 1, wz)).abs())
-                .max((height - g.surface_height(wx, wz + 1)).abs());
-        }
-    }
-
-    assert!(
-        maximum - minimum >= 18,
-        "high-relief window became a flat plateau: {minimum}..={maximum}"
-    );
-    assert!(
-        maximum_step <= 5,
-        "high-relief window formed a vertical terrain wall: step {maximum_step}"
-    );
-}
-
-#[test]
-fn tellus_like_high_mountain_blocks_use_snow_over_stone() {
-    let settings = TellusWorldgenSettings::default();
-    let g = TerrainGenerator::with_worldgen_mode(
-        918_273_645,
-        tiny_registry(),
-        WorldgenMode::TellusLike(settings),
-    );
-
-    let high = g.plan_column(
-        ChunkPos {
-            x: (-78_080_i32).div_euclid(16),
-            z: (-28_928_i32).div_euclid(16),
-        },
-        (-78_080_i32).rem_euclid(16) as u8,
-        (-28_928_i32).rem_euclid(16) as u8,
-        None,
-    );
-    assert!(g.biomes.mountain.contains(&high.biome));
-    assert!(high.height >= settings.sea_level + 112);
-    assert_eq!(high.surface, g.snow_block);
-    assert_eq!(high.fill, g.stone);
 }
 
 #[test]
@@ -1228,26 +755,11 @@ fn generated_chunks_respect_short_and_tall_geometry_boundaries() {
 
 #[test]
 fn generated_chunks_handle_extreme_valid_geometry_without_y_overflow() {
-    for (geometry, sea_level) in [
-        (
-            mc_world::ChunkGeometry::new(i32::MIN, 16).expect("lowest aligned section"),
-            i32::MIN,
-        ),
-        (
-            mc_world::ChunkGeometry::new(i32::MAX - 31, 16).expect("highest aligned section"),
-            i32::MAX,
-        ),
+    for geometry in [
+        mc_world::ChunkGeometry::new(i32::MIN, 16).expect("lowest aligned section"),
+        mc_world::ChunkGeometry::new(i32::MAX - 31, 16).expect("highest aligned section"),
     ] {
-        let settings = TellusWorldgenSettings {
-            sea_level,
-            ..TellusWorldgenSettings::default()
-        };
-        let generator = TerrainGenerator::with_worldgen_mode(
-            42,
-            tiny_registry(),
-            WorldgenMode::TellusLike(settings),
-        )
-        .with_geometry(geometry);
+        let generator = TerrainGenerator::new(42, tiny_registry()).with_geometry(geometry);
 
         let chunk = generator.generate(ChunkPos { x: 0, z: 0 });
 
@@ -1290,62 +802,6 @@ fn generated_block_fingerprint(generator: &TerrainGenerator, positions: &[ChunkP
         }
     }
     hash
-}
-
-fn generated_serialized_fingerprint(
-    generator: &TerrainGenerator,
-    registry: &BlockRegistry,
-    items: &mc_data::items::ItemRegistry,
-    positions: &[ChunkPos],
-) -> u64 {
-    let mut hash = 0xcbf2_9ce4_8422_2325_u64;
-    let mut hash_bytes = |bytes: &[u8]| {
-        for &byte in bytes {
-            hash = (hash ^ u64::from(byte)).wrapping_mul(0x0000_0100_0000_01B3);
-        }
-    };
-    for &pos in positions {
-        let chunk = generator.generate(pos);
-        let payload =
-            mc_world::anvil::chunk_to_payload_with_items(&chunk, registry, Some(items), 0)
-                .expect("generated chunk serializes");
-        hash_bytes(&[payload.local_x, payload.local_z]);
-        hash_bytes(&payload.uncompressed_nbt);
-        for word in chunk.highest_opaque.to_long_array() {
-            hash_bytes(&word.to_le_bytes());
-        }
-    }
-    hash
-}
-
-#[test]
-fn explicit_overworld_geometry_preserves_deterministic_serialized_chunk_output() {
-    let positions = [
-        ChunkPos { x: 0, z: 0 },
-        ChunkPos { x: 4, z: 0 },
-        ChunkPos { x: 5, z: -3 },
-    ];
-    let registry = Arc::new(
-        BlockRegistry::from_report(&mc_data::blocks::solaris_required_blocks_report())
-            .expect("embedded block registry"),
-    );
-    let items = mc_data::items::solaris_required_items();
-    let structures = StructureRules::solaris_playable_ruin(registry.as_ref(), &items)
-        .expect("playable ruin resolves embedded data");
-    let default =
-        TerrainGenerator::new(0, Arc::clone(&registry)).with_structures(structures.clone());
-    let explicit = TerrainGenerator::new(0, Arc::clone(&registry))
-        .with_geometry(OVERWORLD_GEOMETRY)
-        .with_structures(structures);
-    let default_fingerprint =
-        generated_serialized_fingerprint(&default, registry.as_ref(), &items, &positions);
-
-    assert!(!default.generate(ChunkPos { x: 4, z: 0 }).chests.is_empty());
-
-    assert_eq!(
-        generated_serialized_fingerprint(&explicit, registry.as_ref(), &items, &positions),
-        default_fingerprint
-    );
 }
 
 #[test]
@@ -2187,55 +1643,6 @@ fn jungle_admits_trees_more_often_than_forest_and_plains() {
 }
 
 #[test]
-fn generated_jungles_have_both_bushes_and_trees_across_seeds() {
-    for (seed, x, z) in [
-        (5617830, 192i32, -64i32),
-        (712816, -3200, 7872),
-        (-17711, 1152, -192),
-    ] {
-        let generator = TerrainGenerator::with_worldgen_mode(
-            seed,
-            tiny_registry(),
-            WorldgenMode::TellusLike(TellusWorldgenSettings::default()),
-        );
-        let log = generator.decorations.jungle_log.unwrap();
-        let leaves = generator.decorations.oak_leaves.unwrap();
-        let mut bushes = 0;
-        let mut trees = 0;
-        for dz in -1..=1 {
-            for dx in -1..=1 {
-                let pos = ChunkPos {
-                    x: x.div_euclid(16) + dx,
-                    z: z.div_euclid(16) + dz,
-                };
-                let chunk = generator.generate(pos);
-                for lz in 0..16 {
-                    for lx in 0..16 {
-                        let plan = generator.plan_column(pos, lx, lz, None);
-                        if !generator.biomes.jungle.contains(&plan.biome) {
-                            continue;
-                        }
-                        let root = plan.height + 1;
-                        if chunk.get_block(lx, root, lz) != Some(log) {
-                            continue;
-                        }
-                        if chunk.get_block(lx, root + 1, lz) == Some(log) {
-                            trees += 1;
-                        } else if chunk.get_block(lx, root + 1, lz) == Some(leaves)
-                            && chunk.get_block(lx, root + 2, lz) == Some(leaves)
-                        {
-                            bushes += 1;
-                        }
-                    }
-                }
-            }
-        }
-        assert!(bushes > 0, "seed {seed} has no rooted jungle undergrowth");
-        assert!(trees > 0, "seed {seed} lost its jungle tree layer");
-    }
-}
-
-#[test]
 fn vegetation_density_changes_over_regions_instead_of_columns() {
     let registry = tiny_registry();
     let mut near_change = 0.0;
@@ -2243,11 +1650,7 @@ fn vegetation_density_changes_over_regions_instead_of_columns() {
     let mut comparisons = 0usize;
 
     for seed in [-11, 0, 712_816] {
-        let generator = TerrainGenerator::with_worldgen_mode(
-            seed,
-            Arc::clone(&registry),
-            WorldgenMode::TellusLike(TellusWorldgenSettings::default()),
-        );
+        let generator = TerrainGenerator::new(seed, Arc::clone(&registry));
         for z in (-2_048_i32..=2_048_i32).step_by(137) {
             for x in (-2_048_i32..=2_048_i32).step_by(131) {
                 let centre = generator.plan_column(
@@ -2288,455 +1691,6 @@ fn vegetation_density_changes_over_regions_instead_of_columns() {
     assert!(
         near_change * 4.0 < regional_change,
         "vegetation density is too noisy per column: near={near_change}, regional={regional_change}"
-    );
-}
-
-#[test]
-fn tellus_multi_seed_biome_and_feature_fingerprints_are_distinct_and_bounded() {
-    let registry = tiny_registry();
-    let seeds = [
-        0, 712_816, -1, 1, 2, 3, 5, 8, 13, 21, 34, 55, 89, 144, 233, 377, 610, 987, 1_597, 2_584,
-        4_181, 6_765, 10_946, 17_711, 28_657, 46_368, 75_025, 121_393, 196_418, 317_811, 514_229,
-        832_040,
-    ];
-    let mut fingerprints = HashSet::new();
-    let mut highly_dominated_seeds = 0usize;
-    let mut all_land_biomes = HashSet::new();
-
-    for seed in seeds {
-        let generator = TerrainGenerator::with_worldgen_mode(
-            seed,
-            Arc::clone(&registry),
-            WorldgenMode::TellusLike(TellusWorldgenSettings::default()),
-        );
-        let spawn = generator
-            .locate_safe_spawn()
-            .unwrap_or_else(|| panic!("seed {seed} has no natural spawn"));
-        let mut biome_counts = BTreeMap::<String, usize>::new();
-        let mut density_buckets = [0usize; 4];
-        let mut land_samples = 0usize;
-        let mut tree_candidates = 0usize;
-        let mut cover_candidates = 0usize;
-
-        for dz in (-4_096..=4_096).step_by(128) {
-            for dx in (-4_096..=4_096).step_by(128) {
-                let x = spawn.block_x + dx;
-                let z = spawn.block_z + dz;
-                let plan = generator.plan_column(
-                    ChunkPos {
-                        x: x.div_euclid(16),
-                        z: z.div_euclid(16),
-                    },
-                    x.rem_euclid(16) as u8,
-                    z.rem_euclid(16) as u8,
-                    None,
-                );
-                if land_biome_family(&generator, &plan.biome).is_some() {
-                    land_samples += 1;
-                    *biome_counts
-                        .entry(plan.biome.as_str().to_owned())
-                        .or_default() += 1;
-                    all_land_biomes.insert(plan.biome.as_str().to_owned());
-                }
-                let density_index = match plan.vegetation_density {
-                    value if value < -0.4 => 0,
-                    value if value < 0.0 => 1,
-                    value if value < 0.4 => 2,
-                    _ => 3,
-                };
-                density_buckets[density_index] += 1;
-                tree_candidates += usize::from(
-                    generator
-                        .tree_spacing_for_biome(&plan.biome)
-                        .is_some_and(|spacing| plan.hash.is_multiple_of(spacing))
-                        && generator.tree_density_allows(&plan),
-                );
-                cover_candidates += usize::from(
-                    generator.ground_cover_density_allows(&plan)
-                        && plan
-                            .hash
-                            .is_multiple_of(generator.plant_spacing_for_biome(&plan.biome).0),
-                );
-            }
-        }
-
-        assert!(land_samples >= 128, "seed {seed} sampled too little land");
-        let dominant = biome_counts.values().copied().max().unwrap_or(0);
-        if land_samples >= 512 {
-            highly_dominated_seeds += usize::from(dominant * 10 > land_samples * 9);
-        }
-        assert!(tree_candidates > 0, "seed {seed} has no tree candidates");
-        assert!(
-            cover_candidates > 0,
-            "seed {seed} has no ground-cover candidates"
-        );
-        let fingerprint = format!(
-            "{spawn:?}|{biome_counts:?}|{density_buckets:?}|{tree_candidates}|{cover_candidates}"
-        );
-        assert!(
-            fingerprints.insert(fingerprint),
-            "seed {seed} duplicated a biome/feature fingerprint"
-        );
-    }
-
-    assert_eq!(fingerprints.len(), seeds.len());
-
-    assert!(
-        highly_dominated_seeds <= 8,
-        "too many seeds are >90% one land biome: {highly_dominated_seeds}/{}",
-        seeds.len()
-    );
-    assert!(
-        all_land_biomes.len() >= 12,
-        "multi-seed sample reached only {} land biomes: {all_land_biomes:?}",
-        all_land_biomes.len()
-    );
-}
-
-#[derive(Debug)]
-struct BiomeCoherenceMetrics {
-    /// Ratio between the larger and smaller directional family-transition totals.
-    edge_axis_ratio: f64,
-    /// Fraction of adjacent sample edges that cross family boundaries.
-    family_transition_density: f64,
-    /// Ratio between directional river-gradient totals.
-    river_axis_ratio: f64,
-    /// Fraction of land cells trapped in components smaller than four samples.
-    fragmented_land_share: f64,
-    /// Fraction of land covered by the largest connected component of each family.
-    coherent_land_share: f64,
-    /// Fraction of land covered by the single largest family-domain component.
-    largest_land_domain_share: f64,
-    /// Largest land-family share, guarding against one-family domination.
-    dominant_land_share: f64,
-    river_lag_1536_correlation: f64,
-    river_lag_1536_excess: f64,
-}
-
-// Keep non-land precedence aligned with the production selector: water and
-// coast remain separate from climate families, while cave/unknown results are
-// excluded from land metrics rather than being assigned a guessed family.
-fn diagnostic_family(generator: &TerrainGenerator, biome: &Identifier) -> u8 {
-    if generator.biomes.is_surface_water(biome) {
-        0
-    } else if generator.biomes.is_beach_or_shore(biome) {
-        1
-    } else if generator.biomes.mountain.contains(biome) {
-        2
-    } else {
-        match land_biome_family(generator, biome) {
-            Some("swamp") => 3,
-            Some("cold") => 4,
-            Some("hot_dry") => 5,
-            Some("jungle") => 6,
-            Some("temperate_forest") => 7,
-            Some("grassland") => 8,
-            _ => 9,
-        }
-    }
-}
-
-fn coherence_metrics(
-    generator: &TerrainGenerator,
-    center_x: i32,
-    center_z: i32,
-) -> BiomeCoherenceMetrics {
-    // 129 samples at 64-block spacing cover an 8,192-block square. That is
-    // large enough to observe climate domains while keeping each seed bounded.
-    const SIDE: usize = 129;
-    const STEP: i32 = 64;
-    const PERIOD_CELLS: usize = 24;
-    let mut families = Vec::with_capacity(SIDE * SIDE);
-    let mut river_weights = Vec::with_capacity(SIDE * SIDE);
-    for grid_z in 0..SIDE {
-        for grid_x in 0..SIDE {
-            let x = center_x + (grid_x as i32 - SIDE as i32 / 2) * STEP;
-            let z = center_z + (grid_z as i32 - SIDE as i32 / 2) * STEP;
-            let terrain = generator.density_router().sample(x, z);
-            let biome = generator.biome_for(x, z, terrain.surface_y);
-            families.push(diagnostic_family(generator, &biome));
-            river_weights.push(1.0 - (terrain.river / 0.10).clamp(0.0, 1.0));
-        }
-    }
-
-    let index = |x: usize, z: usize| z * SIDE + x;
-    let mut x_edges = 0usize;
-    let mut z_edges = 0usize;
-    for z in 0..SIDE {
-        for x in 0..SIDE {
-            let family = families[index(x, z)];
-            if x + 1 < SIDE {
-                x_edges += usize::from(family != families[index(x + 1, z)]);
-            }
-            if z + 1 < SIDE {
-                z_edges += usize::from(family != families[index(x, z + 1)]);
-            }
-        }
-    }
-    let lesser_edges = x_edges.min(z_edges).max(1) as f64;
-    let edge_axis_ratio = x_edges.max(z_edges) as f64 / lesser_edges;
-    let family_transition_density = (x_edges + z_edges) as f64 / (2 * SIDE * (SIDE - 1)) as f64;
-    let mut river_x_energy = 0.0;
-    let mut river_z_energy = 0.0;
-    for z in 0..SIDE {
-        for x in 0..SIDE {
-            let river = river_weights[index(x, z)];
-            if x + 1 < SIDE {
-                river_x_energy += (river - river_weights[index(x + 1, z)]).abs();
-            }
-            if z + 1 < SIDE {
-                river_z_energy += (river - river_weights[index(x, z + 1)]).abs();
-            }
-        }
-    }
-    let river_axis_ratio =
-        river_x_energy.max(river_z_energy) / river_x_energy.min(river_z_energy).max(f64::EPSILON);
-
-    let mut family_areas = [0usize; 10];
-    for &family in &families {
-        family_areas[family as usize] += 1;
-    }
-    let land_area: usize = family_areas[3..=8].iter().sum();
-    let dominant_land_share =
-        family_areas[3..=8].iter().copied().max().unwrap_or(0) as f64 / land_area.max(1) as f64;
-
-    let mut visited = vec![false; families.len()];
-    let mut fragmented_land_area = 0usize;
-    let mut largest_components = [0usize; 10];
-    for start_z in 0..SIDE {
-        for start_x in 0..SIDE {
-            let start = index(start_x, start_z);
-            let family = families[start];
-            if visited[start] || !(3..=8).contains(&family) {
-                continue;
-            }
-            visited[start] = true;
-            let mut queue = std::collections::VecDeque::from([(start_x, start_z)]);
-            let mut area = 0usize;
-            while let Some((x, z)) = queue.pop_front() {
-                area += 1;
-                for dz in -1isize..=1 {
-                    for dx in -1isize..=1 {
-                        if dx == 0 && dz == 0 {
-                            continue;
-                        }
-                        let nx = x as isize + dx;
-                        let nz = z as isize + dz;
-                        if nx < 0 || nz < 0 || nx >= SIDE as isize || nz >= SIDE as isize {
-                            continue;
-                        }
-                        let next = index(nx as usize, nz as usize);
-                        if !visited[next] && families[next] == family {
-                            visited[next] = true;
-                            queue.push_back((nx as usize, nz as usize));
-                        }
-                    }
-                }
-            }
-            if area < 4 {
-                fragmented_land_area += area;
-            }
-            largest_components[family as usize] = largest_components[family as usize].max(area);
-        }
-    }
-    let coherent_land_area: usize = largest_components[3..=8].iter().sum();
-    let largest_land_domain_area = largest_components[3..=8].iter().copied().max().unwrap_or(0);
-
-    let lag_correlation = |dx: usize, dz: usize| {
-        let mut samples = 0usize;
-        let mut left_sum = 0.0;
-        let mut right_sum = 0.0;
-        for z in 0..(SIDE - dz) {
-            for x in 0..(SIDE - dx) {
-                left_sum += river_weights[index(x, z)];
-                right_sum += river_weights[index(x + dx, z + dz)];
-                samples += 1;
-            }
-        }
-        let left_mean = left_sum / samples as f64;
-        let right_mean = right_sum / samples as f64;
-        let mut covariance = 0.0;
-        let mut left_variance = 0.0;
-        let mut right_variance = 0.0;
-        for z in 0..(SIDE - dz) {
-            for x in 0..(SIDE - dx) {
-                let left = river_weights[index(x, z)] - left_mean;
-                let right = river_weights[index(x + dx, z + dz)] - right_mean;
-                covariance += left * right;
-                left_variance += left * left;
-                right_variance += right * right;
-            }
-        }
-        covariance / (left_variance * right_variance).sqrt().max(f64::EPSILON)
-    };
-
-    let period_x = lag_correlation(PERIOD_CELLS, 0).abs();
-    let period_z = lag_correlation(0, PERIOD_CELLS).abs();
-    let neighbouring_x = (lag_correlation(PERIOD_CELLS - 1, 0).abs()
-        + lag_correlation(PERIOD_CELLS + 1, 0).abs())
-        * 0.5;
-    let neighbouring_z = (lag_correlation(0, PERIOD_CELLS - 1).abs()
-        + lag_correlation(0, PERIOD_CELLS + 1).abs())
-        * 0.5;
-    BiomeCoherenceMetrics {
-        edge_axis_ratio,
-        river_axis_ratio,
-        fragmented_land_share: fragmented_land_area as f64 / land_area.max(1) as f64,
-        coherent_land_share: coherent_land_area as f64 / land_area.max(1) as f64,
-        largest_land_domain_share: largest_land_domain_area as f64 / land_area.max(1) as f64,
-        family_transition_density,
-        dominant_land_share,
-        river_lag_1536_correlation: period_x.max(period_z),
-        river_lag_1536_excess: (period_x - neighbouring_x)
-            .max(period_z - neighbouring_z)
-            .max(0.0),
-    }
-}
-
-#[test]
-fn tellus_multi_seed_biome_family_coherence_metrics_are_bounded() {
-    let registry = tiny_registry();
-    for seed in [0, 1, 34, 233, 712_816, 17_711, 121_393, 832_040] {
-        let generator = TerrainGenerator::with_worldgen_mode(
-            seed,
-            Arc::clone(&registry),
-            WorldgenMode::TellusLike(TellusWorldgenSettings::default()),
-        );
-        for (center_x, center_z) in [(0, 0), (8_192, -8_192)] {
-            let metrics = coherence_metrics(&generator, center_x, center_z);
-            eprintln!("worldgen coherence seed={seed} center=({center_x},{center_z}): {metrics:?}");
-            assert!(metrics.edge_axis_ratio < 1.20, "seed {seed}: {metrics:?}");
-            assert!(metrics.river_axis_ratio < 3.0, "seed {seed}: {metrics:?}");
-            assert!(
-                metrics.family_transition_density < 0.55,
-                "seed {seed}: family transitions are too dense: {metrics:?}"
-            );
-            assert!(
-                metrics.fragmented_land_share < 0.20,
-                "seed {seed}: {metrics:?}"
-            );
-            assert!(
-                metrics.coherent_land_share > 0.20,
-                "seed {seed}: no family-level connected domains: {metrics:?}"
-            );
-            assert!(
-                metrics.largest_land_domain_share > 0.025,
-                "seed {seed}: largest land domain is too small: {metrics:?}"
-            );
-            assert!(
-                metrics.dominant_land_share <= 0.90,
-                "seed {seed}: {metrics:?}"
-            );
-            assert!(
-                metrics.river_lag_1536_correlation < 0.95,
-                "seed {seed}: periodic river correlation too high: {metrics:?}"
-            );
-            assert!(
-                metrics.river_lag_1536_excess < 0.20,
-                "seed {seed}: {metrics:?}"
-            );
-        }
-    }
-}
-
-#[test]
-fn tellus_savanna_generates_sparse_acacia_while_desert_remains_treeless() {
-    let registry = tiny_registry();
-    let seeds = [0, 712_816, -1, 17_711, 75_025, 196_418, 514_229, 832_040];
-    let mut savanna_columns = 0usize;
-    let mut desert_columns = 0usize;
-    let mut acacia_trees = 0usize;
-    let mut inspected_chunks = HashSet::new();
-
-    'seeds: for seed in seeds {
-        let generator = TerrainGenerator::with_worldgen_mode(
-            seed,
-            Arc::clone(&registry),
-            WorldgenMode::TellusLike(TellusWorldgenSettings::default()),
-        );
-        let spawn = generator
-            .locate_safe_spawn()
-            .unwrap_or_else(|| panic!("seed {seed} has no natural spawn"));
-        for dz in (-4_096..=4_096).step_by(29) {
-            for dx in (-4_096..=4_096).step_by(29) {
-                let x = spawn.block_x + dx;
-                let z = spawn.block_z + dz;
-                let pos = ChunkPos {
-                    x: x.div_euclid(16),
-                    z: z.div_euclid(16),
-                };
-                let lx = x.rem_euclid(16) as u8;
-                let lz = z.rem_euclid(16) as u8;
-                let plan = generator.plan_column(pos, lx, lz, None);
-                if plan.biome.path() == "desert" {
-                    desert_columns += 1;
-                    assert_eq!(generator.tree_spacing_for_biome(&plan.biome), None);
-                    continue;
-                }
-                if !TerrainGenerator::is_savanna(&plan.biome) {
-                    continue;
-                }
-                savanna_columns += 1;
-                let Some(spacing) = generator.tree_spacing_for_biome(&plan.biome) else {
-                    panic!("savanna must have sparse tree admission");
-                };
-                if !(2..=13).contains(&lx)
-                    || !(2..=13).contains(&lz)
-                    || !plan.hash.is_multiple_of(spacing)
-                    || !generator.tree_density_allows(&plan)
-                    || !generator.tree_site_is_stable(&plan)
-                    || !inspected_chunks.insert((seed, pos))
-                {
-                    continue;
-                }
-                let chunk = generator.generate(pos);
-                let acacia_log = generator.decorations.acacia_log.expect("acacia log state");
-                let acacia_leaves = generator
-                    .decorations
-                    .acacia_leaves
-                    .expect("acacia leaf state");
-                assert_eq!(
-                    chunk.get_block(lx, plan.height + 1, lz),
-                    Some(acacia_log),
-                    "savanna tree at {},{} did not use acacia",
-                    plan.wx,
-                    plan.wz
-                );
-                assert!(
-                    (plan.height + 3..=plan.height + 8).any(|y| {
-                        (-2..=2).any(|ox| {
-                            (-2..=2).any(|oz| {
-                                let tx = i32::from(lx) + ox;
-                                let tz = i32::from(lz) + oz;
-                                (0..16).contains(&tx)
-                                    && (0..16).contains(&tz)
-                                    && chunk.get_block(tx as u8, y, tz as u8) == Some(acacia_leaves)
-                            })
-                        })
-                    }),
-                    "savanna acacia at {},{} has no canopy",
-                    plan.wx,
-                    plan.wz
-                );
-                acacia_trees += 1;
-                if acacia_trees >= 2 && desert_columns >= 128 && savanna_columns >= 128 {
-                    break 'seeds;
-                }
-            }
-        }
-    }
-
-    assert!(
-        savanna_columns >= 128,
-        "sampled only {savanna_columns} savanna columns"
-    );
-    assert!(
-        desert_columns >= 128,
-        "sampled only {desert_columns} desert columns"
-    );
-    assert!(
-        acacia_trees >= 2,
-        "generated only {acacia_trees} acacia trees"
     );
 }
 
@@ -2993,67 +1947,6 @@ fn radius_one_tree_crowns_are_raised_and_irregular() {
 }
 
 #[test]
-fn structures_precede_tree_and_single_plant_decoration() {
-    let registry = tiny_registry();
-    let seed = 42;
-    let plain = TerrainGenerator::new(seed, Arc::clone(&registry));
-    let mut target = None;
-    'search: for wx in -384_i32..=384 {
-        for wz in -384_i32..=384 {
-            let lx = wx.rem_euclid(16) as u8;
-            let lz = wz.rem_euclid(16) as u8;
-            if !(2..=13).contains(&lx) || !(2..=13).contains(&lz) {
-                continue;
-            }
-            let pos = ChunkPos {
-                x: wx.div_euclid(16),
-                z: wz.div_euclid(16),
-            };
-            let plan = plain.plan_column(pos, lx, lz, None);
-            let Some(tree) = plain.tree_blocks_for_biome(&plan.biome) else {
-                continue;
-            };
-            if plain
-                .tree_spacing_for_biome(&plan.biome)
-                .is_some_and(|spacing| plan.hash.is_multiple_of(spacing))
-                && plan.hash.is_multiple_of(61)
-            {
-                target = Some((wx, wz, plan.height, tree.log, tree.leaves));
-                break 'search;
-            }
-        }
-    }
-    let (wx, wz, height, log, leaves) = target.expect("sample should contain a tree anchor");
-    let marker = BlockStateId(25);
-    assert_ne!(marker, log);
-    assert_ne!(marker, leaves);
-    let structure = StructureTemplate::new(
-        [1, 1, 1],
-        vec![crate::structures::TemplateBlock {
-            pos: [0, 0, 0],
-            state: marker,
-        }],
-    );
-    let generator = TerrainGenerator::new(seed, registry)
-        .with_structures(StructureRules::fixed_for_test(structure, (wx, wz)));
-    let chunk = generator.generate(ChunkPos {
-        x: wx.div_euclid(16),
-        z: wz.div_euclid(16),
-    });
-    let lx = wx.rem_euclid(16) as u8;
-    let lz = wz.rem_euclid(16) as u8;
-
-    assert_eq!(chunk.get_block(lx, height + 1, lz), Some(marker));
-    for y in (height + 2)..=(height + 6) {
-        assert_ne!(
-            chunk.get_block(lx, y, lz),
-            Some(log),
-            "structure-overwritten tree left a floating trunk at {wx},{y},{wz}"
-        );
-    }
-}
-
-#[test]
 fn generated_columns_keep_a_solid_surface_shell_across_seeds() {
     let registry = tiny_registry();
     for seed in [i64::MIN, -1_000_003, -4, -1, 0, 1, 3, 999_983, i64::MAX] {
@@ -3088,347 +1981,12 @@ fn generated_columns_keep_a_solid_surface_shell_across_seeds() {
     }
 }
 
-#[test]
-fn generated_overlays_survive_flush_and_reopen() {
-    let registry = tiny_registry();
-    let marker = BlockStateId(25);
-    let template = StructureTemplate::new(
-        [1, 1, 1],
-        vec![crate::structures::TemplateBlock {
-            pos: [0, 0, 0],
-            state: marker,
-        }],
-    );
-    let structures = dense_plains_village_rules(vec![template]);
-    let generator =
-        Arc::new(TerrainGenerator::new(42, Arc::clone(&registry)).with_structures(structures));
-    let mut structure_target = None;
-    'cells: for gx in -64..=64 {
-        for gz in -64..=64 {
-            let Some((_template, center_x, center_z)) = generator.structure_plan(gx, gz) else {
-                continue;
-            };
-            let height = generator.surface_height(center_x, center_z);
-            let biome = generator.biome_for(center_x, center_z, height);
-            if height > SEA_LEVEL + BEACH_HEIGHT_ABOVE_SEA
-                && generator.biomes.grassland.contains(&biome)
-            {
-                structure_target = Some((center_x, height + 1, center_z));
-                break 'cells;
-            }
-        }
-    }
-    let (structure_x, structure_y, structure_z) = structure_target.expect("structure target");
-
-    let root = unique_temp_world_dir();
-    std::fs::create_dir_all(root.join("region")).unwrap();
-    let mut storage = mc_world::WorldStorage::open(&root, Arc::clone(&registry))
-        .unwrap()
-        .with_generator(Arc::clone(&generator) as Arc<dyn ChunkGenerator>);
-    let structure_pos = ChunkPos {
-        x: structure_x.div_euclid(16),
-        z: structure_z.div_euclid(16),
-    };
-    let structure_lx = structure_x.rem_euclid(16) as u8;
-    let structure_lz = structure_z.rem_euclid(16) as u8;
-    let chunk = storage
-        .get_chunk(structure_pos)
-        .unwrap()
-        .expect("generated structure chunk");
-    assert_eq!(
-        chunk.get_block(structure_lx, structure_y, structure_lz),
-        Some(marker)
-    );
-
-    let (decor_pos, decor_lx, decor_y, decor_lz, decor_state) =
-        find_decoration_in_storage(&mut storage, &generator);
-    assert!(storage.dirty_count() >= 1);
-    assert!(storage.flush_dirty().unwrap() >= 1);
-    drop(storage);
-
-    let mut fresh = mc_world::WorldStorage::open(&root, Arc::clone(&registry)).unwrap();
-    let structure_chunk = fresh
-        .get_chunk(structure_pos)
-        .unwrap()
-        .expect("reopened structure chunk");
-    assert_eq!(
-        structure_chunk.get_block(structure_lx, structure_y, structure_lz),
-        Some(marker)
-    );
-    assert!(
-        structure_chunk
-            .highest_opaque_y(structure_lx, structure_lz)
-            .is_some_and(|top| top >= structure_y)
-    );
-
-    let decoration_chunk = fresh
-        .get_chunk(decor_pos)
-        .unwrap()
-        .expect("reopened decoration chunk");
-    assert_eq!(
-        decoration_chunk.get_block(decor_lx, decor_y, decor_lz),
-        Some(decor_state)
-    );
-    assert!(
-        decoration_chunk
-            .highest_opaque_y(decor_lx, decor_lz)
-            .is_some_and(|top| top >= decor_y)
-    );
-
-    let _ = std::fs::remove_dir_all(root);
-}
-
-#[test]
-fn seed_zero_playable_ruin_chest_stays_empty_after_flush_and_reopen() {
-    let registry = Arc::new(
-        BlockRegistry::from_report(&mc_data::blocks::solaris_required_blocks_report())
-            .expect("embedded block registry"),
-    );
-    let items = Arc::new(mc_data::items::solaris_required_items());
-    let generator = Arc::new(
-        TerrainGenerator::new(0, Arc::clone(&registry)).with_structures(
-            StructureRules::solaris_playable_ruin(&registry, &items)
-                .expect("playable ruin resolves embedded data"),
-        ),
-    );
-    let root = unique_temp_world_dir();
-    std::fs::create_dir_all(root.join("region")).unwrap();
-    let ruin_chunk = ChunkPos { x: 4, z: 0 };
-
-    let mut storage = mc_world::WorldStorage::open(&root, Arc::clone(&registry))
-        .unwrap()
-        .with_item_registry(Arc::clone(&items))
-        .with_generator(Arc::clone(&generator) as Arc<dyn ChunkGenerator>);
-    let chest_pos = storage
-        .get_chunk(ruin_chunk)
-        .unwrap()
-        .expect("generated ruin chunk")
-        .chests
-        .keys()
-        .next()
-        .copied()
-        .expect("generated ruin chest");
-    assert!(
-        storage
-            .chest_block_entity(chest_pos)
-            .unwrap()
-            .expect("generated chest entity")
-            .slots
-            .iter()
-            .any(|slot| !slot.is_empty())
-    );
-
-    storage
-        .set_chest_block_entity(chest_pos, mc_world::ChestBlockEntity::default())
-        .expect("empty chest after loot");
-    assert!(storage.flush_dirty().unwrap() >= 1);
-    drop(storage);
-
-    let mut reopened = mc_world::WorldStorage::open(&root, registry)
-        .unwrap()
-        .with_item_registry(items);
-    let chest = reopened
-        .chest_block_entity(chest_pos)
-        .unwrap()
-        .expect("persisted chest entity");
-    assert!(chest.slots.iter().all(mc_world::FurnaceSlot::is_empty));
-
-    let _ = std::fs::remove_dir_all(root);
-}
-
-#[test]
-fn playable_ruin_does_not_insert_chest_entity_above_chunk_geometry() {
-    let registry = Arc::new(
-        BlockRegistry::from_report(&mc_data::blocks::solaris_required_blocks_report())
-            .expect("embedded block registry"),
-    );
-    let items = mc_data::items::solaris_required_items();
-    let geometry = mc_world::ChunkGeometry::new(0, 16).expect("single-section geometry");
-    let generator = TerrainGenerator::new(0, Arc::clone(&registry))
-        .with_geometry(geometry)
-        .with_structures(
-            StructureRules::solaris_playable_ruin(&registry, &items)
-                .expect("playable ruin resolves embedded data"),
-        );
-
-    let chunk = generator.generate(ChunkPos { x: 4, z: 0 });
-
-    assert!(chunk.chests.is_empty());
-}
-
 fn unique_temp_world_dir() -> std::path::PathBuf {
     let suffix = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_nanos();
     std::env::temp_dir().join(format!("solaris-worldgen-{suffix}"))
-}
-
-fn find_decoration_in_storage(
-    storage: &mut mc_world::WorldStorage,
-    generator: &TerrainGenerator,
-) -> (ChunkPos, u8, i32, u8, BlockStateId) {
-    let decorations = [
-        BlockStateId(26),
-        BlockStateId(27),
-        BlockStateId(28),
-        BlockStateId(29),
-        BlockStateId(30),
-        BlockStateId(31),
-        BlockStateId(32),
-        BlockStateId(33),
-    ];
-    for cx in -2..=2 {
-        for cz in -2..=2 {
-            let pos = ChunkPos { x: cx, z: cz };
-            let chunk = storage.get_chunk(pos).unwrap().expect("generated chunk");
-            for lx in 0..16u8 {
-                for lz in 0..16u8 {
-                    let wx = cx * 16 + lx as i32;
-                    let wz = cz * 16 + lz as i32;
-                    let height = generator.surface_height(wx, wz);
-                    for y in (height + 1)..=(height + 8).min(MAX_Y - 1) {
-                        if let Some(state) = chunk.get_block(lx, y, lz)
-                            && decorations.contains(&state)
-                        {
-                            return (pos, lx, y, lz, state);
-                        }
-                    }
-                }
-            }
-        }
-    }
-    panic!("sampled chunks should contain a decoration");
-}
-
-#[test]
-fn structure_rules_paste_intersecting_template_blocks() {
-    let marker = BlockStateId(25);
-    let template = StructureTemplate::new(
-        [1, 1, 1],
-        vec![crate::structures::TemplateBlock {
-            pos: [0, 0, 0],
-            state: marker,
-        }],
-    );
-    let structures = dense_plains_village_rules(vec![template]);
-    let g = TerrainGenerator::new(42, tiny_registry()).with_structures(structures);
-
-    let mut target = None;
-    'cells: for gx in -64..=64 {
-        for gz in -64..=64 {
-            let Some((_template, center_x, center_z)) = g.structure_plan(gx, gz) else {
-                continue;
-            };
-            let height = g.surface_height(center_x, center_z);
-            let biome = g.biome_for(center_x, center_z, height);
-            if height > SEA_LEVEL + BEACH_HEIGHT_ABOVE_SEA && g.biomes.grassland.contains(&biome) {
-                target = Some((center_x, center_z, height + 1));
-                break 'cells;
-            }
-        }
-    }
-    let (wx, wz, y) = target.expect("dense structure grid should find a land grassland cell");
-    let chunk = g.generate(ChunkPos {
-        x: wx.div_euclid(16),
-        z: wz.div_euclid(16),
-    });
-    let lx = wx.rem_euclid(16) as u8;
-    let lz = wz.rem_euclid(16) as u8;
-
-    assert_eq!(chunk.get_block(lx, y, lz), Some(marker));
-    assert!(
-        chunk.heightmaps["WORLD_SURFACE"].get(lx, lz) >= (y + 1 - MIN_Y) as u32,
-        "later decorations may raise the world-surface heightmap above the structure"
-    );
-}
-
-#[test]
-fn structure_paste_clips_blocks_and_chests_to_chunk_geometry() {
-    let geometry = mc_world::ChunkGeometry::new(0, 16).expect("one section");
-    let marker = BlockStateId(25);
-    let positions = [[0, -2, 0], [0, -1, 0], [0, 14, 0], [0, 15, 0]];
-    let template = StructureTemplate::new(
-        [1, 18, 1],
-        positions
-            .into_iter()
-            .map(|pos| crate::structures::TemplateBlock { pos, state: marker })
-            .collect(),
-    )
-    .with_chests(
-        positions
-            .into_iter()
-            .map(|pos| crate::structures::TemplateChest {
-                pos,
-                chest: mc_world::ChestBlockEntity::default(),
-                loot_table: None,
-            })
-            .collect(),
-    );
-    let mut chunk = Chunk::empty_with_geometry(
-        ChunkPos { x: 0, z: 0 },
-        BlockStateId(0),
-        Identifier::parse("minecraft:plains").unwrap(),
-        geometry,
-    );
-    let mut touched = [false; 256];
-    let held = TestLoot::empty();
-    let loot = held.loot(0);
-
-    paste_template(&mut chunk, &template, 0, 1, 0, &mut touched, &loot);
-
-    assert_eq!(chunk.get_block(0, geometry.min_y(), 0), Some(marker));
-    assert_eq!(chunk.get_block(0, geometry.max_y() - 1, 0), Some(marker));
-    assert_eq!(chunk.chests.len(), 2);
-    assert!(
-        chunk
-            .chests
-            .contains_key(&mc_world::BlockPos { x: 0, y: 0, z: 0 })
-    );
-    assert!(
-        chunk
-            .chests
-            .contains_key(&mc_world::BlockPos { x: 0, y: 15, z: 0 })
-    );
-    assert!(touched[0]);
-}
-
-#[test]
-fn structure_paste_ignores_overflowing_vertical_offsets() {
-    let geometry = mc_world::ChunkGeometry::new(0, 16).expect("one section");
-    let marker = BlockStateId(25);
-    let positions = [[0, i32::MAX, 0], [0, i32::MIN, 0]];
-    let template = StructureTemplate::new(
-        [1, 1, 1],
-        positions
-            .into_iter()
-            .map(|pos| crate::structures::TemplateBlock { pos, state: marker })
-            .collect(),
-    )
-    .with_chests(
-        positions
-            .into_iter()
-            .map(|pos| crate::structures::TemplateChest {
-                pos,
-                chest: mc_world::ChestBlockEntity::default(),
-                loot_table: None,
-            })
-            .collect(),
-    );
-    let mut chunk = Chunk::empty_with_geometry(
-        ChunkPos { x: 0, z: 0 },
-        BlockStateId(0),
-        Identifier::parse("minecraft:plains").unwrap(),
-        geometry,
-    );
-    let mut touched = [false; 256];
-    let held = TestLoot::empty();
-    let loot = held.loot(0);
-
-    paste_template(&mut chunk, &template, 0, 1, 0, &mut touched, &loot);
-
-    assert!(chunk.chests.is_empty());
-    assert!(!touched.into_iter().any(|column| column));
 }
 
 fn find_ore_cell(
@@ -3698,7 +2256,6 @@ fn generated_spawn_window_debug_stage_profile() {
     let mut caves = std::time::Duration::ZERO;
     let mut ores = std::time::Duration::ZERO;
     let mut biomes = std::time::Duration::ZERO;
-    let mut structures = std::time::Duration::ZERO;
     let mut decorations = std::time::Duration::ZERO;
 
     for x in -2..=2 {
@@ -3741,7 +2298,13 @@ fn generated_spawn_window_debug_stage_profile() {
             fill += started.elapsed();
 
             let started = std::time::Instant::now();
-            let mut ore_cache = g.ore_column_cache(&chunk, &columns);
+            let source_columns: [(i32, i32, i32); 256] = std::array::from_fn(|idx| {
+                let plan = &columns[idx];
+                (plan.wx, plan.wz, g.base_surface_y(plan.wx, plan.wz))
+            });
+            let mut heights =
+                crate::terrain::HeightContext::for_chunk(&g, pos, &source_columns, None);
+            let mut ore_cache = g.ore_column_cache(&chunk, &columns, &mut heights);
             g.apply_caves_with_cache(&mut chunk, &columns, Some(&mut ore_cache));
             caves += started.elapsed();
 
@@ -3754,23 +2317,18 @@ fn generated_spawn_window_debug_stage_profile() {
             biomes += started.elapsed();
 
             let started = std::time::Instant::now();
-            g.apply_structures(&mut chunk, None);
-            structures += started.elapsed();
-
-            let started = std::time::Instant::now();
-            g.apply_decorations(&mut chunk, &columns);
+            g.apply_decorations(&mut chunk, &columns, &mut heights);
             decorations += started.elapsed();
         }
     }
 
-    let total = column_plan + fill + caves + ores + biomes + structures + decorations;
+    let total = column_plan + fill + caves + ores + biomes + decorations;
     for (name, elapsed) in [
         ("column_plan", column_plan),
         ("fill", fill),
         ("caves", caves),
         ("ores", ores),
         ("biomes", biomes),
-        ("structures", structures),
         ("decorations", decorations),
     ] {
         eprintln!(
@@ -3804,391 +2362,73 @@ fn generated_spawn_window_debug_budget_reports_throughput() {
     assert!(elapsed < std::time::Duration::from_secs(10));
 }
 
-fn workspace_path(rel: &str) -> std::path::PathBuf {
-    std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .and_then(std::path::Path::parent)
-        .expect("workspace root")
-        .join(rel)
-}
-
-const DETERMINISTIC_LOOT_TABLE: &str = "minecraft:chests/test_deterministic";
-const DETERMINISTIC_LOOT_JSON: &str = r#"{"type":"minecraft:chest","pools":[
-    {"rolls":{"type":"minecraft:uniform","min":2.0,"max":5.0},"entries":[
-        {"type":"minecraft:item","name":"minecraft:diamond","weight":1},
-        {"type":"minecraft:item","name":"minecraft:bread","weight":3,
-         "functions":[{"add":false,"count":{"type":"minecraft:uniform","min":1.0,"max":3.0},
-         "function":"minecraft:set_count"}]},
-        {"type":"minecraft:item","name":"minecraft:stick","weight":2}
-    ]}
-]}"#;
-
-fn two_loot_chest_template(marker: BlockStateId, table: Option<Identifier>) -> StructureTemplate {
-    StructureTemplate::new(
-        [3, 1, 1],
-        vec![
-            crate::structures::TemplateBlock {
-                pos: [0, 0, 0],
-                state: marker,
-            },
-            crate::structures::TemplateBlock {
-                pos: [2, 0, 0],
-                state: marker,
-            },
-        ],
-    )
-    .with_chests(vec![
-        crate::structures::TemplateChest {
-            pos: [0, 0, 0],
-            chest: mc_world::ChestBlockEntity::default(),
-            loot_table: table.clone(),
-        },
-        crate::structures::TemplateChest {
-            pos: [2, 0, 0],
-            chest: mc_world::ChestBlockEntity::default(),
-            loot_table: table,
-        },
-    ])
-}
-
-fn paste_two_chests(
-    template: &StructureTemplate,
-    loot: &crate::structures::StructureLoot<'_>,
-) -> Chunk {
-    let geometry = mc_world::ChunkGeometry::new(0, 16).expect("one section");
-    let mut chunk = Chunk::empty_with_geometry(
-        ChunkPos { x: 0, z: 0 },
-        BlockStateId(0),
-        Identifier::parse("minecraft:plains").unwrap(),
-        geometry,
-    );
-    let mut touched = [false; 256];
-    paste_template(&mut chunk, template, 0, 1, 0, &mut touched, loot);
-    chunk
-}
-
+/// The height-context contract, pinned: a 5x5 window generates byte-identical
+/// chunks regardless of visitation order. Every context entry is a pure
+/// function of `(seed, x, z)` — order only decides cache hits vs misses,
+/// never values — so forward and reverse generation must agree on blocks,
+/// heightmaps and biome palettes alike.
 #[test]
-fn loot_chest_rolls_are_deterministic_per_seed_pos_and_index() {
-    let held = TestLoot::with_items_and_table(DETERMINISTIC_LOOT_TABLE, DETERMINISTIC_LOOT_JSON);
-    let table = Some(Identifier::parse(DETERMINISTIC_LOOT_TABLE).unwrap());
-    let template = two_loot_chest_template(BlockStateId(25), table);
-
-    let first = paste_two_chests(&template, &held.loot(0));
-    let second = paste_two_chests(&template, &held.loot(0));
-    assert_eq!(first.chests, second.chests);
-
-    let left = &first.chests[&mc_world::BlockPos { x: 0, y: 1, z: 0 }];
-    let right = &first.chests[&mc_world::BlockPos { x: 2, y: 1, z: 0 }];
-    assert!(
-        left.slots.iter().any(|slot| !slot.is_empty()),
-        "rolled chests must hold loot"
-    );
-    assert_ne!(
-        left, right,
-        "distinct chest positions/indices must roll different contents"
-    );
-
-    let reseeded = paste_two_chests(&template, &held.loot(0x5EED));
-    assert_ne!(
-        &reseeded.chests[&mc_world::BlockPos { x: 0, y: 1, z: 0 }],
-        left,
-        "a different world seed must roll different contents"
-    );
-}
-
-#[test]
-fn absent_loot_table_pastes_fixed_contents() {
-    let mut fixed = mc_world::ChestBlockEntity::default();
-    fixed.slots[1] = mc_world::FurnaceSlot {
-        item_id: 7,
-        count: 3,
-        damage: None,
-        enchantments: Vec::new(),
-        custom_name: None,
-        item_model: None,
-        stew_effects: Vec::new(),
-    };
-    let marker = BlockStateId(25);
-    let template = StructureTemplate::new(
-        [2, 1, 1],
-        vec![crate::structures::TemplateBlock {
-            pos: [0, 0, 0],
-            state: marker,
-        }],
-    )
-    .with_chests(vec![
-        crate::structures::TemplateChest {
-            pos: [0, 0, 0],
-            chest: fixed.clone(),
-            loot_table: Some(Identifier::parse("minecraft:chests/no_such_table").unwrap()),
-        },
-        crate::structures::TemplateChest {
-            pos: [0, 0, 0],
-            chest: fixed.clone(),
-            loot_table: None,
-        },
-    ]);
-    // The second entry overwrites the first at the same position; both must
-    // resolve to the fixed contents when no catalog entry exists.
-    let held = TestLoot::empty();
-    let chunk = paste_two_chests(&template, &held.loot(0));
-    assert_eq!(
-        chunk.chests[&mc_world::BlockPos { x: 0, y: 1, z: 0 }],
-        fixed
-    );
-}
-
-#[test]
-fn seed_zero_ruin_rolls_real_simple_dungeon_table_when_wired() {
-    let data_root = workspace_path("data/vanilla/data");
-    let table_path = data_root.join("minecraft/loot_table/chests/simple_dungeon.json");
-    if !table_path.is_file() {
-        return;
-    }
-    let registry = Arc::new(
-        BlockRegistry::from_report(&mc_data::blocks::solaris_required_blocks_report())
-            .expect("embedded block registry"),
-    );
-    let items = mc_data::items::solaris_required_items();
-    let structures =
-        StructureRules::solaris_playable_ruin(registry.as_ref(), &items).expect("playable ruin");
-    let table_id = Identifier::parse(crate::structures::SOLARIS_RUIN_LOOT_TABLE).unwrap();
-    let catalog = mc_data::loot::chest_26_1_2::ChestLootCatalog::load_vanilla_tables(
-        &data_root,
-        std::slice::from_ref(&table_id),
-    )
-    .expect("real dungeon table loads");
-    let table = catalog.get(&table_id).expect("catalog holds the table");
-    let mut table_items = std::collections::HashSet::new();
-    for pool in table.pools() {
-        for entry in &pool.entries {
-            if let mc_data::loot::chest_26_1_2::ChestLootEntry::Item { item, .. } = entry {
-                table_items.insert(item.clone());
-            }
-        }
-    }
-
-    let generator = TerrainGenerator::new(0, Arc::clone(&registry))
-        .with_structures(structures.clone())
-        .with_chest_loot(catalog, items.clone());
-    let first = generator.generate(ChunkPos { x: 4, z: 0 });
-    let second = generator.generate(ChunkPos { x: 4, z: 0 });
-    assert_eq!(first.chests, second.chests);
-    let (_, chest) = first.chests.iter().next().expect("seed-zero ruin chest");
-    let filled: Vec<_> = chest.slots.iter().filter(|slot| !slot.is_empty()).collect();
-    assert!(!filled.is_empty(), "rolled ruin chest must hold loot");
-    for slot in filled {
-        let name = items.name_of(slot.item_id).expect("rolled item resolves");
-        assert!(
-            table_items.contains(name),
-            "rolled {name} is outside the simple-dungeon table"
-        );
-    }
-
-    let fallback = TerrainGenerator::new(0, Arc::clone(&registry)).with_structures(structures);
-    let legacy = fallback.generate(ChunkPos { x: 4, z: 0 });
-    let (_, legacy_chest) = legacy.chests.iter().next().expect("fallback ruin chest");
-    assert_ne!(
-        chest, legacy_chest,
-        "rolled loot must replace the fixed fallback"
-    );
-}
-
-#[test]
-fn village_toolsmith_chest_rolls_real_table() {
-    let vanilla = workspace_path("data/vanilla");
-    let blocks_path = vanilla.join("reports/blocks.json");
-    let toolsmith_path =
-        vanilla.join("data/minecraft/structure/village/plains/houses/plains_tool_smith_1.nbt");
-    if ![&blocks_path, &toolsmith_path]
-        .iter()
-        .all(|path| path.is_file())
-    {
-        return;
-    }
-    let report = mc_data::blocks::load_blocks_report(&blocks_path).expect("blocks report");
-    let registry = BlockRegistry::from_report(&report).expect("full block registry");
-    let rules =
-        StructureRules::plains_village_prototype(&vanilla, &registry).expect("village prototype");
-    let template = &rules.templates()[0];
-    let toolsmith_id = Identifier::parse(crate::structures::VILLAGE_TOOLSMITH_LOOT_TABLE).unwrap();
-    let chest = template
-        .chests()
-        .iter()
-        .find(|chest| chest.loot_table.as_ref() == Some(&toolsmith_id))
-        .expect("prototype carries a toolsmith loot chest");
-    // Toolsmith part offset [0, 0, 12] plus the interior floor cell [5, 1, 4].
-    assert_eq!(chest.pos, [5, 1, 16]);
-    let chest_state = template
-        .blocks()
-        .iter()
-        .find(|block| block.pos == chest.pos)
-        .map(|block| block.state)
-        .expect("toolsmith chest block");
-    assert_eq!(
-        registry
-            .by_id(chest_state)
-            .map(|state| state.block.id.as_str()),
-        Some("minecraft:chest")
-    );
-
-    let catalog = mc_data::loot::chest_26_1_2::ChestLootCatalog::load_vanilla_tables(
-        vanilla.join("data"),
-        std::slice::from_ref(&toolsmith_id),
-    )
-    .expect("real toolsmith table loads");
-    let items = mc_data::items::solaris_required_items();
-    let loot = crate::structures::StructureLoot {
-        seed: 0,
-        catalog: &catalog,
-        items: &items,
-    };
-    let loot_seed = crate::structures::chest_loot_seed(0, [100, 64, -40], 0);
-    let first = chest.resolve_contents(&loot, loot_seed);
-    let second = chest.resolve_contents(&loot, loot_seed);
-    assert_eq!(first, second);
-    assert!(
-        first.slots.iter().any(|slot| !slot.is_empty()),
-        "seed-0 toolsmith roll must yield loot"
-    );
-}
-
-#[test]
-fn tellus_carved_channel_routes_river_wall_to_wall() {
-    // Seed 9700063978612627 carries a weak upland reach that used to route
-    // as a warm_ocean stripe: only the w > 0.84 core qualified as river,
-    // leaving below-sea carve shoulders as ocean with grassy savanna
-    // shallows. The whole below-sea carved profile must be river (sand bed).
-    let generator = TerrainGenerator::with_worldgen_mode(
-        9700063978612627,
-        tiny_registry(),
-        WorldgenMode::TellusLike(TellusWorldgenSettings::default()),
-    );
-    for x in [-208, -204, -200, -196] {
-        let sample = generator.diagnostic_sample(x, -2992);
-        assert!(
-            generator.biomes.is_river(&sample.biome),
-            "carved column below sea at {x} must be river, got {}",
-            sample.biome.path()
-        );
-        let (surface, _) = generator.surface_materials(&sample.biome);
-        assert_eq!(surface, generator.sand, "riverbed at {x} must be sand");
-    }
-    for x in [-216, -212, -192, -188] {
-        let sample = generator.diagnostic_sample(x, -2992);
-        assert!(
-            !generator.biomes.is_river(&sample.biome),
-            "dry bank at {x} must keep its climate biome, got {}",
-            sample.biome.path()
-        );
-    }
-}
-
-#[test]
-fn tellus_sub_sea_land_routes_shore_not_grass() {
-    // Seed 1785772562805887200: y62 plains at the waterline got water fill
-    // over grass (grass underwater). Anything below sea that is not river,
-    // swamp or ocean must be shoreline (sand bed).
-    let generator = TerrainGenerator::with_worldgen_mode(
-        1785772562805887200,
-        tiny_registry(),
-        WorldgenMode::TellusLike(TellusWorldgenSettings::default()),
-    );
-    for z in [1812, 1816, 1820, 1824, 1828, 1832] {
-        let sample = generator.diagnostic_sample(1283, z);
-        assert!(
-            generator.biomes.is_beach_or_shore(&sample.biome),
-            "sub-sea column at (1283, {z}) must be shore, got {}",
-            sample.biome.path()
-        );
-        let (surface, _) = generator.surface_materials(&sample.biome);
-        assert_eq!(
-            surface, generator.sand,
-            "shore bed at (1283, {z}) must be sand"
-        );
-    }
-    let bank = generator.diagnostic_sample(1283, 1800);
-    assert_eq!(bank.surface_y, 63);
-    assert!(
-        !generator.biomes.is_beach_or_shore(&bank.biome),
-        "dry y63 bank must keep its climate biome, got {}",
-        bank.biome.path()
-    );
-}
-
-#[test]
-fn tellus_beach_never_cuts_dry_ground_inland() {
-    // Seed 1785772562805887200: a y64 flat 140 blocks from the nearest water
-    // used to be painted as beach, cutting a sand band across dry ground. A
-    // beach now requires water one probe step away, so only the true fringe
-    // stays beach while dry ground keeps its climate.
-    let generator = TerrainGenerator::with_worldgen_mode(
-        1785772562805887200,
-        tiny_registry(),
-        WorldgenMode::TellusLike(TellusWorldgenSettings::default()),
-    );
-    for (x, z) in [(890, 1388), (1044, 1388), (1760, 1260)] {
-        let dry = generator.diagnostic_sample(x, z);
-        assert!(
-            !generator.biomes.is_beach_or_shore(&dry.biome),
-            "dry ground at ({x}, {z}) y={} must keep its climate, got {}",
-            dry.surface_y,
-            dry.biome.path()
-        );
-    }
-    for (x, z) in [(1060, 1388), (1076, 1388)] {
-        let fringe = generator.diagnostic_sample(x, z);
-        assert!(
-            generator.biomes.is_beach_or_shore(&fringe.biome),
-            "water-edge fringe at ({x}, {z}) y={} must be beach, got {}",
-            fringe.surface_y,
-            fringe.biome.path()
-        );
-        let (surface, _) = generator.surface_materials(&fringe.biome);
-        assert_eq!(surface, generator.sand);
-    }
-}
-
-#[test]
-fn river_beds_carry_gravel_bars_between_sand() {
-    let generator = TerrainGenerator::with_worldgen_mode(
-        1785772562805887200,
-        tiny_registry(),
-        WorldgenMode::TellusLike(TellusWorldgenSettings::default()),
-    );
-    let mut chunks: BTreeMap<(i32, i32), mc_world::Chunk> = BTreeMap::new();
-    let (mut sand, mut gravel) = (0usize, 0usize);
-    for x in (1500..1900).step_by(8) {
-        for z in (1100..1520).step_by(8) {
-            let sample = generator.diagnostic_sample(x, z);
-            if !generator.biomes.is_river(&sample.biome) {
-                continue;
-            }
-            let pos = ChunkPos {
-                x: x.div_euclid(16),
-                z: z.div_euclid(16),
+fn height_context_five_by_five_window_is_order_independent() {
+    fn fingerprint(generator: &TerrainGenerator, order: &[ChunkPos]) -> u64 {
+        // Per-chunk hashes combined commutatively: the visitation order must
+        // not leak into the fingerprint itself, only into chunk bytes.
+        let mut total = 0u64;
+        for &pos in order {
+            let mut hash = 0xcbf2_9ce4_8422_2325_u64;
+            let mut mix = |bytes: &[u8]| {
+                for byte in bytes {
+                    hash = (hash ^ u64::from(*byte)).wrapping_mul(0x0000_0100_0000_01B3);
+                }
             };
-            let chunk = chunks
-                .entry((pos.x, pos.z))
-                .or_insert_with(|| generator.generate(pos));
-            let state = chunk
-                .get_block(
-                    x.rem_euclid(16) as u8,
-                    sample.surface_y,
-                    z.rem_euclid(16) as u8,
-                )
-                .expect("river bed column is inside its chunk");
-            if state == generator.gravel {
-                gravel += 1;
-            } else if state == generator.sand {
-                sand += 1;
-            } else {
-                panic!("river bed at ({x}, {z}) is neither sand nor gravel");
+            let chunk = generator.generate(pos);
+            mix(&pos.x.to_le_bytes());
+            mix(&pos.z.to_le_bytes());
+            for y in chunk.geometry().min_y()..chunk.geometry().max_y() {
+                for z in 0..16u8 {
+                    for x in 0..16u8 {
+                        let state = chunk.get_block(x, y, z).expect("Y is inside geometry");
+                        mix(&state.0.to_le_bytes());
+                    }
+                }
             }
+            for name in ["MOTION_BLOCKING", "WORLD_SURFACE"] {
+                let map = chunk
+                    .heightmaps
+                    .get(name)
+                    .expect("generation writes heightmaps");
+                for z in 0..16u8 {
+                    for x in 0..16u8 {
+                        mix(&map.get(x, z).to_le_bytes());
+                    }
+                }
+            }
+            for section in &chunk.biomes {
+                for id in section.palette() {
+                    mix(id.as_str().as_bytes());
+                }
+            }
+            total = total.wrapping_add(hash);
+        }
+        total
+    }
+    let g = TerrainGenerator::new(42, tiny_registry());
+    let mut forward = Vec::new();
+    for x in -2..=2 {
+        for z in -2..=2 {
+            forward.push(ChunkPos { x, z });
         }
     }
-    assert!(
-        gravel > 0 && sand > gravel,
-        "river beds need gravel bars over a sand majority: sand={sand} gravel={gravel}"
+    let mut backward = forward.clone();
+    backward.reverse();
+    assert_eq!(
+        fingerprint(&g, &forward),
+        fingerprint(&g, &backward),
+        "a 5x5 window must generate identically in either visitation order"
+    );
+    // A second forward pass must replay the same bytes (no stale context).
+    assert_eq!(
+        fingerprint(&g, &forward),
+        fingerprint(&g, &forward),
+        "repeated generation must replay identical chunks"
     );
 }

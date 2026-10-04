@@ -14,7 +14,10 @@
 //! Output is deterministic in `(seed, world_x, world_z)` and independent of
 //! chunk generation order.
 
+use std::cell::RefCell;
 use std::collections::HashMap;
+#[cfg(feature = "worldgen-counters")]
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use mc_data::Identifier;
@@ -23,11 +26,13 @@ use mc_data::loot::chest_26_1_2::ChestLootCatalog;
 use mc_world::chunk::{Chunk, ChunkGeometry, ChunkPos, Heightmap, OVERWORLD_GEOMETRY};
 use mc_world::{
     BIOME_DIM, BIOME_VOLUME, BiomeSection, BlockRegistry, BlockStateId, ChunkGenerator,
-    PackedBitArray, SettlementInhabitantMarker, SettlementVacantHomeMarker,
+    PackedBitArray,
 };
 
 use crate::noise::fbm_2d;
-use crate::structures::{StructureLoot, StructureRules, StructureTemplate, chest_loot_seed};
+use crate::structures::StructureLoot;
+use crate::vanilla_climate::VanillaClimate;
+use crate::vanilla_density::{SurfaceHeightSampler, VanillaDensity};
 use crate::village::plan_source::{VillagePlanSet, VillagePlanSource};
 
 mod biome_routing;
@@ -39,7 +44,6 @@ mod overworld;
 mod sediments;
 mod trees;
 
-use biome_routing::BEACH_HEIGHT_ABOVE_SEA;
 pub use biome_rules::BiomeRules;
 pub use gameplay_rules::{ClayRule, TreeRule};
 use geological_ores::GeologicalOreRules;
@@ -87,6 +91,73 @@ const SPAWN_SITE_SAMPLE_RADIUS_BLOCKS: i32 = 8;
 const SPAWN_SITE_MAX_RELIEF: i32 = 3;
 const DIAGNOSTIC_CACHE_SHARDS: usize = 64;
 const DIAGNOSTIC_CACHE_ENTRIES_PER_SHARD: usize = 2_048;
+
+#[cfg(feature = "worldgen-counters")]
+static HEIGHT_SOURCE_HITS: AtomicU64 = AtomicU64::new(0);
+#[cfg(feature = "worldgen-counters")]
+static HEIGHT_SOURCE_MISSES: AtomicU64 = AtomicU64::new(0);
+#[cfg(feature = "worldgen-counters")]
+static HEIGHT_PLAN_HITS: AtomicU64 = AtomicU64::new(0);
+#[cfg(feature = "worldgen-counters")]
+static HEIGHT_PLAN_MISSES: AtomicU64 = AtomicU64::new(0);
+
+/// Snapshot of the generation-local height-context cache counters.
+///
+/// Only populated with the `worldgen-counters` feature; without it every
+/// increment below compiles out and collection costs nothing.
+#[cfg(feature = "worldgen-counters")]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct HeightContextStats {
+    pub source_hits: u64,
+    pub source_misses: u64,
+    pub plan_hits: u64,
+    pub plan_misses: u64,
+}
+
+/// Read the height-context counters accumulated so far.
+#[cfg(feature = "worldgen-counters")]
+#[must_use]
+pub fn height_context_stats() -> HeightContextStats {
+    HeightContextStats {
+        source_hits: HEIGHT_SOURCE_HITS.load(Ordering::Relaxed),
+        source_misses: HEIGHT_SOURCE_MISSES.load(Ordering::Relaxed),
+        plan_hits: HEIGHT_PLAN_HITS.load(Ordering::Relaxed),
+        plan_misses: HEIGHT_PLAN_MISSES.load(Ordering::Relaxed),
+    }
+}
+
+/// Zero the height-context counters, e.g. between benchmark rounds.
+#[cfg(feature = "worldgen-counters")]
+pub fn reset_height_context_stats() {
+    HEIGHT_SOURCE_HITS.store(0, Ordering::Relaxed);
+    HEIGHT_SOURCE_MISSES.store(0, Ordering::Relaxed);
+    HEIGHT_PLAN_HITS.store(0, Ordering::Relaxed);
+    HEIGHT_PLAN_MISSES.store(0, Ordering::Relaxed);
+}
+
+#[inline]
+fn count_height_source_hit() {
+    #[cfg(feature = "worldgen-counters")]
+    HEIGHT_SOURCE_HITS.fetch_add(1, Ordering::Relaxed);
+}
+
+#[inline]
+fn count_height_source_miss() {
+    #[cfg(feature = "worldgen-counters")]
+    HEIGHT_SOURCE_MISSES.fetch_add(1, Ordering::Relaxed);
+}
+
+#[inline]
+fn count_height_plan_hit() {
+    #[cfg(feature = "worldgen-counters")]
+    HEIGHT_PLAN_HITS.fetch_add(1, Ordering::Relaxed);
+}
+
+#[inline]
+fn count_height_plan_miss() {
+    #[cfg(feature = "worldgen-counters")]
+    HEIGHT_PLAN_MISSES.fetch_add(1, Ordering::Relaxed);
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SpawnLocation {
@@ -160,34 +231,11 @@ impl SpawnLocation {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct TellusWorldgenSettings {
-    pub world_scale_meters_per_block: f64,
-    pub terrestrial_height_scale: f64,
-    pub oceanic_height_scale: f64,
-    pub sea_level: i32,
-    pub climate_strength: f64,
-    pub water_enabled: bool,
-}
-
-impl Default for TellusWorldgenSettings {
-    fn default() -> Self {
-        Self {
-            world_scale_meters_per_block: 30.0,
-            terrestrial_height_scale: 1.0,
-            oceanic_height_scale: 1.0,
-            sea_level: SEA_LEVEL,
-            climate_strength: 1.0,
-            water_enabled: true,
-        }
-    }
-}
-
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub enum WorldgenMode {
     #[default]
     VanillaLike,
-    TellusLike(TellusWorldgenSettings),
+    TellusLike,
 }
 
 impl WorldgenMode {
@@ -195,7 +243,7 @@ impl WorldgenMode {
     pub const fn contract_name(self) -> &'static str {
         match self {
             Self::VanillaLike => "vanilla_like",
-            Self::TellusLike(_) => "tellus_like",
+            Self::TellusLike => "tellus_like",
         }
     }
 }
@@ -222,12 +270,8 @@ pub struct TerrainGenerator {
     ores: OreRules,
     geological_ores: Option<GeologicalOreRules>,
     ore_generation_profile: &'static str,
-    structures: StructureRules,
-    /// The village plan lookup. `None` — no village generation — keeps every
-    /// path in this generator byte-identical to the pre-village behaviour:
-    /// [`TerrainGenerator::surface_height`] reads the router directly and
-    /// [`TerrainGenerator::apply_structures`] takes its `structures.is_empty()`
-    /// fast path.
+    /// Native village plans. `None` leaves terrain routing unadapted and places
+    /// no village pieces.
     village_plans: Option<Arc<VillagePlanSource>>,
     /// Compiled vanilla chest tables rolled at structure paste time. Empty
     /// by default, in which case structure chests paste fixed contents.
@@ -237,7 +281,7 @@ pub struct TerrainGenerator {
     decorations: DecorationBlocks,
     tree_rules: HashMap<Identifier, TreeRule>,
     clay_rule: ClayRule,
-    worldgen_mode: WorldgenMode,
+    vanilla_worldgen: Option<(VanillaClimate, VanillaDensity)>,
     diagnostic_cache: DiagnosticCache,
 }
 
@@ -257,25 +301,149 @@ struct ColumnPlan {
     hash: u64,
 }
 
-struct OreColumnCache {
+/// Generation-local height context: the chunk's own source heights plus one
+/// shared [`SurfaceHeightSampler`] + one village-plan memo the decorations
+/// (trees), ore-halo reads and structure writes consult instead of re-running
+/// the full height + plan pipeline per neighbour column.
+///
+/// Cache key discipline: `source_heights` holds each column's SOURCE
+/// (pre-village) surface — clamped to `geometry.min_y()..=max_y()-1` — so a
+/// village plan can still move the column later without a second SOURCE
+/// evaluation. Single village adjustment only: [`HeightContext::adjusted_height`]
+/// reads exactly one [`VillagePlanSet`] (the chunk's set for generation-local
+/// columns, the column's own chunk's set for halo readers) and applies it once;
+/// callers must not pre-adjust or post-adjust.
+///
+/// Order-independence: every entry is a pure function of `(seed, world_x,
+/// world_z)` — SOURCE through the density query, the plan set through the
+/// village lookup keyed by chunk, and the final height through the beard
+/// analogue — so visitation order only decides hits vs misses, never values.
+pub(crate) struct HeightContext<'h> {
+    generator: &'h TerrainGenerator,
+    geometry_min_y: i32,
+    geometry_max_y: i32,
+    source_heights: HashMap<(i32, i32), i32>,
+    native_sampler: Option<SurfaceHeightSampler<'h>>,
+    plans: HashMap<(i32, i32), Option<VillagePlanSet>>,
+}
+
+impl<'h> HeightContext<'h> {
+    /// Build a context seeded with the central chunk's ready SOURCE heights.
+    /// `columns` are the chunk's own final plans; only their pre-village
+    /// bases (`plan_column`'s diagnostic minus the village analogue is not
+    /// observable, but `base_surface_y` recomputes the same value) seed the
+    /// map — the context re-applies the village set per read so planned and
+    /// unplanned readers agree.
+    pub(crate) fn for_chunk(
+        generator: &'h TerrainGenerator,
+        pos: ChunkPos,
+        source_columns: &[(i32, i32, i32)],
+        native_sampler: Option<SurfaceHeightSampler<'h>>,
+    ) -> Self {
+        let mut source_heights = HashMap::with_capacity(source_columns.len().max(256));
+        for &(wx, wz, base) in source_columns {
+            source_heights.insert((wx, wz), base);
+            count_height_source_hit();
+        }
+        let _ = pos;
+        Self {
+            generator,
+            geometry_min_y: generator.geometry.min_y(),
+            geometry_max_y: generator.geometry.max_y(),
+            source_heights,
+            native_sampler,
+            plans: HashMap::new(),
+        }
+    }
+
+    /// The SOURCE (pre-village) surface for one column: ready central-chunk
+    /// values first, then the shared sampler, then the per-column query.
+    fn source_height(&mut self, world_x: i32, world_z: i32) -> i32 {
+        if let Some(&height) = self.source_heights.get(&(world_x, world_z)) {
+            count_height_source_hit();
+            return height;
+        }
+        count_height_source_miss();
+        // ONE shared sampler: lazily computed halo columns retain lattice
+        // corners across columns instead of one sampler per column.
+        let height = if let Some(sampler) = self.native_sampler.as_mut() {
+            sampler.surface_height(world_x, world_z)
+        } else {
+            self.generator.base_surface_y(world_x, world_z)
+        };
+        // `base_surface_y` already clamps vanilla heights to the geometry;
+        // clamp the sampler path identically so every stored value is final.
+        let clamped = height.clamp(self.geometry_min_y, self.geometry_max_y - 1);
+        self.source_heights.insert((world_x, world_z), clamped);
+        clamped
+    }
+
+    /// The chunk's plan set, memoized: one lookup per chunk reached.
+    fn plans_for_chunk(&mut self, chunk: ChunkPos) -> Option<VillagePlanSet> {
+        if let Some(hit) = self.plans.get(&(chunk.x, chunk.z)) {
+            count_height_plan_hit();
+            return hit.clone();
+        }
+        count_height_plan_miss();
+        let set = self.generator.village_plans_for_chunk(chunk);
+        self.plans.insert((chunk.x, chunk.z), set.clone());
+        set
+    }
+
+    /// Final (village-adjusted) height: cached SOURCE + single adjustment.
+    pub(crate) fn adjusted_height(&mut self, world_x: i32, world_z: i32) -> i32 {
+        let base = self.source_height(world_x, world_z);
+        let chunk = ChunkPos {
+            x: world_x.div_euclid(16),
+            z: world_z.div_euclid(16),
+        };
+        let plans = self.plans_for_chunk(chunk);
+        self.generator
+            .village_surface_y(world_x, world_z, base, plans.as_ref())
+    }
+
+    /// Column plan for halo readers that need more than a height: SOURCE
+    /// diagnostic (cached by the generator) + this context's single plan set.
+    fn halo_column(&mut self, world_x: i32, world_z: i32) -> ColumnPlan {
+        let chunk = ChunkPos {
+            x: world_x.div_euclid(16),
+            z: world_z.div_euclid(16),
+        };
+        let plans = self.plans_for_chunk(chunk);
+        let diagnostic = self.generator.cached_diagnostic_sample(world_x, world_z);
+        let lx = world_x.rem_euclid(16) as u8;
+        let lz = world_z.rem_euclid(16) as u8;
+        self.generator
+            .plan_column_from_diagnostic(chunk, lx, lz, plans.as_ref(), diagnostic)
+    }
+
+    /// The SOURCE surface the village piece writer projects pieces against.
+    /// Identical to `base_surface_y`, but served from the shared context so
+    /// repeated piece-column queries do not re-run the density query.
+    pub(crate) fn structure_surface(&mut self, world_x: i32, world_z: i32) -> i32 {
+        self.source_height(world_x, world_z)
+    }
+}
+
+struct OreColumnCache<'a, 'h> {
     min_x: i64,
     min_z: i64,
     side: usize,
     columns: Vec<Option<ColumnPlan>>,
-    /// One village-plan lookup per chunk the halo reaches, shared by that
-    /// chunk's columns. The lookup is a pure function of the world seed and the
-    /// chunk, and it is the *chunk's* set — never a single column's filtered
-    /// result, which would be `None` for a column outside a village's region and
-    /// would then suppress the village for the chunk's other columns. The memo
-    /// is per call, so it cannot go stale.
-    plans: HashMap<(i32, i32), Option<VillagePlanSet>>,
+    /// The generation-local height context: ONE shared native sampler plus
+    /// the village-plan memo, owned by the caller. The previous
+    /// `native_heights: Option<SurfaceHeightSampler>` + `plans` fields lived
+    /// here; they moved into the context so tree, ore and structure readers
+    /// share the same sampler and the same plan lookup instead of each
+    /// building their own.
+    heights: &'a mut HeightContext<'h>,
     cave_min_y: i32,
     cave_layers: usize,
     cave_samples: Vec<u8>,
     raw_cave_samples: Vec<u8>,
 }
 
-impl OreColumnCache {
+impl OreColumnCache<'_, '_> {
     fn column_index(&self, world_x: i32, world_z: i32) -> Option<usize> {
         let local_x = i64::from(world_x).checked_sub(self.min_x)?;
         let local_z = i64::from(world_z).checked_sub(self.min_z)?;
@@ -287,34 +455,18 @@ impl OreColumnCache {
         Some(local_z * self.side + local_x)
     }
 
-    fn get_or_plan<'a>(
-        &'a mut self,
-        generator: &TerrainGenerator,
-        world_x: i32,
-        world_z: i32,
-    ) -> Option<&'a ColumnPlan> {
+    fn get_or_plan<'a>(&'a mut self, world_x: i32, world_z: i32) -> Option<&'a ColumnPlan> {
         let index = self.column_index(world_x, world_z)?;
         if self.columns[index].is_none() {
-            let chunk = ChunkPos {
-                x: world_x.div_euclid(16),
-                z: world_z.div_euclid(16),
-            };
-            // The column's own chunk's plan set, from the same on-demand lookup
-            // every other column surface comes from: the halo reaches into
-            // neighbouring chunks, so the plan cannot be this chunk's, and the
-            // lookup is the *chunk's* set rather than this column's filtered
-            // slice of it (`plan_column` applies the set per column anyway).
-            let plan = self
-                .plans
-                .entry((chunk.x, chunk.z))
-                .or_insert_with(|| generator.village_plans_for_chunk(chunk))
-                .clone();
-            self.columns[index] = Some(generator.plan_column(
-                chunk,
-                world_x.rem_euclid(16) as u8,
-                world_z.rem_euclid(16) as u8,
-                plan.as_ref(),
-            ));
+            // The halo reaches into neighbouring chunks, so the plan is the
+            // column's own chunk's set — never this chunk's, and never a
+            // single column's filtered slice of it (`plan_column` applies the
+            // set per column anyway). The context memoizes the lookup per
+            // chunk and serves SOURCE heights from one shared sampler, so
+            // halo columns cost one plan lookup per chunk and one sampler
+            // query per column however many ore cells read them.
+            let column = self.heights.halo_column(world_x, world_z);
+            self.columns[index] = Some(column);
         }
         self.columns[index].as_ref()
     }
@@ -634,26 +786,29 @@ impl TerrainGenerator {
         Self::try_with_rules(seed, registry, biomes, ores)
     }
 
-    /// Build a generator and set its worldgen mode.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the registry is missing required vanilla terrain blocks. Use
-    /// [`TerrainGenerator::try_with_biome_rules`] for fallible startup validation.
-    #[must_use]
-    pub fn with_worldgen_mode(seed: i64, registry: Arc<BlockRegistry>, mode: WorldgenMode) -> Self {
-        let mut generator = Self::new(seed, registry);
-        generator.worldgen_mode = mode;
-        generator
-    }
-
-    #[must_use]
-    pub fn with_mode(mut self, mode: WorldgenMode) -> Self {
-        self.worldgen_mode = mode;
+    /// Compile the local vanilla router and expanded overworld biome preset.
+    /// Missing or invalid vanilla data is a startup error.
+    pub fn load_vanilla_worldgen(&mut self, data_root: &std::path::Path) -> Result<(), String> {
+        let climate = VanillaClimate::new(self.seed as u64, data_root)?;
+        let density = VanillaDensity::from_runtime(climate.runtime())?;
+        self.vanilla_worldgen = Some((climate, density));
         self.diagnostic_cache = DiagnosticCache::default();
-        self
+        Ok(())
     }
 
+    fn vanilla(&self) -> Option<&(VanillaClimate, VanillaDensity)> {
+        self.vanilla_worldgen.as_ref()
+    }
+
+    /// The unzoomed noise biome used by chunk palettes and structure gates.
+    #[must_use]
+    pub fn noise_biome(&self, world_x: i32, y: i32, world_z: i32) -> Identifier {
+        if let Some((climate, _)) = self.vanilla() {
+            return Identifier::parse(climate.sample(world_x, y, world_z).biome)
+                .expect("validated vanilla biome identifier");
+        }
+        self.base_biome(world_x, world_z)
+    }
     /// Build a generator with explicit biome and ore rules.
     ///
     /// # Panics
@@ -710,22 +865,15 @@ impl TerrainGenerator {
             ores,
             geological_ores: None,
             ore_generation_profile: "vanilla",
-            structures: StructureRules::none(),
             village_plans: None,
             chest_loot: ChestLootCatalog::new(),
             chest_loot_items: ItemRegistry::default(),
             decorations: DecorationBlocks::new(registry.as_ref()),
             tree_rules: HashMap::new(),
             clay_rule: ClayRule::default(),
-            worldgen_mode: WorldgenMode::VanillaLike,
+            vanilla_worldgen: None,
             diagnostic_cache: DiagnosticCache::default(),
         })
-    }
-
-    #[must_use]
-    pub fn with_structures(mut self, structures: StructureRules) -> Self {
-        self.structures = structures;
-        self
     }
 
     /// Wire the village plan source: vanilla villages assembled by the jigsaw
@@ -758,12 +906,8 @@ impl TerrainGenerator {
         self
     }
 
-    /// Enable alpha3's canonical deterministic regional-deposit profile.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`TerrainGeneratorError::MissingRequiredBlock`] if any normal or
-    /// deepslate ore block required by the profile is absent.
+    /// Explicit standalone vanilla plugin deposit profile. Native Earth never
+    /// calls this path: its ores belong to the immutable geological base.
     pub fn try_with_realistic_deposits(
         mut self,
         registry: &BlockRegistry,
@@ -774,12 +918,6 @@ impl TerrainGenerator {
         Ok(self)
     }
 
-    /// Enable alpha3's canonical deterministic regional-deposit profile.
-    ///
-    /// # Panics
-    ///
-    /// Panics if a required normal or deepslate ore block is absent. Use
-    /// [`TerrainGenerator::try_with_realistic_deposits`] for startup validation.
     #[must_use]
     pub fn with_realistic_deposits(self, registry: &BlockRegistry) -> Self {
         self.try_with_realistic_deposits(registry)
@@ -817,6 +955,11 @@ impl TerrainGenerator {
 
     /// The router's surface for one column, before the village analogue.
     fn base_surface_y(&self, world_x: i32, world_z: i32) -> i32 {
+        if let Some((_, density)) = self.vanilla() {
+            return density
+                .surface_height(world_x, world_z)
+                .clamp(self.geometry.min_y(), self.geometry.max_y() - 1);
+        }
         self.density_router().sample(world_x, world_z).surface_y
     }
 
@@ -845,7 +988,7 @@ impl TerrainGenerator {
             return Vec::new();
         };
         let free_height = |x, z| self.first_free_height(x, z);
-        let biome_at = |x, z| self.base_biome(x, z);
+        let biome_at = |x, y, z| self.noise_biome(x, y, z);
         source.sites_in_region(min_chunk, max_chunk, &free_height, &biome_at)
     }
 
@@ -854,7 +997,7 @@ impl TerrainGenerator {
     fn village_plans_for_chunk(&self, pos: ChunkPos) -> Option<VillagePlanSet> {
         let source = self.village_plans.as_ref()?;
         let free_height = |x, z| self.first_free_height(x, z);
-        let biome_at = |x, z| self.base_biome(x, z);
+        let biome_at = |x, y, z| self.noise_biome(x, y, z);
         source.plans_for_chunk(pos.x, pos.z, &free_height, &biome_at)
     }
 
@@ -864,7 +1007,7 @@ impl TerrainGenerator {
     fn village_plans_for_column(&self, world_x: i32, world_z: i32) -> Option<VillagePlanSet> {
         let source = self.village_plans.as_ref()?;
         let free_height = |x, z| self.first_free_height(x, z);
-        let biome_at = |x, z| self.base_biome(x, z);
+        let biome_at = |x, y, z| self.noise_biome(x, y, z);
         source.plans_for_column(world_x, world_z, &free_height, &biome_at)
     }
 
@@ -925,21 +1068,43 @@ impl TerrainGenerator {
         if let Some(sample) = self.diagnostic_cache.get(world_x, world_z) {
             return sample;
         }
-        let sample = self.diagnostic_sample_uncached(world_x, world_z);
+        let sample = self.diagnostic_sample_uncached(world_x, world_z, None);
         self.diagnostic_cache.insert(world_x, world_z, sample)
     }
 
-    fn diagnostic_sample_uncached(&self, world_x: i32, world_z: i32) -> TerrainDiagnosticSample {
+    fn diagnostic_sample_uncached(
+        &self,
+        world_x: i32,
+        world_z: i32,
+        native_height: Option<i32>,
+    ) -> TerrainDiagnosticSample {
+        // The vanilla branch never reads the own-router sample: `surface_y` is
+        // overwritten from the native density, `moisture` from the native
+        // climate, and `biome` from `noise_biome`. The router call below is
+        // therefore dead work in exactly this branch — and skipping it is
+        // side-effect-free by construction: `OverworldRouter::sample` and
+        // `fbm_2d` are pure functions of `(seed, x, z)` (no statics, cells,
+        // locks or atomics anywhere in `overworld/*` or `noise.rs`), so no
+        // memo, counter or global observes the call.
+        if let Some((climate, density)) = self.vanilla() {
+            let surface_y = native_height
+                .unwrap_or_else(|| density.surface_height(world_x, world_z))
+                .clamp(self.geometry.min_y(), self.geometry.max_y() - 1);
+            let native = climate.sample(world_x, surface_y, world_z);
+            let biome =
+                Identifier::parse(native.biome).expect("validated vanilla biome identifier");
+            let vegetation_density = self
+                .biome_supports_land_vegetation(&biome)
+                .then(|| self.vegetation_density(world_x, world_z, native.climate[1]));
+            return TerrainDiagnosticSample {
+                surface_y,
+                biome,
+                vegetation_density,
+            };
+        }
         let sample = self.density_router().sample(world_x, world_z);
+        let biome = self.vanilla_biome_for(world_x, world_z, sample.surface_y, sample);
         let surface_y = sample.surface_y;
-        let biome = match self.worldgen_mode {
-            WorldgenMode::VanillaLike => {
-                self.vanilla_biome_for(world_x, world_z, surface_y, sample)
-            }
-            WorldgenMode::TellusLike(settings) => {
-                self.tellus_biome_for(world_x, world_z, surface_y, settings, sample)
-            }
-        };
         let vegetation_density = self
             .biome_supports_land_vegetation(&biome)
             .then(|| self.vegetation_density(world_x, world_z, sample.moisture));
@@ -988,12 +1153,8 @@ impl TerrainGenerator {
     }
 
     fn spawn_candidate(&self, block_x: i32, block_z: i32) -> Option<SpawnLocation> {
-        let router = self.density_router();
-        let centre = router.sample(block_x, block_z);
-        let sea_level = match self.worldgen_mode {
-            WorldgenMode::VanillaLike => SEA_LEVEL,
-            WorldgenMode::TellusLike(settings) => settings.sea_level,
-        };
+        let centre = self.routing_sample(block_x, block_z);
+        let sea_level = SEA_LEVEL;
         if centre.surface_y < sea_level + 4
             || centre.continentalness < 0.02
             || centre.river < 0.08
@@ -1014,7 +1175,8 @@ impl TerrainGenerator {
                 0,
                 SPAWN_SITE_SAMPLE_RADIUS_BLOCKS,
             ] {
-                let sample = router.sample(block_x.checked_add(dx)?, block_z.checked_add(dz)?);
+                let sample =
+                    self.routing_sample(block_x.checked_add(dx)?, block_z.checked_add(dz)?);
                 if sample.surface_y < sea_level + 3 || sample.river < 0.04 {
                     return None;
                 }
@@ -1033,7 +1195,28 @@ impl TerrainGenerator {
     }
 
     fn density_router(&self) -> OverworldRouter {
-        OverworldRouter::new(self.seed, self.geometry, self.worldgen_mode)
+        OverworldRouter::new(self.seed, self.geometry)
+    }
+
+    fn routing_sample(&self, x: i32, z: i32) -> TerrainSample {
+        if let Some((climate, density)) = self.vanilla() {
+            let surface_y = density
+                .surface_height(x, z)
+                .clamp(self.geometry.min_y(), self.geometry.max_y() - 1);
+            let sample = climate.sample(x, surface_y, z).climate;
+            return TerrainSample {
+                surface_y,
+                temperature: sample[0],
+                moisture: sample[1],
+                continentalness: sample[2],
+                erosion: sample[3],
+                ridges: sample[5].abs(),
+                river: sample[5].abs(),
+                wetland: 0.0,
+                climate_domain: 0.0,
+            };
+        }
+        self.density_router().sample(x, z)
     }
 
     #[cfg(test)]
@@ -1044,17 +1227,15 @@ impl TerrainGenerator {
         world_z: i32,
         surface_height: i32,
     ) -> Identifier {
+        if self.vanilla().is_some() {
+            return self.noise_biome(world_x, y, world_z);
+        }
         if i64::from(y) < i64::from(surface_height) - 24 && y < 32 {
             return self
                 .biomes
                 .pick(&self.biomes.cave, world_x, world_z, self.seed, 0x554E_4447);
         }
         self.biome_for(world_x, world_z, surface_height)
-    }
-
-    #[cfg(test)]
-    fn ridges(&self, world_x: i32, world_z: i32) -> f64 {
-        self.density_router().sample(world_x, world_z).ridges
     }
 
     fn vegetation_density(&self, world_x: i32, world_z: i32, moisture: f64) -> f64 {
@@ -1099,13 +1280,23 @@ impl TerrainGenerator {
         let wx = world_block_coordinate(pos.x, lx);
         let wz = world_block_coordinate(pos.z, lz);
         let diagnostic = self.cached_diagnostic_sample(wx, wz);
+        self.plan_column_from_diagnostic(pos, lx, lz, plans, diagnostic)
+    }
+
+    fn plan_column_from_diagnostic(
+        &self,
+        pos: ChunkPos,
+        lx: u8,
+        lz: u8,
+        plans: Option<&VillagePlanSet>,
+        diagnostic: TerrainDiagnosticSample,
+    ) -> ColumnPlan {
+        let wx = world_block_coordinate(pos.x, lx);
+        let wz = world_block_coordinate(pos.z, lz);
         let height = self.village_surface_y(wx, wz, diagnostic.surface_y, plans);
         let biome = diagnostic.biome;
         let vegetation_density = diagnostic.vegetation_density.unwrap_or(-1.0);
-        let (sea_level, water_enabled) = match self.worldgen_mode {
-            WorldgenMode::VanillaLike => (SEA_LEVEL, true),
-            WorldgenMode::TellusLike(settings) => (settings.sea_level, settings.water_enabled),
-        };
+        let (sea_level, water_enabled) = (SEA_LEVEL, true);
         let (mut surface, mut fill) = self.surface_materials(&biome);
         if self.biomes.mountain.contains(&biome) && height >= sea_level + 112 {
             surface = self.snow_block;
@@ -1117,7 +1308,9 @@ impl TerrainGenerator {
             surface = self.gravel;
             fill = self.gravel;
         }
-        let top_non_air = if water_enabled && (height < sea_level || self.biomes.is_river(&biome)) {
+        let top_non_air = if self.vanilla().is_some() {
+            height.max(sea_level - 1).min(self.geometry.max_y() - 1)
+        } else if water_enabled && (height < sea_level || self.biomes.is_river(&biome)) {
             let inclusive_top = checked_y_offset(self.geometry.max_y(), -1).unwrap_or(height);
             sea_level.clamp(height, inclusive_top)
         } else {
@@ -1222,7 +1415,9 @@ impl TerrainGenerator {
                         let Ok(y) = i32::try_from(y) else {
                             continue;
                         };
-                        let biome = if i64::from(y) < i64::from(column.height) - 24 && y < 32 {
+                        let biome = if self.vanilla().is_some() {
+                            self.noise_biome(column.wx, y, column.wz)
+                        } else if i64::from(y) < i64::from(column.height) - 24 && y < 32 {
                             self.biomes.pick(
                                 &self.biomes.cave,
                                 column.wx,
@@ -1263,6 +1458,9 @@ impl TerrainGenerator {
         columns: &[ColumnPlan; 256],
         mut ore_cache: Option<&mut OreColumnCache>,
     ) {
+        if self.vanilla().is_some() {
+            return;
+        }
         const RAW_SIDE: usize = 18;
         let cave_min_y = self.geometry.min_y().saturating_add(8);
         let cave_max_y = columns
@@ -1369,7 +1567,12 @@ impl TerrainGenerator {
         ))
     }
 
-    fn ore_column_cache(&self, chunk: &Chunk, chunk_columns: &[ColumnPlan; 256]) -> OreColumnCache {
+    fn ore_column_cache<'a, 'h>(
+        &self,
+        chunk: &Chunk,
+        chunk_columns: &[ColumnPlan; 256],
+        heights: &'a mut HeightContext<'h>,
+    ) -> OreColumnCache<'a, 'h> {
         let min_x_i64 = i64::from(chunk.pos.x) * 16 - i64::from(ORE_COLUMN_HALO);
         let min_z_i64 = i64::from(chunk.pos.z) * 16 - i64::from(ORE_COLUMN_HALO);
         let side = usize::try_from(16 + ORE_COLUMN_HALO * 2)
@@ -1389,7 +1592,7 @@ impl TerrainGenerator {
             min_z,
             side,
             columns: vec![None; side * side],
-            plans: HashMap::new(),
+            heights,
             cave_min_y,
             cave_layers,
             cave_samples: vec![0; side * side * cave_layers],
@@ -1409,11 +1612,36 @@ impl TerrainGenerator {
             geological_ores.apply(self, chunk);
             return;
         }
-        let mut column_cache = self.ore_column_cache(chunk, chunk_columns);
+        // `apply_ores` without a caller-owned context exists for the two
+        // non-generation callers (tests, geological-ore fallback): it builds
+        // a throwaway context with the same bounds `generate` uses, so the
+        // code path — and the bytes it emits — is one path, not two.
+        let source_columns: [(i32, i32, i32); 256] = std::array::from_fn(|idx| {
+            let plan = &chunk_columns[idx];
+            (plan.wx, plan.wz, self.base_surface_y(plan.wx, plan.wz))
+        });
+        let mut heights = HeightContext::for_chunk(
+            self,
+            chunk.pos,
+            &source_columns,
+            self.vanilla().map(|(_, density)| {
+                let min_x = i64::from(chunk.pos.x) * 16 - i64::from(ORE_COLUMN_HALO);
+                let min_z = i64::from(chunk.pos.z) * 16 - i64::from(ORE_COLUMN_HALO);
+                let clamp =
+                    |value: i64| value.clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32;
+                density.surface_height_sampler(
+                    clamp(min_x),
+                    clamp(min_z),
+                    clamp(min_x + 16 + i64::from(ORE_COLUMN_HALO) * 2 - 1),
+                    clamp(min_z + 16 + i64::from(ORE_COLUMN_HALO) * 2 - 1),
+                )
+            }),
+        );
+        let mut column_cache = self.ore_column_cache(chunk, chunk_columns, &mut heights);
         self.apply_ores_with_cache(chunk, &mut column_cache);
     }
 
-    fn apply_ores_with_cache(&self, chunk: &mut Chunk, column_cache: &mut OreColumnCache) {
+    fn apply_ores_with_cache(&self, chunk: &mut Chunk, column_cache: &mut OreColumnCache<'_, '_>) {
         debug_assert!(self.geological_ores.is_none());
         let chunk_min_x = i64::from(chunk.pos.x) * 16;
         let chunk_min_z = i64::from(chunk.pos.z) * 16;
@@ -1494,7 +1722,7 @@ impl TerrainGenerator {
                             }
                             if !rule.biomes.is_any()
                                 && !column_cache
-                                    .get_or_plan(self, anchor_x, anchor_z)
+                                    .get_or_plan(anchor_x, anchor_z)
                                     .is_some_and(|column| rule.biomes.matches(&column.biome))
                             {
                                 continue;
@@ -1524,7 +1752,7 @@ impl TerrainGenerator {
     fn place_ore_vein(
         &self,
         chunk: &mut Chunk,
-        column_cache: &mut OreColumnCache,
+        column_cache: &mut OreColumnCache<'_, '_>,
         rule: &OreRule,
         anchor: [i32; 3],
         vein_hash: u64,
@@ -1547,7 +1775,7 @@ impl TerrainGenerator {
 
     fn ore_cell_can_generate(
         &self,
-        column_cache: &mut OreColumnCache,
+        column_cache: &mut OreColumnCache<'_, '_>,
         rule: &OreRule,
         anchor: [i32; 3],
         offset: [i8; 3],
@@ -1602,22 +1830,25 @@ impl TerrainGenerator {
 
     fn should_discard_exposed_ore(
         &self,
-        column_cache: &mut OreColumnCache,
+        column_cache: &mut OreColumnCache<'_, '_>,
         world_x: i32,
         y: i32,
         world_z: i32,
         rule: &OreRule,
         hash: u64,
     ) -> bool {
+        // Cheap gates first: NaN/zero chance never discards, so the six-cell
+        // air scan below must not run at all for those rules — its result is
+        // unread and each cell would plan a halo column for nothing.
         let chance = rule.discard_chance_on_air_exposure;
-        if !chance.is_finite()
-            || chance <= 0.0
-            || !self.generated_cell_touches_air(column_cache, world_x, y, world_z)
-        {
+        if !chance.is_finite() || chance <= 0.0 {
             return false;
         }
         if chance >= 1.0 {
-            return true;
+            return self.generated_cell_touches_air(column_cache, world_x, y, world_z);
+        }
+        if !self.generated_cell_touches_air(column_cache, world_x, y, world_z) {
+            return false;
         }
         let sample = (hash >> 11) as f64 * (1.0 / ((1_u64 << 53) as f64));
         sample < chance
@@ -1625,7 +1856,7 @@ impl TerrainGenerator {
 
     fn generated_cell_touches_air(
         &self,
-        column_cache: &mut OreColumnCache,
+        column_cache: &mut OreColumnCache<'_, '_>,
         world_x: i32,
         y: i32,
         world_z: i32,
@@ -1644,7 +1875,7 @@ impl TerrainGenerator {
 
     fn generated_cell_before_ores(
         &self,
-        column_cache: &mut OreColumnCache,
+        column_cache: &mut OreColumnCache<'_, '_>,
         world_x: i32,
         y: i32,
         world_z: i32,
@@ -1653,7 +1884,7 @@ impl TerrainGenerator {
             return None;
         }
         let (top_non_air, height, dirt_start, fill, surface, cave_bounds) = {
-            let plan = column_cache.get_or_plan(self, world_x, world_z)?;
+            let plan = column_cache.get_or_plan(world_x, world_z)?;
             (
                 plan.top_non_air,
                 plan.height,
@@ -1704,32 +1935,6 @@ impl TerrainGenerator {
         Some(surface)
     }
 
-    fn apply_structures(&self, chunk: &mut Chunk, village: Option<&VillagePlanSet>) {
-        if let Some(plans) = village {
-            self.apply_village_pieces(chunk, plans);
-        }
-        if self.structures.is_empty() {
-            return;
-        }
-
-        let grid = self.structures.grid_chunks();
-        let cell_x = chunk.pos.x.div_euclid(grid);
-        let cell_z = chunk.pos.z.div_euclid(grid);
-        let mut touched = [false; 256];
-        for gx in (cell_x - 1)..=(cell_x + 1) {
-            for gz in (cell_z - 1)..=(cell_z + 1) {
-                self.apply_structure_cell(chunk, gx, gz, &mut touched);
-            }
-        }
-        for lz in 0..16u8 {
-            for lx in 0..16u8 {
-                if touched[lz as usize * 16 + lx as usize] {
-                    self.refresh_structure_column(chunk, lx, lz);
-                }
-            }
-        }
-    }
-
     /// Write every plan's piece blocks into this chunk and refresh the
     /// heightmaps of the columns they touched.
     ///
@@ -1743,11 +1948,21 @@ impl TerrainGenerator {
     /// the invariant is enforced where it can be, once, before a world uses the
     /// village — and reaching the failure here means the village would silently
     /// lose blocks, which is worse than stopping.
-    fn apply_village_pieces(&self, chunk: &mut Chunk, plans: &VillagePlanSet) {
+    fn apply_village_pieces(
+        &self,
+        chunk: &mut Chunk,
+        plans: &VillagePlanSet,
+        heights: &mut HeightContext<'_>,
+    ) {
         let Some(source) = self.village_plans.as_ref() else {
             return;
         };
-        let surface = |x: i32, z: i32| self.base_surface_y(x, z);
+        // The piece writer's surface is the terrain's own (SOURCE) surface —
+        // the `WORLD_SURFACE_WG` heightmap the `terrain_matching` projection's
+        // gravity processor reads — served from the shared context so repeated
+        // piece-column queries do not re-run the density query per column.
+        let heights_cell = RefCell::new(heights);
+        let surface = |x: i32, z: i32| heights_cell.borrow_mut().structure_surface(x, z);
         let loot = StructureLoot {
             seed: self.seed,
             catalog: &self.chest_loot,
@@ -1766,7 +1981,12 @@ impl TerrainGenerator {
         }
     }
 
-    fn apply_decorations(&self, chunk: &mut Chunk, columns: &[ColumnPlan; 256]) {
+    fn apply_decorations(
+        &self,
+        chunk: &mut Chunk,
+        columns: &[ColumnPlan; 256],
+        heights: &mut HeightContext<'_>,
+    ) {
         let mut touched = [None; 256];
         let mut leaves = Vec::new();
         for lz in 0..16u8 {
@@ -1794,7 +2014,7 @@ impl TerrainGenerator {
                 let tree_spacing = self.tree_spacing_for_biome(biome);
                 if tree_spacing.is_some_and(|spacing| h.is_multiple_of(spacing))
                     && self.tree_density_allows(plan)
-                    && self.tree_site_is_stable(plan)
+                    && self.tree_site_is_stable(plan, heights)
                     && self.place_tree(
                         chunk,
                         plan,
@@ -1957,8 +2177,11 @@ impl TerrainGenerator {
         }
     }
 
-    fn tree_site_is_stable(&self, plan: &ColumnPlan) -> bool {
+    fn tree_site_is_stable(&self, plan: &ColumnPlan, heights: &mut HeightContext<'_>) -> bool {
         // Keep the trunk and nearby canopy footprint off sharp terrain ledges.
+        // Neighbour heights come from the generation-local context — one shared
+        // sampler + one plan memo — instead of 25 independent `surface_height`
+        // queries that each re-run the density query and the village lookup.
         for dz in -2..=2 {
             for dx in -2..=2 {
                 let Some(wx) = plan.wx.checked_add(dx) else {
@@ -1967,7 +2190,7 @@ impl TerrainGenerator {
                 let Some(wz) = plan.wz.checked_add(dz) else {
                     return false;
                 };
-                let neighbour = self.surface_height(wx, wz);
+                let neighbour = heights.adjusted_height(wx, wz);
                 if (neighbour - plan.height).abs() > 1 {
                     return false;
                 }
@@ -2211,129 +2434,6 @@ impl TerrainGenerator {
         chunk.highest_opaque.set(lx, lz, value);
     }
 
-    fn apply_structure_cell(
-        &self,
-        chunk: &mut Chunk,
-        grid_x: i32,
-        grid_z: i32,
-        touched: &mut [bool; 256],
-    ) {
-        let Some((template, center_x, center_z)) = self.structure_plan(grid_x, grid_z) else {
-            return;
-        };
-        let center_height = self.surface_height(center_x, center_z);
-        if self.structures.fixed_center().is_none() {
-            if center_height <= SEA_LEVEL + BEACH_HEIGHT_ABOVE_SEA {
-                return;
-            }
-            let biome = self.biome_for(center_x, center_z, center_height);
-            if !self.biomes.grassland.contains(&biome) {
-                return;
-            }
-        }
-
-        let size = template.size();
-        let origin_x = center_x - size[0] / 2;
-        let Some(origin_y) = checked_y_offset(center_height, 1) else {
-            return;
-        };
-        let origin_z = center_z - size[2] / 2;
-        let loot = StructureLoot {
-            seed: self.seed,
-            catalog: &self.chest_loot,
-            items: &self.chest_loot_items,
-        };
-        paste_template(
-            chunk, template, origin_x, origin_y, origin_z, touched, &loot,
-        );
-        let mut inhabitants = chunk.settlement_inhabitants();
-        inhabitants.extend(
-            self.structures
-                .inhabitants()
-                .iter()
-                .zip(template.villager_markers())
-                .filter_map(|(inhabitant, marker)| {
-                    let x = origin_x.checked_add(marker[0])?;
-                    let y = origin_y.checked_add(marker[1])?;
-                    let z = origin_z.checked_add(marker[2])?;
-                    (x.div_euclid(16) == chunk.pos.x && z.div_euclid(16) == chunk.pos.z).then(
-                        || {
-                            let position = [f64::from(x) + 0.5, f64::from(y), f64::from(z) + 0.5];
-                            SettlementInhabitantMarker {
-                                claim: format!("{}@{center_x},{center_z}", inhabitant.id),
-                                entity_type: inhabitant.entity_type.clone(),
-                                position,
-                                villager_kind: inhabitant.villager_kind.clone(),
-                                profession: inhabitant.profession.clone(),
-                                level: inhabitant.level,
-                                home: Some(position),
-                                job_site: (inhabitant.profession != "none").then_some(position),
-                                meeting_point: Some([
-                                    f64::from(center_x) + 0.5,
-                                    f64::from(origin_y),
-                                    f64::from(center_z) + 0.5,
-                                ]),
-                                // The settlement plan authors adults with no
-                                // rotation of their own.
-                                age: 0,
-                                yaw: 0.0,
-                                pitch: 0.0,
-                            }
-                        },
-                    )
-                }),
-        );
-        if !inhabitants.is_empty() {
-            chunk.set_settlement_inhabitants(&inhabitants);
-        }
-
-        let mut vacant_homes = chunk.settlement_vacant_homes();
-        vacant_homes.extend(
-            template
-                .villager_markers()
-                .iter()
-                .enumerate()
-                .skip(self.structures.inhabitants().len())
-                .take(1)
-                .filter_map(|(slot, marker)| {
-                    let x = origin_x.checked_add(marker[0])?;
-                    let y = origin_y.checked_add(marker[1])?;
-                    let z = origin_z.checked_add(marker[2])?;
-                    (x.div_euclid(16) == chunk.pos.x && z.div_euclid(16) == chunk.pos.z).then(
-                        || SettlementVacantHomeMarker {
-                            claim: format!("solaris:vacant-home-{slot}@{center_x},{center_z}"),
-                            position: [f64::from(x) + 0.5, f64::from(y), f64::from(z) + 0.5],
-                        },
-                    )
-                }),
-        );
-        if !vacant_homes.is_empty() {
-            chunk.set_settlement_vacant_homes(&vacant_homes);
-        }
-    }
-
-    fn structure_plan(&self, grid_x: i32, grid_z: i32) -> Option<(&StructureTemplate, i32, i32)> {
-        let templates = self.structures.templates();
-        if templates.is_empty() {
-            return None;
-        }
-        if let Some((center_x, center_z)) = self.structures.fixed_center() {
-            return (grid_x == 0 && grid_z == 0).then_some((&templates[0], center_x, center_z));
-        }
-        let spacing = self.structures.grid_chunks();
-        let separation = self.structures.separation_chunks();
-        let usable = (spacing - separation * 2).max(1);
-        let h = feature_hash(self.seed, grid_x, 0, grid_z, self.structures.salt());
-        let x_offset = separation + (h % usable as u64) as i32;
-        let z_offset = separation + ((h >> 16) % usable as u64) as i32;
-        let template = &templates[((h >> 32) as usize) % templates.len()];
-        let center_chunk_x = i64::from(grid_x) * i64::from(spacing) + i64::from(x_offset);
-        let center_chunk_z = i64::from(grid_z) * i64::from(spacing) + i64::from(z_offset);
-        let center_x = i32::try_from(center_chunk_x * 16 + 8).ok()?;
-        let center_z = i32::try_from(center_chunk_z * 16 + 8).ok()?;
-        Some((template, center_x, center_z))
-    }
-
     fn refresh_structure_column(&self, chunk: &mut Chunk, lx: u8, lz: u8) {
         let top = (self.geometry.min_y()..self.geometry.max_y())
             .rev()
@@ -2373,6 +2473,9 @@ impl TerrainGenerator {
     }
 
     fn is_cave_cell(&self, x: i32, y: i32, z: i32, surface_y: i32) -> bool {
+        if let Some((_, density)) = self.vanilla() {
+            return y < surface_y && density.density(x, y, z) <= 0.0;
+        }
         self.density_router().is_cave(x, y, z, surface_y)
     }
 
@@ -2505,75 +2608,6 @@ fn first_available_ore_offset(existing: &[[i8; 3]]) -> Option<([i8; 3], usize)> 
     None
 }
 
-fn paste_template(
-    chunk: &mut Chunk,
-    template: &StructureTemplate,
-    origin_x: i32,
-    origin_y: i32,
-    origin_z: i32,
-    touched: &mut [bool; 256],
-    loot: &StructureLoot<'_>,
-) {
-    let min_x = world_block_coordinate(chunk.pos.x, 0);
-    let min_z = world_block_coordinate(chunk.pos.z, 0);
-    let geometry = chunk.geometry();
-    for block in template.blocks() {
-        let wx = origin_x + block.pos[0];
-        let Some(wy) = origin_y.checked_add(block.pos[1]) else {
-            continue;
-        };
-        let wz = origin_z + block.pos[2];
-        if !(geometry.min_y()..geometry.max_y()).contains(&wy)
-            || wx < min_x
-            || wx >= min_x + 16
-            || wz < min_z
-            || wz >= min_z + 16
-        {
-            continue;
-        }
-        let lx = (wx - min_x) as u8;
-        let lz = (wz - min_z) as u8;
-        if chunk.set_block(lx, wy, lz, block.state).is_some() {
-            touched[lz as usize * 16 + lx as usize] = true;
-        }
-    }
-    for (chest_index, template_chest) in template.chests().iter().enumerate() {
-        let x = origin_x + template_chest.pos[0];
-        let Some(y) = origin_y.checked_add(template_chest.pos[1]) else {
-            continue;
-        };
-        let z = origin_z + template_chest.pos[2];
-        if !(geometry.min_y()..geometry.max_y()).contains(&y)
-            || x < min_x
-            || x >= min_x + 16
-            || z < min_z
-            || z >= min_z + 16
-        {
-            continue;
-        }
-        let Some(expected_state) = template
-            .blocks()
-            .iter()
-            .find(|block| block.pos == template_chest.pos)
-            .map(|block| block.state)
-        else {
-            continue;
-        };
-        let lx = (x - min_x) as u8;
-        let lz = (z - min_z) as u8;
-        if chunk.get_block(lx, y, lz) != Some(expected_state) {
-            continue;
-        }
-        // The plugin lane's own seeding, not vanilla's: this composite has no
-        // vanilla counterpart to be faithful to.
-        let loot_seed = chest_loot_seed(loot.seed, [x, y, z], chest_index);
-        let contents = template_chest.resolve_contents(loot, loot_seed);
-        chunk
-            .chests
-            .insert(mc_world::BlockPos { x, y, z }, contents);
-    }
-}
-
 impl ChunkGenerator for TerrainGenerator {
     fn village_sites_in_region(
         &self,
@@ -2596,15 +2630,107 @@ impl ChunkGenerator for TerrainGenerator {
         chunk
             .heightmaps
             .insert("WORLD_SURFACE".into(), Heightmap::zeroed());
+        let native_density = self.vanilla().map(|(climate, density)| {
+            let min_x = world_block_coordinate(pos.x, 0);
+            let min_z = world_block_coordinate(pos.z, 0);
+            let mut values = vec![0.0; density.height() as usize * 256];
+            density.fill_density_chunk(min_x, min_z, &mut values);
+            for idx in 0..256 {
+                let x = min_x + (idx % 16) as i32;
+                let z = min_z + (idx / 16) as i32;
+                let top = (self.geometry.min_y()..self.geometry.max_y())
+                    .rev()
+                    .find(|&y| {
+                        let offset = y - density.min_y();
+                        offset >= 0
+                            && offset < density.height()
+                            && values[offset as usize * 256 + idx] > 0.0
+                    })
+                    .unwrap_or(self.geometry.min_y());
+                let native = climate.sample(x, top, z);
+                let biome =
+                    Identifier::parse(native.biome).expect("validated vanilla biome identifier");
+                let vegetation_density = self
+                    .biome_supports_land_vegetation(&biome)
+                    .then(|| self.vegetation_density(x, z, native.climate[1]));
+                self.diagnostic_cache.insert(
+                    x,
+                    z,
+                    TerrainDiagnosticSample {
+                        surface_y: top,
+                        biome,
+                        vegetation_density,
+                    },
+                );
+            }
+            values
+        });
         let village = self.village_plans_for_chunk(pos);
         let columns = std::array::from_fn(|idx| {
             let lx = (idx % 16) as u8;
             let lz = (idx / 16) as u8;
             self.plan_column(pos, lx, lz, village.as_ref())
         });
+        // The generation-local height context: ready central-chunk SOURCE
+        // heights (recomputed from the same `base_surface_y` the columns
+        // planned from, so no second derivation can disagree) plus ONE
+        // shared native halo sampler for lazily reached neighbours plus the
+        // village-plan memo. Tree, ore-halo and structure readers consult it
+        // instead of re-running the full height + plan pipeline per column.
+        //
+        // The context's sampler covers exactly the columns a chunk fill can
+        // read: the halo's reach is `ORE_COLUMN_HALO` (ore veins) inside the
+        // ±2 tree-stability footprint; the sampler bound is the union.
+        let source_columns: [(i32, i32, i32); 256] = std::array::from_fn(|idx| {
+            let plan = &columns[idx];
+            (plan.wx, plan.wz, self.base_surface_y(plan.wx, plan.wz))
+        });
+        let mut heights = HeightContext::for_chunk(
+            self,
+            pos,
+            &source_columns,
+            self.vanilla().map(|(_, density)| {
+                let min_x = world_block_coordinate(pos.x, 0) as i64 - i64::from(ORE_COLUMN_HALO);
+                let min_z = world_block_coordinate(pos.z, 0) as i64 - i64::from(ORE_COLUMN_HALO);
+                let clamp =
+                    |value: i64| value.clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32;
+                density.surface_height_sampler(
+                    clamp(min_x),
+                    clamp(min_z),
+                    clamp(min_x + 16 + i64::from(ORE_COLUMN_HALO) * 2 - 1),
+                    clamp(min_z + 16 + i64::from(ORE_COLUMN_HALO) * 2 - 1),
+                )
+            }),
+        );
 
         for plan in &columns {
-            self.fill_column(&mut chunk, plan);
+            if let (Some(values), Some((_, density))) = (&native_density, self.vanilla()) {
+                let idx = usize::from(plan.lz) * 16 + usize::from(plan.lx);
+                for y in self.geometry.min_y()..=plan.top_non_air {
+                    let offset = y - density.min_y();
+                    let solid = offset >= 0
+                        && offset < density.height()
+                        && values[offset as usize * 256 + idx] > 0.0;
+                    let state = if y == self.geometry.min_y() {
+                        self.bedrock
+                    } else if y == plan.height {
+                        plan.surface
+                    } else if y > plan.height {
+                        self.water
+                    } else if solid || y >= plan.dirt_start {
+                        if y >= plan.dirt_start {
+                            plan.fill
+                        } else {
+                            self.base_stone_for_y(plan.lx, y, plan.lz, pos)
+                        }
+                    } else {
+                        self.air
+                    };
+                    let _ = chunk.set_block(plan.lx, y, plan.lz, state);
+                }
+            } else {
+                self.fill_column(&mut chunk, plan);
+            }
             // Heightmap value: Y of the first air cell above the
             // Heightmaps store offsets from this dimension's minimum Y.
             let Some(world_surface) = heightmap_value_for_top(self.geometry, plan.top_non_air)
@@ -2624,15 +2750,25 @@ impl ChunkGenerator for TerrainGenerator {
         }
         if self.geological_ores.is_some() {
             self.apply_caves(&mut chunk, &columns);
-            self.apply_ores(&mut chunk, &columns);
+            if let Some(geological_ores) = &self.geological_ores {
+                geological_ores.apply(self, &mut chunk);
+            }
         } else {
-            let mut ore_cache = self.ore_column_cache(&chunk, &columns);
-            self.apply_caves_with_cache(&mut chunk, &columns, Some(&mut ore_cache));
-            self.apply_ores_with_cache(&mut chunk, &mut ore_cache);
+            {
+                let mut ore_cache = self.ore_column_cache(&chunk, &columns, &mut heights);
+                self.apply_caves_with_cache(&mut chunk, &columns, Some(&mut ore_cache));
+                self.apply_ores_with_cache(&mut chunk, &mut ore_cache);
+            }
         }
         self.assign_biomes(&mut chunk, &columns);
-        self.apply_structures(&mut chunk, village.as_ref());
-        self.apply_decorations(&mut chunk, &columns);
+        if let Some(plans) = village.as_ref() {
+            {
+                self.apply_village_pieces(&mut chunk, plans, &mut heights);
+            }
+        }
+        {
+            self.apply_decorations(&mut chunk, &columns, &mut heights);
+        }
         chunk.status = "minecraft:full".into();
         chunk.mark_dirty();
         chunk
@@ -2642,10 +2778,6 @@ impl ChunkGenerator for TerrainGenerator {
 #[cfg(test)]
 #[path = "terrain/tests.rs"]
 mod tests;
-
-#[cfg(test)]
-#[path = "terrain/wetland_tests.rs"]
-mod wetland_tests;
 
 #[cfg(test)]
 #[path = "terrain/coastal_tests.rs"]

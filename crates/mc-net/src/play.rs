@@ -30,13 +30,13 @@ use mc_data::item_components::ItemFactsTable;
 use mc_data::items::ItemRegistry;
 use mc_data::tags::TagsData;
 use mc_data::{Registry, VanillaData};
-use mc_domain::{Direction, GameMode, InteractionHand};
 #[cfg(test)]
-use mc_entity::AttributeKind;
+use mc_domain::Direction;
+use mc_domain::{GameMode, InteractionHand};
 use mc_entity::player_survival_26_1_2::SurvivalHealthTick;
 use mc_entity::{
-    EntityId, EntityItemStack, EntityLifecycle, EntitySnapshot, GoalState, PathingBudget,
-    PathingProbe, PathingProbeResult, RegionKey, Rotation, SpawnEntity, Vec3,
+    EntityId, EntityItemStack, EntityLifecycle, GoalState, PathingBudget, PathingProbe,
+    PathingProbeResult, RegionKey, Rotation, SpawnEntity, Vec3,
 };
 pub(crate) use mc_entity::{EntityPhysicsKind, EntityPhysicsQuery};
 #[cfg(test)]
@@ -52,35 +52,45 @@ use mc_protocol::packets::play::{
     ClientboundContainerSetData, ClientboundContainerSetSlot, ClientboundCooldown,
     ClientboundCustomPayload, ClientboundInitializeBorder, ClientboundKeepAlive,
     ClientboundMerchantOffers, ClientboundOpenScreen, ClientboundRecipeBookSettings,
-    ClientboundRespawn, ClientboundSetEntityData, ClientboundSetExperience, ClientboundSetHealth,
-    ClientboundSetHeldSlot, ClientboundSystemChat, ClientboundTabList, ClientboundTakeItemEntity,
-    ConfirmTeleportation, ContainerInput, ENTITY_DATA_POSE_INDEX, ENTITY_DATA_SHARED_FLAGS_INDEX,
-    EntityAnimation, EntityAnimationAction, EntityDataValue, EntityEvent, EntityPose,
-    EntityPositionSync, EntityVec3, ForgetLevelChunk, GameEvent, HashedStack,
-    ITEM_ENTITY_DATA_ITEM_INDEX, LIVING_ENTITY_DATA_FLAGS_INDEX, LevelChunkWithLight, LevelEvent,
-    LightData, LightUpdate, LoginPlay, MoveEntityPosRot, MovePlayerFlags, PlayDisconnect,
-    PlayerActionKind, PlayerCommandAction, PlayerInfoActions, PlayerInfoEntry, PlayerInfoRemove,
-    PlayerInfoUpdate, PlayerInput, PositionMoveRotation, RemoveEntities, RotateHead,
-    SHEEP_ENTITY_DATA_WOOL_INDEX, SectionBlockChange, SectionBlocksUpdate, ServerboundAttack,
-    ServerboundChangeGameMode, ServerboundChat, ServerboundChatAck, ServerboundChatCommand,
-    ServerboundChunkBatchReceived, ServerboundClientCommand, ServerboundClientInformation,
-    ServerboundClientTickEnd, ServerboundCommandSuggestion, ServerboundContainerButtonClick,
-    ServerboundContainerClick, ServerboundContainerClose, ServerboundCustomPayload,
-    ServerboundInteract, ServerboundKeepAlive, ServerboundMovePlayerPos,
-    ServerboundMovePlayerPosRot, ServerboundMovePlayerRot, ServerboundMovePlayerStatusOnly,
-    ServerboundPlaceRecipe, ServerboundPlayerAction, ServerboundPlayerCommand,
-    ServerboundPlayerInput, ServerboundPlayerLoaded, ServerboundRecipeBookChangeSettings,
-    ServerboundRecipeBookSeenRecipe, ServerboundResourcePack, ServerboundSelectTrade,
-    ServerboundSetCarriedItem, ServerboundSetCreativeModeSlot, ServerboundSignUpdate,
-    ServerboundSwing, ServerboundUseItem, ServerboundUseItemOn, SetCenterChunk,
-    SetDefaultSpawnPosition, SetEntityMotion, SynchronizePlayerPosition, pack_section_pos,
-    pack_section_relative_pos, unpack_block_pos,
+    ClientboundRespawn, ClientboundSetEntityData, ClientboundSetHealth, ClientboundSetHeldSlot,
+    ClientboundSystemChat, ClientboundTabList, ClientboundTakeItemEntity, ConfirmTeleportation,
+    ContainerInput, ENTITY_DATA_POSE_INDEX, ENTITY_DATA_SHARED_FLAGS_INDEX, EntityAnimation,
+    EntityAnimationAction, EntityDataValue, EntityEvent, EntityPose, EntityPositionSync,
+    EntityVec3, ForgetLevelChunk, GameEvent, HashedStack, ITEM_ENTITY_DATA_ITEM_INDEX,
+    LIVING_ENTITY_DATA_FLAGS_INDEX, LevelChunkWithLight, LevelEvent, LightData, LightUpdate,
+    LoginPlay, MoveEntityPosRot, MovePlayerFlags, PlayDisconnect, PlayerActionKind,
+    PlayerCommandAction, PlayerInfoActions, PlayerInfoEntry, PlayerInfoRemove, PlayerInfoUpdate,
+    PlayerInput, PositionMoveRotation, RemoveEntities, RotateHead, SHEEP_ENTITY_DATA_WOOL_INDEX,
+    SectionBlockChange, SectionBlocksUpdate, ServerboundAttack, ServerboundChangeGameMode,
+    ServerboundChat, ServerboundChatAck, ServerboundChatCommand, ServerboundChunkBatchReceived,
+    ServerboundClientCommand, ServerboundClientInformation, ServerboundClientTickEnd,
+    ServerboundCommandSuggestion, ServerboundContainerButtonClick, ServerboundContainerClick,
+    ServerboundContainerClose, ServerboundCustomPayload, ServerboundInteract, ServerboundKeepAlive,
+    ServerboundMovePlayerPos, ServerboundMovePlayerPosRot, ServerboundMovePlayerRot,
+    ServerboundMovePlayerStatusOnly, ServerboundMoveVehicle, ServerboundPlaceRecipe,
+    ServerboundPlayerAction, ServerboundPlayerCommand, ServerboundPlayerInput,
+    ServerboundPlayerLoaded, ServerboundRecipeBookChangeSettings, ServerboundRecipeBookSeenRecipe,
+    ServerboundResourcePack, ServerboundSelectTrade, ServerboundSetCarriedItem,
+    ServerboundSetCreativeModeSlot, ServerboundSignUpdate, ServerboundSwing, ServerboundUseItem,
+    ServerboundUseItemOn, SetCenterChunk, SetDefaultSpawnPosition, SetEntityMotion,
+    SynchronizePlayerPosition, pack_section_pos, pack_section_relative_pos, unpack_block_pos,
 };
 use mc_protocol::packets::{CustomPayload, Packet};
 use mc_script::{
     MAX_SCRIPT_CUSTOM_PAYLOAD_BYTES, ScriptCraftingSource, ScriptEvent, ScriptInteractionHand,
     ScriptItemPickupSource, ScriptPlayerContext, ScriptPlayerId, ScriptProtocolPhase,
 };
+use mc_simulation::block_edit::{
+    AppliedBlockEdit, BlockEdit, BlockEditPrecondition, BlockPlanningRead, SnapshotPlanningWorld,
+    SnapshotReadPrecondition, adjacent_block_positions, air_state_id, block_state_property,
+    fluid_neighbour_positions, sibling_state_with_bool_property,
+};
+use mc_simulation::rng::splitmix64;
+#[cfg(test)]
+use mc_simulation::tick_policy::DEFAULT_VIEW_DISTANCE;
+#[cfg(test)]
+use mc_simulation::tick_policy::ENTITY_TICK_PERIOD;
+use mc_simulation::tick_policy::RandomTickPolicy;
 #[cfg(test)]
 use mc_world::FurnaceSlot;
 use mc_world::light::{ChunkLight, LightCache, LightWorkspace};
@@ -96,11 +106,10 @@ use tracing::{debug, info, warn};
 
 use crate::chunk_pipeline::ChunkPipelineResources;
 use crate::configuration::ConfigurationCustomPayload;
-use crate::connection::{read_frame, write_packet};
+use crate::connection::{read_frame, text_component_nbt, write_packet};
 use crate::error::ConnectionError;
 use crate::loader::loader_view_action_channel;
 use crate::login::LoggedInProfile;
-use crate::play::scheduled_blocks::ScheduledBlockRegionPlan;
 use crate::script::{PluginStorageHandle, PluginZoneAdapter};
 use crate::server::{ScriptEventSink, ServerConfig, WorldHandle};
 use crate::{
@@ -108,12 +117,13 @@ use crate::{
     RuntimeControlHandle,
 };
 
+mod animal_interactions;
 mod beds;
+use animal_interactions::handle_animal_special_interact;
 mod block_break;
 #[cfg(test)]
 mod block_break_tests;
 mod block_edit_commit;
-mod block_placement;
 pub(crate) mod block_wire;
 mod bucket_interactions;
 mod campfire;
@@ -122,20 +132,12 @@ mod chunk_stream;
 mod client_load;
 #[cfg(test)]
 mod client_load_tests;
-mod combat;
 mod command_execution;
 pub(crate) mod commands;
 mod containers;
 mod explosions;
-mod falling_blocks;
-mod fluids;
 mod ingress;
 mod ingress_rate;
-mod inhabited_time;
-#[cfg(test)]
-mod inhabited_time_tests;
-mod inventory;
-mod item_blocks;
 mod lighting;
 mod liveness;
 
@@ -144,23 +146,19 @@ mod merchant_adapter;
 mod movement;
 #[cfg(test)]
 mod movement_tests;
+pub(crate) mod npc_work;
 pub(crate) mod owned_inventory;
 #[cfg(test)]
 mod owned_inventory_request_tests;
 #[cfg(test)]
 mod owned_inventory_tests;
 pub(crate) mod persistence;
-mod player_breathing;
-#[cfg(test)]
-mod player_breathing_tests;
 mod player_damage_adapter;
 mod player_teleport;
 #[cfg(test)]
 mod player_teleport_tests;
-mod random_ticks;
 mod recipes;
-pub(crate) mod resident_work;
-pub(crate) use session::resident_orders::{ResidentAttack, ResidentGoal};
+pub(crate) use session::npc_orders::NpcGoalUpdate;
 mod scheduled_blocks;
 mod script_gameplay_events;
 #[cfg(test)]
@@ -170,14 +168,14 @@ use client_load::ClientLoadGate;
 pub(super) use mc_entity::natural_spawn_26_1_2::HerdSpawn;
 #[cfg(test)]
 pub(super) use mc_entity::natural_spawn_26_1_2::{
-    MAX_HOSTILE_SPAWNS_PER_CHUNK, MAX_PASSIVE_SPAWNS_PER_CHUNK,
     MIN_ENTITY_SPAWN_DISTANCE_FROM_PLAYER, herd_uuid,
 };
+use mc_simulation::player_breathing::{PlayerBreathingState, player_can_drown};
 use merchant_adapter::{handle_select_trade, open_merchant_container};
-use player_breathing::{PlayerBreathingState, player_can_drown};
 mod script_inventory_transaction;
 pub(crate) use script_inventory_transaction::{
-    ScriptStorageCommitError, ScriptStoragePrepareOutcome, ScriptStorageTransactionPrepare,
+    ReservedScriptCommit, ScriptStorageCommitError, ScriptStorageTransactionPrepare,
+    commit_reserved_script_transaction,
 };
 #[cfg(test)]
 mod script_inventory_transaction_tests;
@@ -187,25 +185,19 @@ pub(crate) const MAX_BLOCK_EDIT_COMMAND_EDITS: usize = 512;
 mod simulation;
 pub(crate) use simulation::SimulationWorldAccess;
 mod spawn;
-mod survival;
-mod toggles;
+mod survival_adapter;
 mod use_item_on_adapter;
 mod wire_entities;
 #[cfg(test)]
 mod wire_entities_tests;
-pub(crate) mod world_journal;
 
 #[cfg(test)]
 use campfire::{
-    CAMPFIRE_COOKING_SLOT_COUNT, CAMPFIRE_NBT_COOKING_TIMES, CAMPFIRE_NBT_COOKING_TOTAL_TIMES,
-    LEGACY_CAMPFIRE_NBT_REMAINING, LEGACY_CAMPFIRE_NBT_TOTAL,
-    campfire_block_entity_persistent_bytes, campfire_block_entity_persistent_nbt,
-    campfire_block_entity_update_nbt, campfire_cooking_state_from_persistent_nbt,
-    campfire_cooking_state_from_persistent_nbt_strict, campfire_output_uuid, compound_field,
-    compound_int_array_field, pending_campfire_outputs_from_nbt,
-};
-pub(in crate::play) use campfire::{
-    CampfireCookingState, PendingCampfireOutput, is_campfire_block,
+    CAMPFIRE_NBT_COOKING_TIMES, CAMPFIRE_NBT_COOKING_TOTAL_TIMES, LEGACY_CAMPFIRE_NBT_REMAINING,
+    LEGACY_CAMPFIRE_NBT_TOTAL, campfire_block_entity_persistent_bytes,
+    campfire_block_entity_persistent_nbt, campfire_block_entity_update_nbt,
+    campfire_cooking_state_from_persistent_nbt, campfire_cooking_state_from_persistent_nbt_strict,
+    compound_field, compound_int_array_field, pending_campfire_outputs_from_nbt,
 };
 #[cfg(test)]
 use campfire_adapter::handle_campfire_use_on;
@@ -222,36 +214,46 @@ pub(crate) use campfire_adapter::{
 pub(crate) use chunk_stream::{
     passive_entity_passable_blocks, passive_herd_fallback_surface_blocks,
 };
-use combat::{
+#[cfg(test)]
+use mc_simulation::campfire::{CAMPFIRE_COOKING_SLOT_COUNT, campfire_output_uuid};
+use mc_simulation::campfire::{CampfireCookingState, PendingCampfireOutput, is_campfire_block};
+use mc_simulation::combat::{
     ActiveShield, PlayerDamageKind, PlayerDamageRequest, ShieldUseState,
     begin_player_attack_attempt, damage_active_shield_slots, damage_held_weapon_stack,
-    player_horizontal_look_direction, shield_blocks_damage, shield_hand_slot, shield_use_flags,
-    shield_use_from_stack, shield_use_matches, stack_is_shield, weapon_attacks_damage_held_item,
+    plan_player_attack_costs, player_horizontal_look_direction, shield_blocks_damage,
+    shield_hand_slot, shield_use_from_stack, weapon_attacks_damage_held_item,
 };
 #[cfg(test)]
-use combat::{
+use mc_simulation::combat::{
     PlayerHurtResistance, PlayerHurtResolution, SHIELD_ACTIVATION_DELAY_TICKS,
     SHIELD_FALLBACK_MAX_DAMAGE, attack_damage_for_item, held_attack_damage,
     held_attack_damage_at_tick, held_attack_speed, melee_knockback, shield_block_knockback,
     shield_durability_damage,
 };
-pub(crate) use falling_blocks::LandedFallingBlock;
-use falling_blocks::{
-    FallingBlockLandingPlan, falling_block_landing_chunks, falling_block_start_chunks,
-    is_falling_block_state, plan_falling_block_landings, plan_falling_block_starts,
+use mc_simulation::falling_blocks::{
+    FallingBlockLandingPlan, LandedFallingBlock, falling_block_landing_chunks,
+    falling_block_start_chunks, is_falling_block_state, plan_falling_block_landings,
+    plan_falling_block_starts,
 };
-pub(crate) use inhabited_time::InhabitedTimeAccumulator;
+#[cfg(test)]
+use session::TestPause;
+pub(crate) use session::native_item_deployment;
+pub(crate) use session::npc_block_use_reachable;
 #[cfg(test)]
 pub(in crate::play) use session::{ENTITY_PICKUP_RADIUS, ITEM_PICKUP_DELAY_TICKS};
-pub(crate) use session::{SessionRegistry, WeatherKind, entity_owner_fatal_from_panic};
+pub(crate) use session::{NativePlayerAttackEffect, NativeProjectileImpact, StagedPlayerDeath};
+pub(crate) use session::{SessionRegistry, entity_owner_fatal_from_panic};
 
 pub(crate) fn prewarm_entity_pathing_tables() -> std::num::NonZeroUsize {
     std::num::NonZeroUsize::new(session::prewarm_canonical_pathing_state_facts())
         .expect("canonical pathing table must contain collision-backed states")
 }
 
+pub(crate) use simulation::WorldRule;
 #[cfg(test)]
 pub(crate) use simulation::simulation_channel;
+#[cfg(test)]
+pub(crate) use simulation::spawn_simulation_owner_for_test;
 use simulation::{
     ActiveShieldTransition, AnimalFeedPlan, AuthoritativePlayerStateSnapshot, BowReleasePlan,
     CommittedPlayerPose, FoodUsePlan, MerchantTradeDestination, MerchantTradePlan,
@@ -289,15 +291,10 @@ pub(crate) use simulation::{
 pub(crate) use spawn::prepare_spawn_chunk;
 
 #[cfg(test)]
-use beds::{bed_respawn_pose, canonical_bed_position, next_morning_time};
-use beds::{
-    bed_sleep_is_blocked_by_monster, bed_sleep_is_obstructed, plan_bed_occupied_edits,
-    plan_loaded_bed_interaction, safe_bed_wake_pose,
-};
+use beds::bed_respawn_pose;
+use beds::{plan_loaded_bed_interaction, safe_bed_wake_pose};
 use block_break::{
-    PendingBreak, block_break_loot_seed, break_replacement_state_in_storage,
-    handle_block_destroy_action, plan_break_block_edits, plan_break_edit_preconditions,
-    plan_survival_break_drops, tick_delayed_break,
+    PendingBreak, handle_block_destroy_action, plan_survival_break_drops, tick_delayed_break,
 };
 #[cfg(test)]
 use block_edit_commit::{
@@ -309,11 +306,6 @@ use block_edit_commit::{
     apply_block_edit_to_storage, apply_player_block_edit_batch_conditionally,
     apply_visible_block_edit_batch_conditionally, finalize_visible_block_edit_outcome,
 };
-#[cfg(test)]
-use block_placement::{
-    append_cactus_side_neighbor_cascades, door_half_state, horizontal_facing_from_yaw,
-    placed_sign_edit, sign_block_entity_update_nbt, sign_placement_state,
-};
 use block_wire::{
     BlockDelta, broadcast_block_deltas_to_sessions, broadcast_light_updates_to_sessions,
     send_block_deltas, send_light_updates,
@@ -321,8 +313,6 @@ use block_wire::{
 #[cfg(test)]
 use block_wire::{BlockDeltaPacket, plan_block_delta_packets};
 use bucket_interactions::handle_bucket_use;
-#[cfg(test)]
-use bucket_interactions::plan_bucket_replacement;
 #[cfg(test)]
 use chunk_stream::{
     ChunkBuildTiming, ChunkWriteTiming, passable_block_name, plan_passive_herd, spiral_chunks,
@@ -335,94 +325,146 @@ use command_execution::{
     execute_player_command, handle_client_command, prepare_game_mode_transition,
     send_command_feedback, send_world_time,
 };
-#[cfg(test)]
-use commands::{
-    AdminCommand, DebugCommand, SurvivalCommand, command_suggestions, parse_admin_command,
-};
 use commands::{
     CommandError, CommandPermissions, command_suggestions_with_plugin_roots,
     command_tree_packet_with_plugin_roots, player_abilities_for_mode,
 };
 #[cfg(test)]
+use commands::{DebugCommand, SurvivalCommand};
+#[cfg(test)]
 use commands::{parse_debug_command, parse_gamemode_command};
 use containers::{
-    ActiveContainer, CRAFTING_MENU_TYPE_ID, ChestClickAction, ChestClickInput, ChestView,
-    ChestWindow, CraftingTableWindow, ENCHANTING_MENU_SLOT_COUNT, ENCHANTING_MENU_TYPE_ID,
-    EnchantingTableWindow, FURNACE_MENU_SLOT_COUNT, FurnaceClickAction, FurnaceClickInput,
-    FurnaceKind, FurnaceWindow, MERCHANT_MENU_TYPE_ID, MerchantWindow, QuickCraftClick,
-    QuickCraftOutcome, QuickCraftState, STONECUTTER_MENU_TYPE_ID, ScriptMenuClick,
-    ScriptMenuClickDisposition, ScriptMenuOpenError, ScriptMenuWindow, StonecutterClickAction,
-    StonecutterClickInput, StonecutterWindow,
-    can_place_in_enchanting_menu_slot as can_place_in_enchanting_menu_slot_with_data,
+    ActiveContainer, ChestClickAction, ChestClickInput, ChestView, ChestWindow,
+    ENCHANTING_MENU_TYPE_ID, FURNACE_MENU_SLOT_COUNT, FurnaceClickAction, FurnaceClickInput,
+    FurnaceKind, FurnaceWindow, MERCHANT_MENU_TYPE_ID, MerchantWindow, STONECUTTER_MENU_TYPE_ID,
+    ScriptMenuClick, ScriptMenuClickDisposition, ScriptMenuOpenError, ScriptMenuWindow,
     chest_menu_state_change_count, chest_menu_title_nbt, chest_slot_stacks, chest_wire_items,
-    count_valid_enchanting_bookshelves, crafting_menu_title_nbt,
-    crafting_table_input_from_projection, crafting_table_input_projection, crafting_wire_items,
-    enchant_item_candidate, enchanting_data_values, enchanting_menu_stack,
-    enchanting_menu_title_nbt, enchanting_offer, enchanting_player_slot,
-    enchanting_table_input_from_projection, enchanting_table_input_projection,
+    crafting_menu_title_nbt, enchanting_data_values, enchanting_menu_title_nbt,
     enchanting_wire_items, furnace_data_values, furnace_experience_seed, furnace_kind_for_block_id,
     furnace_kind_for_state, furnace_menu_title_for_state, furnace_menu_title_nbt,
     furnace_output_was_taken, furnace_slot_to_stack, is_barrel_state, is_chest_state,
-    is_crafting_table_state, is_enchanting_table_state, is_furnace_state, is_lapis_stack,
-    is_stonecutter_state, next_container_id, plan_chest_click, plan_click as plan_furnace_click,
-    plan_stonecutter_click, refresh_crafting_result as refresh_crafting_result_with_data,
-    select_stonecutter_recipe as select_stonecutter_recipe_with_data, set_enchanting_menu_stack,
-    set_stonecutter_input as set_stonecutter_input_with_data, stonecutter_input_array,
-    stonecutter_input_from_projection, stonecutter_input_projection, stonecutter_menu_title_nbt,
-    stonecutter_wire_items, store_active_container, supported_enchantment_for_item,
-    tick as tick_furnace_rules, unsupported_survival_station_for_state,
+    is_crafting_table_state, is_enchanting_table_state, is_furnace_state, is_stonecutter_state,
+    next_container_id, plan_chest_click, plan_click as plan_furnace_click,
+    stonecutter_menu_title_nbt, stonecutter_wire_items, store_active_container,
+    tick as tick_furnace_rules,
 };
 #[cfg(test)]
 use containers::{
     DOUBLE_CHEST_MENU_TYPE_ID, SINGLE_CHEST_STORAGE_SLOTS,
     apply_quick_move_click as chest_apply_quick_move_click,
     apply_swap_click as chest_apply_swap_click, apply_throw_click as chest_apply_throw_click,
-    chest_player_slot, crafting_result_from_input, furnace_experience_award,
-    inventory_crafting_input, item_is_efficiency_enchantable,
-    refresh_inventory_crafting_result as refresh_inventory_crafting_result_with_data,
-    repair_item_crafting_result, set_chest_menu_stack, stack_to_furnace_slot,
+    chest_player_slot, furnace_experience_award, set_chest_menu_stack, stack_to_furnace_slot,
 };
 use containers::{
     merchant_input_projection, merchant_protocol_offers, merchant_wire_items, select_merchant_offer,
 };
+use lighting::{light_update_chunks, outbound_light_updates, persist_baked_light_updates};
 #[cfg(test)]
-use fluids::{WATER_FLOW_DELAY_TICKS, fluid_tick_edits, fluid_wash_drops, supported_flow_state};
-use fluids::{
-    fluid_state_with_level, plan_fluid_ticks_near_applied, scheduled_fluid_planning_chunks,
+use mc_data::recipes::ingredient_accepts_item;
+use mc_simulation::beds::{
+    DAY_LENGTH_TICKS, bed_sleep_is_blocked_by_monster, bed_sleep_is_obstructed,
+    plan_bed_occupied_edits,
 };
 #[cfg(test)]
-use inventory::damage_equipped_armor;
-#[cfg(test)]
-use inventory::{
-    ArmorStats, armor_reduced_damage, player_swap_slot, protection_reduced_damage, take_throw_stack,
+use mc_simulation::beds::{canonical_bed_position, next_morning_time};
+use mc_simulation::block_break::break_replacement_state_in_storage;
+use mc_simulation::block_break::{
+    block_break_loot_seed, plan_break_block_edits, plan_break_edit_preconditions,
 };
-use inventory::{
-    PlayerInventory, apply_outside_pickup_click as apply_outside_pickup_click_with_carried,
-    apply_regular_pickup_slot, apply_regular_swap_slot, apply_regular_throw_slot,
-    can_place_in_player_slot, can_stack, hotbar_swap_slot, item_max_stack, pickup_click_max_stack,
-    survival_damage_after_armor, survival_damage_after_protection,
-};
-use item_blocks::ItemToBlockTable;
 #[cfg(test)]
-use lighting::collect_incremental_light_updates_for_applied_edits;
-use lighting::{
-    IncrementalLightSources, capture_incremental_light_sources,
+use mc_simulation::block_placement::{
+    append_cactus_side_neighbor_cascades, door_half_state, horizontal_facing_from_yaw,
+    sign_block_entity_update_nbt, sign_placement_state,
+};
+#[cfg(test)]
+use mc_simulation::buckets::plan_bucket_replacement;
+#[cfg(test)]
+use mc_simulation::combat::{is_durability_tool_path, max_tool_damage_for_path};
+use mc_simulation::crafting::{
+    CRAFTING_MENU_TYPE_ID, ContainerClickAction, CraftingTableWindow, MenuClickStatus,
+    crafting_table_input_from_projection, crafting_table_input_projection, crafting_wire_items,
+    plan_crafting_table_click, plan_inventory_click,
+    refresh_crafting_result as refresh_crafting_result_with_data,
+};
+#[cfg(test)]
+use mc_simulation::crafting::{
+    crafting_result_from_input, inventory_crafting_input,
+    refresh_inventory_crafting_result as refresh_inventory_crafting_result_with_data,
+};
+use mc_simulation::enchanting::{
+    EnchantingTableWindow, count_valid_enchanting_bookshelves,
+    enchanting_table_input_from_projection, enchanting_table_input_projection, plan_enchant_button,
+    plan_enchanting_table_click,
+};
+use mc_simulation::fluids::{
+    ScheduledFluidTickPlan, plan_fluid_ticks_near_applied, scheduled_fluid_planning_chunks,
+};
+#[cfg(test)]
+use mc_simulation::fluids::{
+    WATER_FLOW_DELAY_TICKS, fluid_tick_edits, fluid_wash_drops, supported_flow_state,
+};
+use mc_simulation::inventory::{
+    PlayerInventory, can_stack, inventory_damage_after_armor, inventory_damage_after_protection,
+    item_max_stack,
+};
+use mc_simulation::item_blocks::ItemToBlockTable;
+#[cfg(test)]
+use mc_simulation::lighting::collect_incremental_light_updates_for_applied_edits;
+use mc_simulation::lighting::{
+    IncrementalLightSources, block_edit_changes_light, capture_incremental_light_sources,
     collect_full_light_updates_for_current_world, compute_incremental_light_updates,
-    incremental_light_sources_are_current, light_update_chunks, persist_baked_light_updates,
+    incremental_light_sources_are_current,
 };
 #[cfg(test)]
-use movement::fall_damage_amount;
+use mc_simulation::movement::fall_damage_amount;
+use mc_simulation::movement::{
+    farmland_trample_pos, movement_exhaustion, player_body_collides_with_solid_in_snapshot,
+    player_water_overlap_in_snapshot,
+};
+#[cfg(test)]
+use mc_simulation::persistence::PersistedEntityRecord;
+use mc_simulation::persistence::{PersistedEntityCheckpoint, XpState};
+use mc_simulation::quickcraft::{QuickCraftClick, QuickCraftState};
+#[cfg(test)]
+use mc_simulation::random_ticks::{
+    LeafDecayDropRolls, RandomTickSample, next_fire_state, next_leaf_decay_state, random_tick_edit,
+    sample_random_tick_positions, section_may_random_tick,
+};
+use mc_simulation::random_ticks::{
+    RandomTickCandidate, leaf_decay_drop_rolls, natural_leaf_decay_drops,
+    random_tick_candidate_seed, random_tick_candidates, random_tick_edit_seeded,
+};
+#[cfg(test)]
+use mc_simulation::recipes::CraftedItem;
+use mc_simulation::recipes::{craft_recipe, recipe_fits_grid};
+use mc_simulation::scheduled_blocks::{
+    ScheduledBlockRegionPlan, ScheduledBlockTickPlan,
+    plan_scheduled_block_tick_edits as plan_scheduled_block_tick_edits_with_blocks,
+    scheduled_block_planning_chunks, scheduled_block_tick_inputs_available,
+};
+use mc_simulation::stonecutter::{
+    StonecutterClickAction, StonecutterClickInput, StonecutterWindow,
+    plan_click as plan_stonecutter_click,
+    select_stonecutter_recipe as select_stonecutter_recipe_with_data,
+    set_stonecutter_input as set_stonecutter_input_with_data, stonecutter_input_array,
+    stonecutter_input_from_projection, stonecutter_input_projection,
+};
+use mc_simulation::survival::{
+    BlockMutationSnapshot, PendingUse, SurvivalState, UseKind, arrow_entity_type_id,
+    block_break_is_denied, bow_draw_power, entity_item_stack, falling_block_entity_type_id,
+    is_hostile_entity, item_entity_type_id, item_use_ticks, mob_xp_value, pending_use_is_complete,
+    xp_orb_entity_type_id,
+};
+#[cfg(test)]
+use mc_simulation::toggles::toggled_bool_state;
+use mc_simulation::toggles::{ToggleBlockPlan, plan_toggle_block_interaction_with_protection};
 use movement::{
-    AcceptedAbsoluteMovement, PendingTeleport, PlayerCollisionContext, TeleportConfirmResult,
-    clamp_player_pose, confirm_pending_teleport, farmland_trample_pos,
-    guard_pending_teleport_movement, movement_exhaustion, next_player_teleport_id,
-    normalize_absolute_player_movement, note_teleport_confirm_mismatch,
-    player_pose_collides_with_solid_in_snapshot_with_context, player_water_overlap_in_snapshot,
-    refresh_player_fall_state, validate_player_rotation,
+    AcceptedAbsoluteMovement, PendingTeleport, TeleportConfirmResult, clamp_player_pose,
+    confirm_pending_teleport, guard_pending_teleport_movement, movement_state,
+    next_player_teleport_id, normalize_absolute_player_movement, note_teleport_confirm_mismatch,
+    player_collision_context, refresh_player_fall_state, validate_player_rotation,
 };
-#[cfg(test)]
-use persistence::PersistedEntityRecord;
-use persistence::{PersistedEntityCheckpoint, PlayerPersistedState, XpState, load_player_state};
+use persistence::{PlayerPersistedState, load_player_state, xp_packet};
 #[cfg(test)]
 use player_damage_adapter::apply_unhooked_player_damage_for_test;
 use player_damage_adapter::{
@@ -430,27 +472,13 @@ use player_damage_adapter::{
     apply_fall_damage, apply_player_damage, apply_player_damage_publication,
     player_melee_knockback,
 };
-use player_teleport::apply_script_player_teleport;
-#[cfg(test)]
-use random_ticks::{LeafDecayDropRolls, next_fire_state, next_leaf_decay_state, random_tick_edit};
-use random_ticks::{
-    leaf_decay_drop_rolls, natural_leaf_decay_drops, random_tick_candidate_seed,
-    random_tick_candidates, random_tick_edit_seeded,
-};
-#[cfg(test)]
-use random_ticks::{sample_random_tick_positions, section_may_random_tick};
-#[cfg(test)]
-use recipes::ingredient_accepts_item;
-use recipes::{
-    CraftedItem, craft_recipe, initial_recipe_book, initial_recipe_update, recipe_fits_grid,
-};
+use player_teleport::apply_committed_player_teleport;
+use recipes::{initial_recipe_book, initial_recipe_update};
 use scheduled_blocks::{
     COMPARATOR_TICK_DELAY_TICKS, HOPPER_TICK_DELAY_TICKS, HopperTransferContext,
-    HopperTransferUpdate, ScheduledBlockTickPlan, backfill_loaded_hopper_ticks,
-    furnace_slot_stacks, plan_resident_hopper_transfer,
-    plan_scheduled_block_tick_edits as plan_scheduled_block_tick_edits_with_blocks,
-    resident_hopper_cooldown_plan, schedule_comparator_ticks_for_hopper_update,
-    scheduled_block_planning_chunks, scheduled_block_tick_edits,
+    HopperTransferUpdate, backfill_loaded_hopper_ticks, furnace_slot_stacks,
+    plan_resident_hopper_transfer, resident_hopper_cooldown_plan,
+    schedule_comparator_ticks_for_hopper_update, scheduled_block_tick_edits,
     scheduled_hopper_transfer_with_admission,
 };
 #[cfg(test)]
@@ -465,10 +493,13 @@ use session::{
     EntityAttackOutcome, OutboundCommand, OutboundLightUpdate, PlayerAttackResult,
     PlayerEntitySnapshot, ScriptMenuCloseRequest, ScriptMenuOpenRequest, ServerEntityMove,
     ServerEntitySnapshot, SessionAdmissionError, SessionId, SessionRegistration, SleepOutcome,
-    VisibilityDispatch, apply_loader_item_grant, apply_script_player_inventory_transaction,
-    dispatch_visibility_commands, publish_script_menu_click,
+    VisibilityDispatch, dispatch_visibility_commands, publish_script_menu_click,
 };
-pub(crate) use session::{NaturalSpawnScheduler, NaturalSpawnTickInput};
+pub(crate) use session::{
+    InventoryGrant, InventoryRefusal, InventoryReservation, NaturalSpawnScheduler,
+    NaturalSpawnTickInput, ReservedPlayerInventory, commit_owned_inventory_reservation,
+    commit_owned_inventory_transfer, owned_transfer_names_foreign_player,
+};
 #[cfg(test)]
 use session::{PlayerDamagePublication, PlayerInventorySlotDelta, within_block_reach};
 #[cfg(test)]
@@ -477,22 +508,13 @@ use session::{entity_aabb, within_entity_reach};
 use spawn::spawn_chunk_pos;
 #[cfg(test)]
 use spawn::spawn_y_from_chunk;
-use spawn::{chunk_pos_from_coords, pack_block_pos, spawn_dimension, spawn_position};
-use survival::{
-    BlockMutationSnapshot, PendingUse, SurvivalState, UseKind, arrow_entity_type_id,
-    available_arrow_slot, block_break_is_denied, bow_draw_power, entity_item_stack,
-    falling_block_entity_type_id, held_bow_max_damage, held_food_use, is_bow_item,
-    is_hostile_entity, item_entity_type_id, item_use_ticks, mob_drop_stacks_from_seed,
-    mob_xp_value, pending_use_is_complete, pending_use_matches, snowball_entity_type_id,
-    xp_orb_entity_type_id,
+use spawn::{chunk_pos_from_coords, pack_block_pos, resolve_spawn_position, spawn_dimension};
+use survival_adapter::{
+    available_arrow_slot, held_bow_max_damage, held_food_use, is_bow_item, pending_use_matches,
+    survival_health_packet,
 };
 #[cfg(test)]
-use survival::{block_drop_stacks_from, is_durability_tool_path, max_tool_damage_for_path};
-#[cfg(test)]
-use toggles::plan_toggle_block_interaction;
-#[cfg(test)]
-use toggles::toggled_bool_state;
-use toggles::{ToggleBlockPlan, plan_toggle_block_interaction_with_protection};
+use use_item_on_adapter::placed_sign_edit;
 #[cfg(test)]
 use use_item_on_adapter::{
     UseItemOnNoOpReason, UseItemOnOutcome, UseItemOnResyncOptions, classify_use_item_on_preflight,
@@ -503,8 +525,8 @@ use use_item_on_adapter::{
 use use_item_on_adapter::{ack_use_item_noop, handle_sign_update, handle_use_item_on};
 use wire_entities::{
     send_entities_despawn, send_entity_data, send_entity_health, send_entity_hurt,
-    send_entity_relative_move, send_entity_spawn, send_player_animation, send_player_despawn,
-    send_player_move, send_player_spawn_synced, send_take_item_entity,
+    send_entity_spawns, send_player_animation, send_player_despawn, send_player_move,
+    send_player_spawn_synced, send_take_item_entity,
 };
 
 #[cfg(test)]
@@ -580,11 +602,6 @@ fn apply_crafting_pickup_click(
         .0
 }
 
-#[cfg(test)]
-fn apply_outside_pickup_click(state: &mut InteractionState, button: i8) -> Option<ItemStack> {
-    apply_outside_pickup_click_with_carried(&mut state.carried_item, button)
-}
-
 thread_local! {
     static CHUNK_LIGHT_WORKSPACE: RefCell<LightWorkspace> = RefCell::new(LightWorkspace::new());
     static CHUNK_LIGHT_WORKSPACE_GAUGE: RefCell<crate::resource_profile::LightWorkspaceGauge> = RefCell::default();
@@ -594,10 +611,7 @@ thread_local! {
 pub const KEEPALIVE_PERIOD: Duration = Duration::from_secs(15);
 /// How long both a pending echo and all inbound traffic may remain idle.
 pub const KEEPALIVE_TIMEOUT: Duration = Duration::from_secs(30);
-#[cfg(not(test))]
 const SLOW_CLIENT_OUTBOUND_WRITE_TIMEOUT: Duration = Duration::from_secs(5);
-#[cfg(test)]
-const SLOW_CLIENT_OUTBOUND_WRITE_TIMEOUT: Duration = Duration::from_millis(10);
 const SLOW_CLIENT_OUTBOUND_PRESSURE_NUMERATOR: usize = 3;
 const SLOW_CLIENT_OUTBOUND_PRESSURE_DENOMINATOR: usize = 4;
 const OUTBOUND_COMMANDS_PER_PLAYER_BURST: usize = 16;
@@ -624,10 +638,7 @@ const SPAWN_Z: f64 = 0.5;
 const DEFAULT_SEA_LEVEL: i32 = 63;
 const PLAYER_ENTITY_TYPE_ID: i32 = 155;
 const SERVER_ENTITY_ID_START: i32 = 1_000_000;
-pub(crate) const ENTITY_TICK_PERIOD: Duration = Duration::from_millis(50);
-const DAY_LENGTH_TICKS: u64 = 24_000;
 const NIGHT_START_TICK: u64 = 12_542;
-const DAY_START_TICK: u64 = 0;
 const SIGN_BLOCK_ENTITY_TYPE_ID: i32 = 7;
 
 fn effective_block_entity_types(
@@ -666,35 +677,34 @@ pub(crate) fn configure_session_arrow_kill_rewards(
         arrow_entity_type_id(&config.entity_types),
         Arc::clone(&config.items),
         Arc::clone(&config.item_facts),
-        Arc::clone(&config.loot),
     );
-    sessions.configure_hostile_small_fireball_entity_type(survival::small_fireball_entity_type_id(
-        &config.entity_types,
-    ));
-    sessions.configure_hostile_fireball_entity_type(survival::fireball_entity_type_id(
-        &config.entity_types,
-    ));
+    sessions.configure_hostile_small_fireball_entity_type(
+        mc_simulation::survival::small_fireball_entity_type_id(&config.entity_types),
+    );
+    sessions.configure_hostile_fireball_entity_type(
+        mc_simulation::survival::fireball_entity_type_id(&config.entity_types),
+    );
     sessions.configure_hostile_breeze_wind_charge_entity_type(
-        survival::breeze_wind_charge_entity_type_id(&config.entity_types),
+        mc_simulation::survival::breeze_wind_charge_entity_type_id(&config.entity_types),
     );
     sessions.configure_hostile_dragon_fireball_entity_type(
-        survival::dragon_fireball_entity_type_id(&config.entity_types),
+        mc_simulation::survival::dragon_fireball_entity_type_id(&config.entity_types),
     );
     sessions.configure_hostile_area_effect_cloud_entity_type(
-        survival::area_effect_cloud_entity_type_id(&config.entity_types),
+        mc_simulation::survival::area_effect_cloud_entity_type_id(&config.entity_types),
     );
-    sessions.configure_hostile_wither_skull_entity_type(survival::wither_skull_entity_type_id(
-        &config.entity_types,
-    ));
-    sessions.configure_hostile_splash_potion_entity_type(survival::splash_potion_entity_type_id(
-        &config.entity_types,
-    ));
-    sessions.configure_hostile_shulker_bullet_entity_type(survival::shulker_bullet_entity_type_id(
-        &config.entity_types,
-    ));
-    sessions.configure_hostile_evoker_fangs_entity_type(survival::evoker_fangs_entity_type_id(
-        &config.entity_types,
-    ));
+    sessions.configure_hostile_wither_skull_entity_type(
+        mc_simulation::survival::wither_skull_entity_type_id(&config.entity_types),
+    );
+    sessions.configure_hostile_splash_potion_entity_type(
+        mc_simulation::survival::splash_potion_entity_type_id(&config.entity_types),
+    );
+    sessions.configure_hostile_shulker_bullet_entity_type(
+        mc_simulation::survival::shulker_bullet_entity_type_id(&config.entity_types),
+    );
+    sessions.configure_hostile_evoker_fangs_entity_type(
+        mc_simulation::survival::evoker_fangs_entity_type_id(&config.entity_types),
+    );
 }
 
 pub(crate) fn configure_session_player_combat(sessions: &SessionRegistry, config: &ServerConfig) {
@@ -888,45 +898,53 @@ const CREEPER_FUSE_TICKS: u64 = 30;
 const CREEPER_TRIGGER_RANGE: f64 = 3.0;
 const CREEPER_CANCEL_RANGE: f64 = 7.0;
 const CREEPER_EXPLOSION_POWER: f32 = 3.0;
-// 26.1.2 `RangedBowAttackGoal(this, 1.0, attackIntervalMin 20, 15.0F)`:
-// 20-tick bow pull to full power, then `attackIntervalMin` cooldown.
-const SKELETON_BOW_DRAW_TICKS: u64 = 20;
-const SKELETON_BOW_COOLDOWN_TICKS: u64 = 20;
-const SKELETON_SHOT_RANGE: f64 = 16.0;
-const SKELETON_ARROW_SPEED: f64 = 1.6;
+use mc_entity::hostile_authority::SKELETON_ARROW_SPEED;
+#[cfg(test)]
+use mc_entity::hostile_authority::{SKELETON_BOW_COOLDOWN_TICKS, SKELETON_BOW_DRAW_TICKS};
 #[cfg(test)]
 const HOSTILE_FOLLOW_SPEED: f64 = 2.3;
 fn world_time_is_night(world_time: u64) -> bool {
     world_time % DAY_LENGTH_TICKS >= NIGHT_START_TICK
 }
 
-#[cfg(test)]
-fn world_time_advance_crosses_night_start(world_time: u64, ticks: u64) -> bool {
-    if ticks == 0 {
-        return false;
-    }
-    let day_tick = world_time % DAY_LENGTH_TICKS;
-    let ticks_until_night = if day_tick < NIGHT_START_TICK {
-        NIGHT_START_TICK - day_tick
-    } else {
-        DAY_LENGTH_TICKS - day_tick + NIGHT_START_TICK
-    };
-    ticks >= ticks_until_night
-}
 const ENTITY_HURT_INVULNERABLE_TICKS: u64 = 6;
 pub const ITEM_DESPAWN_AGE_TICKS: u64 = 6_000;
 const ITEM_DESPAWN_SWEEP_BUDGET: usize = 256;
 const ARROW_ENTITY_HIT_DAMAGE: f32 = 4.0;
 const ARROW_ENTITY_HIT_KNOCKBACK: f64 = 0.6;
 const CHUNK_STREAM_STEPS_PER_TURN: usize = 1;
-const DEFAULT_FLUID_TICK_BUDGET: usize = 256;
+
+fn survival_damage_after_armor(state: Option<&InteractionState>, amount: f32) -> f32 {
+    let Some(state) = state else {
+        return amount.max(0.0);
+    };
+    inventory_damage_after_armor(&state.items, &state.inventory, amount)
+}
+
+fn survival_damage_after_protection(state: Option<&InteractionState>, amount: f32) -> f32 {
+    let Some(state) = state else {
+        return amount.max(0.0);
+    };
+    inventory_damage_after_protection(&state.items, &state.inventory, amount)
+}
+
+fn damage_equipped_armor(
+    state: &mut InteractionState,
+    incoming_damage: f32,
+) -> Vec<(usize, ItemStack)> {
+    mc_simulation::inventory::damage_inventory_armor(
+        &state.items,
+        &mut state.inventory,
+        incoming_damage,
+    )
+}
 
 fn survival_damage_after_equipment(
     state: Option<&InteractionState>,
     amount: f32,
     kind: PlayerDamageKind,
 ) -> f32 {
-    if !amount.is_finite() || !kind.is_supported() {
+    if !amount.is_finite() {
         return 0.0;
     }
     let damage = if kind.uses_armor() {
@@ -938,71 +956,6 @@ fn survival_damage_after_equipment(
         survival_damage_after_protection(state, damage)
     } else {
         damage
-    }
-}
-
-/// Default chunk radius around the player when no operator override is present.
-pub const DEFAULT_VIEW_DISTANCE: i32 = 10;
-/// Upper bound for chunks sampled by one natural-spawn category attempt.
-pub const MAX_NATURAL_SPAWN_CHUNK_BUDGET: usize = 64;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct RandomTickPolicy {
-    pub simulation_distance: i32,
-    pub random_tick_speed: u32,
-    pub chunk_budget: usize,
-    pub fluid_tick_budget: usize,
-    pub save_interval_ticks: u64,
-    pub friendly_spawn_interval_ticks: u64,
-    pub hostile_spawn_interval_ticks: u64,
-    pub friendly_spawn_chunk_budget: usize,
-    pub hostile_spawn_chunk_budget: usize,
-    pub seed: u64,
-}
-
-impl Default for RandomTickPolicy {
-    fn default() -> Self {
-        Self {
-            simulation_distance: DEFAULT_VIEW_DISTANCE,
-            random_tick_speed: 3,
-            chunk_budget: 64,
-            fluid_tick_budget: DEFAULT_FLUID_TICK_BUDGET,
-            save_interval_ticks: 20,
-            friendly_spawn_interval_ticks: 400,
-            hostile_spawn_interval_ticks: 20,
-            friendly_spawn_chunk_budget: 48,
-            hostile_spawn_chunk_budget: 4,
-            seed: 0,
-        }
-    }
-}
-
-impl RandomTickPolicy {
-    #[must_use]
-    pub fn normalized(self) -> Self {
-        Self {
-            simulation_distance: self
-                .simulation_distance
-                .clamp(crate::MIN_VIEW_DISTANCE, crate::MAX_VIEW_DISTANCE),
-            random_tick_speed: self.random_tick_speed,
-            chunk_budget: self.chunk_budget.max(1),
-            fluid_tick_budget: self.fluid_tick_budget.max(1),
-            save_interval_ticks: self.save_interval_ticks.max(1),
-            friendly_spawn_interval_ticks: self.friendly_spawn_interval_ticks,
-            hostile_spawn_interval_ticks: self.hostile_spawn_interval_ticks,
-            friendly_spawn_chunk_budget: self
-                .friendly_spawn_chunk_budget
-                .clamp(1, MAX_NATURAL_SPAWN_CHUNK_BUDGET),
-            hostile_spawn_chunk_budget: self
-                .hostile_spawn_chunk_budget
-                .clamp(1, MAX_NATURAL_SPAWN_CHUNK_BUDGET),
-            seed: self.seed,
-        }
-    }
-
-    #[must_use]
-    pub fn is_enabled(self) -> bool {
-        self.random_tick_speed > 0 && self.chunk_budget > 0
     }
 }
 
@@ -1036,7 +989,7 @@ pub(crate) struct ScheduledBlockTickReport {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub(super) struct SettlementInhabitantSpawn {
+pub(super) struct GeneratedEntitySpawn {
     claim: String,
     entity_type_id: i32,
     entity_type_name: String,
@@ -1046,7 +999,7 @@ pub(super) struct SettlementInhabitantSpawn {
     /// The pitch the template authored; the spawn clamps it the way the entity's
     /// own `setXRot` does.
     pitch: f32,
-    /// The entity's `Age`, negative for a baby.
+    /// The native entity's `Age`, including baby ages and parent cooldowns.
     age: i32,
     villager: mc_entity::VillagerData,
     villager_brain: mc_entity::villager_26_1_2::VillagerBrainState,
@@ -1094,6 +1047,7 @@ pub(crate) struct HurtingProjectilePhysicsFact {
     pub projectile_id: EntityId,
     pub block_hit: Option<HurtingProjectileBlockHitFact>,
     pub in_water: bool,
+    pub exposed_to_sky: bool,
 }
 
 #[derive(Debug, Default)]
@@ -1101,29 +1055,6 @@ pub(crate) struct EntityProjectilePhysicsFacts {
     pub arrows: Vec<ArrowPhysicsFact>,
     pub hurting: Vec<HurtingProjectilePhysicsFact>,
     pub throwable: Vec<HurtingProjectilePhysicsFact>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) struct BlockEdit {
-    pos: mc_world::BlockPos,
-    new_state: mc_world::BlockStateId,
-}
-
-impl BlockEdit {
-    /// Build one server-owned edit for a caller outside the `play` modules
-    /// (the settlement structure pipeline), which cannot name private fields.
-    pub(crate) const fn new(pos: mc_world::BlockPos, new_state: mc_world::BlockStateId) -> Self {
-        Self { pos, new_state }
-    }
-}
-
-impl From<mc_world::plant_rules_26_1_2::PlantBlockEdit> for BlockEdit {
-    fn from(edit: mc_world::plant_rules_26_1_2::PlantBlockEdit) -> Self {
-        Self {
-            pos: edit.pos,
-            new_state: edit.new_state,
-        }
-    }
 }
 
 #[cfg(test)]
@@ -1167,69 +1098,10 @@ fn sweet_berry_harvest(
     Some((BlockEdit::from(edit), ItemStack::new(item_id, drop.count)))
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) struct BlockEditPrecondition {
-    pos: mc_world::BlockPos,
-    expected_state: mc_world::BlockStateId,
-    expected_token: mc_world::BlockMutationToken,
-}
-
-trait BlockPlanningRead {
-    fn get_cached_block(&self, pos: mc_world::BlockPos) -> Option<mc_world::BlockStateId>;
-    fn block_mutation_token(&self, pos: mc_world::BlockPos)
-    -> Option<mc_world::BlockMutationToken>;
-}
-
-impl BlockPlanningRead for mc_world::WorldStorage {
-    fn get_cached_block(&self, pos: mc_world::BlockPos) -> Option<mc_world::BlockStateId> {
-        mc_world::WorldStorage::get_cached_block(self, pos)
-    }
-
-    fn block_mutation_token(
-        &self,
-        pos: mc_world::BlockPos,
-    ) -> Option<mc_world::BlockMutationToken> {
-        mc_world::WorldStorage::block_mutation_token(self, pos)
-    }
-}
-
-impl BlockPlanningRead for mc_world::WorldReadSnapshot {
-    fn get_cached_block(&self, pos: mc_world::BlockPos) -> Option<mc_world::BlockStateId> {
-        mc_world::WorldReadSnapshot::get_cached_block(self, pos)
-    }
-
-    fn block_mutation_token(
-        &self,
-        pos: mc_world::BlockPos,
-    ) -> Option<mc_world::BlockMutationToken> {
-        mc_world::WorldReadSnapshot::block_mutation_token(self, pos)
-    }
-}
-
-impl BlockPlanningRead for mc_world::WorldReadView {
-    fn get_cached_block(&self, pos: mc_world::BlockPos) -> Option<mc_world::BlockStateId> {
-        mc_world::WorldReadView::get_cached_block(self, pos)
-    }
-
-    fn block_mutation_token(
-        &self,
-        pos: mc_world::BlockPos,
-    ) -> Option<mc_world::BlockMutationToken> {
-        mc_world::WorldReadView::block_mutation_token(self, pos)
-    }
-}
-
 #[derive(Debug, Default, PartialEq, Eq)]
 struct HoeTillingPlan {
     edits: Vec<BlockEdit>,
     preconditions: Vec<BlockEditPrecondition>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) struct AppliedBlockEdit {
-    pos: mc_world::BlockPos,
-    previous: mc_world::BlockStateId,
-    new_state: mc_world::BlockStateId,
 }
 
 #[derive(Debug, Default)]
@@ -1241,6 +1113,7 @@ pub(super) struct BlockEditBatchOutcome {
     light_edit_chunks: HashSet<(i32, i32)>,
     previous_light_chunks: HashMap<(i32, i32), ChunkLight>,
     cleared_campfires: Vec<mc_world::BlockPos>,
+    removed_brewing: Vec<(mc_world::BlockPos, mc_world::chunk::BrewingStandBlockEntity)>,
     precomputed_light_updates: Option<Vec<OutboundLightUpdate>>,
     pending_light_sources: Option<IncrementalLightSources>,
 }
@@ -1250,6 +1123,9 @@ fn append_resident_block_outcome(
     mut additional: BlockEditBatchOutcome,
 ) {
     target.applied.append(&mut additional.applied);
+    target
+        .removed_brewing
+        .append(&mut additional.removed_brewing);
     target.resulting_tokens.extend(additional.resulting_tokens);
     target.deltas.append(&mut additional.deltas);
     target.edit_chunks.extend(additional.edit_chunks);
@@ -1353,19 +1229,19 @@ enum PlayerInventoryCommitOutcome {
         crafting_table_input: Option<Box<[ItemStack; 9]>>,
         enchanting_table_input: Option<Box<[ItemStack; 2]>>,
         merchant_input: Option<Box<[ItemStack; 2]>>,
+        reason: InventoryRejection,
     },
 }
 
+/// Why the owner refused one menu inventory commit.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct RandomTickSample {
-    pub chunk: (i32, i32),
-    pub pos: mc_world::BlockPos,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct RandomTickCandidate {
-    sample: RandomTickSample,
-    state: mc_world::BlockStateId,
+enum InventoryRejection {
+    /// The plan's expected state no longer matches the canonical state.
+    Stale,
+    /// A journal outcome is unresolved until restart recovery.
+    RecoveryRequired,
+    /// A compound storage transaction holds the owner reservation.
+    InventoryReserved,
 }
 
 #[derive(Debug)]
@@ -1419,13 +1295,6 @@ struct ResidentBlockCommit<'a> {
     leaf_trigger_tick: Option<u64>,
 }
 
-#[derive(Debug, Default)]
-struct ScheduledFluidTickPlan {
-    edits: Vec<BlockEdit>,
-    preconditions: Vec<SnapshotReadPrecondition>,
-    scheduled_fluid_ticks: Vec<ScheduledFluidTick>,
-}
-
 struct ScheduledBlockRegionJob {
     index: usize,
     #[cfg(test)]
@@ -1442,76 +1311,6 @@ struct ScheduledBlockRegionResult {
     result: mc_world::ResidentBlockEditBatchResult,
     touched: Vec<ChunkPos>,
     panicked: bool,
-}
-
-#[derive(Debug, Clone, Copy)]
-struct SnapshotReadPrecondition {
-    pos: mc_world::BlockPos,
-    expected_state: Option<mc_world::BlockStateId>,
-    expected_token: Option<mc_world::BlockMutationToken>,
-}
-
-struct SnapshotPlanningWorld<'a> {
-    snapshot: &'a mc_world::WorldReadSnapshot,
-    overrides: HashMap<mc_world::BlockPos, mc_world::BlockStateId>,
-    read_positions: RefCell<HashSet<mc_world::BlockPos>>,
-}
-
-impl<'a> SnapshotPlanningWorld<'a> {
-    fn new(snapshot: &'a mc_world::WorldReadSnapshot) -> Self {
-        Self {
-            snapshot,
-            overrides: HashMap::new(),
-            read_positions: RefCell::new(HashSet::new()),
-        }
-    }
-
-    fn apply(&mut self, edit: BlockEdit) -> bool {
-        let Some(current) = self.get_cached_block(edit.pos) else {
-            return false;
-        };
-        if current == edit.new_state {
-            return false;
-        }
-        self.overrides.insert(edit.pos, edit.new_state);
-        true
-    }
-
-    fn preconditions(&self) -> Vec<SnapshotReadPrecondition> {
-        let mut positions = self
-            .read_positions
-            .borrow()
-            .iter()
-            .copied()
-            .collect::<Vec<_>>();
-        positions.sort_unstable_by_key(|position| (position.x, position.y, position.z));
-        positions
-            .into_iter()
-            .map(|pos| SnapshotReadPrecondition {
-                pos,
-                expected_state: self.snapshot.get_cached_block(pos),
-                expected_token: self.snapshot.block_mutation_token(pos),
-            })
-            .collect()
-    }
-}
-
-impl BlockPlanningRead for SnapshotPlanningWorld<'_> {
-    fn get_cached_block(&self, pos: mc_world::BlockPos) -> Option<mc_world::BlockStateId> {
-        self.read_positions.borrow_mut().insert(pos);
-        self.overrides
-            .get(&pos)
-            .copied()
-            .or_else(|| self.snapshot.get_cached_block(pos))
-    }
-
-    fn block_mutation_token(
-        &self,
-        pos: mc_world::BlockPos,
-    ) -> Option<mc_world::BlockMutationToken> {
-        self.read_positions.borrow_mut().insert(pos);
-        self.snapshot.block_mutation_token(pos)
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -1673,6 +1472,19 @@ impl ScriptZoneObserver {
     }
 }
 
+// Дешёвый дефолт для уже сохранённых игроков: поза на диске всё равно
+// перезапишет её через `load_player_state`, резолв чанков здесь не нужен.
+pub(crate) fn world_read_spawn_fallback(
+    world_read: Option<&mc_world::WorldReadView>,
+) -> (f64, f64, f64) {
+    let spawn = world_read.map_or_else(mc_world::WorldSpawn::default, |view| view.spawn());
+    (
+        f64::from(spawn.block_x) + 0.5,
+        DEFAULT_SPAWN_Y,
+        f64::from(spawn.block_z) + 0.5,
+    )
+}
+
 fn load_player_state_for_login(
     world_root: &std::path::Path,
     uuid: uuid::Uuid,
@@ -1702,7 +1514,7 @@ pub(crate) async fn handle<R, W>(
     connection_world: crate::server::ConnectionWorld,
     sessions: Arc<SessionRegistry>,
     chunk_pipeline_resources: ChunkPipelineResources,
-    dirty_flush: Option<crate::dirty_flush::DirtyFlushNotifier>,
+    dirty_flush: Option<mc_simulation::persistence::dirty_flush::DirtyFlushNotifier>,
     runtime_control: Option<RuntimeControlHandle>,
     simulation: SimulationHandle,
     configuration_custom_payloads: Vec<ConfigurationCustomPayload>,
@@ -1735,17 +1547,44 @@ where
         "entering Play state"
     );
 
-    let (spawn_x, spawn_y, spawn_z) = spawn_position(config, connection_world.read.as_ref());
-    let default_spawn_pose = PlayerPose::new(spawn_x, spawn_y, spawn_z);
+    // Default-spawn резолв ленивый и только когда дефолт реально нужен:
+    // recoverable-состояние и сохранённая playerdata-поза впускают даже при
+    // небезопасном общем спавне; `resolve_spawn_position` отказывает во входе
+    // только игроку без сохранённой позы.
     let world_root = connection_world.root;
     let world_read = connection_world.read;
     let world_mutation = connection_world.mutation;
     let chunk_source = connection_world.chunk_source;
-    let default_player_state = PlayerPersistedState::new_default(default_spawn_pose);
+    let saved_pose_on_disk = world_root.as_deref().is_some_and(|root| {
+        mc_simulation::persistence::playerdata_path(root, profile.uuid).is_file()
+    });
     let mut player_state = if let Some(state) = sessions.recoverable_player_state(profile.uuid) {
         info!(player = %profile.name, state = %state, "recovered disconnected player state");
         state
+    } else if saved_pose_on_disk {
+        // Поза уже на диске: грузим без дефолт-резолва. Неуспех чтения —
+        // всё ещё жёсткая ошибка входа (как раньше), но отказ общего спавна
+        // игрока с сохранённой позой не касается.
+        let root = world_root
+            .as_deref()
+            .expect("playerdata root checked above");
+        let fallback_spawn = world_read_spawn_fallback(world_read.as_ref());
+        let default_player_state = PlayerPersistedState::new_default(PlayerPose::new(
+            fallback_spawn.0,
+            fallback_spawn.1,
+            fallback_spawn.2,
+        ));
+        let state =
+            load_player_state_for_login(root, profile.uuid, &config.items, default_player_state)?;
+        info!(player = %profile.name, state = %state, "initialized player state");
+        state
     } else if let Some(root) = world_root.as_deref() {
+        let (spawn_x, spawn_y, spawn_z) =
+            resolve_spawn_position(config, &chunk_pipeline_resources, world_read.as_ref())
+                .await
+                .map_err(std::io::Error::other)?;
+        let default_player_state =
+            PlayerPersistedState::new_default(PlayerPose::new(spawn_x, spawn_y, spawn_z));
         let state = load_player_state_for_login(
             root,
             profile.uuid,
@@ -1755,10 +1594,14 @@ where
         info!(player = %profile.name, state = %state, "initialized player state");
         state
     } else {
-        default_player_state
+        let (spawn_x, spawn_y, spawn_z) =
+            resolve_spawn_position(config, &chunk_pipeline_resources, world_read.as_ref())
+                .await
+                .map_err(std::io::Error::other)?;
+        PlayerPersistedState::new_default(PlayerPose::new(spawn_x, spawn_y, spawn_z))
     };
     player_state.pose = clamp_player_pose(player_state.pose);
-    let respawn_pose = clamp_player_pose(player_state.spawn.pose());
+    let respawn_pose = clamp_player_pose(PlayerPose::from_persisted(player_state.spawn.pose()));
 
     let (spawn_cx, spawn_cz) = player_state.pose.chunk_pos();
     let (outbound_tx, outbound_rx) = mpsc::channel(outbound_command_queue_capacity(config));
@@ -1974,9 +1817,9 @@ where
         &SetDefaultSpawnPosition {
             dimension: dim_name.clone(),
             position: pack_block_pos(
-                spawn_x.floor() as i32,
-                spawn_y.floor() as i32,
-                spawn_z.floor() as i32,
+                player_state.pose.x.floor() as i32,
+                player_state.pose.y.floor() as i32,
+                player_state.pose.z.floor() as i32,
             ),
             yaw: 0.0,
             pitch: 0.0,
@@ -2111,9 +1954,7 @@ where
                     .into_iter()
                     .map(|(x, z)| [x, z])
                     .collect();
-                storage
-                    .wake_resident_work(dim_name.to_string(), chunks)
-                    .await;
+                storage.wake_npc_work(dim_name.to_string(), chunks).await;
             }
             if step == ChunkStreamStep::Complete {
                 stream.log_summary_once();
@@ -2302,7 +2143,7 @@ struct InteractionState {
 
 impl InteractionState {
     fn selected_hotbar_slot(&self) -> u8 {
-        crate::lock_policy::lock_authoritative_mutex(
+        mc_simulation::lock_policy::lock_authoritative_mutex(
             &self.player_persistence,
             "play.player_persistence",
         )
@@ -2390,9 +2231,14 @@ fn classify_play_custom_payload(
 }
 
 fn clamp_client_view_distance(requested: i8, server_view_distance: i32) -> i32 {
-    let server_view_distance =
-        server_view_distance.clamp(crate::MIN_VIEW_DISTANCE, crate::MAX_VIEW_DISTANCE);
-    i32::from(requested).clamp(crate::MIN_VIEW_DISTANCE, server_view_distance)
+    let server_view_distance = server_view_distance.clamp(
+        mc_simulation::tick_policy::MIN_VIEW_DISTANCE,
+        mc_simulation::tick_policy::MAX_VIEW_DISTANCE,
+    );
+    i32::from(requested).clamp(
+        mc_simulation::tick_policy::MIN_VIEW_DISTANCE,
+        server_view_distance,
+    )
 }
 
 async fn write_block_ack<W>(
@@ -2659,30 +2505,6 @@ where
     Ok(true)
 }
 
-fn crafting_menu_state_change_count(
-    before_window: &CraftingTableWindow,
-    after_window: &CraftingTableWindow,
-    before_inventory: &PlayerInventory,
-    after_inventory: &PlayerInventory,
-    before_carried: &ItemStack,
-    after_carried: &ItemStack,
-) -> i32 {
-    let result_changes = usize::from(before_window.result != after_window.result);
-    let input_changes = before_window
-        .input
-        .iter()
-        .zip(&after_window.input)
-        .filter(|(before, after)| before != after)
-        .count();
-    let inventory_changes = (9..=44)
-        .filter(|slot| before_inventory.slots[*slot] != after_inventory.slots[*slot])
-        .count();
-    let carried_changes = usize::from(before_carried != after_carried);
-    i32::try_from(result_changes + input_changes + inventory_changes + carried_changes)
-        .unwrap_or(i32::MAX)
-        .max(1)
-}
-
 async fn handle_crafting_container_click<W>(
     state: &mut InteractionState,
     writer: &mut W,
@@ -2698,141 +2520,51 @@ where
     // Vanilla applies queued clicks to authoritative slots even when the
     // client's state id lags; the mismatch requests a full resync, not a veto.
     let stale_state = packet.state_id != window.state_id;
-    let action = classify_container_click(&packet);
-    if !matches!(action, ContainerClickAction::QuickCraft(_)) {
-        window.quickcraft.reset();
-    }
-    let before_inventory = state.inventory.clone();
-    let before_carried_item = state.carried_item.clone();
-    let before_window = window.clone();
-    let mut dropped = None;
-    let mut overflow_remainders = Vec::new();
-    let mut quickcraft_outcome = None;
-    let crafted_result = match &action {
-        ContainerClickAction::Pickup { slot: 0, .. }
-        | ContainerClickAction::QuickMove { slot: 0 } => Some(before_window.result.clone()),
-        _ => None,
-    };
-    let quick_moved_result = matches!(&action, ContainerClickAction::QuickMove { slot: 0 });
-    let changed = match action {
-        ContainerClickAction::Pickup { slot, button } => {
-            let (changed, discarded) = window.apply_pickup_click(
-                &state.items,
-                &state.item_facts,
-                &state.tags,
-                &state.recipes,
-                &mut state.inventory,
-                &mut state.carried_item,
-                slot,
-                button,
-            );
-            overflow_remainders = discarded;
-            changed
-        }
-        ContainerClickAction::OutsidePickup { button } => {
-            dropped = apply_outside_pickup_click_with_carried(&mut state.carried_item, button);
-            dropped.is_some()
-        }
-        ContainerClickAction::QuickMove { slot } => {
-            let (changed, discarded) = window.apply_quick_move_click(
-                &state.items,
-                &state.item_facts,
-                &state.tags,
-                &state.recipes,
-                &mut state.inventory,
-                slot,
-            );
-            overflow_remainders = discarded;
-            changed
-        }
-        ContainerClickAction::Swap { slot, button } => window.apply_swap_click(
-            &state.items,
-            &state.item_facts,
-            &state.tags,
-            &state.recipes,
-            &mut state.inventory,
-            slot,
-            button,
-        ),
-        ContainerClickAction::Throw { slot, button } => {
-            if item_entity_type_id(&state.entity_types).is_some() {
-                dropped = window.apply_throw_click(
-                    &state.items,
-                    &state.item_facts,
-                    &state.tags,
-                    &state.recipes,
-                    &mut state.inventory,
-                    slot,
-                    button,
-                );
-                dropped.is_some()
-            } else {
-                false
-            }
-        }
-        ContainerClickAction::QuickCraft(click) => {
-            let outcome = window.apply_quickcraft_click(
-                &state.items,
-                &state.item_facts,
-                &mut state.inventory,
-                &mut state.carried_item,
-                click,
-                &state.tags,
-                &state.recipes,
-            );
-            quickcraft_outcome = Some(outcome);
-            outcome == QuickCraftOutcome::Changed
-        }
-        ContainerClickAction::Unsupported => false,
-    };
-    if quickcraft_outcome == Some(QuickCraftOutcome::Pending) {
-        if stale_state || client_carried_item_matches(&packet.carried_item, &state.carried_item) {
-            if stale_state {
-                write_crafting_content(state, writer, &window).await?;
-            }
-            return Ok(window);
-        }
-        state.inventory = before_inventory;
-        state.carried_item = before_carried_item;
-        window = before_window;
-        window.quickcraft.reset();
-        write_crafting_content(state, writer, &window).await?;
-        return Ok(window);
-    }
-    if !stale_state && !client_carried_item_matches(&packet.carried_item, &state.carried_item) {
-        state.inventory = before_inventory;
-        state.carried_item = before_carried_item;
-        window = before_window;
-        window.quickcraft.reset();
-        write_crafting_content(state, writer, &window).await?;
-        return Ok(window);
-    }
-    if !changed {
-        write_crafting_content(state, writer, &window).await?;
-        return Ok(window);
-    }
-    let state_id_increment = crafting_menu_state_change_count(
-        &before_window,
-        &window,
-        &before_inventory,
+    let click = plan_crafting_table_click(
+        &state.items,
+        &state.item_facts,
+        &state.tags,
+        &state.recipes,
+        *window,
         &state.inventory,
-        &before_carried_item,
         &state.carried_item,
+        classify_container_click(&packet),
+        item_entity_type_id(&state.entity_types).is_some(),
     );
-    let crafted = crafted_result.as_ref().and_then(|result| {
-        if quick_moved_result {
-            crafted_item_from_inventory_delta(result, &before_inventory, &state.inventory)
-        } else {
-            CraftedItem::from_single_result(result)
+    let before_window = click.before_window;
+    let carried_matches = client_carried_item_matches(&packet.carried_item, &click.carried_item);
+    if click.status == MenuClickStatus::Pending && (stale_state || carried_matches) {
+        *window = click.window;
+        state.inventory = click.inventory;
+        state.carried_item = click.carried_item;
+        if stale_state {
+            write_crafting_content(state, writer, &window).await?;
         }
-    });
+        return Ok(window);
+    }
+    if click.status == MenuClickStatus::Pending || !stale_state && !carried_matches {
+        *window = before_window;
+        window.quickcraft.reset();
+        write_crafting_content(state, writer, &window).await?;
+        return Ok(window);
+    }
+    *window = click.window;
+    let before_inventory = std::mem::replace(&mut state.inventory, click.inventory);
+    let before_carried_item = std::mem::replace(&mut state.carried_item, click.carried_item);
+    if click.status == MenuClickStatus::Unchanged {
+        write_crafting_content(state, writer, &window).await?;
+        return Ok(window);
+    }
+    let state_id_increment = click.state_id_increment;
+    let crafted = click.crafted;
+    let dropped = click.drops;
     if commit_crafting_table_candidate(
         state,
         &mut window,
         &before_window.input,
         before_inventory,
         before_carried_item,
-        dropped.into_iter().chain(overflow_remainders).collect(),
+        dropped,
         player_pose,
     )
     .await?
@@ -3009,20 +2741,6 @@ fn enchanting_bookshelf_count(state: &InteractionState, table: mc_world::BlockPo
     )
 }
 
-fn can_place_in_enchanting_menu_slot(
-    state: &InteractionState,
-    menu_slot: usize,
-    stack: &ItemStack,
-) -> bool {
-    can_place_in_enchanting_menu_slot_with_data(
-        &state.items,
-        &state.item_facts,
-        menu_slot,
-        stack,
-        |slot, stack| can_place_in_player_slot(&state.item_facts, &state.items, slot, stack),
-    )
-}
-
 async fn write_enchanting_content<W>(
     state: &InteractionState,
     writer: &mut W,
@@ -3069,177 +2787,6 @@ where
         .await?;
     }
     Ok(())
-}
-
-fn apply_enchanting_swap_click(
-    state: &mut InteractionState,
-    window: &mut EnchantingTableWindow,
-    menu_slot: usize,
-    button: i8,
-) -> bool {
-    if menu_slot >= ENCHANTING_MENU_SLOT_COUNT {
-        return false;
-    }
-    let Some(player_slot) = hotbar_swap_slot(button) else {
-        return false;
-    };
-    if enchanting_player_slot(menu_slot) == Some(player_slot) {
-        return false;
-    }
-    let Some(clicked) = enchanting_menu_stack(window, &state.inventory, menu_slot) else {
-        return false;
-    };
-    let swap = state.inventory.slots[player_slot].clone();
-    let can_place_swap = can_place_in_enchanting_menu_slot(state, menu_slot, &swap);
-    let can_place_clicked =
-        can_place_in_player_slot(&state.item_facts, &state.items, player_slot, &clicked);
-    let Some((new_clicked, new_swap)) =
-        apply_regular_swap_slot(clicked, swap, can_place_swap, can_place_clicked)
-    else {
-        return false;
-    };
-    if !set_enchanting_menu_stack(window, &mut state.inventory, menu_slot, new_clicked) {
-        return false;
-    }
-    state.inventory.slots[player_slot] = new_swap;
-    true
-}
-
-fn apply_enchanting_throw_click(
-    state: &mut InteractionState,
-    window: &mut EnchantingTableWindow,
-    menu_slot: usize,
-    button: i8,
-) -> Option<ItemStack> {
-    if menu_slot >= ENCHANTING_MENU_SLOT_COUNT {
-        return None;
-    }
-    let (stack, dropped) = apply_regular_throw_slot(
-        enchanting_menu_stack(window, &state.inventory, menu_slot)?,
-        button,
-    )?;
-    set_enchanting_menu_stack(window, &mut state.inventory, menu_slot, stack).then_some(dropped)
-}
-
-fn apply_enchanting_pickup_click(
-    state: &mut InteractionState,
-    window: &mut EnchantingTableWindow,
-    menu_slot: usize,
-    button: i8,
-) -> bool {
-    if menu_slot >= ENCHANTING_MENU_SLOT_COUNT || !(button == 0 || button == 1) {
-        return false;
-    }
-    let Some(slot_stack) = enchanting_menu_stack(window, &state.inventory, menu_slot) else {
-        return false;
-    };
-    let cursor = state.carried_item.clone();
-    let max_stack = pickup_click_max_stack(
-        &state.item_facts,
-        &state.items,
-        &state.carried_item,
-        &slot_stack,
-    );
-    let can_place_cursor = can_place_in_enchanting_menu_slot(state, menu_slot, &cursor);
-    let Some(new_slot) = apply_regular_pickup_slot(
-        &mut state.carried_item,
-        slot_stack,
-        button,
-        max_stack,
-        can_place_cursor,
-    ) else {
-        return false;
-    };
-    set_enchanting_menu_stack(window, &mut state.inventory, menu_slot, new_slot)
-}
-
-fn merge_stack_into_enchanting_slot(
-    state: &InteractionState,
-    window: &mut EnchantingTableWindow,
-    menu_slot: usize,
-    stack: ItemStack,
-) -> ItemStack {
-    if stack.is_empty() || !can_place_in_enchanting_menu_slot(state, menu_slot, &stack) {
-        return stack;
-    }
-    let target = &mut window.inputs[menu_slot];
-    let max_stack = item_max_stack(&state.item_facts, &state.items, &stack);
-    if target.is_empty() {
-        let moved = stack.count.min(max_stack);
-        let mut moved_stack = stack.clone();
-        moved_stack.count = moved;
-        *target = moved_stack;
-        let mut remaining = stack;
-        remaining.count -= moved;
-        if remaining.count <= 0 {
-            ItemStack::EMPTY
-        } else {
-            remaining
-        }
-    } else if can_stack(target, &stack) && target.count < max_stack {
-        let moved = (max_stack - target.count).min(stack.count);
-        target.count += moved;
-        let mut remaining = stack;
-        remaining.count -= moved;
-        if remaining.count <= 0 {
-            ItemStack::EMPTY
-        } else {
-            remaining
-        }
-    } else {
-        stack
-    }
-}
-
-fn apply_enchanting_quick_move_click(
-    state: &mut InteractionState,
-    window: &mut EnchantingTableWindow,
-    menu_slot: usize,
-) -> bool {
-    if menu_slot >= ENCHANTING_MENU_SLOT_COUNT {
-        return false;
-    }
-    match menu_slot {
-        0..=1 => {
-            let original = window.inputs[menu_slot].clone();
-            if original.is_empty() {
-                return false;
-            }
-            let max_stack = item_max_stack(&state.item_facts, &state.items, &original);
-            let (remaining, _) = state.inventory.merge_stack(original.clone(), max_stack);
-            window.inputs[menu_slot] = remaining.clone();
-            remaining != original
-        }
-        _ => {
-            let Some(player_slot) = enchanting_player_slot(menu_slot) else {
-                return false;
-            };
-            let original = state.inventory.slots[player_slot].clone();
-            if original.is_empty() {
-                return false;
-            }
-            let target = if is_lapis_stack(&state.items, &original) {
-                Some(1)
-            } else if state
-                .items
-                .name_of(original.item_id)
-                .and_then(|id| supported_enchantment_for_item(&state.item_facts, id))
-                .is_some()
-            {
-                Some(0)
-            } else {
-                None
-            };
-            let Some(target) = target else {
-                return false;
-            };
-            state.inventory.slots[player_slot] = ItemStack::EMPTY;
-            let remaining =
-                merge_stack_into_enchanting_slot(state, window, target, original.clone());
-            state.inventory.slots[player_slot] = remaining;
-            state.inventory.slots[player_slot] != original
-        }
-    }
 }
 
 async fn open_enchanting_table_container<W>(
@@ -3293,51 +2840,33 @@ where
         write_enchanting_data(state, writer, &window, xp).await?;
         return Ok(window);
     }
-    let before_inventory = state.inventory.clone();
-    let before_carried_item = state.carried_item.clone();
-    let before_window = window.clone();
-    let mut dropped = None;
-    let changed = match classify_container_click(&packet) {
-        ContainerClickAction::Pickup { slot, button } => {
-            apply_enchanting_pickup_click(state, &mut window, slot, button)
+    let click = plan_enchanting_table_click(
+        &state.items,
+        &state.item_facts,
+        window.clone(),
+        &state.inventory,
+        &state.carried_item,
+        classify_container_click(&packet),
+        item_entity_type_id(&state.entity_types).is_some(),
+    );
+    if client_carried_item_matches(&packet.carried_item, &click.carried_item) {
+        let before_inputs = std::mem::replace(&mut window, click.window).inputs;
+        let before_inventory = std::mem::replace(&mut state.inventory, click.inventory);
+        let before_carried_item = std::mem::replace(&mut state.carried_item, click.carried_item);
+        if click.status == MenuClickStatus::Changed
+            && commit_enchanting_table_candidate(
+                state,
+                &mut window,
+                &before_inputs,
+                before_inventory,
+                before_carried_item,
+                click.dropped,
+                player_pose,
+            )
+            .await?
+        {
+            window.state_id = window.state_id.wrapping_add(1);
         }
-        ContainerClickAction::OutsidePickup { button } => {
-            dropped = apply_outside_pickup_click_with_carried(&mut state.carried_item, button);
-            dropped.is_some()
-        }
-        ContainerClickAction::QuickMove { slot } => {
-            apply_enchanting_quick_move_click(state, &mut window, slot)
-        }
-        ContainerClickAction::Swap { slot, button } => {
-            apply_enchanting_swap_click(state, &mut window, slot, button)
-        }
-        ContainerClickAction::Throw { slot, button } => {
-            if item_entity_type_id(&state.entity_types).is_some() {
-                dropped = apply_enchanting_throw_click(state, &mut window, slot, button);
-                dropped.is_some()
-            } else {
-                false
-            }
-        }
-        ContainerClickAction::QuickCraft(_) | ContainerClickAction::Unsupported => false,
-    };
-    if !client_carried_item_matches(&packet.carried_item, &state.carried_item) {
-        state.inventory = before_inventory;
-        state.carried_item = before_carried_item;
-        window = before_window;
-    } else if changed
-        && commit_enchanting_table_candidate(
-            state,
-            &mut window,
-            &before_window.inputs,
-            before_inventory,
-            before_carried_item,
-            dropped,
-            player_pose,
-        )
-        .await?
-    {
-        window.state_id = window.state_id.wrapping_add(1);
     }
     write_enchanting_content(state, writer, &window).await?;
     write_enchanting_data(state, writer, &window, xp).await?;
@@ -3668,7 +3197,7 @@ where
         };
         let mut positions = vec![position];
         if title == "Chest"
-            && let Some(neighbour) = block_placement::chest::paired_position(
+            && let Some(neighbour) = mc_simulation::block_placement::chest::paired_position(
                 &state.blocks,
                 |pos| state.world_read.get_cached_block(pos),
                 position,
@@ -3710,6 +3239,24 @@ where
         }
         if lid_opened {
             containers::dispatch_chest_lid_event(state, *position, 1);
+        }
+    }
+    // The native container commit requires its viewer fence before rolling;
+    // the client screen is still unopened until the committed contents exist.
+    match populate_pending_chest_loot(state, &mut window).await {
+        Ok(true) => {}
+        result => {
+            for position in &window.positions {
+                if state
+                    .sessions
+                    .unregister_chest_viewer_with_lid_transition(state.session_id, *position)
+                {
+                    containers::dispatch_chest_lid_event(state, *position, 0);
+                }
+            }
+            result?;
+            write_block_ack(writer, state.compression, sequence).await?;
+            return Ok(true);
         }
     }
     let (view, state_id) = load_chest_commit_snapshot(state, &window).await?;
@@ -3785,37 +3332,6 @@ where
     Ok(true)
 }
 
-async fn reject_unsupported_survival_station_use<W>(
-    state: &mut InteractionState,
-    writer: &mut W,
-    sequence: i32,
-    x: i32,
-    y: i32,
-    z: i32,
-) -> Result<bool, ConnectionError>
-where
-    W: AsyncWriteExt + Unpin,
-{
-    let position = mc_world::BlockPos { x, y, z };
-    let station = {
-        let clicked = state
-            .world_read
-            .get_cached_block(position)
-            .and_then(|block_state| unsupported_survival_station_for_state(state, block_state));
-        let Some(station) = clicked else {
-            return Ok(false);
-        };
-        station
-    };
-
-    debug!(
-        station,
-        x, y, z, "unsupported survival station use rejected safely"
-    );
-    write_block_ack(writer, state.compression, sequence).await?;
-    Ok(true)
-}
-
 async fn handle_place_recipe<W>(
     state: &mut InteractionState,
     writer: &mut W,
@@ -3830,7 +3346,7 @@ where
 {
     state.pending_break = None;
     state.pending_use = None;
-    clear_shield_use(state);
+    clear_shield_use(state).await?;
     if game_mode == GameMode::Survival && survival_state.is_dead() {
         debug!(
             recipe = packet.recipe_display_id,
@@ -3892,7 +3408,14 @@ where
         return Ok(());
     }
 
-    if let Some((inventory, outcome)) = craft_recipe(state, &recipe, packet.use_max_items) {
+    if let Some((inventory, outcome)) = craft_recipe(
+        &state.items,
+        &state.item_facts,
+        &state.tags,
+        &state.inventory,
+        &recipe,
+        packet.use_max_items,
+    ) {
         if commit_player_inventory_candidate(
             state,
             inventory,
@@ -3970,94 +3493,6 @@ where
     write_inventory_content_with_state_id(state, writer, state.inventory_state_id).await
 }
 
-fn commit_session_owner_script_player_inventory(
-    state: &mut InteractionState,
-    transaction: &mc_script::ScriptPlayerInventoryTransaction,
-) -> Result<(), mc_script::ScriptPlayerInventoryFailure> {
-    let items = Arc::clone(&state.items);
-    let item_facts = Arc::clone(&state.item_facts);
-    let player_persistence = Arc::clone(&state.player_persistence);
-    let mut persisted = crate::lock_policy::lock_authoritative_mutex(
-        &player_persistence,
-        "play.player_persistence",
-    );
-    apply_script_player_inventory_transaction(
-        transaction,
-        &mut state.inventory,
-        &mut persisted,
-        &items,
-        &item_facts,
-    )
-}
-
-fn commit_session_owner_loader_item_grant(
-    state: &mut InteractionState,
-    stack: &ItemStack,
-) -> Result<(), mc_script::ScriptPlayerInventoryFailure> {
-    let items = Arc::clone(&state.items);
-    let item_facts = Arc::clone(&state.item_facts);
-    let player_persistence = Arc::clone(&state.player_persistence);
-    let mut persisted = crate::lock_policy::lock_authoritative_mutex(
-        &player_persistence,
-        "play.player_persistence",
-    );
-    apply_loader_item_grant(
-        stack,
-        &mut state.inventory,
-        &mut persisted,
-        &items,
-        &item_facts,
-    )
-}
-
-async fn apply_script_player_inventory_command<W>(
-    mut state: Option<&mut InteractionState>,
-    writer: &mut W,
-    command: session::ScriptPlayerInventoryCommand,
-) -> Result<(), ConnectionError>
-where
-    W: AsyncWriteExt + Unpin,
-{
-    let result = match command.begin_commit() {
-        Some(_transaction_guard) => match state.as_deref_mut() {
-            Some(state) => {
-                commit_session_owner_script_player_inventory(state, command.transaction())
-            }
-            None => Err(mc_script::ScriptPlayerInventoryFailure::RuntimeUnavailable),
-        },
-        None => Err(mc_script::ScriptPlayerInventoryFailure::PlayerUnavailable),
-    };
-    let committed = result.is_ok();
-    command.complete(result);
-    if committed && let Some(state) = state {
-        write_inventory_content(state, writer).await?;
-    }
-    Ok(())
-}
-
-async fn apply_loader_item_grant_command<W>(
-    mut state: Option<&mut InteractionState>,
-    writer: &mut W,
-    command: session::LoaderItemGrantCommand,
-) -> Result<(), ConnectionError>
-where
-    W: AsyncWriteExt + Unpin,
-{
-    let result = match command.begin_commit() {
-        Some(_transaction_guard) => match state.as_deref_mut() {
-            Some(state) => commit_session_owner_loader_item_grant(state, command.stack()),
-            None => Err(mc_script::ScriptPlayerInventoryFailure::RuntimeUnavailable),
-        },
-        None => Err(mc_script::ScriptPlayerInventoryFailure::PlayerUnavailable),
-    };
-    let committed = result.is_ok();
-    command.complete(result);
-    if committed && let Some(state) = state {
-        write_inventory_content(state, writer).await?;
-    }
-    Ok(())
-}
-
 async fn publish_authoritative_inventory<W>(
     state: Option<&mut InteractionState>,
     writer: &mut W,
@@ -4104,17 +3539,6 @@ where
         state.compression,
     )
     .await
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ContainerClickAction {
-    Pickup { slot: usize, button: i8 },
-    OutsidePickup { button: i8 },
-    QuickMove { slot: usize },
-    Swap { slot: usize, button: i8 },
-    Throw { slot: usize, button: i8 },
-    QuickCraft(QuickCraftClick),
-    Unsupported,
 }
 
 #[cfg(test)]
@@ -4220,7 +3644,7 @@ fn container_drop_plans(
         return Some(Vec::new());
     }
     let entity_type_id = item_entity_type_id(&state.entity_types)?;
-    let stacks = inventory::pack_drop_stacks(
+    let stacks = mc_simulation::inventory::pack_drop_stacks(
         &state.item_facts,
         &state.items,
         dropped,
@@ -4320,6 +3744,7 @@ async fn commit_crafting_table_candidate(
             crafting_table_input,
             enchanting_table_input: _,
             merchant_input: _,
+            reason: _,
         } => {
             state.inventory = inventory;
             state.carried_item = carried_item;
@@ -4406,6 +3831,7 @@ async fn commit_stonecutter_candidate(
             crafting_table_input,
             enchanting_table_input: _,
             merchant_input: _,
+            reason: _,
         } => {
             state.inventory = inventory;
             state.carried_item = carried_item;
@@ -4493,6 +3919,7 @@ async fn commit_enchanting_table_candidate(
             crafting_table_input: _,
             enchanting_table_input,
             merchant_input: _,
+            reason: _,
         } => {
             state.inventory = inventory;
             state.carried_item = carried_item;
@@ -4551,6 +3978,7 @@ async fn commit_player_inventory_candidate(
             crafting_table_input: _,
             enchanting_table_input: _,
             merchant_input: _,
+            reason: _,
         } => {
             state.inventory = inventory;
             state.carried_item = carried_item;
@@ -4762,6 +4190,7 @@ async fn settle_player_inventory_returns(
                 crafting_table_input,
                 enchanting_table_input,
                 merchant_input,
+                reason: _,
             }) => {
                 state.inventory = inventory;
                 state.carried_item = carried_item;
@@ -4897,7 +4326,7 @@ fn commit_resident_furnace_tick_wave(
                             .then_some((plan.block_state, plan.after_block_state)),
                     ));
                     #[cfg(test)]
-                    _sessions.pause_after_server_furnace_commit_for_test();
+                    _sessions.pause_for_test(TestPause::ServerFurnaceCommit);
                 }
                 mc_world::ResidentFurnaceTickCommitResult::Missing => {}
                 mc_world::ResidentFurnaceTickCommitResult::Stale => {
@@ -5054,7 +4483,7 @@ async fn run_furnace_ticks_owned(
             if let Some(update) = update {
                 updates.push(update);
                 #[cfg(test)]
-                sessions.pause_after_server_furnace_commit_for_test();
+                sessions.pause_for_test(TestPause::ServerFurnaceCommit);
             }
         }
         updates
@@ -5234,7 +4663,7 @@ where
                 } else {
                     state.inventory = authoritative.inventory;
                     state.carried_item = authoritative.carried_item;
-                    refresh_shield_use_state(state);
+                    refresh_shield_use_state(state).await?;
                 }
                 if state.inventory.slots != client_view {
                     // The client still displays the stale session snapshot:
@@ -5247,13 +4676,13 @@ where
         },
         Ok(None) => {
             state.inventory = *expected_inventory;
-            refresh_shield_use_state(state);
+            refresh_shield_use_state(state).await?;
             debug!("player survival transition rejected because owner state changed");
             return Ok(PlayerSurvivalUpdateOutcome::Rejected);
         }
         Err(error) => {
             state.inventory = *expected_inventory;
-            refresh_shield_use_state(state);
+            refresh_shield_use_state(state).await?;
             debug!(?error, "simulation player survival request rejected");
             return Ok(PlayerSurvivalUpdateOutcome::Rejected);
         }
@@ -5289,14 +4718,20 @@ where
     if committed.died {
         state.pending_break = None;
         state.pending_use = None;
-        clear_shield_use(state);
+        // The owner transaction removed the active shield atomically with death.
+        drop_shield_use_projection(state);
         // The registry commit learned died=true: hide the corpse from every
         // observer exactly like the PvP publication path does.
         dispatch_visibility_commands(state.sessions.player_death_visibility(state.session_id));
     }
     let respawned = was_dead && !committed.survival.is_dead();
     if survival_changed && write_health {
-        write_packet(writer, &survival_state.as_packet(), state.compression).await?;
+        write_packet(
+            writer,
+            &survival_health_packet(survival_state),
+            state.compression,
+        )
+        .await?;
     }
     if committed.died {
         write_inventory_content(state, writer).await?;
@@ -5304,7 +4739,7 @@ where
         write_inventory_slot_updates(state, writer, changed_slots).await?;
     }
     if xp_changed {
-        write_packet(writer, &xp_state.as_packet(), state.compression).await?;
+        write_packet(writer, &xp_packet(xp_state), state.compression).await?;
     }
     if respawned {
         // Restore the respawned player to its viewers through the regular
@@ -5934,7 +5369,7 @@ fn apply_furnace_click_for_test(
 struct ContainerClickContext<'a> {
     game_mode: GameMode,
     survival_state: SurvivalState,
-    xp_state: &'a XpState,
+    xp_state: &'a mut XpState,
     player_pose: PlayerPose,
     script_events: Option<&'a ScriptGameplayEventPublisher>,
     scripts: Option<&'a ScriptEventSink>,
@@ -5948,6 +5383,11 @@ fn persistent_container_claim_allowed(
 ) -> bool {
     match active {
         ActiveContainer::Furnace(window) => block_allowed(window.position),
+        ActiveContainer::Station(window)
+            if window.kind == mc_simulation::stations::StationKind::Brewing =>
+        {
+            block_allowed(window.position)
+        }
         ActiveContainer::Chest(window) => window
             .positions
             .iter()
@@ -5977,7 +5417,7 @@ where
     } = context;
     state.pending_break = None;
     state.pending_use = None;
-    clear_shield_use(state);
+    clear_shield_use(state).await?;
     if game_mode == GameMode::Spectator
         || matches!(game_mode, GameMode::Survival | GameMode::Adventure) && survival_state.is_dead()
     {
@@ -5989,6 +5429,14 @@ where
                     let (furnace, _) = load_furnace_commit_snapshot(state, window.position).await?;
                     write_furnace_content(state, writer, &window, &furnace).await?;
                     state.active_container = Some(ActiveContainer::Furnace(window));
+                }
+                ActiveContainer::Station(mut window) => {
+                    if window.kind == mc_simulation::stations::StationKind::Brewing {
+                        containers::stations::refresh_brewing(state, writer, &mut window).await?;
+                    } else {
+                        containers::stations::write_content(state, writer, &window).await?;
+                    }
+                    state.active_container = Some(ActiveContainer::Station(window));
                 }
                 ActiveContainer::CraftingTable(window) => {
                     write_crafting_content(state, writer, &window).await?;
@@ -6022,7 +5470,7 @@ where
     }
 
     if packet.container_id != 0 {
-        let Some(active) = state.active_container.take() else {
+        let Some(mut active) = state.active_container.take() else {
             write_inventory_content_resync(state, writer).await?;
             return Ok(());
         };
@@ -6032,7 +5480,7 @@ where
             })
         });
         if claim_rejected {
-            match &active {
+            match &mut active {
                 ActiveContainer::Furnace(window) => {
                     let (furnace, _) = load_furnace_commit_snapshot(state, window.position).await?;
                     write_furnace_content(state, writer, window, &furnace).await?;
@@ -6041,12 +5489,28 @@ where
                     let view = load_chest_view(state, window).await?;
                     write_chest_content(state, writer, window, &view).await?;
                 }
+                ActiveContainer::Station(window) => {
+                    containers::stations::refresh_brewing(state, writer, window).await?;
+                }
                 _ => unreachable!("only persistent world containers can be claim-rejected"),
             }
             state.active_container = Some(active);
             return Ok(());
         }
         match active {
+            ActiveContainer::Station(window) if window.container_id == packet.container_id => {
+                let window = containers::stations::handle_click(
+                    state,
+                    writer,
+                    *window,
+                    player_pose,
+                    packet,
+                    game_mode,
+                    xp_state,
+                )
+                .await?;
+                state.active_container = Some(ActiveContainer::Station(Box::new(window)));
+            }
             ActiveContainer::CraftingTable(crafting)
                 if crafting.container_id == packet.container_id =>
             {
@@ -6160,102 +5624,30 @@ where
         );
     }
 
-    let mut inventory = state.inventory.clone();
-    let mut carried_item = state.carried_item.clone();
-    let mut dropped = None;
-    let mut overflow_remainders = Vec::new();
-    let action = classify_container_click(&packet);
-    if !matches!(action, ContainerClickAction::QuickCraft(_)) {
-        state.inventory_quickcraft.reset();
+    let click = plan_inventory_click(
+        &state.items,
+        &state.item_facts,
+        &state.tags,
+        &state.recipes,
+        &state.inventory,
+        &state.carried_item,
+        &mut state.inventory_quickcraft,
+        classify_container_click(&packet),
+        item_entity_type_id(&state.entity_types).is_some(),
+    );
+    if click.status == MenuClickStatus::Pending {
+        if !client_carried_item_matches(&packet.carried_item, &click.carried_item) {
+            state.inventory_quickcraft.reset();
+            write_inventory_content_resync(state, writer).await?;
+        }
+        return Ok(());
     }
-    let crafted_result = match &action {
-        ContainerClickAction::Pickup { slot: 0, .. }
-        | ContainerClickAction::QuickMove { slot: 0 } => Some(state.inventory.slots[0].clone()),
-        _ => None,
-    };
-    let quick_moved_result = matches!(&action, ContainerClickAction::QuickMove { slot: 0 });
-    let changed = match action {
-        ContainerClickAction::Pickup { slot, button } => {
-            let (changed, discarded) = inventory.apply_crafting_pickup_click(
-                &state.items,
-                &state.item_facts,
-                &state.tags,
-                &state.recipes,
-                &mut carried_item,
-                slot,
-                button,
-            );
-            overflow_remainders = discarded;
-            changed
-        }
-        ContainerClickAction::OutsidePickup { button } => {
-            dropped = apply_outside_pickup_click_with_carried(&mut carried_item, button);
-            dropped.is_some()
-        }
-        ContainerClickAction::QuickMove { slot } => {
-            let (changed, discarded) = inventory.apply_crafting_quick_move_click(
-                &state.items,
-                &state.item_facts,
-                &state.tags,
-                &state.recipes,
-                slot,
-            );
-            overflow_remainders = discarded;
-            changed
-        }
-        ContainerClickAction::Swap { slot, button } => inventory.apply_crafting_swap_click(
-            &state.items,
-            &state.item_facts,
-            &state.tags,
-            &state.recipes,
-            slot,
-            button,
-        ),
-        ContainerClickAction::Throw { slot, button } => {
-            if item_entity_type_id(&state.entity_types).is_some() {
-                dropped = inventory.apply_crafting_throw_click(
-                    &state.items,
-                    &state.item_facts,
-                    &state.tags,
-                    &state.recipes,
-                    slot,
-                    button,
-                );
-                dropped.is_some()
-            } else {
-                false
-            }
-        }
-        ContainerClickAction::QuickCraft(click) => {
-            match inventory.apply_crafting_quickcraft_click(
-                &state.items,
-                &state.item_facts,
-                &mut carried_item,
-                &mut state.inventory_quickcraft,
-                click,
-                &state.tags,
-                &state.recipes,
-            ) {
-                QuickCraftOutcome::Pending => {
-                    if !client_carried_item_matches(&packet.carried_item, &carried_item) {
-                        state.inventory_quickcraft.reset();
-                        write_inventory_content_resync(state, writer).await?;
-                    }
-                    return Ok(());
-                }
-                QuickCraftOutcome::Changed => true,
-                QuickCraftOutcome::Rejected => false,
-            }
-        }
-        ContainerClickAction::Unsupported => false,
-    };
-    if !client_carried_item_matches(&packet.carried_item, &carried_item) {
+    if !client_carried_item_matches(&packet.carried_item, &click.carried_item) {
         debug!("container click resynced mismatched carried item");
         write_inventory_content_resync(state, writer).await?;
         return Ok(());
     }
-
-    if !changed {
+    if click.status == MenuClickStatus::Unchanged {
         debug!(
             slot = packet.slot_num,
             button = packet.button_num,
@@ -6265,18 +5657,12 @@ where
         write_inventory_content_resync(state, writer).await?;
         return Ok(());
     }
-    let crafted = crafted_result.as_ref().and_then(|result| {
-        if quick_moved_result {
-            crafted_item_from_inventory_delta(result, &state.inventory, &inventory)
-        } else {
-            CraftedItem::from_single_result(result)
-        }
-    });
+    let crafted = click.crafted;
     if commit_player_inventory_candidate(
         state,
-        inventory,
-        carried_item,
-        dropped.into_iter().chain(overflow_remainders).collect(),
+        click.inventory,
+        click.carried_item,
+        click.drops,
         player_pose,
     )
     .await?
@@ -6300,30 +5686,6 @@ where
     }
 }
 
-fn crafted_item_from_inventory_delta(
-    result: &ItemStack,
-    before: &PlayerInventory,
-    after: &PlayerInventory,
-) -> Option<CraftedItem> {
-    let matching_count = |inventory: &PlayerInventory| {
-        inventory.slots[9..=44]
-            .iter()
-            .filter(|stack| can_stack(stack, result))
-            .map(|stack| u64::try_from(stack.count).unwrap_or_default())
-            .sum::<u64>()
-    };
-    let added = matching_count(after).checked_sub(matching_count(before))?;
-    let result_count = u64::try_from(result.count).ok()?;
-    if result_count == 0 || added == 0 || !added.is_multiple_of(result_count) {
-        return None;
-    }
-    Some(CraftedItem {
-        item_id: result.item_id,
-        count: added,
-        craft_count: u32::try_from(added / result_count).ok()?,
-    })
-}
-
 async fn handle_container_button_click<W>(
     state: &mut InteractionState,
     writer: &mut W,
@@ -6338,12 +5700,25 @@ where
 {
     state.pending_break = None;
     state.pending_use = None;
-    clear_shield_use(state);
+    clear_shield_use(state).await?;
 
     let Some(active) = state.active_container.take() else {
         return Ok(());
     };
     let mut window = match active {
+        ActiveContainer::Station(window) => {
+            let window = containers::stations::button(
+                state,
+                writer,
+                *window,
+                packet.container_id,
+                packet.button_id,
+                game_mode,
+            )
+            .await?;
+            state.active_container = Some(ActiveContainer::Station(Box::new(window)));
+            return Ok(());
+        }
         ActiveContainer::Stonecutter(mut window) => {
             if window.container_id == packet.container_id {
                 let changed = usize::try_from(packet.button_id)
@@ -6391,45 +5766,42 @@ where
         return Ok(());
     }
 
-    if game_mode == GameMode::Survival && !survival_state.is_dead() {
-        let bookshelf_count = enchanting_bookshelf_count(state, window.position);
-        let Some(offer) = enchanting_offer(bookshelf_count, packet.button_id) else {
-            write_enchanting_content(state, writer, &window).await?;
-            write_enchanting_data(state, writer, &window, xp_state).await?;
-            state.active_container = Some(ActiveContainer::EnchantingTable(window));
-            return Ok(());
-        };
-        let mut updated_inputs = window.inputs.clone();
-        let mut updated_xp = xp_state.clone();
-        if enchant_item_candidate(
-            &state.items,
-            &state.item_facts,
-            &mut updated_inputs,
-            &mut updated_xp,
-            offer,
-        ) {
-            let expected_inventory = Box::new(state.inventory.clone());
-            if commit_player_survival_update(
-                state,
-                writer,
-                survival_state,
-                xp_state,
-                expected_inventory,
-                *survival_state,
-                updated_xp,
-                Some(EnchantingTableInputPlan {
-                    expected: enchanting_table_input_projection(&window.inputs),
-                    updated: enchanting_table_input_projection(&updated_inputs),
-                }),
-                None,
-                false,
-                player_pose,
-            )
-            .await?
-            {
-                window.inputs = updated_inputs;
-                window.state_id = window.state_id.wrapping_add(1);
-            }
+    let can_enchant = game_mode == GameMode::Survival && !survival_state.is_dead();
+    let bookshelf_count = if can_enchant {
+        enchanting_bookshelf_count(state, window.position)
+    } else {
+        0
+    };
+    if let Some((updated_inputs, updated_xp)) = plan_enchant_button(
+        &state.items,
+        &state.item_facts,
+        &window,
+        xp_state,
+        can_enchant,
+        bookshelf_count,
+        packet.button_id,
+    ) {
+        let expected_inventory = Box::new(state.inventory.clone());
+        if commit_player_survival_update(
+            state,
+            writer,
+            survival_state,
+            xp_state,
+            expected_inventory,
+            *survival_state,
+            updated_xp,
+            Some(EnchantingTableInputPlan {
+                expected: enchanting_table_input_projection(&window.inputs),
+                updated: enchanting_table_input_projection(&updated_inputs),
+            }),
+            None,
+            false,
+            player_pose,
+        )
+        .await?
+        {
+            window.inputs = updated_inputs;
+            window.state_id = window.state_id.wrapping_add(1);
         }
     }
 
@@ -6451,39 +5823,11 @@ async fn pickup_candidate_entities<W>(
 where
     W: AsyncWriteExt + Unpin,
 {
-    pickup_item_candidates(
-        state,
-        writer,
-        &candidates,
-        script_events,
-        player_pose,
-        game_mode,
-    )
-    .await?;
-    pickup_arrow_candidates(
-        state,
-        writer,
-        &candidates,
-        script_events,
-        player_pose,
-        game_mode,
-    )
-    .await?;
-    pickup_experience_candidates(state, writer, xp_state, &candidates).await
-}
+    use simulation::{PickupCandidate, PickupCredit};
 
-async fn pickup_item_candidates<W>(
-    state: &mut InteractionState,
-    writer: &mut W,
-    candidates: &[ServerEntitySnapshot],
-    script_events: Option<&ScriptGameplayEventPublisher>,
-    player_pose: PlayerPose,
-    game_mode: GameMode,
-) -> Result<(), ConnectionError>
-where
-    W: AsyncWriteExt + Unpin,
-{
-    for entity in candidates {
+    // Preserve category order and the snapshot order within each category.
+    let mut requests = Vec::new();
+    for entity in &candidates {
         let Some(ref stack) = entity.item_stack else {
             continue;
         };
@@ -6492,166 +5836,162 @@ where
             count: stack.count,
             damage: stack.damage,
             enchantments: stack.enchantments.clone(),
-            custom_name: stack.custom_name.as_deref().cloned(),
+            custom_name: stack
+                .custom_name
+                .as_deref()
+                .map(|name| name.as_str().into()),
             item_model: stack.item_model.as_deref().cloned().map(Arc::new),
             stew_effects: stack.stew_effects.clone(),
+            components: stack.components.clone(),
         };
         let max_stack = item_max_stack(&state.item_facts, &state.items, &probe);
-        let credited = match state
-            .simulation
-            .pickup_item_into_inventory(
-                entity.id,
-                stack.item_id,
-                stack.damage,
-                stack.enchantments.clone(),
-                max_stack,
-            )
-            .await
-        {
-            Ok(Some(credited)) => credited,
-            Ok(None) => continue,
-            Err(error) => {
-                debug!(
-                    ?error,
-                    entity_id = entity.id.0,
-                    "simulation item pickup request rejected"
-                );
+        requests.push(PickupCandidate::Item {
+            entity_id: entity.id,
+            expected_item_id: stack.item_id,
+            expected_damage: stack.damage,
+            expected_enchantments: probe.enchantments,
+            max_stack,
+        });
+    }
+
+    for entity in candidates.iter().filter(|entity| {
+        matches!(
+            entity.type_name.as_str(),
+            "minecraft:arrow" | "minecraft:spectral_arrow"
+        )
+    }) {
+        let arrow = if let Some(metadata) = &entity.native_projectile {
+            let Some(stack) = &metadata.stack else {
                 continue;
-            }
+            };
+            wire_entities::wire_entity_item_stack(stack)
+        } else if let Some(stack) = &entity.projectile_item_stack {
+            wire_entities::wire_entity_item_stack(stack)
+        } else {
+            let name = Identifier::parse(&entity.type_name).expect("canonical arrow carrier");
+            let Some(id) = state.items.id_of(&name) else {
+                continue;
+            };
+            ItemStack::new(id, 1)
         };
-        debug!(
-            entity_id = entity.id.0,
-            item_id = credited.credited.item_id,
-            count = credited.credited.count,
-            "simulation credited item pickup"
-        );
-        if let Some(script_events) = script_events {
-            match u64::try_from(credited.credited.count) {
-                Ok(count) if count > 0 => {
+        let max_stack = item_max_stack(&state.item_facts, &state.items, &arrow);
+        requests.push(PickupCandidate::Arrow {
+            entity_id: entity.id,
+            arrow_item_id: arrow.item_id,
+            max_stack,
+        });
+    }
+    requests.extend(
+        candidates
+            .iter()
+            .filter(|entity| entity.experience_value.is_some())
+            .map(|entity| PickupCandidate::Experience {
+                entity_id: entity.id,
+            }),
+    );
+    if requests.is_empty() {
+        return Ok(());
+    }
+    let credits = match state.simulation.pickup_candidates(requests).await {
+        Ok(credits) => credits,
+        Err(error) => {
+            debug!(?error, "simulation pickup batch request rejected");
+            return Ok(());
+        }
+    };
+    let mut xp_changed = false;
+    // Every credit is already committed; a wire error must not abandon later script events.
+    let mut wire_error = None;
+    for credit in credits {
+        match credit {
+            PickupCredit::Item {
+                entity_id,
+                credited,
+            } => {
+                debug!(
+                    entity_id = entity_id.0,
+                    item_id = credited.credited.item_id,
+                    count = credited.credited.count,
+                    "simulation credited item pickup"
+                );
+                if let Some(script_events) = script_events {
+                    match u64::try_from(credited.credited.count) {
+                        Ok(count) if count > 0 => {
+                            script_events
+                                .publish_item_picked_up(
+                                    &state.items,
+                                    credited.credited.item_id,
+                                    count,
+                                    ScriptItemPickupSource::ItemEntity,
+                                    player_pose,
+                                    game_mode,
+                                )
+                                .await;
+                        }
+                        _ => warn!(
+                            entity_id = entity_id.0,
+                            count = credited.credited.count,
+                            "committed item pickup has invalid credited count"
+                        ),
+                    }
+                }
+                state.inventory = credited.inventory;
+                if wire_error.is_none()
+                    && let Err(error) =
+                        write_inventory_slot_updates(state, writer, credited.changed_slots).await
+                {
+                    wire_error = Some(error);
+                }
+            }
+            PickupCredit::Arrow {
+                entity_id,
+                item_id,
+                credited,
+            } => {
+                debug!(
+                    entity_id = entity_id.0,
+                    item_id, "simulation credited arrow pickup"
+                );
+                if let Some(script_events) = script_events {
                     script_events
                         .publish_item_picked_up(
                             &state.items,
-                            credited.credited.item_id,
-                            count,
-                            ScriptItemPickupSource::ItemEntity,
+                            item_id,
+                            1,
+                            ScriptItemPickupSource::Arrow,
                             player_pose,
                             game_mode,
                         )
                         .await;
                 }
-                _ => warn!(
-                    entity_id = entity.id.0,
-                    count = credited.credited.count,
-                    "committed item pickup has invalid credited count"
-                ),
+                state.inventory = credited.inventory;
+                if wire_error.is_none()
+                    && let Err(error) =
+                        write_inventory_slot_updates(state, writer, credited.changed_slots).await
+                {
+                    wire_error = Some(error);
+                }
+            }
+            PickupCredit::Experience {
+                entity_id,
+                credited,
+            } => {
+                debug!(
+                    entity_id = entity_id.0,
+                    value = credited.value,
+                    total = credited.xp.total,
+                    "simulation credited experience pickup"
+                );
+                *xp_state = credited.xp;
+                xp_changed = true;
             }
         }
-        state.inventory = credited.inventory;
-        write_inventory_slot_updates(state, writer, credited.changed_slots).await?;
     }
-    Ok(())
-}
-
-async fn pickup_arrow_candidates<W>(
-    state: &mut InteractionState,
-    writer: &mut W,
-    candidates: &[ServerEntitySnapshot],
-    script_events: Option<&ScriptGameplayEventPublisher>,
-    player_pose: PlayerPose,
-    game_mode: GameMode,
-) -> Result<(), ConnectionError>
-where
-    W: AsyncWriteExt + Unpin,
-{
-    let arrow = Identifier::parse("minecraft:arrow").expect("static identifier");
-    let Some(item_id) = state.items.id_of(&arrow) else {
-        return Ok(());
-    };
-    for entity in candidates
-        .iter()
-        .filter(|entity| entity.type_name == "minecraft:arrow")
-    {
-        let arrow = ItemStack::new(item_id, 1);
-        let max_stack = item_max_stack(&state.item_facts, &state.items, &arrow);
-        let credited = match state
-            .simulation
-            .pickup_arrow_into_inventory(entity.id, item_id, max_stack)
-            .await
-        {
-            Ok(Some(credited)) => credited,
-            Ok(None) => continue,
-            Err(error) => {
-                debug!(
-                    ?error,
-                    entity_id = entity.id.0,
-                    "simulation arrow pickup request rejected"
-                );
-                continue;
-            }
-        };
-        debug!(
-            entity_id = entity.id.0,
-            item_id, "simulation credited arrow pickup"
-        );
-        if let Some(script_events) = script_events {
-            script_events
-                .publish_item_picked_up(
-                    &state.items,
-                    item_id,
-                    1,
-                    ScriptItemPickupSource::Arrow,
-                    player_pose,
-                    game_mode,
-                )
-                .await;
-        }
-        state.inventory = credited.inventory;
-        write_inventory_slot_updates(state, writer, credited.changed_slots).await?;
+    if let Some(error) = wire_error {
+        return Err(error);
     }
-    Ok(())
-}
-
-async fn pickup_experience_candidates<W>(
-    state: &mut InteractionState,
-    writer: &mut W,
-    xp_state: &mut XpState,
-    candidates: &[ServerEntitySnapshot],
-) -> Result<(), ConnectionError>
-where
-    W: AsyncWriteExt + Unpin,
-{
-    let mut changed = false;
-    for entity in candidates
-        .iter()
-        .filter(|entity| entity.experience_value.is_some())
-    {
-        let credited = match state
-            .simulation
-            .pickup_experience_into_player(entity.id)
-            .await
-        {
-            Ok(Some(credited)) => credited,
-            Ok(None) => continue,
-            Err(error) => {
-                debug!(
-                    ?error,
-                    entity_id = entity.id.0,
-                    "simulation experience pickup request rejected"
-                );
-                continue;
-            }
-        };
-        debug!(
-            entity_id = entity.id.0,
-            value = credited.value,
-            total = credited.xp.total,
-            "simulation credited experience pickup"
-        );
-        *xp_state = credited.xp;
-        changed = true;
-    }
-    if changed {
-        write_packet(writer, &xp_state.as_packet(), state.compression).await?;
+    if xp_changed {
+        write_packet(writer, &xp_packet(xp_state), state.compression).await?;
     }
     Ok(())
 }
@@ -6669,10 +6009,11 @@ where
     let candidates = state
         .sessions
         .nearby_item_entities(position, ENTITY_PICKUP_RADIUS);
-    pickup_item_candidates(
+    pickup_candidate_entities(
         state,
         writer,
-        &candidates,
+        &mut XpState::default(),
+        candidates,
         None,
         player_pose,
         GameMode::Survival,
@@ -6693,10 +6034,11 @@ where
     let candidates = state
         .sessions
         .nearby_grounded_arrows(position, ENTITY_PICKUP_RADIUS);
-    pickup_arrow_candidates(
+    pickup_candidate_entities(
         state,
         writer,
-        &candidates,
+        &mut XpState::default(),
+        candidates,
         None,
         player_pose,
         GameMode::Survival,
@@ -6718,7 +6060,16 @@ where
     let candidates = state
         .sessions
         .nearby_experience_entities(position, ENTITY_PICKUP_RADIUS);
-    pickup_experience_candidates(state, writer, xp_state, &candidates).await
+    pickup_candidate_entities(
+        state,
+        writer,
+        xp_state,
+        candidates,
+        None,
+        player_pose,
+        GameMode::Survival,
+    )
+    .await
 }
 
 async fn handle_interact<W>(
@@ -6788,6 +6139,9 @@ async fn handle_vanilla_interact<W>(
 where
     W: AsyncWriteExt + Unpin,
 {
+    if handle_animal_special_interact(state, writer, &packet).await? {
+        return Ok(());
+    }
     let held_slot = hand_inventory_slot(state, packet.hand);
     let expected_held = state.inventory.slots[held_slot].clone();
     let held_is_shears = state
@@ -6907,12 +6261,12 @@ fn sheep_shear_plan(
     if expected_held.item_id != shears_item_id {
         return None;
     }
-    let shears_max_damage = state
-        .item_facts
-        .get(&shears)
-        .and_then(|facts| facts.max_damage)
-        .and_then(|value| i32::try_from(value).ok())
-        .unwrap_or(238);
+    let shears_max_damage = mc_data::item_semantics_26_1_2::max_damage_for_stack(
+        &state.item_facts,
+        &state.items,
+        &expected_held,
+    )
+    .unwrap_or(238);
     let item_entity_type_id = item_entity_type_id(&state.entity_types)?;
     let mut wool_item_ids = [0; 16];
     for color in mc_entity::SheepColor::ALL {
@@ -7024,6 +6378,42 @@ where
 
     let entity_id = EntityId(packet.entity_id);
     let current_tick = state.sessions.simulation_tick();
+    if let Some(profile) = state
+        .item_facts
+        .has_physical_profiles()
+        .then(|| state.item_facts.custom_for_stack(&held, &state.items))
+        .flatten()
+        .and_then(|definition| definition.facts.physical_profile.as_deref())
+    {
+        let Some(attack) = profile.attacks.first() else {
+            return Ok(());
+        };
+        let damage = attack.base_damage_hp;
+        let Some(attacker_costs) =
+            player_attack_cost_plan(state, game_mode, *survival_state, xp_state, player_pose)
+        else {
+            return Ok(());
+        };
+        // The packet starts the native phase; it never directly applies profile
+        // damage, consumes ammunition, or wears the weapon.
+        if matches!(
+            state
+                .simulation
+                .player_attack_server_entity_with_costs(
+                    entity_id,
+                    damage,
+                    attacker_costs,
+                    current_tick,
+                )
+                .await,
+            Ok(PlayerAttackResult::AcceptedNoDamage)
+        ) {
+            dispatch_visibility_commands(
+                state.sessions.broadcast_player_animation(state.session_id),
+            );
+        }
+        return Ok(());
+    }
     let Some(damage) = begin_player_attack_attempt(
         &state.item_facts,
         &state.items,
@@ -7187,9 +6577,14 @@ where
         .map(|(slot, (_, after))| (slot, after.clone()))
         .collect::<Vec<_>>();
     state.inventory = committed.inventory;
-    refresh_shield_use_state(state);
+    refresh_shield_use_state(state).await?;
     if old_survival != *survival_state {
-        write_packet(writer, &survival_state.as_packet(), state.compression).await?;
+        write_packet(
+            writer,
+            &survival_health_packet(survival_state),
+            state.compression,
+        )
+        .await?;
     }
     if !changed_slots.is_empty() {
         write_inventory_slot_updates(state, writer, changed_slots).await?;
@@ -7204,14 +6599,14 @@ fn player_attack_cost_plan(
     xp: &XpState,
     player_pose: PlayerPose,
 ) -> Option<PlayerSurvivalPlan> {
-    let mut updated_survival = survival;
-    let mut updated_inventory = state.inventory.clone();
-    if game_mode == GameMode::Survival {
-        let held = updated_inventory.held_mut(state.selected_hotbar_slot())?;
-        updated_survival
-            .add_exhaustion(mc_entity::player_survival_26_1_2::ENTITY_ATTACK_EXHAUSTION);
-        damage_held_weapon_stack(&state.items, &state.item_facts, held);
-    }
+    let (updated_survival, updated_inventory) = plan_player_attack_costs(
+        &state.items,
+        &state.item_facts,
+        game_mode,
+        survival,
+        &state.inventory,
+        state.selected_hotbar_slot(),
+    )?;
     Some(PlayerSurvivalPlan {
         expected_survival: survival,
         updated_survival,
@@ -7317,8 +6712,46 @@ where
             | PlayerActionKind::StopDestroyBlock
     );
     if matches!(action.action, PlayerActionKind::ReleaseUseItem) {
-        clear_shield_use(state);
+        if state.item_facts.has_physical_profiles() {
+            state
+                .sessions
+                .cancel_player_physical_attack(state.session_id);
+        }
+        clear_shield_use(state).await?;
         let current_tick = state.sessions.simulation_tick();
+        if matches!(game_mode, GameMode::Survival | GameMode::Creative)
+            && let Some(pending) = state.pending_use
+            && matches!(pending.kind, UseKind::Trident)
+        {
+            state.pending_use = None;
+            if pending_use_matches(state, &pending)
+                && current_tick.saturating_sub(pending.started_tick) >= 10
+                && !survival_state.is_dead()
+            {
+                let riptide = state.inventory.slots[pending.held_slot]
+                    .enchantments
+                    .iter()
+                    .any(|enchantment| {
+                        enchantment.id.as_str() == "minecraft:riptide" && enchantment.level > 0
+                    });
+                let weapon_action = if riptide {
+                    session::item_weapons::ItemWeaponAction::TridentRiptide
+                } else {
+                    session::item_weapons::ItemWeaponAction::TridentThrow
+                };
+                commit_item_weapon(
+                    state,
+                    writer,
+                    game_mode,
+                    pending.held_slot,
+                    weapon_action,
+                    player_pose,
+                    2.5,
+                )
+                .await?;
+            }
+            return write_block_ack(writer, state.compression, action.sequence).await;
+        }
         if game_mode == GameMode::Survival
             && let Some(pending) = state.pending_use.take()
             && matches!(pending.kind, UseKind::Bow)
@@ -7375,9 +6808,14 @@ where
         action.action,
         PlayerActionKind::DropItem | PlayerActionKind::DropAllItems
     ) {
+        if state.item_facts.has_physical_profiles() {
+            state
+                .sessions
+                .cancel_player_physical_attack(state.session_id);
+        }
         state.pending_break = None;
         state.pending_use = None;
-        clear_shield_use(state);
+        clear_shield_use(state).await?;
         if game_mode == GameMode::Survival && survival_state.is_dead() {
             return write_block_ack(writer, state.compression, action.sequence).await;
         }
@@ -7423,12 +6861,17 @@ where
         return write_block_ack(writer, state.compression, action.sequence).await;
     }
     if matches!(action.action, PlayerActionKind::SwapItemWithOffhand) {
+        if state.item_facts.has_physical_profiles() {
+            state
+                .sessions
+                .cancel_player_physical_attack(state.session_id);
+        }
         state.pending_break = None;
         if game_mode == GameMode::Spectator {
             return write_block_ack(writer, state.compression, action.sequence).await;
         }
         state.pending_use = None;
-        clear_shield_use(state);
+        clear_shield_use(state).await?;
 
         let main_hand_slot = PlayerInventory::HOTBAR_BASE + state.selected_hotbar_slot() as usize;
         let mut inventory = state.inventory.clone();
@@ -7494,10 +6937,17 @@ fn arrow_spawn_position(pose: PlayerPose) -> Vec3 {
 }
 
 fn player_look_direction(pose: PlayerPose) -> Vec3 {
-    let yaw = f64::from(pose.yaw).to_radians();
-    let pitch = f64::from(pose.pitch).to_radians();
-    let pitch_cos = pitch.cos();
-    Vec3::new(-yaw.sin() * pitch_cos, -pitch.sin(), yaw.cos() * pitch_cos)
+    let yaw = f64::from(-pose.yaw * mc_physics::mth::DEG_TO_RAD);
+    let pitch = f64::from(pose.pitch * mc_physics::mth::DEG_TO_RAD);
+    let yaw_cos = mc_physics::mth::cos(yaw);
+    let yaw_sin = mc_physics::mth::sin(yaw);
+    let pitch_cos = mc_physics::mth::cos(pitch);
+    let pitch_sin = mc_physics::mth::sin(pitch);
+    Vec3::new(
+        f64::from(yaw_sin * pitch_cos),
+        f64::from(-pitch_sin),
+        f64::from(yaw_cos * pitch_cos),
+    )
 }
 
 fn shield_use_entity_data_value(shield_use: Option<&ShieldUseState>) -> EntityDataValue {
@@ -7514,19 +6964,43 @@ fn dispatch_shield_use_metadata(state: &InteractionState) {
     ));
 }
 
-fn clear_shield_use(state: &mut InteractionState) {
+/// Drops the local shield projection after the owner already committed its removal.
+fn drop_shield_use_projection(state: &mut InteractionState) {
     if state.shield_use.take().is_some() {
-        state.sessions.set_active_shield(state.session_id, None);
         dispatch_shield_use_metadata(state);
     }
 }
 
-fn start_shield_use(
+async fn commit_active_shield(
+    state: &InteractionState,
+    shield: Option<ActiveShield>,
+) -> Result<(), ConnectionError> {
+    state
+        .simulation
+        .commit_active_shield(shield)
+        .await
+        .map_err(|error| {
+            warn!(?error, "active shield owner commit failed");
+            ConnectionError::RuntimeUnavailable {
+                operation: "committing active shield",
+            }
+        })
+}
+
+async fn clear_shield_use(state: &mut InteractionState) -> Result<(), ConnectionError> {
+    if state.shield_use.is_some() {
+        commit_active_shield(state, None).await?;
+        drop_shield_use_projection(state);
+    }
+    Ok(())
+}
+
+async fn start_shield_use(
     state: &mut InteractionState,
     hand: mc_protocol::packets::play::InteractionHand,
-) -> bool {
+) -> Result<bool, ConnectionError> {
     if state.shield_use.is_some() {
-        return true;
+        return Ok(true);
     }
     let slot = shield_hand_slot(
         hand,
@@ -7534,54 +7008,62 @@ fn start_shield_use(
         PlayerInventory::OFFHAND_SLOT,
     );
     let stack = state.inventory.slots[slot].clone();
-    let is_shield = stack_is_shield(&state.items, &stack);
+    let is_shield =
+        mc_simulation::combat::stack_is_manual_shield(&state.item_facts, &state.items, &stack);
     if !is_shield {
-        return false;
+        return Ok(false);
     }
     if state
         .sessions
         .shield_disable_remaining_ticks(state.session_id, state.sessions.simulation_tick())
         .is_some()
     {
-        return true;
+        return Ok(true);
     }
     let Some(shield_use) =
         shield_use_from_stack(hand, slot, stack, state.sessions.world_time(), true)
     else {
-        return false;
+        return Ok(false);
     };
     state.pending_break = None;
     state.pending_use = None;
-    state.sessions.set_active_shield(
-        state.session_id,
+    commit_active_shield(
+        state,
         Some(ActiveShield {
             started_tick: shield_use.started_tick,
             slot: shield_use.slot,
             expected_stack: shield_use.stack.clone(),
         }),
-    );
+    )
+    .await?;
     state.shield_use = Some(shield_use);
     dispatch_shield_use_metadata(state);
-    true
+    Ok(true)
 }
 
-fn refresh_shield_use_state(state: &mut InteractionState) {
+fn shield_use_stale(state: &InteractionState) -> bool {
     let Some(shield_use) = &state.shield_use else {
-        return;
+        return false;
     };
     let current_hand_slot = shield_hand_slot(
         shield_use.hand,
         PlayerInventory::HOTBAR_BASE + usize::from(state.selected_hotbar_slot()),
         PlayerInventory::OFFHAND_SLOT,
     );
-    if !shield_use_matches(
+    !mc_simulation::combat::shield_use_matches_admitted(
         shield_use,
         current_hand_slot,
         &state.inventory.slots,
+        &state.item_facts,
         &state.items,
-    ) {
-        clear_shield_use(state);
+    )
+}
+
+async fn refresh_shield_use_state(state: &mut InteractionState) -> Result<(), ConnectionError> {
+    if shield_use_stale(state) {
+        clear_shield_use(state).await?;
     }
+    Ok(())
 }
 
 fn restore_authoritative_shield_state(
@@ -7602,7 +7084,13 @@ fn restore_authoritative_shield_state(
             return None;
         };
         let stack = state.inventory.slots.get(shield.slot)?;
-        if stack != &shield.expected_stack || !stack_is_shield(&state.items, stack) {
+        if stack != &shield.expected_stack
+            || !mc_simulation::combat::stack_is_manual_shield(
+                &state.item_facts,
+                &state.items,
+                stack,
+            )
+        {
             return None;
         }
         Some(ShieldUseState {
@@ -7641,13 +7129,14 @@ fn plan_active_shield_damage(
         PlayerInventory::HOTBAR_BASE + usize::from(state.selected_hotbar_slot()),
         PlayerInventory::OFFHAND_SLOT,
     );
-    if !shield_use_matches(
+    if !mc_simulation::combat::shield_use_matches_admitted(
         &shield_use,
         current_hand_slot,
         &state.inventory.slots,
+        &state.item_facts,
         &state.items,
     ) {
-        clear_shield_use(state);
+        // `shield_blocks_current_damage` already committed stale-shield removal.
         return None;
     }
     let changed = damage_active_shield_slots(
@@ -7702,19 +7191,19 @@ fn damage_active_shield(
     Some(changed)
 }
 
-fn shield_blocks_current_damage(
+async fn shield_blocks_current_damage(
     state: &mut InteractionState,
     player_pose: PlayerPose,
     source_origin: Option<Vec3>,
-) -> bool {
-    refresh_shield_use_state(state);
-    shield_blocks_damage(
+) -> Result<bool, ConnectionError> {
+    refresh_shield_use_state(state).await?;
+    Ok(shield_blocks_damage(
         Vec3::new(player_pose.x, player_pose.y, player_pose.z),
         player_pose.yaw,
         source_origin,
         state.sessions.world_time(),
         state.shield_use.as_ref(),
-    )
+    ))
 }
 
 fn arrow_velocity(pose: PlayerPose, power: f64) -> Vec3 {
@@ -7766,7 +7255,7 @@ fn sheep_food_states(blocks: &BlockRegistry) -> Option<SheepFoodStates> {
 
 fn sheep_food_edit(
     world: &impl BlockPlanningRead,
-    candidate: session::SheepGrazingCandidate,
+    candidate: mc_entity::passive_mobs::SheepGrazingCandidate,
     states: &SheepFoodStates,
 ) -> Option<BlockEdit> {
     let position = candidate.block_position;
@@ -7908,8 +7397,8 @@ async fn run_sheep_grazing_owned(
         Some(outcome) => outcome,
         None => {
             let mut outcome = BlockEditBatchOutcome::default();
-            let mut storage = crate::lock_metrics::timed_guard(
-                crate::lock_metrics::LockMetricKind::WorldStorage,
+            let mut storage = mc_simulation::lock_metrics::timed_guard(
+                mc_simulation::lock_metrics::LockMetricKind::WorldStorage,
                 "sheep grazing block edit",
                 Instant::now(),
                 world.lock().await,
@@ -8148,7 +7637,7 @@ async fn run_random_ticks_owned(
     sessions: &SessionRegistry,
     access: SimulationWorldAccess<'_>,
     #[cfg(test)] probe: Option<simulation::RegionalBlockEditProbe>,
-    protection: Option<&crate::script::ZoneProtectionSnapshot>,
+    protection: Option<&mc_simulation::zone_protection::ZoneProtectionSnapshot>,
     world_tick: u64,
     chunk_budget: usize,
 ) -> RandomTickReport {
@@ -8156,6 +7645,9 @@ async fn run_random_ticks_owned(
     let world_mutation = access.mutation;
     let cpu_resources = access.cpu;
     let mut policy = config.random_tick.normalized();
+    if let Some(speed) = sessions.command_int_override("random_tick_speed") {
+        policy.random_tick_speed = speed as u32;
+    }
     policy.chunk_budget = chunk_budget.max(1);
     let Some(world) = config.world.as_ref() else {
         return RandomTickReport::default();
@@ -8369,8 +7861,8 @@ async fn run_random_ticks_owned(
                             applied: 0,
                         };
                     }
-                    let mut storage = crate::lock_metrics::timed_guard(
-                        crate::lock_metrics::LockMetricKind::WorldStorage,
+                    let mut storage = mc_simulation::lock_metrics::timed_guard(
+                        mc_simulation::lock_metrics::LockMetricKind::WorldStorage,
                         "random tick region-boundary commit",
                         Instant::now(),
                         world.lock().await,
@@ -8540,7 +8032,9 @@ async fn run_random_ticks_owned(
         }
     }
 
-    if let Some(entity_type_id) = item_entity_type_id(&config.entity_types) {
+    if sessions.command_bool_rule("block_drops")
+        && let Some(entity_type_id) = item_entity_type_id(&config.entity_types)
+    {
         for drop in accepted_leaf_drops {
             dispatch_visibility_commands(sessions.spawn_item_drop_checkpoint_only_owned(
                 authority,
@@ -8735,7 +8229,7 @@ async fn commit_resident_block_edits(
 
 async fn record_empty_resident_journal_decision(
     sessions: &SessionRegistry,
-    journal: world_journal::WorldChunkJournal,
+    journal: mc_simulation::persistence::world_journal::WorldChunkJournal,
     world_tick: u64,
     decision_id: u64,
 ) -> Result<(), ()> {
@@ -8956,7 +8450,7 @@ async fn commit_cross_region_scheduled_block_tick(
 }
 
 struct ResidentWorldJournalWave {
-    journal: Option<world_journal::WorldChunkJournal>,
+    journal: Option<mc_simulation::persistence::world_journal::WorldChunkJournal>,
     decision_id: Option<u64>,
     touched: HashSet<ChunkPos>,
 }
@@ -9142,12 +8636,7 @@ impl ResidentWorldJournalWave {
         let (Some(journal), Some(decision_id)) = (&self.journal, self.decision_id) else {
             return Ok(());
         };
-        if let Err(error) = journal.wait_for_append_turn(decision_id).await {
-            warn!(%error, "world journal append turn failed");
-            sessions.report_world_chunk_journal_failure();
-            return Err(());
-        }
-        Ok(())
+        wait_for_world_journal_append_turn(journal, decision_id, sessions).await
     }
 
     async fn finish(
@@ -9157,6 +8646,7 @@ impl ResidentWorldJournalWave {
         mutation: &mc_world::WorldMutationView,
         world_tick: u64,
     ) -> Result<(), ()> {
+        self.wait_for_append_turn(sessions).await?;
         let (Some(journal), Some(decision_id)) = (self.journal, self.decision_id) else {
             return Ok(());
         };
@@ -9209,6 +8699,7 @@ impl ResidentWorldJournalWave {
         positions: &[ChunkPos],
         snapshots: Vec<mc_world::ChunkSnapshot>,
     ) -> Result<(), ()> {
+        self.wait_for_append_turn(sessions).await?;
         let (Some(journal), Some(decision_id)) = (self.journal, self.decision_id) else {
             return Ok(());
         };
@@ -9237,6 +8728,29 @@ impl ResidentWorldJournalWave {
             }
         }
     }
+}
+
+async fn wait_for_world_journal_append_turn(
+    journal: &mc_simulation::persistence::world_journal::WorldChunkJournal,
+    decision_id: u64,
+    sessions: &SessionRegistry,
+) -> Result<(), ()> {
+    let mut failure = sessions.subscribe_world_chunk_journal_failure();
+    if *failure.borrow() {
+        return Err(());
+    }
+    // A failed earlier producer can leave its reservation open. Stop waiting
+    // on the existing fail-stop signal, without acknowledging any chunk fence.
+    let turn = tokio::select! {
+        turn = journal.wait_for_append_turn(decision_id) => turn,
+        _ = failure.changed() => return Err(()),
+    };
+    if let Err(error) = turn {
+        warn!(%error, "world journal append turn failed");
+        sessions.report_world_chunk_journal_failure();
+        return Err(());
+    }
+    Ok(())
 }
 
 fn random_tick_resident_inputs(
@@ -9459,7 +8973,7 @@ fn plan_indexed_random_tick_edits(
     world_tick: u64,
     snapshot: &mc_world::WorldReadSnapshot,
     candidates: &[(usize, RandomTickCandidate)],
-    protection: Option<&crate::script::ZoneProtectionSnapshot>,
+    protection: Option<&mc_simulation::zone_protection::ZoneProtectionSnapshot>,
 ) -> RandomTickPlan {
     let mut world = SnapshotPlanningWorld::new(snapshot);
     let mut edited_positions = HashSet::new();
@@ -9535,7 +9049,7 @@ fn ambient_random_tick_edit_allowed(
     family: mc_data::block_facts::RandomTickFamily,
     source: mc_world::BlockPos,
     target: mc_world::BlockPos,
-    protection: Option<&crate::script::ZoneProtectionSnapshot>,
+    protection: Option<&mc_simulation::zone_protection::ZoneProtectionSnapshot>,
 ) -> bool {
     family != mc_data::block_facts::RandomTickFamily::Fire
         || target == source
@@ -9598,7 +9112,7 @@ async fn run_scheduled_fluid_ticks_owned(
     let drained = due.len();
     let planning_chunks = scheduled_fluid_planning_chunks(&due);
     let snapshot = world_read.snapshot_chunks(&planning_chunks);
-    let plan = fluids::plan_scheduled_fluid_tick_edits(
+    let plan = mc_simulation::fluids::plan_scheduled_fluid_tick_edits(
         &config.blocks,
         &config.block_facts,
         world_tick,
@@ -9638,8 +9152,8 @@ async fn run_scheduled_fluid_ticks_owned(
     let outcome = match resident {
         Some(outcome) => outcome,
         None => {
-            let mut storage = crate::lock_metrics::timed_guard(
-                crate::lock_metrics::LockMetricKind::WorldStorage,
+            let mut storage = mc_simulation::lock_metrics::timed_guard(
+                mc_simulation::lock_metrics::LockMetricKind::WorldStorage,
                 "scheduled fluid tick commit",
                 Instant::now(),
                 world.lock().await,
@@ -9730,7 +9244,7 @@ fn plan_scheduled_fluid_tick_edits(
     snapshot: &mc_world::WorldReadSnapshot,
     ticks: &[ScheduledFluidTick],
 ) -> ScheduledFluidTickPlan {
-    fluids::plan_scheduled_fluid_tick_edits(
+    mc_simulation::fluids::plan_scheduled_fluid_tick_edits(
         &config.blocks,
         &config.block_facts,
         world_tick,
@@ -9790,10 +9304,14 @@ fn spawn_fluid_wash_drops(
     world_tick: u64,
     outcome: &BlockEditBatchOutcome,
 ) {
-    let Some(entity_type_id) = survival::item_entity_type_id(&config.entity_types) else {
+    if !sessions.command_bool_rule("block_drops") {
+        return;
+    }
+    let Some(entity_type_id) = mc_simulation::survival::item_entity_type_id(&config.entity_types)
+    else {
         return;
     };
-    let drops = fluids::fluid_wash_drops(
+    let drops = mc_simulation::fluids::fluid_wash_drops(
         &config.blocks,
         &config.loot,
         &config.items,
@@ -9843,6 +9361,8 @@ fn commit_scheduled_fluid_tick_plan(
 }
 
 fn due_scheduled_block_ticks(
+    blocks: &mc_world::BlockRegistry,
+    world_read: &mc_world::WorldReadView,
     snapshot: &mc_world::WorldReadSnapshot,
     loaded_chunks: &[ChunkPos],
     world_tick: u64,
@@ -9850,7 +9370,7 @@ fn due_scheduled_block_ticks(
 ) -> Vec<ScheduledBlockTick> {
     let mut due = Vec::new();
     for &position in loaded_chunks {
-        let Some(chunk) = snapshot.chunk(position) else {
+        let Some(chunk) = snapshot.chunk_ref(position) else {
             continue;
         };
         let remaining = budget.saturating_sub(due.len());
@@ -9862,6 +9382,9 @@ fn due_scheduled_block_ticks(
                 .scheduled_block_ticks()
                 .iter()
                 .take_while(|tick| tick.trigger_tick <= world_tick)
+                // Keep blocked identities queued without delaying ready ticks
+                // later in the same chunk or changing their relative order.
+                .filter(|tick| scheduled_block_tick_inputs_available(blocks, world_read, tick))
                 .take(remaining)
                 .cloned(),
         );
@@ -9873,7 +9396,7 @@ fn plan_scheduled_block_tick_edits(
     config: &ServerConfig,
     snapshot: &mc_world::WorldReadSnapshot,
     ticks: &[ScheduledBlockTick],
-    protection: Option<&crate::script::ZoneProtectionSnapshot>,
+    protection: Option<&mc_simulation::zone_protection::ZoneProtectionSnapshot>,
 ) -> Option<ScheduledBlockTickPlan> {
     plan_scheduled_block_tick_edits_with_blocks(&config.blocks, snapshot, ticks, protection)
 }
@@ -9892,15 +9415,16 @@ fn requeue_stale_scheduled_block_ticks(
 fn claim_scheduled_block_ticks(
     storage: &mut mc_world::WorldStorage,
     ticks: &[ScheduledBlockTick],
-    world_tick: u64,
 ) -> bool {
     let grouped = scheduled_block_ticks_by_chunk(ticks);
-    if !scheduled_block_tick_prefixes_are_current(storage, &grouped) {
+    if !scheduled_block_ticks_are_current(storage, &grouped) {
         return false;
     }
     for (position, expected) in grouped {
-        let claimed = storage.drain_due_cached_block_ticks(position, world_tick, expected.len());
-        assert_eq!(claimed, expected, "preflighted block-tick prefix changed");
+        assert!(
+            storage.drain_scheduled_block_ticks(position, &expected),
+            "preflighted block-tick identities changed"
+        );
     }
     true
 }
@@ -9923,14 +9447,14 @@ fn scheduled_block_ticks_by_chunk(
     grouped
 }
 
-fn scheduled_block_tick_prefixes_are_current(
+fn scheduled_block_ticks_are_current(
     storage: &mc_world::WorldStorage,
     grouped: &[(ChunkPos, Vec<ScheduledBlockTick>)],
 ) -> bool {
     !grouped.iter().any(|(position, expected)| {
         storage
             .cached_chunk_snapshot(*position)
-            .is_none_or(|chunk| !chunk.scheduled_block_ticks().starts_with(expected))
+            .is_none_or(|chunk| !chunk.contains_scheduled_block_ticks(expected))
     })
 }
 
@@ -9983,13 +9507,13 @@ async fn commit_scheduled_block_tick_coordinator(
     let mut wave = ResidentWorldJournalWave::begin(sessions).await?;
     loop {
         wave.wait_for_append_turn(sessions).await?;
-        let mut storage = crate::lock_metrics::timed_guard(
-            crate::lock_metrics::LockMetricKind::WorldStorage,
+        let mut storage = mc_simulation::lock_metrics::timed_guard(
+            mc_simulation::lock_metrics::LockMetricKind::WorldStorage,
             "scheduled block tick coordinator journal commit",
             Instant::now(),
             world.lock().await,
         );
-        let current = scheduled_block_tick_prefixes_are_current(&storage, &grouped_due)
+        let current = scheduled_block_ticks_are_current(&storage, &grouped_due)
             && snapshot_read_preconditions_are_current(&storage, &plan.preconditions);
         if !current {
             wave.finish_coordinator(sessions, mutation, world_tick, &[], Vec::new())
@@ -10017,7 +9541,7 @@ async fn commit_scheduled_block_tick_coordinator(
         }
 
         assert!(
-            claim_scheduled_block_ticks(&mut storage, due, world_tick),
+            claim_scheduled_block_ticks(&mut storage, due),
             "preflighted scheduled block ticks remain current under coordinator lock"
         );
         let outcome = commit_scheduled_block_tick_plan(&mut storage, table, world_tick, plan, due)
@@ -10041,7 +9565,7 @@ async fn plan_scheduled_block_regions_off_owner(
     blocks: Arc<BlockRegistry>,
     snapshot: mc_world::WorldReadSnapshot,
     region_ticks: Vec<(RegionKey, Vec<ScheduledBlockTick>)>,
-    protection: Option<Arc<crate::script::ZoneProtectionSnapshot>>,
+    protection: Option<Arc<mc_simulation::zone_protection::ZoneProtectionSnapshot>>,
     cpu_resources: Option<&ChunkPipelineResources>,
 ) -> Result<Vec<ScheduledBlockRegionPlan>, ()> {
     let permit = match cpu_resources {
@@ -10271,7 +9795,7 @@ pub(crate) async fn run_scheduled_block_ticks_background(
     config: &ServerConfig,
     sessions: &SessionRegistry,
     access: SimulationWorldAccess<'_>,
-    protection: Option<Arc<crate::script::ZoneProtectionSnapshot>>,
+    protection: Option<Arc<mc_simulation::zone_protection::ZoneProtectionSnapshot>>,
     world_tick: u64,
     budget: usize,
 ) -> ScheduledBlockTickReport {
@@ -10293,7 +9817,7 @@ async fn run_scheduled_block_ticks_owned(
     sessions: &SessionRegistry,
     access: SimulationWorldAccess<'_>,
     #[cfg(test)] probe: Option<simulation::RegionalBlockEditProbe>,
-    protection: Option<Arc<crate::script::ZoneProtectionSnapshot>>,
+    protection: Option<Arc<mc_simulation::zone_protection::ZoneProtectionSnapshot>>,
     world_tick: u64,
     budget: usize,
 ) -> ScheduledBlockTickReport {
@@ -10325,20 +9849,6 @@ async fn run_scheduled_block_ticks_owned(
         .iter()
         .map(|&(x, z)| ChunkPos { x, z })
         .collect::<Vec<_>>();
-    if let Some(mutation) = world_mutation {
-        mutation.backfill_hopper_ticks(
-            &loaded_positions,
-            world_tick.saturating_add(HOPPER_TICK_DELAY_TICKS),
-        );
-    } else {
-        let mut storage = world.lock().await;
-        backfill_loaded_hopper_ticks(
-            &mut storage,
-            &config.blocks,
-            &loaded_chunks,
-            world_tick.saturating_add(HOPPER_TICK_DELAY_TICKS),
-        );
-    }
     let owned_world_views = if world_read.is_none() || world_mutation.is_none() {
         let storage = world.lock().await;
         Some((storage.read_view(), storage.mutation_view()))
@@ -10351,9 +9861,34 @@ async fn run_scheduled_block_ticks_owned(
     let world_mutation = world_mutation
         .or(owned_world_views.as_ref().map(|(_, mutation)| mutation))
         .expect("world-backed scheduled block ticks have a mutation view");
-    let loaded_snapshot = world_read.snapshot_chunks(&loaded_positions);
-    let mut due =
-        due_scheduled_block_ticks(&loaded_snapshot, &loaded_positions, world_tick, budget);
+    let hopper_positions = world_read.hopper_chunks(&loaded_positions);
+    if let Some(mutation) = access.mutation {
+        mutation.backfill_hopper_ticks(
+            &hopper_positions,
+            world_tick.saturating_add(HOPPER_TICK_DELAY_TICKS),
+        );
+    } else {
+        let mut storage = world.lock().await;
+        backfill_loaded_hopper_ticks(
+            &mut storage,
+            &config.blocks,
+            &hopper_positions
+                .iter()
+                .map(|position| (position.x, position.z))
+                .collect::<Vec<_>>(),
+            world_tick.saturating_add(HOPPER_TICK_DELAY_TICKS),
+        );
+    }
+    let (due_positions, loaded_snapshot) =
+        world_read.due_block_tick_snapshot(&loaded_positions, world_tick);
+    let mut due = due_scheduled_block_ticks(
+        &config.blocks,
+        world_read,
+        &loaded_snapshot,
+        &due_positions,
+        world_tick,
+        budget,
+    );
 
     let table = config.block_light.as_deref();
     let mut applied_mutations = 0usize;
@@ -10577,13 +10112,13 @@ async fn run_scheduled_block_ticks_owned(
             due.clear();
         }
     } else if contains_comparator_tick {
-        let mut storage = crate::lock_metrics::timed_guard(
-            crate::lock_metrics::LockMetricKind::WorldStorage,
+        let mut storage = mc_simulation::lock_metrics::timed_guard(
+            mc_simulation::lock_metrics::LockMetricKind::WorldStorage,
             "scheduled special block tick claim",
             Instant::now(),
             world.lock().await,
         );
-        if !claim_scheduled_block_ticks(&mut storage, &due, world_tick) {
+        if !claim_scheduled_block_ticks(&mut storage, &due) {
             due.clear();
         } else {
             due_claimed_by_coordinator = true;
@@ -10601,11 +10136,25 @@ async fn run_scheduled_block_ticks_owned(
             Err(()) => due.clear(),
             Ok(mut wave) => {
                 let mut coordinator_due = Vec::with_capacity(due.len());
+                // Ready ticks drain in queue order. An earlier tick in a chunk that
+                // falls back to the coordinator must not be overtaken by a later
+                // resident commit in the same chunk, so forward later same-chunk
+                // ticks to the coordinator too.
+                let mut deferred_chunk: Option<ChunkPos> = None;
                 for tick in due.drain(..) {
+                    let chunk = ChunkPos {
+                        x: tick.pos.x.div_euclid(SECTION_DIM as i32),
+                        z: tick.pos.z.div_euclid(SECTION_DIM as i32),
+                    };
+                    if deferred_chunk == Some(chunk) {
+                        coordinator_due.push(tick);
+                        continue;
+                    }
                     let Some(plan) =
                         resident_hopper_cooldown_plan(&config.blocks, &snapshot, &tick, world_tick)
                     else {
                         coordinator_due.push(tick);
+                        deferred_chunk = Some(chunk);
                         continue;
                     };
                     match wave.commit_hopper(world_mutation, &tick, &plan) {
@@ -10614,12 +10163,26 @@ async fn run_scheduled_block_ticks_owned(
                         | mc_world::ResidentHopperTransferCommitResult::Stale
                         | mc_world::ResidentHopperTransferCommitResult::CrossRegion => {
                             coordinator_due.push(tick);
+                            deferred_chunk = Some(chunk);
                         }
                     }
                 }
                 due = coordinator_due;
                 let mut coordinator_due = Vec::with_capacity(due.len());
+                // Same ordering fence as the cooldown pass above, plus a retained
+                // fence: a tick held queued by admission/stock keeps its physical
+                // tick, so later ticks in the same chunk stay queued too instead
+                // of overtaking it through either commit path.
+                let mut fallback_chunk: Option<ChunkPos> = None;
+                let mut retained_chunk: Option<ChunkPos> = None;
                 for tick in due.drain(..) {
+                    let chunk = ChunkPos {
+                        x: tick.pos.x.div_euclid(SECTION_DIM as i32),
+                        z: tick.pos.z.div_euclid(SECTION_DIM as i32),
+                    };
+                    if retained_chunk == Some(chunk) {
+                        continue;
+                    }
                     let Some(planned) = plan_resident_hopper_transfer(
                         &hopper_context,
                         &config.blocks,
@@ -10629,6 +10192,7 @@ async fn run_scheduled_block_ticks_owned(
                         world_tick,
                     ) else {
                         coordinator_due.push(tick);
+                        fallback_chunk = Some(chunk);
                         continue;
                     };
                     let mut admission_positions = planned
@@ -10653,18 +10217,24 @@ async fn run_scheduled_block_ticks_owned(
                     });
                     let Some(_admissions) = admission_positions
                         .into_iter()
-                        .map(|position| sessions.try_lock_warehouse_reservation_admission(position))
+                        .map(|position| sessions.try_lock_container_reservation_admission(position))
                         .collect::<Option<Vec<_>>>()
                     else {
                         // The unclaimed tick stays due until reservation admission releases.
+                        retained_chunk = Some(chunk);
                         continue;
                     };
                     if !planned.plan.chests.iter().all(|chest| {
-                        sessions.warehouse_reservation_stock_survives(
+                        sessions.container_reservation_stock_survives(
                             std::slice::from_ref(&chest.position),
                             std::slice::from_ref(&chest.updated),
                         )
                     }) {
+                        retained_chunk = Some(chunk);
+                        continue;
+                    }
+                    if fallback_chunk == Some(chunk) {
+                        coordinator_due.push(tick);
                         continue;
                     }
                     match wave.commit_hopper(world_mutation, &tick, &planned.plan) {
@@ -10681,6 +10251,7 @@ async fn run_scheduled_block_ticks_owned(
                         | mc_world::ResidentHopperTransferCommitResult::Stale
                         | mc_world::ResidentHopperTransferCommitResult::CrossRegion => {
                             coordinator_due.push(tick);
+                            fallback_chunk = Some(chunk);
                         }
                     }
                 }
@@ -10705,8 +10276,8 @@ async fn run_scheduled_block_ticks_owned(
 
     if let Some(plan) = plan.filter(|_| !due.is_empty()) {
         if due_claimed_by_coordinator {
-            let mut storage = crate::lock_metrics::timed_guard(
-                crate::lock_metrics::LockMetricKind::WorldStorage,
+            let mut storage = mc_simulation::lock_metrics::timed_guard(
+                mc_simulation::lock_metrics::LockMetricKind::WorldStorage,
                 "scheduled block tick commit",
                 Instant::now(),
                 world.lock().await,
@@ -10734,20 +10305,20 @@ async fn run_scheduled_block_ticks_owned(
         due.clear();
     } else if !due.is_empty() {
         if !due.is_empty() && !due_claimed_by_coordinator {
-            let mut storage = crate::lock_metrics::timed_guard(
-                crate::lock_metrics::LockMetricKind::WorldStorage,
+            let mut storage = mc_simulation::lock_metrics::timed_guard(
+                mc_simulation::lock_metrics::LockMetricKind::WorldStorage,
                 "scheduled special block tick fallback claim",
                 Instant::now(),
                 world.lock().await,
             );
-            if !claim_scheduled_block_ticks(&mut storage, &due, world_tick) {
+            if !claim_scheduled_block_ticks(&mut storage, &due) {
                 due.clear();
             }
         }
         for tick in &due {
             let mut tick_outcome = BlockEditBatchOutcome::default();
-            let mut storage = crate::lock_metrics::timed_guard(
-                crate::lock_metrics::LockMetricKind::WorldStorage,
+            let mut storage = mc_simulation::lock_metrics::timed_guard(
+                mc_simulation::lock_metrics::LockMetricKind::WorldStorage,
                 "scheduled special block tick apply",
                 Instant::now(),
                 world.lock().await,
@@ -10924,8 +10495,8 @@ async fn land_falling_blocks_owned(
     let mut outcome = BlockEditBatchOutcome::default();
     let mut landed_ids = blocked_ids;
     {
-        let mut storage = crate::lock_metrics::timed_guard(
-            crate::lock_metrics::LockMetricKind::WorldStorage,
+        let mut storage = mc_simulation::lock_metrics::timed_guard(
+            mc_simulation::lock_metrics::LockMetricKind::WorldStorage,
             "falling block landing commit",
             Instant::now(),
             world.lock().await,
@@ -10947,6 +10518,11 @@ async fn land_falling_blocks_owned(
         );
     }
 
+    let drops = if sessions.command_bool_rule("entity_drops") {
+        drops
+    } else {
+        Vec::new()
+    };
     if let Some(entity_type_id) = item_entity_type_id(&config.entity_types) {
         for drop in drops {
             dispatch_visibility_commands(sessions.spawn_item_drop_owned(
@@ -10997,13 +10573,6 @@ fn schedule_fluid_ticks_near_applied(
         .into_iter()
         .filter(|tick| storage.schedule_fluid_tick(tick.clone()).unwrap_or(false))
         .count()
-}
-
-fn push_unique_block_edit(edits: &mut Vec<BlockEdit>, edit: BlockEdit) {
-    if edits.iter().any(|existing| existing.pos == edit.pos) {
-        return;
-    }
-    edits.push(edit);
 }
 
 fn schedule_leaf_ticks_near_applied(
@@ -11093,44 +10662,6 @@ fn coordinator_random_tick_journal_positions(
     positions
 }
 
-fn fluid_neighbour_positions(pos: mc_world::BlockPos) -> [mc_world::BlockPos; 6] {
-    [
-        mc_world::BlockPos {
-            x: pos.x + 1,
-            ..pos
-        },
-        mc_world::BlockPos {
-            x: pos.x - 1,
-            ..pos
-        },
-        mc_world::BlockPos {
-            z: pos.z + 1,
-            ..pos
-        },
-        mc_world::BlockPos {
-            z: pos.z - 1,
-            ..pos
-        },
-        mc_world::BlockPos {
-            y: pos.y + 1,
-            ..pos
-        },
-        mc_world::BlockPos {
-            y: pos.y - 1,
-            ..pos
-        },
-    ]
-}
-
-fn named_block_default(
-    blocks: &mc_world::BlockRegistry,
-    name: &str,
-) -> Option<mc_world::BlockStateId> {
-    blocks
-        .block(&Identifier::parse(name).expect("static identifier"))
-        .map(|block| block.default)
-}
-
 async fn collect_server_origin_light_updates(
     world: &WorldHandle,
     sessions: &SessionRegistry,
@@ -11138,22 +10669,27 @@ async fn collect_server_origin_light_updates(
     outcome: &BlockEditBatchOutcome,
 ) -> Vec<OutboundLightUpdate> {
     let sources = {
-        let storage = crate::lock_metrics::timed_guard(
-            crate::lock_metrics::LockMetricKind::WorldStorage,
+        let storage = mc_simulation::lock_metrics::timed_guard(
+            mc_simulation::lock_metrics::LockMetricKind::WorldStorage,
             "capture server relight sources",
             Instant::now(),
             world.lock().await,
         );
-        capture_incremental_light_sources(&storage, table, outcome)
+        capture_incremental_light_sources(&storage, table, &outcome.applied)
     };
     #[cfg(test)]
-    sessions.pause_before_server_relight_compute_for_test();
+    sessions.pause_for_test(TestPause::ServerRelightCompute);
     #[cfg(not(test))]
     let _ = sessions;
-    let updates = compute_incremental_light_updates(&sources, table, outcome);
+    let updates = outbound_light_updates(compute_incremental_light_updates(
+        &sources,
+        table,
+        &outcome.applied,
+        &outcome.previous_light_chunks,
+    ));
 
-    let mut storage = crate::lock_metrics::timed_guard(
-        crate::lock_metrics::LockMetricKind::WorldStorage,
+    let mut storage = mc_simulation::lock_metrics::timed_guard(
+        mc_simulation::lock_metrics::LockMetricKind::WorldStorage,
         "publish server relight result",
         Instant::now(),
         world.lock().await,
@@ -11162,15 +10698,17 @@ async fn collect_server_origin_light_updates(
         persist_baked_light_updates(&mut storage, &updates);
         updates
     } else {
-        collect_full_light_updates_for_current_world(&mut storage, table, outcome)
+        outbound_light_updates(collect_full_light_updates_for_current_world(
+            &mut storage,
+            table,
+            &outcome.applied,
+        ))
     }
 }
 
 #[cfg(test)]
 thread_local! {
     static OUTBOUND_LIGHT_UPDATE_ENCODING_COUNT: std::cell::Cell<usize> =
-        const { std::cell::Cell::new(0) };
-    static OUTBOUND_LIGHT_NEIGHBOURHOOD_CAPTURE_COUNT: std::cell::Cell<usize> =
         const { std::cell::Cell::new(0) };
     static RANDOM_TICK_PLANNING_COMPLETION_COUNT: std::cell::Cell<usize> =
         const { std::cell::Cell::new(0) };
@@ -11186,42 +10724,6 @@ thread_local! {
         const { std::cell::Cell::new(0) };
 }
 
-fn block_state_property<'a>(state: &'a mc_world::BlockState, name: &str) -> Option<&'a str> {
-    state
-        .properties
-        .iter()
-        .find_map(|(key, value)| (key == name).then_some(value.as_str()))
-}
-
-fn sibling_state_with_property(
-    blocks: &mc_world::BlockRegistry,
-    state: &mc_world::BlockState,
-    name: &str,
-    value: &str,
-) -> Option<mc_world::BlockStateId> {
-    let mut props = state.properties.clone();
-    let (_, current) = props.iter_mut().find(|(key, _)| key == name)?;
-    *current = value.to_string();
-    blocks.by_name_and_props(&state.block.id, &props)
-}
-
-fn sibling_state_with_bool_property(
-    blocks: &mc_world::BlockRegistry,
-    state: &mc_world::BlockState,
-    name: &str,
-    value: bool,
-) -> Option<mc_world::BlockStateId> {
-    sibling_state_with_property(blocks, state, name, if value { "true" } else { "false" })
-}
-
-fn crop_state_with_age(
-    blocks: &mc_world::BlockRegistry,
-    crop: &Identifier,
-    age: u8,
-) -> Option<mc_world::BlockStateId> {
-    blocks.by_name_and_props(crop, &[("age".to_string(), age.to_string())])
-}
-
 async fn refresh_player_water_state(state: Option<&InteractionState>, pose: &mut PlayerPose) {
     if let Some(state) = state {
         let (in_water, eye_in_water) = player_water_overlap(state, *pose).await;
@@ -11234,21 +10736,44 @@ async fn refresh_player_water_state(state: Option<&InteractionState>, pose: &mut
     pose.swimming = pose.sprinting && pose.in_water && (pose.swimming || pose.eye_in_water);
 }
 
+fn shield_use_flags(shield_use: Option<&ShieldUseState>) -> i8 {
+    let Some(shield_use) = shield_use else {
+        return 0;
+    };
+    let mut flags = mc_protocol::packets::play::LIVING_ENTITY_FLAG_USING_ITEM;
+    if shield_use.hand == InteractionHand::OffHand {
+        flags |= mc_protocol::packets::play::LIVING_ENTITY_FLAG_OFF_HAND;
+    }
+    flags
+}
+
 fn publish_player_air_supply(
     sessions: &SessionRegistry,
     session_id: SessionId,
     breathing: PlayerBreathingState,
 ) {
-    dispatch_visibility_commands(
-        sessions
-            .broadcast_player_entity_data_including_self(session_id, vec![breathing.metadata()]),
-    );
+    dispatch_visibility_commands(sessions.broadcast_player_entity_data_including_self(
+        session_id,
+        vec![player_air_supply_metadata(breathing)],
+    ));
+}
+
+fn player_air_supply_metadata(breathing: PlayerBreathingState) -> EntityDataValue {
+    EntityDataValue::Int {
+        index: mc_protocol::packets::play::ENTITY_DATA_AIR_SUPPLY_INDEX,
+        value: breathing.air_supply(),
+    }
 }
 
 async fn player_water_overlap(state: &InteractionState, pose: PlayerPose) -> (bool, bool) {
     let half_width = 0.3;
     let snapshot = player_body_block_snapshot(state, pose, half_width);
-    player_water_overlap_in_snapshot(&state.block_facts, &snapshot, pose)
+    player_water_overlap_in_snapshot(
+        &state.block_facts,
+        &snapshot,
+        movement::player_body(pose),
+        pose.eye_height(),
+    )
 }
 
 async fn player_pose_collides_with_solid(
@@ -11274,12 +10799,12 @@ async fn player_pose_collides_with_solid_using_context(
             .items
             .name_of(feet.item_id)
             .is_some_and(|name| name.as_str() == "minecraft:leather_boots");
-    player_pose_collides_with_solid_in_snapshot_with_context(
+    player_body_collides_with_solid_in_snapshot(
         &state.block_facts,
         &state.blocks,
         &snapshot,
-        pose,
-        PlayerCollisionContext::from_pose(context_pose, leather_boots),
+        movement::player_body(pose),
+        player_collision_context(context_pose, leather_boots),
     )
 }
 
@@ -11387,7 +10912,7 @@ async fn maybe_trample_farmland<W>(
 where
     W: AsyncWriteExt + Unpin,
 {
-    let Some(pos) = farmland_trample_pos(old_pose, new_pose) else {
+    let Some(pos) = farmland_trample_pos(movement_state(old_pose), movement_state(new_pose)) else {
         return Ok(());
     };
     let dirt = Identifier::parse("minecraft:dirt").expect("static identifier");
@@ -11434,7 +10959,7 @@ where
     };
     if let Some((expected_state, expected_token)) = expected_farmland {
         if let Some((crop_pos, crop_state, crop_token)) = crop {
-            let drops = survival::block_drop_stacks_with_tool_and_facts_from_seeded(
+            let drops = mc_simulation::survival::block_drop_stacks_with_tool_and_facts_from_seeded(
                 &state.loot,
                 &state.items,
                 &state.item_facts,
@@ -11498,7 +11023,7 @@ where
                 .commit_block_drops(edits, preconditions, drops)
                 .await
             {
-                finalize_visible_block_edit_outcome(state, writer, outcome, false).await?;
+                finalize_visible_block_edit_outcome(state, writer, outcome).await?;
             }
         } else {
             let _ = apply_visible_block_edit_batch_conditionally(
@@ -11588,24 +11113,6 @@ where
         .sessions
         .begin_sleep_at(state.session_id, canonical_bed)
     {
-        SleepOutcome::Skipped { new_time, sleepers } => {
-            let mut dispatches = state.sessions.broadcast_player_entity_data_including_self(
-                state.session_id,
-                vec![player_pose_entity_data(EntityPose::Sleeping)],
-            );
-            dispatches.extend(
-                state
-                    .sessions
-                    .completed_sleep_dispatches(sleepers, Some(new_time)),
-            );
-            dispatch_visibility_commands(dispatches);
-            send_command_feedback(
-                writer,
-                state.compression,
-                "Respawn point set; skipped to morning",
-            )
-            .await?;
-        }
         SleepOutcome::Daytime => {
             send_command_feedback(writer, state.compression, "Respawn point set").await?;
         }
@@ -11875,7 +11382,7 @@ fn plan_loaded_toggle_block_interaction(
                 ?error,
                 "zone protection snapshot unavailable; denying piston movement"
             );
-            crate::script::ZoneProtectionSnapshot::unavailable()
+            mc_simulation::zone_protection::ZoneProtectionSnapshot::unavailable()
         })
     });
     let centre = ChunkPos {
@@ -11901,61 +11408,6 @@ fn plan_loaded_toggle_block_interaction(
         world_tick,
         protection.as_ref(),
     )
-}
-
-fn adjacent_block_positions(pos: mc_world::BlockPos) -> [mc_world::BlockPos; 6] {
-    [
-        mc_world::BlockPos {
-            x: pos.x + 1,
-            ..pos
-        },
-        mc_world::BlockPos {
-            x: pos.x - 1,
-            ..pos
-        },
-        mc_world::BlockPos {
-            y: pos.y + 1,
-            ..pos
-        },
-        mc_world::BlockPos {
-            y: pos.y - 1,
-            ..pos
-        },
-        mc_world::BlockPos {
-            z: pos.z + 1,
-            ..pos
-        },
-        mc_world::BlockPos {
-            z: pos.z - 1,
-            ..pos
-        },
-    ]
-}
-
-fn splitmix64(mut value: u64) -> u64 {
-    value = value.wrapping_add(0x9E37_79B9_7F4A_7C15);
-    value = (value ^ (value >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
-    value = (value ^ (value >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
-    value ^ (value >> 31)
-}
-
-fn block_edit_changes_light(
-    table: &BlockLightTable,
-    previous: mc_world::BlockStateId,
-    new_state: mc_world::BlockStateId,
-) -> bool {
-    table.emission(previous.0).unwrap_or(0) != table.emission(new_state.0).unwrap_or(0)
-        || table.opacity(previous.0).unwrap_or(0) != table.opacity(new_state.0).unwrap_or(0)
-        || table.propagates_sky(previous.0).unwrap_or(true)
-            != table.propagates_sky(new_state.0).unwrap_or(true)
-}
-
-pub(crate) fn air_state_id(registry: &mc_world::BlockRegistry) -> mc_world::BlockStateId {
-    let air_id = mc_data::Identifier::parse("minecraft:air").expect("static identifier");
-    registry
-        .block(&air_id)
-        .map(|b| b.default)
-        .unwrap_or(mc_world::BlockStateId(0))
 }
 
 fn fluid_state_ids(
@@ -12038,8 +11490,14 @@ where
     if handle_throwable_item_use(state, writer, game_mode, player_pose, action, held_slot).await? {
         return Ok(());
     }
+    if handle_item_weapon_use(state, writer, game_mode, player_pose, action, held_slot).await? {
+        return Ok(());
+    }
 
-    if game_mode != GameMode::Survival {
+    let creative_cure = game_mode == GameMode::Creative
+        && held_food_use(state, held_slot)
+            .is_some_and(|(_, rule, _)| rule.can_always_eat && rule.food == 0);
+    if game_mode != GameMode::Survival && !creative_cure {
         return ack_use_item_noop(
             writer,
             state.compression,
@@ -12049,7 +11507,7 @@ where
         .await;
     }
 
-    if start_shield_use(state, action.hand) {
+    if start_shield_use(state, action.hand).await? {
         return write_block_ack(writer, state.compression, action.sequence).await;
     }
 
@@ -12096,10 +11554,128 @@ where
     write_block_ack(writer, state.compression, action.sequence).await
 }
 
-/// `minecraft:snowball` and other ThrowableItem uses: spawn the projectile at
-/// eye height along the packet's look vector, consume one item in survival
-/// (none in creative, per the bow precedent), and acknowledge the sequence.
-/// Egg and ender pearl throws are later work and stay unhandled here.
+async fn commit_item_weapon<W>(
+    state: &mut InteractionState,
+    writer: &mut W,
+    game_mode: GameMode,
+    held_slot: usize,
+    action: session::item_weapons::ItemWeaponAction,
+    player_pose: PlayerPose,
+    speed: f64,
+) -> Result<(), ConnectionError>
+where
+    W: AsyncWriteExt + Unpin,
+{
+    let mut velocity = throwable_item_throw_velocity(player_pose.yaw, player_pose.pitch);
+    velocity.x *= speed / 1.5;
+    velocity.y *= speed / 1.5;
+    velocity.z *= speed / 1.5;
+    let plan = session::item_weapons::ItemWeaponUsePlan {
+        held_slot,
+        expected_held: state.inventory.slots[held_slot].clone(),
+        game_mode,
+        action,
+        position: arrow_spawn_position(player_pose),
+        velocity,
+        rotation: Rotation {
+            yaw: player_pose.yaw,
+            pitch: player_pose.pitch,
+            head_yaw: player_pose.yaw,
+        },
+        items: state.items.clone(),
+    };
+    if let Ok(Some(committed)) = state.simulation.commit_item_weapon_use(plan).await {
+        state.inventory = committed.inventory;
+        write_inventory_slot_updates(state, writer, committed.changed_slots).await?;
+    }
+    Ok(())
+}
+
+async fn handle_item_weapon_use<W>(
+    state: &mut InteractionState,
+    writer: &mut W,
+    game_mode: GameMode,
+    mut pose: PlayerPose,
+    action: ServerboundUseItem,
+    held_slot: usize,
+) -> Result<bool, ConnectionError>
+where
+    W: AsyncWriteExt + Unpin,
+{
+    use session::item_weapons::ItemWeaponAction;
+    if !matches!(game_mode, GameMode::Survival | GameMode::Creative) {
+        return Ok(false);
+    }
+    let held = &state.inventory.slots[held_slot];
+    let name = state.items.name_of(held.item_id).map(Identifier::as_str);
+    if !matches!(
+        name,
+        Some("minecraft:crossbow" | "minecraft:trident" | "minecraft:fishing_rod")
+    ) {
+        return Ok(false);
+    }
+    if !action.y_rot.is_finite() || !action.x_rot.is_finite() {
+        return ack_use_item_noop(writer, state.compression, action.sequence, "invalid_look")
+            .await
+            .map(|()| true);
+    }
+    pose.yaw = action.y_rot;
+    pose.pitch = action.x_rot;
+    let kind = match name {
+        Some("minecraft:fishing_rod") => {
+            state.pending_use = None;
+            commit_item_weapon(
+                state,
+                writer,
+                game_mode,
+                held_slot,
+                ItemWeaponAction::FishingCastOrReel,
+                pose,
+                1.5,
+            )
+            .await?;
+            return write_block_ack(writer, state.compression, action.sequence)
+                .await
+                .map(|()| true);
+        }
+        Some("minecraft:crossbow") if !held.extended().charged_projectiles.is_empty() => {
+            state.pending_use = None;
+            commit_item_weapon(
+                state,
+                writer,
+                game_mode,
+                held_slot,
+                ItemWeaponAction::CrossbowFire,
+                pose,
+                3.15,
+            )
+            .await?;
+            return write_block_ack(writer, state.compression, action.sequence)
+                .await
+                .map(|()| true);
+        }
+        Some("minecraft:crossbow") => UseKind::Crossbow,
+        _ => UseKind::Trident,
+    };
+    state.pending_break = None;
+    state.pending_use = Some(PendingUse {
+        started_tick: state.sessions.simulation_tick(),
+        required_ticks: if matches!(kind, UseKind::Crossbow) {
+            session::item_weapons::crossbow_charge_ticks(held)
+        } else {
+            item_use_ticks(Duration::from_secs(60))
+        },
+        held_hotbar_slot: state.selected_hotbar_slot(),
+        held_slot,
+        held_item_id: held.item_id,
+        kind,
+    });
+    write_block_ack(writer, state.compression, action.sequence).await?;
+    Ok(true)
+}
+
+/// Throws vanilla throwable items from eye height, consumes one in survival,
+/// preserves the creative stack, and acknowledges the interaction sequence.
 async fn handle_throwable_item_use<W>(
     state: &mut InteractionState,
     writer: &mut W,
@@ -12118,26 +11694,42 @@ where
         Some(held) if !held.is_empty() => held.clone(),
         _ => return Ok(false),
     };
-    let is_snowball = state
-        .items
-        .name_of(held.item_id)
-        .is_some_and(|item| item.as_str() == "minecraft:snowball");
-    if !is_snowball {
-        return Ok(false);
-    }
+    let projectile_name = match state.items.name_of(held.item_id).map(Identifier::as_str) {
+        Some("minecraft:snowball") => "minecraft:snowball",
+        Some("minecraft:egg" | "minecraft:blue_egg" | "minecraft:brown_egg") => "minecraft:egg",
+        Some("minecraft:ender_pearl") => "minecraft:ender_pearl",
+        Some("minecraft:splash_potion") => "minecraft:splash_potion",
+        Some("minecraft:lingering_potion") => "minecraft:lingering_potion",
+        Some("minecraft:firework_rocket") => "minecraft:firework_rocket",
+        _ => return Ok(false),
+    };
     if !action.y_rot.is_finite() || !action.x_rot.is_finite() {
         return ack_use_item_noop(writer, state.compression, action.sequence, "invalid_look")
             .await
             .map(|()| true);
     }
-    let Some(entity_type_id) = snowball_entity_type_id(&state.entity_types) else {
+    let Some(entity_type_id) = Identifier::parse(projectile_name)
+        .ok()
+        .and_then(|name| state.entity_types.id_of(&name))
+        .map(|id| id as i32)
+    else {
         return Ok(false);
     };
 
     state.pending_break = None;
     state.pending_use = None;
     let position = arrow_spawn_position(player_pose);
-    let velocity = throwable_item_throw_velocity(action.y_rot, action.x_rot);
+    let mut velocity = throwable_item_throw_velocity(action.y_rot, action.x_rot);
+    if matches!(
+        projectile_name,
+        "minecraft:splash_potion" | "minecraft:lingering_potion"
+    ) {
+        velocity.x /= 3.0;
+        velocity.z /= 3.0;
+        velocity.y = -f64::from(action.x_rot + 20.0).to_radians().sin() * 0.5;
+    } else if projectile_name == "minecraft:firework_rocket" {
+        velocity = Vec3::new(0.0, 0.05, 0.0);
+    }
     let rotation = Rotation {
         yaw: action.y_rot,
         pitch: action.x_rot,
@@ -12150,7 +11742,7 @@ where
             expected_held: held,
             game_mode,
             entity_type_id,
-            entity_type_name: "minecraft:snowball".to_owned(),
+            entity_type_name: projectile_name.to_owned(),
             position,
             velocity,
             rotation,
@@ -12175,13 +11767,13 @@ where
 /// Vanilla ThrowableItemProjectile throw speed: 1.5 blocks per tick.
 fn throwable_item_throw_velocity(y_rot: f32, x_rot: f32) -> Vec3 {
     const THROWABLE_ITEM_THROW_SPEED: f64 = 1.5;
-    let yaw = f64::from(y_rot).to_radians();
-    let pitch = f64::from(x_rot).to_radians();
-    let pitch_cos = pitch.cos();
+    let yaw = f64::from(y_rot * mc_physics::mth::DEG_TO_RAD);
+    let pitch = f64::from(x_rot * mc_physics::mth::DEG_TO_RAD);
+    let pitch_cos = mc_physics::mth::cos(pitch);
     Vec3::new(
-        THROWABLE_ITEM_THROW_SPEED * -yaw.sin() * pitch_cos,
-        THROWABLE_ITEM_THROW_SPEED * -pitch.sin(),
-        THROWABLE_ITEM_THROW_SPEED * yaw.cos() * pitch_cos,
+        f64::from(-mc_physics::mth::sin(yaw) * pitch_cos) * THROWABLE_ITEM_THROW_SPEED,
+        f64::from(-mc_physics::mth::sin(pitch)) * THROWABLE_ITEM_THROW_SPEED,
+        f64::from(mc_physics::mth::cos(yaw) * pitch_cos) * THROWABLE_ITEM_THROW_SPEED,
     )
 }
 
@@ -12205,7 +11797,7 @@ where
         return Ok(());
     }
 
-    let remainder = match survival::food_use_remainder(state, pending.held_item_id) {
+    let remainder = match survival_adapter::food_use_remainder(state, pending.held_item_id) {
         Ok(remainder) => remainder,
         Err(reason) => {
             debug!(reason, "food use remainder cannot be resolved");
@@ -12222,6 +11814,7 @@ where
             saturation: food_rule.saturation,
             can_always_eat: food_rule.can_always_eat,
             remainder,
+            consumption: Some((Arc::clone(&state.item_facts), Arc::clone(&state.items))),
         })
         .await
     {
@@ -12241,7 +11834,12 @@ where
     state.inventory = committed.inventory;
     *survival_state = committed.survival;
     write_inventory_slot_updates(state, writer, committed.changed_slots).await?;
-    write_packet(writer, &survival_state.as_packet(), state.compression).await
+    write_packet(
+        writer,
+        &survival_health_packet(survival_state),
+        state.compression,
+    )
+    .await
 }
 
 /// Converge the session cache and the client to the registry's authoritative
@@ -12268,10 +11866,15 @@ where
         return Ok(());
     }
     state.inventory = inventory;
-    refresh_shield_use_state(state);
+    refresh_shield_use_state(state).await?;
     *survival_state = survival;
     if survival_diverged {
-        write_packet(writer, &survival_state.as_packet(), state.compression).await?;
+        write_packet(
+            writer,
+            &survival_health_packet(survival_state),
+            state.compression,
+        )
+        .await?;
     }
     if inventory_diverged {
         write_inventory_content(state, writer).await?;
@@ -12289,12 +11892,18 @@ async fn tick_pending_use<W>(
 where
     W: AsyncWriteExt + Unpin,
 {
-    if game_mode != GameMode::Survival {
+    let creative_consumable = game_mode == GameMode::Creative
+        && state.pending_use.is_some_and(|pending| match pending.kind {
+            UseKind::Food(rule) => rule.can_always_eat && rule.food == 0,
+            UseKind::Crossbow | UseKind::Trident => true,
+            UseKind::Bow => false,
+        });
+    if game_mode != GameMode::Survival && !creative_consumable {
         state.pending_use = None;
-        clear_shield_use(state);
+        clear_shield_use(state).await?;
         return Ok(());
     }
-    refresh_shield_use_state(state);
+    refresh_shield_use_state(state).await?;
     let Some(pending) = state.pending_use else {
         return Ok(());
     };
@@ -12303,8 +11912,62 @@ where
         return Ok(());
     }
     if pending_use_is_complete(&pending, current_tick) {
-        state.pending_use = None;
-        complete_food_use(state, writer, survival_state, pending).await?;
+        match pending.kind {
+            UseKind::Food(_) => {
+                state.pending_use = None;
+                complete_food_use(state, writer, survival_state, pending).await?;
+            }
+            UseKind::Crossbow => {
+                state.pending_use = None;
+                let offhand = PlayerInventory::OFFHAND_SLOT;
+                let ammo_slot = if offhand != pending.held_slot
+                    && state
+                        .items
+                        .name_of(state.inventory.slots[offhand].item_id)
+                        .is_some_and(|name| name.as_str() == "minecraft:firework_rocket")
+                    && !state.inventory.slots[offhand].is_empty()
+                {
+                    Some(offhand)
+                } else {
+                    available_arrow_slot(state)
+                };
+                let weapon_action = ammo_slot
+                    .map(
+                        |ammo_slot| session::item_weapons::ItemWeaponAction::CrossbowLoad {
+                            ammo_slot,
+                            expected_ammo: state.inventory.slots[ammo_slot].clone(),
+                        },
+                    )
+                    .or_else(|| {
+                        (game_mode == GameMode::Creative).then_some(
+                            session::item_weapons::ItemWeaponAction::CrossbowLoadCreative,
+                        )
+                    });
+                if let Some(action) = weapon_action {
+                    let plan = session::item_weapons::ItemWeaponUsePlan {
+                        held_slot: pending.held_slot,
+                        expected_held: state.inventory.slots[pending.held_slot].clone(),
+                        game_mode,
+                        action,
+                        position: Vec3::new(0.0, 0.0, 0.0),
+                        velocity: Vec3::new(0.0, 0.0, 0.0),
+                        rotation: Rotation {
+                            yaw: 0.0,
+                            pitch: 0.0,
+                            head_yaw: 0.0,
+                        },
+                        items: state.items.clone(),
+                    };
+                    if let Ok(Some(committed)) = state.simulation.commit_item_weapon_use(plan).await
+                    {
+                        state.inventory = committed.inventory;
+                        write_inventory_slot_updates(state, writer, committed.changed_slots)
+                            .await?;
+                    }
+                }
+            }
+            UseKind::Bow | UseKind::Trident => {}
+        }
     }
     Ok(())
 }
@@ -12360,25 +12023,6 @@ where
     Ok(())
 }
 
-async fn commit_authoritative_player_pose(
-    simulation: &SimulationHandle,
-    pose: &mut PlayerPose,
-    old_pose: PlayerPose,
-) -> Result<(), ConnectionError> {
-    match commit_authoritative_player_movement(simulation, *pose, 0.0).await {
-        Ok(_) => Ok(()),
-        Err(SimulationRequestError::PlayerMovementRejected(reason)) => {
-            *pose = old_pose;
-            debug!(
-                ?reason,
-                "player state update rejected; retaining authoritative pose"
-            );
-            Ok(())
-        }
-        Err(error) => Err(simulation_pose_commit_error(error)),
-    }
-}
-
 async fn commit_authoritative_player_teleport(
     simulation: &SimulationHandle,
     pose: PlayerPose,
@@ -12388,14 +12032,6 @@ async fn commit_authoritative_player_teleport(
         .await
         .map(drop)
         .map_err(simulation_pose_commit_error)
-}
-
-async fn commit_authoritative_player_movement(
-    simulation: &SimulationHandle,
-    pose: PlayerPose,
-    exhaustion: f32,
-) -> Result<CommittedPlayerPose, SimulationRequestError> {
-    simulation.commit_player_pose(pose, exhaustion).await
 }
 
 fn simulation_pose_commit_error(error: SimulationRequestError) -> ConnectionError {
@@ -12414,7 +12050,7 @@ async fn settle_disconnected_cursor(
         return true;
     }
     let pose = {
-        let state = crate::lock_policy::lock_authoritative_mutex(
+        let state = mc_simulation::lock_policy::lock_authoritative_mutex(
             player_save_state,
             "play.player_persistence",
         );
@@ -12434,7 +12070,7 @@ async fn settle_disconnected_inventory(
     player_save_state: &Arc<Mutex<PlayerPersistedState>>,
 ) -> bool {
     let (pose, owner_has_crafting_table_input, owner_enchanting_table_input, owner_merchant_input) = {
-        let state = crate::lock_policy::lock_authoritative_mutex(
+        let state = mc_simulation::lock_policy::lock_authoritative_mutex(
             player_save_state,
             "play.player_persistence",
         );
@@ -12449,6 +12085,11 @@ async fn settle_disconnected_inventory(
     let crafting_table_input = match &active {
         Some(ActiveContainer::CraftingTable(window)) => Some(window.input.clone()),
         Some(ActiveContainer::Stonecutter(window)) => Some(stonecutter_input_array(&window.input)),
+        Some(ActiveContainer::Station(window))
+            if window.kind != mc_simulation::stations::StationKind::Brewing =>
+        {
+            Some(window.input.clone())
+        }
         _ => None,
     };
     let return_crafting_table_input = owner_has_crafting_table_input
@@ -12468,6 +12109,13 @@ async fn settle_disconnected_inventory(
             interaction
                 .sessions
                 .unregister_furnace_viewer(interaction.session_id, window.position);
+        }
+        Some(ActiveContainer::Station(window))
+            if window.kind == mc_simulation::stations::StationKind::Brewing =>
+        {
+            interaction
+                .sessions
+                .unregister_brewing_viewer(interaction.session_id, window.position);
         }
         Some(ActiveContainer::Chest(window)) => {
             for position in &window.positions {
@@ -12503,6 +12151,7 @@ async fn settle_disconnected_inventory(
                         | ActiveContainer::EnchantingTable(_)
                         | ActiveContainer::Stonecutter(_)
                         | ActiveContainer::Merchant(_)
+                        | ActiveContainer::Station(_)
                 )
             }) {
                 interaction.active_container = active;
@@ -12522,6 +12171,38 @@ async fn recv_outbound_command(
     } else {
         rx.recv().await
     }
+}
+
+/// Await the in-flight movement commit; never ready without one.
+async fn pending_movement_committed(
+    pending: &mut Option<PendingMovementCommit>,
+) -> Result<CommittedPlayerPose, SimulationRequestError> {
+    match pending {
+        Some(pending) => pending.committed().await,
+        None => std::future::pending().await,
+    }
+}
+
+/// Next inbound frame in arrival order. A frame held behind an in-flight
+/// movement commit is replayed (`true`) once the commit is answered; no new
+/// frame is read past it.
+async fn next_inbound_frame<R>(
+    reader: &mut R,
+    buf: &mut BytesMut,
+    compression: Compression,
+    held_frame: &mut Option<mc_protocol::RawFrame>,
+    movement_pending: bool,
+) -> Result<(mc_protocol::RawFrame, bool), ConnectionError>
+where
+    R: AsyncReadExt + Unpin,
+{
+    if held_frame.is_some() {
+        if movement_pending {
+            return std::future::pending().await;
+        }
+        return Ok((held_frame.take().expect("checked above"), true));
+    }
+    Ok((read_frame(reader, buf, compression).await?, false))
 }
 
 fn collect_block_delta_batch(
@@ -12579,10 +12260,7 @@ where
         let remaining = entities.split_off(ENTITY_SPAWNS_PER_WRITE_TURN);
         pending.push_front(OutboundCommand::SpawnEntities(remaining));
     }
-    for entity in &entities {
-        send_entity_spawn(writer, compression, entity).await?;
-    }
-    Ok(())
+    send_entity_spawns(writer, compression, &entities).await
 }
 
 async fn write_entity_movement_turn<W>(
@@ -12590,6 +12268,7 @@ async fn write_entity_movement_turn<W>(
     compression: Compression,
     movements: Vec<ServerEntityMove>,
     pending: &mut VecDeque<OutboundCommand>,
+    sent_packets: &std::sync::atomic::AtomicU64,
 ) -> Result<(), ConnectionError>
 where
     W: AsyncWriteExt + Unpin,
@@ -12598,10 +12277,7 @@ where
     if let Some(remaining) = remaining {
         pending.push_front(OutboundCommand::MoveEntitiesRelative(remaining));
     }
-    for movement in &movements {
-        send_entity_relative_move(writer, compression, movement).await?;
-    }
-    Ok(())
+    wire_entities::send_entity_relative_moves(writer, compression, &movements, sent_packets).await
 }
 
 fn outbound_queue_at_shed_pressure(
@@ -13227,7 +12903,7 @@ where
         *publication,
     );
     if applied.survival_changed {
-        write_packet(writer, &survival_state.as_packet(), compression).await?;
+        write_packet(writer, &survival_health_packet(survival_state), compression).await?;
     }
     if let Some(state) = interaction {
         if applied.died {
@@ -13237,7 +12913,7 @@ where
         }
     }
     if applied.xp_changed {
-        write_packet(writer, &xp_state.as_packet(), compression).await?;
+        write_packet(writer, &xp_packet(xp_state), compression).await?;
     }
     if let Some(cooldown) = applied.shield_cooldown {
         write_packet(
@@ -13299,7 +12975,7 @@ where
                 .map(|(x, z)| [x, z])
                 .collect();
             storage
-                .wake_resident_work(state.world_dimension.clone(), chunks)
+                .wake_npc_work(state.world_dimension.clone(), chunks)
                 .await;
         }
         match step {
@@ -13391,12 +13067,14 @@ where
     let mut drowning_damage_committed = false;
     if matches!(game_mode, GameMode::Survival | GameMode::Adventure) {
         let mut updated_survival = *survival_state;
-        let health_tick = if game_mode == GameMode::Survival {
-            updated_survival.tick_health(food_tick_timer)
-        } else {
-            *food_tick_timer = 0;
-            SurvivalHealthTick::Unchanged
-        };
+        let health_tick = player_damage_adapter::tick_player_health(
+            game_mode == GameMode::Survival
+                && updated_survival.food != 0
+                && sessions.command_bool_rule("natural_health_regeneration"),
+            game_mode,
+            &mut updated_survival,
+            food_tick_timer,
+        );
         let starvation_damage = client_has_loaded
             .then_some(match health_tick {
                 SurvivalHealthTick::StarvationDamage(amount) => Some(amount),
@@ -13423,7 +13101,7 @@ where
                 .await?;
             } else {
                 *survival_state = updated_survival;
-                write_packet(writer, &survival_state.as_packet(), compression).await?;
+                write_packet(writer, &survival_health_packet(survival_state), compression).await?;
             }
         }
         if let Some(amount) = starvation_damage {
@@ -13644,10 +13322,21 @@ where
     let mut client_preferences: Option<ClientPreferences> = None;
     let mut effective_client_view_distance = server_view_distance;
     let mut pending_outbound = VecDeque::new();
+    // One inbound pose commit (movement, input, sprint/shift) may be in flight;
+    // outbound keeps draining meanwhile. Later movement packets merge into
+    // one sample, and other frames wait behind it to preserve inbound order.
+    let mut pending_movement: Option<PendingMovementCommit> = None;
+    let mut collapsed_movement: Option<MovementSample> = None;
+    let mut held_frame: Option<mc_protocol::RawFrame> = None;
     let mut simulation_ticks = sessions.subscribe_simulation_ticks();
     send_world_time(writer, compression, &sessions).await?;
-    write_packet(writer, &survival_state.as_packet(), compression).await?;
-    write_packet(writer, &xp_state.as_packet(), compression).await?;
+    write_packet(
+        writer,
+        &survival_health_packet(&survival_state),
+        compression,
+    )
+    .await?;
+    write_packet(writer, &xp_packet(&xp_state), compression).await?;
     let mut chunk_stream_needs_step = chunk_stream
         .as_ref()
         .is_some_and(|stream| !stream.is_complete());
@@ -13689,6 +13378,7 @@ where
             notify.notify_one();
         }
         let chunk_progress_sessions = Arc::clone(&sessions);
+        let movement_pending = pending_movement.is_some();
 
         tokio::select! {
             command = recv_outbound_command(&mut outbound_rx, &mut pending_outbound) => {
@@ -13719,7 +13409,11 @@ where
                         send_player_despawn(writer, compression, &player).await?;
                     }
                     Some(OutboundCommand::SpawnEntity(entity)) => {
-                        send_entity_spawn(writer, compression, &entity).await?;
+                        send_entity_spawns(
+                            writer,
+                            compression,
+                            std::slice::from_ref(&entity),
+                        ).await?;
                     }
                     Some(OutboundCommand::SpawnEntities(entities)) => {
                         write_entity_spawn_turn(
@@ -13732,11 +13426,15 @@ where
                     Some(OutboundCommand::UpdateEntityData(entity)) => {
                         send_entity_data(writer, compression, &entity).await?;
                     }
+                    Some(OutboundCommand::UpdateEntityEquipment(entity)) => {
+                        wire_entities::send_entity_equipment(writer, compression, &entity).await?;
+                    }
                     Some(OutboundCommand::UpdateEntityHealth(entity)) => {
                         send_entity_health(writer, compression, &entity).await?;
                     }
                     Some(OutboundCommand::MoveEntityRelative(movement)) => {
-                        send_entity_relative_move(writer, compression, &movement).await?;
+                        wire_entities::send_entity_relative_moves(writer, compression, std::slice::from_ref(&movement), &sessions.entity_move_packets,
+                        ).await?;
                     }
                     Some(OutboundCommand::MoveEntitiesRelative(movements)) => {
                         write_entity_movement_turn(
@@ -13744,6 +13442,7 @@ where
                             compression,
                             movements,
                             &mut pending_outbound,
+                            &sessions.entity_move_packets,
                         ).await?;
                     }
                     Some(OutboundCommand::EntityEvent { entity_id, event_id }) => {
@@ -13889,6 +13588,11 @@ where
                             .await?;
                         }
                     }
+                    Some(OutboundCommand::BrewingChanged { position }) => {
+                        if let Some(state) = interaction.as_deref_mut() {
+                            containers::stations::publish_brewing_changed(state, writer, position).await?;
+                        }
+                    }
                     Some(OutboundCommand::ChestSlots {
                         position,
                         state_id,
@@ -13916,6 +13620,28 @@ where
                         .await?;
                     }
                     Some(OutboundCommand::SystemChat { message }) => send_system_chat_message(writer, compression, &message).await?,
+                    Some(OutboundCommand::GameModeChanged(mode)) => {
+                        if let Some(state) = interaction.as_deref_mut() {
+                            state.pending_break = None;
+                            state.pending_use = None;
+                            clear_shield_use(state).await?;
+                        }
+                        game_mode = mode;
+                        write_packet(writer, &GameEvent {
+                            event: GameEvent::EVENT_CHANGE_GAME_MODE,
+                            value: mode.id() as f32,
+                        }, compression).await?;
+                        write_packet(writer, &player_abilities_for_mode(mode), compression).await?;
+                    }
+                    Some(OutboundCommand::PlayerImpulse { entity_id, velocity }) => {
+                        write_packet(writer, &SetEntityMotion {
+                            entity_id,
+                            movement: EntityVec3 { x: velocity.x, y: velocity.y, z: velocity.z },
+                        }, compression).await?;
+                    }
+                    Some(OutboundCommand::ItemCooldown { cooldown_group, duration }) => {
+                        write_packet(writer, &ClientboundCooldown { cooldown_group, duration }, compression).await?;
+                    }
                     Some(OutboundCommand::WorldTime { world_time, rate }) => {
                         send_outbound_world_time(
                             writer,
@@ -13962,9 +13688,10 @@ where
                             close_script_menu(state, writer, request).await?;
                         }
                     }
-                    Some(OutboundCommand::ScriptPlayerTeleport(command)) => {
-                        apply_script_player_teleport(
-                            command,
+                    Some(OutboundCommand::TeleportPlayer { pose, generation }) => {
+                        apply_committed_player_teleport(
+                            pose,
+                            generation,
                             writer,
                             compression,
                             &mut interaction,
@@ -13975,22 +13702,6 @@ where
                             &mut player_pose,
                             &mut next_teleport_id,
                             &mut pending_teleport,
-                        )
-                        .await?;
-                    }
-                    Some(OutboundCommand::ScriptPlayerInventoryTransaction(command)) => {
-                        apply_script_player_inventory_command(
-                            interaction.as_deref_mut(),
-                            writer,
-                            command,
-                        )
-                        .await?;
-                    }
-                    Some(OutboundCommand::LoaderItemGrant(command)) => {
-                        apply_loader_item_grant_command(
-                            interaction.as_deref_mut(),
-                            writer,
-                            command,
                         )
                         .await?;
                     }
@@ -14089,18 +13800,73 @@ where
                 info!("shutdown requested; closing play session");
                 return Ok(());
             }
-            result = read_frame(reader, buf, compression) => {
-                let frame = result?;
-                match ingress_limiter.admit(frame.id, frame.body.len(), Instant::now())? {
-                    ingress_rate::IngressDecision::Allow => {}
-                    decision @ ingress_rate::IngressDecision::Drop { .. } => {
-                        ingress_rate::answer_dropped_ingress(writer, compression, frame.id, decision)
-                            .await?;
-                        continue;
+            result = pending_movement_committed(&mut pending_movement) => {
+                let pending = pending_movement
+                    .take()
+                    .expect("the commit arm completes only with a pending commit");
+                let mut context = PlayerMovementIngressContext {
+                    writer,
+                    compression,
+                    interaction: interaction.as_deref_mut(),
+                    sessions: &sessions,
+                    session_id,
+                    dimension: respawn.dimension_name.as_str(),
+                    chunk_stream: &mut chunk_stream,
+                    simulation: &simulation,
+                    script_zone_observer: &mut script_zone_observer,
+                    survival_state: &mut survival_state,
+                    xp_state: &mut xp_state,
+                    game_mode,
+                    player_pose: &mut player_pose,
+                    current_tick: sessions.simulation_tick(),
+                    next_teleport_id: &mut next_teleport_id,
+                    pending_teleport: &mut pending_teleport,
+                };
+                pending_movement = finish_movement(&mut context, pending, result).await?;
+                if pending_movement.is_none()
+                    && let Some(sample) = collapsed_movement.take()
+                {
+                    pending_movement =
+                        begin_movement(&mut context, sample, client_load.has_loaded()).await?;
+                }
+            }
+            result = next_inbound_frame(
+                reader,
+                buf,
+                compression,
+                &mut held_frame,
+                movement_pending,
+            ) => {
+                let (frame, replayed) = result?;
+                if !replayed {
+                    match ingress_limiter.admit(frame.id, frame.body.len(), Instant::now())? {
+                        ingress_rate::IngressDecision::Allow => {}
+                        decision @ ingress_rate::IngressDecision::Drop { .. } => {
+                            ingress_rate::answer_dropped_ingress(writer, compression, frame.id, decision)
+                                .await?;
+                            continue;
+                        }
+                    }
+                    if liveness::validate_serverbound_play_frame(frame.id, &frame.body)? {
+                        keepalive.record_inbound_activity();
                     }
                 }
-                if liveness::validate_serverbound_play_frame(frame.id, &frame.body)? {
-                    keepalive.record_inbound_activity();
+                if pending_movement.is_some() {
+                    // Tick-end is a validated no-op, not a pose fence. Holding
+                    // it here would prevent collapse across ordinary client ticks.
+                    if frame.id == ServerboundClientTickEnd::ID {
+                        continue;
+                    }
+                    if is_serverbound_movement_packet(frame.id) {
+                        let sample = decode_movement_sample(frame)?;
+                        collapsed_movement = Some(match collapsed_movement {
+                            Some(older) => older.merge(sample),
+                            None => sample,
+                        });
+                    } else {
+                        held_frame = Some(frame);
+                    }
+                    continue;
                 }
                 if frame.id == ServerboundKeepAlive::ID {
                     let mut body = frame.body;
@@ -14126,9 +13892,9 @@ where
                             debug!(teleport_id = confirm.teleport_id, "unexpected teleport confirmation ignored");
                         }
                     }
-                } else if is_serverbound_movement_packet(frame.id) {
-                    handle_serverbound_movement(
-                        PlayerMovementIngressContext {
+                } else if frame.id == ServerboundMoveVehicle::ID {
+                    ingress::movement::handle_vehicle_movement(
+                        &mut PlayerMovementIngressContext {
                             writer,
                             compression,
                             interaction: interaction.as_deref_mut(),
@@ -14148,10 +13914,34 @@ where
                         },
                         frame,
                         client_load.has_loaded(),
+                    ).await?;
+                } else if is_serverbound_movement_packet(frame.id) {
+                    let sample = decode_movement_sample(frame)?;
+                    pending_movement = begin_movement(
+                        &mut PlayerMovementIngressContext {
+                            writer,
+                            compression,
+                            interaction: interaction.as_deref_mut(),
+                            sessions: &sessions,
+                            session_id,
+                            dimension: respawn.dimension_name.as_str(),
+                            chunk_stream: &mut chunk_stream,
+                            simulation: &simulation,
+                            script_zone_observer: &mut script_zone_observer,
+                            survival_state: &mut survival_state,
+                            xp_state: &mut xp_state,
+                            game_mode,
+                            player_pose: &mut player_pose,
+                            current_tick: sessions.simulation_tick(),
+                            next_teleport_id: &mut next_teleport_id,
+                            pending_teleport: &mut pending_teleport,
+                        },
+                        sample,
+                        client_load.has_loaded(),
                     )
                     .await?;
                 } else if is_serverbound_player_state_packet(frame.id) {
-                    handle_serverbound_player_state(
+                    pending_movement = handle_serverbound_player_state(
                         PlayerStateIngressContext {
                             writer,
                             compression,
@@ -14304,15 +14094,6 @@ where
     }
 }
 
-fn text_component_nbt(text: &str) -> Result<Vec<u8>, mc_protocol::CodecError> {
-    let mut out = Vec::new();
-    mc_nbt::write_network(
-        &mut out,
-        &Tag::Compound(vec![("text".to_string(), Tag::String(text.to_string()))]),
-    )?;
-    Ok(out)
-}
-
 /// Render the configured tab-list header/footer. Empty strings on both
 /// sides are the vanilla default (no header/footer lines shown), so no
 /// packet is produced in that case.
@@ -14400,7 +14181,7 @@ mod campfire_output_recovery_tests {
         sessions: Arc<SessionRegistry>,
         simulation: simulation::SimulationHandle,
         owner: simulation::SimulationOwner,
-        writer: Arc<world_journal::JournalWriter>,
+        writer: Arc<mc_simulation::persistence::world_journal::JournalWriter>,
     }
 
     fn campfire_test_blocks() -> Arc<BlockRegistry> {
@@ -14509,21 +14290,26 @@ mod campfire_output_recovery_tests {
             .unwrap();
         assert_eq!(storage.flush_dirty().unwrap(), 1);
 
-        let writer = world_journal::JournalWriter::open(root).unwrap();
+        let writer = mc_simulation::persistence::world_journal::JournalWriter::open(root).unwrap();
         let (entity_journal, entity_pending) =
-            persistence::FileRegionalDecisionJournal::open(root, Arc::clone(&writer)).unwrap();
+            mc_simulation::persistence::FileRegionalDecisionJournal::open(
+                root,
+                Arc::clone(&writer),
+            )
+            .unwrap();
         assert!(entity_pending.is_empty());
         let sessions = Arc::new(SessionRegistry::new_with_entity_owner_journal(
             1,
             Box::new(entity_journal),
         ));
-        let (world_journal, world_pending) = world_journal::WorldChunkJournal::open(
-            root,
-            Arc::clone(&blocks),
-            Arc::clone(&items),
-            Arc::clone(&writer),
-        )
-        .unwrap();
+        let (world_journal, world_pending) =
+            mc_simulation::persistence::world_journal::WorldChunkJournal::open(
+                root,
+                Arc::clone(&blocks),
+                Arc::clone(&items),
+                Arc::clone(&writer),
+            )
+            .unwrap();
         assert!(world_pending.is_empty());
         sessions.install_world_chunk_journal(world_journal);
         assert!(sessions.restore_campfire_cooking(position, cooking));
@@ -14545,28 +14331,38 @@ mod campfire_output_recovery_tests {
         let mut storage = mc_world::WorldStorage::open(root, Arc::clone(&blocks))
             .unwrap()
             .with_item_registry(Arc::clone(&items));
-        let writer = world_journal::JournalWriter::open(root).unwrap();
-        let (world_journal, world_pending) = world_journal::WorldChunkJournal::open(
-            root,
-            Arc::clone(&blocks),
-            Arc::clone(&items),
-            Arc::clone(&writer),
-        )
-        .unwrap();
+        let writer = mc_simulation::persistence::world_journal::JournalWriter::open(root).unwrap();
+        let (world_journal, world_pending) =
+            mc_simulation::persistence::world_journal::WorldChunkJournal::open(
+                root,
+                Arc::clone(&blocks),
+                Arc::clone(&items),
+                Arc::clone(&writer),
+            )
+            .unwrap();
         for chunk in world_journal.decode_pending(&world_pending).unwrap() {
             storage.replay_journal_chunk(chunk).unwrap();
         }
         let (entity_journal, entity_pending) =
-            persistence::FileRegionalDecisionJournal::open(root, Arc::clone(&writer)).unwrap();
+            mc_simulation::persistence::FileRegionalDecisionJournal::open(
+                root,
+                Arc::clone(&writer),
+            )
+            .unwrap();
         let sessions = Arc::new(SessionRegistry::new_with_entity_owner_journal(
             1,
             Box::new(entity_journal),
         ));
         sessions.install_world_chunk_journal(world_journal);
         let (simulation, owner) = simulation::simulation_channel();
-        let persisted = persistence::load_persisted_entities(root, &items, &entity_types).unwrap();
-        let replayed = persistence::replay_regional_commit_decisions(persisted, &entity_pending)
-            .expect("persisted campfire entity journal replays");
+        let persisted =
+            mc_simulation::persistence::load_persisted_entities(root, &items, &entity_types)
+                .unwrap();
+        let replayed = mc_simulation::persistence::replay_regional_commit_decisions(
+            persisted,
+            &entity_pending,
+        )
+        .expect("persisted campfire entity journal replays");
         let expected = replayed.records.len();
         assert_eq!(
             owner.restore_persisted_entities(&sessions, replayed),
@@ -14609,7 +14405,13 @@ mod campfire_output_recovery_tests {
         assert_eq!(
             runtime
                 .owner
-                .process_tick_with_world(&runtime.sessions, runtime.config.world.as_ref(), None, 1,)
+                .process_commands_with_world(
+                    &runtime.sessions,
+                    runtime.config.world.as_ref(),
+                    None,
+                    1,
+                )
+                .await
                 .processed,
             1
         );
@@ -14624,26 +14426,32 @@ mod campfire_output_recovery_tests {
         let blocks = campfire_test_blocks();
         let items = Arc::new(mc_data::items::solaris_required_items());
         let (journal, pending) =
-            world_journal::WorldChunkJournal::open_for_test(root, blocks, Arc::clone(&items))
-                .unwrap();
+            mc_simulation::persistence::world_journal::WorldChunkJournal::open(
+                root,
+                blocks,
+                Arc::clone(&items),
+                mc_simulation::persistence::world_journal::JournalWriter::open(root).unwrap(),
+            )
+            .unwrap();
         pending_output_from_decisions(&journal, &pending, &items, position)
     }
 
     fn pending_output_from_live_world_journal(
         sessions: &SessionRegistry,
+        root: &std::path::Path,
         position: mc_world::BlockPos,
     ) -> PendingCampfireOutput {
         let journal = sessions
             .world_chunk_journal()
             .expect("campfire runtime has a world journal");
-        let pending = journal.pending_decisions_for_test();
+        let pending = crate::test_support::recovered_world_decisions(&journal, root);
         let items = mc_data::items::solaris_required_items();
         pending_output_from_decisions(&journal, &pending, &items, position)
     }
 
     fn pending_output_from_decisions(
-        journal: &world_journal::WorldChunkJournal,
-        pending: &[world_journal::WorldChunkDecision],
+        journal: &mc_simulation::persistence::world_journal::WorldChunkJournal,
+        pending: &[mc_simulation::persistence::world_journal::WorldChunkDecision],
         items: &mc_data::items::ItemRegistry,
         position: mc_world::BlockPos,
     ) -> PendingCampfireOutput {
@@ -14731,3 +14539,70 @@ mod campfire_output_recovery_tests {
 
 #[cfg(test)]
 mod tests;
+
+/// Materialize unopened chest loot through the existing fenced container commit.
+async fn populate_pending_chest_loot(
+    state: &mut crate::play::InteractionState,
+    window: &mut ChestWindow,
+) -> Result<bool, crate::ConnectionError> {
+    use crate::play::{ContainerPlayerPlan, SharedContainerCommit};
+    let (before, state_id) = crate::play::load_chest_commit_snapshot(state, window).await?;
+    window.state_id = state_id;
+    if before.chests.iter().all(|chest| chest.loot_table.is_none()) {
+        return Ok(true);
+    }
+    let luck = {
+        let player = mc_simulation::lock_policy::lock_authoritative_mutex(
+            &state.player_persistence,
+            "play.player_persistence",
+        );
+        player
+            .effects
+            .as_ref()
+            .map_or(0.0, |effects| effects.luck())
+    };
+    let after = ChestView {
+        chests: before
+            .chests
+            .iter()
+            .map(|chest| containers::materialize_loot(chest, &state.items, luck))
+            .collect::<Result<_, _>>()
+            .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?,
+    };
+    let player = ContainerPlayerPlan {
+        expected_inventory: state.inventory.clone(),
+        expected_carried_item: state.carried_item.clone(),
+        updated_inventory: state.inventory.clone(),
+        updated_carried_item: state.carried_item.clone(),
+        crafting_table_input: None,
+        enchanting_table_input: None,
+        merchant_input: None,
+        drops: Vec::new(),
+        xp_orb: None,
+    };
+    match crate::play::commit_chest_click(state, window, &before, &after, player).await? {
+        SharedContainerCommit::Committed {
+            state_id,
+            inventory,
+            carried_item,
+            dispatches,
+        } => {
+            window.state_id = state_id;
+            state.inventory = inventory;
+            state.carried_item = carried_item;
+            crate::play::dispatch_visibility_commands(dispatches);
+            Ok(true)
+        }
+        SharedContainerCommit::Rejected {
+            state_id,
+            inventory,
+            carried_item,
+            ..
+        } => {
+            window.state_id = state_id;
+            state.inventory = inventory;
+            state.carried_item = carried_item;
+            Ok(false)
+        }
+    }
+}

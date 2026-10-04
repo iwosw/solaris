@@ -23,18 +23,31 @@ pub(super) fn spawn_dimension(data: &VanillaData) -> Option<(i32, &Identifier, &
     Some((id, &registry.entries[index], registry.entries.as_slice()))
 }
 
-pub(super) fn spawn_position(
+/// Login-time spawn resolve. `safe_spawn_position` (scanned baked chunks,
+/// with support and body-space checks) wins. When nothing published answers,
+/// the actual spawn chunk is loaded/generated/committed through the existing
+/// pipeline and the safe scan is re-run against real blocks — the analytic
+/// generator surface (`surface_height` is pre-edit terrain per chunk.rs:848)
+/// is never accepted as a position without that block-level validation.
+/// `Err` means login must fail instead of inventing a position: the test
+/// flat-world `DEFAULT_SPAWN_Y` and sea level are not safe substitutes for
+/// an unknown real world.
+pub(super) async fn resolve_spawn_position(
     config: &ServerConfig,
+    resources: &ChunkPipelineResources,
     world_read: Option<&mc_world::WorldReadView>,
-) -> (f64, f64, f64) {
-    safe_spawn_position(config, world_read).unwrap_or_else(|| {
-        let spawn = world_read.map_or_else(mc_world::WorldSpawn::default, |view| view.spawn());
-        let y = adaptive_spawn_y(config, world_read).unwrap_or(DEFAULT_SPAWN_Y);
-        (
-            f64::from(spawn.block_x) + 0.5,
-            y,
-            f64::from(spawn.block_z) + 0.5,
-        )
+) -> Result<(f64, f64, f64), String> {
+    if let Some(position) = safe_spawn_position(config, world_read) {
+        return Ok(position);
+    }
+    prepare_spawn_chunk(config, resources.clone()).await?;
+    let world = config.world.as_ref().ok_or_else(|| {
+        "no safe spawn candidate and no world to prepare; refusing login".to_string()
+    })?;
+    let storage = world.lock().await;
+    let fresh = storage.read_view();
+    safe_spawn_position(config, Some(&fresh)).ok_or_else(|| {
+        "no safe spawn candidate in the prepared spawn chunk; refusing login".to_string()
     })
 }
 
@@ -208,28 +221,6 @@ fn hazardous_spawn_block(path: &str) -> bool {
     )
 }
 
-fn adaptive_spawn_y(
-    config: &ServerConfig,
-    world_read: Option<&mc_world::WorldReadView>,
-) -> Option<f64> {
-    let world_read = world_read?;
-    let spawn = world_read.spawn();
-    let position = spawn.chunk();
-    let chunk = world_read.snapshot_chunks(&[position]).chunk(position)?;
-    let local_x = spawn.block_x.rem_euclid(16) as u8;
-    let local_z = spawn.block_z.rem_euclid(16) as u8;
-    if let Some(top) = chunk.highest_opaque_y(local_x, local_z) {
-        return Some((top + 2) as f64);
-    }
-    let mut chunk = chunk.as_ref().clone();
-    if let Some(table) = config.block_light.as_deref() {
-        chunk.rebuild_highest_opaque(table);
-    }
-    chunk
-        .highest_opaque_y(local_x, local_z)
-        .map(|top| f64::from(top + 2))
-}
-
 pub(crate) async fn prepare_spawn_chunk(
     config: &ServerConfig,
     resources: ChunkPipelineResources,
@@ -238,8 +229,8 @@ pub(crate) async fn prepare_spawn_chunk(
         return Ok(());
     };
     let (position, plan, generator) = {
-        let storage = crate::lock_metrics::timed_guard(
-            crate::lock_metrics::LockMetricKind::WorldStorage,
+        let storage = mc_simulation::lock_metrics::timed_guard(
+            mc_simulation::lock_metrics::LockMetricKind::WorldStorage,
             "spawn chunk plan",
             Instant::now(),
             world.lock().await,
@@ -285,8 +276,8 @@ pub(crate) async fn prepare_spawn_chunk(
         }
     };
 
-    let mut storage = crate::lock_metrics::timed_guard(
-        crate::lock_metrics::LockMetricKind::WorldStorage,
+    let mut storage = mc_simulation::lock_metrics::timed_guard(
+        mc_simulation::lock_metrics::LockMetricKind::WorldStorage,
         "spawn chunk commit",
         Instant::now(),
         world.lock().await,
