@@ -978,8 +978,75 @@ async fn saved_player_pose_bypasses_unsafe_common_spawn_resolve() {
     {
         LoginInitialState::FreshDefault(state) => {
             assert_eq!((state.pose.x, state.pose.y, state.pose.z), expected);
+            // Spawn-теги в poseless-файле есть (1234,-987,4321): спавн обязан
+            // прийти из файла, а не из резолва.
+            assert_eq!(
+                (state.spawn.x, state.spawn.y, state.spawn.z),
+                (1234, -987, 4321)
+            );
         }
         other => panic!("poseless file must resolve, got {}", other.kind()),
+    }
+    // (3b) Файл с валидным Pos, но БЕЗ Spawn*: поза из файла, спавн — из
+    // резолва, probe-default (0.5,0.0,0.5) в респаун не утекает. Такого
+    // файла нет в природе pair-писателя (save пишет Pos+Spawn парой), но
+    // внешний редактор/старая версия могут его дать: SavedPose обязан
+    // нести файловую позу + резолвленный спавн.
+    let nospec_uuid = uuid::Uuid::from_u128(0x5eed_5a61);
+    {
+        use crate::play::persistence::save_player_state;
+        let mut with_pose = PlayerPersistedState::new_default(saved_pose);
+        with_pose.pose = saved_pose;
+        save_player_state(root.path(), nospec_uuid, &items, with_pose).unwrap();
+        // Стираем Spawn-теги из NBT напрямую: файл остаётся валидным
+        // (Pos на месте), но read_spawn вернёт None.
+        let path = mc_simulation::persistence::playerdata_path(root.path(), nospec_uuid);
+        let raw = std::fs::read(&path).unwrap();
+        let mut dec = flate2::read::GzDecoder::new(raw.as_slice());
+        let mut nbt = Vec::new();
+        use std::io::Read as _;
+        dec.read_to_end(&mut nbt).unwrap();
+        let (root_name, tag) = mc_nbt::read_named(&mut nbt.as_slice()).unwrap();
+        let mc_nbt::Tag::Compound(mut fields) = tag else {
+            panic!("playerdata root must be a compound");
+        };
+        fields
+            .retain(|(k, _)| k != "SpawnX" && k != "SpawnY" && k != "SpawnZ" && k != "SpawnAngle");
+        let mut out = Vec::new();
+        mc_nbt::write_named(&mut out, &root_name, &mc_nbt::Tag::Compound(fields)).unwrap();
+        let mut enc = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        use std::io::Write as _;
+        enc.write_all(&out).unwrap();
+        std::fs::write(&path, enc.finish().unwrap()).unwrap();
+    }
+    match resolve_login_initial_state(
+        &safe_config,
+        &resources,
+        Some(root.path()),
+        Some(&safe_read),
+        &sessions,
+        nospec_uuid,
+    )
+    .await
+    .expect("pose-without-spawn must enter")
+    {
+        LoginInitialState::SavedPose(state) => {
+            assert_eq!(
+                (state.pose.x, state.pose.y, state.pose.z),
+                (123.5, 70.0, -45.5)
+            );
+            // Респаун обязан прийти из резолва (expected), а не из
+            // probe-default (0.5,0.0,0.5).
+            assert_eq!(
+                (state.spawn.x, state.spawn.y, state.spawn.z),
+                (
+                    expected.0.floor() as i32,
+                    expected.1.floor() as i32,
+                    expected.2.floor() as i32
+                )
+            );
+        }
+        other => panic!("pose-without-spawn must be SavedPose, got {}", other.kind()),
     }
     let _ = &items;
 }

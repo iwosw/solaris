@@ -169,19 +169,21 @@ pub(super) fn load_player_state(
 ) -> Result<Option<PlayerPersistedState>, PlayerPersistenceError> {
     Ok(
         load_player_state_with_pose_loaded(world_root, uuid, items, default)?
-            .map(|(state, _pose_loaded)| state),
+            .map(|(state, _pose_loaded, _spawn_loaded)| state),
     )
 }
 
-/// Загрузка тем же путём, но с флагом наличия позы в playerdata.
-/// `pose_loaded == false` означает, что поза взята из дефолта: вход обязан
-/// идти через `resolve_spawn_position`, а не через дешёвый фолбэк.
+/// Загрузка тем же путём, но с флагами наличия позы/спавна в playerdata.
+/// `(pose_loaded, spawn_loaded) == (false, *)` означает, что поза взята из
+/// дефолта: вход обязан идти через `resolve_spawn_position`, а не через
+/// дешёвый фолбэк. `spawn_loaded == false` означает, что спавн взят из
+/// дефолта: респаун обязан прийти из резолва, а не из инертного probe.
 pub(super) fn load_player_state_with_pose_loaded(
     world_root: &Path,
     uuid: uuid::Uuid,
     items: &ItemRegistry,
     default: PlayerPersistedState,
-) -> Result<Option<(PlayerPersistedState, bool)>, PlayerPersistenceError> {
+) -> Result<Option<(PlayerPersistedState, bool, bool)>, PlayerPersistenceError> {
     let default_pose = default.pose;
     let inventory_recovery_required = default.inventory_recovery_required;
     let Some(loaded) = mc_simulation::persistence::load_player_state(
@@ -194,6 +196,7 @@ pub(super) fn load_player_state_with_pose_loaded(
         return Ok(None);
     };
     let pose_loaded = loaded.pose_loaded;
+    let spawn_loaded = loaded.spawn_loaded;
     let record = loaded.record;
     let effects = record
         .effects
@@ -230,6 +233,7 @@ pub(super) fn load_player_state_with_pose_loaded(
             inventory_extras: record.inventory_extras,
         },
         pose_loaded,
+        spawn_loaded,
     )))
 }
 
@@ -316,6 +320,9 @@ pub(crate) mod tests {
                     elements: vec![Tag::Float(0.0), Tag::Float(0.0)],
                 }),
             ),
+            ("SpawnX".into(), Tag::Int(1234)),
+            ("SpawnY".into(), Tag::Int(-987)),
+            ("SpawnZ".into(), Tag::Int(4321)),
             ("OnGround".into(), Tag::Byte(0)),
             ("Health".into(), Tag::Float(20.0)),
         ]);

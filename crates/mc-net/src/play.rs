@@ -1515,8 +1515,9 @@ pub(crate) async fn resolve_login_initial_state(
         ));
     };
     // Сначала грузим тем же `load_player_state`-путём, с инертным дефолтом:
-    // поза из файла (если есть) перезапишет его целиком, а Y дефолта никуда
-    // не попадёт — дефолт отбрасывается во всех трёх исходах ниже.
+    // поза и спавн из файла (если есть) перезаписывают его целиком.
+    // Дефолт отбрасывается во всех исходах ниже — кроме спавна, который
+    // правим явно в ветке SavedPose при spawn_loaded == false.
     let probe_default = PlayerPersistedState::new_default(PlayerPose::new(0.5, 0.0, 0.5));
     let loaded = load_player_state_with_pose_loaded(root, uuid, &config.items, probe_default)
         .map_err(|error| {
@@ -1526,12 +1527,25 @@ pub(crate) async fn resolve_login_initial_state(
             )
         })?;
     match loaded {
-        Some((state, true)) => Ok(LoginInitialState::SavedPose(state)),
-        Some((_state, false)) => {
-            // Файл без позы: поза обязана пройти тот же безопасный резолв,
-            // что и у новичка. Перечитываем тем же `load_player_state`-путём
-            // с резолвленным дефолтом: поза (её в файле нет) и спавн (если его
-            // в файле нет) берутся из резолва, остальное — из файла.
+        Some((mut state, true, spawn_loaded)) => {
+            // Валидный Pos, но без Spawn*: probe-default (0.5,0.0,0.5) утёк
+            // бы в респаун через `new_default`->`from_pose`. Резолвим спавн
+            // тем же безопасным путём, позу из файла не трогаем.
+            if !spawn_loaded {
+                let (spawn_x, spawn_y, spawn_z) =
+                    resolve_spawn_position(config, chunk_pipeline_resources, world_read)
+                        .await
+                        .map_err(std::io::Error::other)?;
+                state.spawn = mc_simulation::persistence::SpawnState {
+                    x: spawn_x.floor() as i32,
+                    y: spawn_y.floor() as i32,
+                    z: spawn_z.floor() as i32,
+                    angle: state.pose.yaw,
+                };
+            }
+            Ok(LoginInitialState::SavedPose(state))
+        }
+        Some((_state, false, _spawn_loaded)) => {
             let (spawn_x, spawn_y, spawn_z) =
                 resolve_spawn_position(config, chunk_pipeline_resources, world_read)
                     .await
