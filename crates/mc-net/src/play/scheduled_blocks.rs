@@ -363,7 +363,14 @@ fn hopper_contact_chunks(
                     cell_state.id,
                 )
             });
-        cells.extend(partner);
+        // The partner's own neighbours host comparators reading the pair
+        // (schedule_comparator_ticks_for_container fans out to adjacents of
+        // every chest-like cell): a partner on a chunk corner otherwise
+        // drops its far side's chunk from the staged set.
+        if let Some(partner) = partner {
+            cells.push(partner);
+            cells.extend(adjacent_block_positions(partner));
+        }
     }
     let mut chunks = cells
         .into_iter()
