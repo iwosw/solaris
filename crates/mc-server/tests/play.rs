@@ -63,9 +63,9 @@ async fn start_server() -> SocketAddr {
 }
 
 async fn start_server_with_max(max_players: u32) -> SocketAddr {
-    let random_tick = mc_net::RandomTickPolicy {
+    let random_tick = mc_simulation::tick_policy::RandomTickPolicy {
         simulation_distance: 5,
-        ..mc_net::RandomTickPolicy::default()
+        ..mc_simulation::tick_policy::RandomTickPolicy::default()
     };
     let cfg = mc_net::ServerConfig {
         tab_list: mc_net::TabListConfig::default(),
@@ -135,7 +135,7 @@ async fn start_server_with_script_payloads() -> (SocketAddr, ScriptHostEndpoint)
         entity_types: std::sync::Arc::new(mc_data::entity_types::solaris_required_entity_types()),
         biome_spawns: std::sync::Arc::new(mc_data::biomes::BiomeSpawnRules::default()),
         chunk_pipeline: mc_net::ChunkPipelinePolicy::bounded(2),
-        random_tick: mc_net::RandomTickPolicy::default(),
+        random_tick: mc_simulation::tick_policy::RandomTickPolicy::default(),
         command_permissions: mc_net::CommandPermissionConfig::new(Vec::<String>::new(), true),
         loader_manifest: None,
         shutdown: mc_net::ShutdownHandle::default(),
@@ -195,7 +195,7 @@ fn script_server_config(shutdown: mc_net::ShutdownHandle) -> mc_net::ServerConfi
         entity_types: std::sync::Arc::new(mc_data::entity_types::solaris_required_entity_types()),
         biome_spawns: std::sync::Arc::new(mc_data::biomes::BiomeSpawnRules::default()),
         chunk_pipeline: mc_net::ChunkPipelinePolicy::bounded(2),
-        random_tick: mc_net::RandomTickPolicy::default(),
+        random_tick: mc_simulation::tick_policy::RandomTickPolicy::default(),
         command_permissions: mc_net::CommandPermissionConfig::new(Vec::<String>::new(), true),
         loader_manifest: None,
         shutdown,
@@ -724,11 +724,11 @@ async fn play_state_entry_sends_login_and_spawn_burst() {
     );
     let sync = SynchronizePlayerPosition::decode(&mut frame.body).unwrap();
     assert_eq!(sync.teleport_id, 1);
-    // Spawn Y sits just above the flat-preset grass surface
-    // (Y=-61); see SPAWN_Y in mc_net::play. Bound the assertion to
-    // a sane window rather than re-importing the constant.
+    // World-less fixture (world: None): no chunks exist, safe-scan cannot
+    // find terrain — login falls back to the inert default (y=64) instead
+    // of refusing entry. Production servers always set world: Some.
     assert!(
-        sync.y > -65.0 && sync.y < 0.0,
+        (sync.y - 64.0).abs() < f64::EPSILON,
         "unexpected spawn y={}",
         sync.y
     );
