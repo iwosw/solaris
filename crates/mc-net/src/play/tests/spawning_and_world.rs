@@ -746,9 +746,9 @@ async fn spawn_resolve_loads_unbaked_spawn_chunk_before_falling_back() {
 
     // No chunk committed: the spawn window is not baked yet (fresh world,
     // post-flush eviction, or slow generation). Login must load the actual
-    // spawn chunk and re-run the safe scan on real blocks — never the stale
-    // DEFAULT_SPAWN_Y flat-world fallback (-59.0) that buries the player
-    // inside rock and starts the suffocation death chain.
+    // spawn chunk and re-run the safe scan on real blocks — never invent
+    // a Y that buries the player inside rock and starts suffocation
+    // (the old -59.0 flat-world value did exactly that; fallback is 64.0).
     let blocks = Arc::new(fluid_test_registry());
     let world = mc_world::WorldStorage::in_memory(Arc::clone(&blocks)).with_generator(Arc::new(
         SurfaceGenerator {
@@ -865,20 +865,18 @@ async fn spawn_position_skips_collidable_body_space_and_hazardous_support() {
 }
 #[tokio::test]
 async fn saved_player_pose_bypasses_unsafe_common_spawn_resolve() {
-    use crate::play::persistence::{load_player_state, save_player_state};
+    use crate::play::persistence::save_player_state;
+    use crate::play::{LoginInitialState, resolve_login_initial_state};
 
-    // Регрессия на порядок резолва в `handle`: игрок с сохранённой позой
-    // обязан входить даже когда общий спавн небезопасен. Дефолт-резолв
-    // (`resolve_spawn_position`) в этом пути вообще не вызывается — поза
-    // уже на диске, чанки спавна трогать не нужно.
+    // Регрессия на порядок резолва в `handle`: ветка выделена в
+    // `resolve_login_initial_state`, тест гоняет её напрямую.
     let blocks = Arc::new(fluid_test_registry());
     let world = mc_world::WorldStorage::in_memory(Arc::clone(&blocks));
     let world_read = world.read_view();
     let items = mc_data::items::ItemRegistry::from_report(&[]);
     let uuid = uuid::Uuid::from_u128(0x5eed_5a5e);
     let saved_pose = PlayerPose::new(123.5, 70.0, -45.5);
-    let mut saved = PlayerPersistedState::new_default(saved_pose);
-    saved.pose = saved_pose;
+    let saved = PlayerPersistedState::new_default(saved_pose);
 
     let root = tempfile::tempdir().unwrap();
     save_player_state(root.path(), uuid, &items, saved).unwrap();
@@ -896,6 +894,7 @@ async fn saved_player_pose_bypasses_unsafe_common_spawn_resolve() {
         Arc::new(fluid_test_facts()),
     );
     let resources = crate::chunk_pipeline::ChunkPipelineResources::with_limits(1, 1);
+    let sessions = SessionRegistry::new();
     assert!(
         resolve_spawn_position(&config, &resources, Some(&world_read))
             .await
@@ -903,21 +902,86 @@ async fn saved_player_pose_bypasses_unsafe_common_spawn_resolve() {
         "unsafe common spawn must refuse the default resolve"
     );
 
-    // Но сохранённая поза грузится мимо резолва и не трогается: тот же
-    // дешёвый дефолт, что `handle` подставляет до `load_player_state`,
-    // перезаписывается позой с диска.
-    let fallback = crate::play::world_read_spawn_fallback(Some(&world_read));
-    let loaded = load_player_state(
-        root.path(),
+    // (1) Файл с позой входит без резолва общего спавна.
+    match resolve_login_initial_state(
+        &config,
+        &resources,
+        Some(root.path()),
+        Some(&world_read),
+        &sessions,
         uuid,
-        &items,
-        PlayerPersistedState::new_default(PlayerPose::new(fallback.0, fallback.1, fallback.2)),
     )
-    .unwrap()
-    .expect("saved playerdata must load");
-    assert_eq!(loaded.pose.x, 123.5);
-    assert_eq!(loaded.pose.y, 70.0);
-    assert_eq!(loaded.pose.z, -45.5);
+    .await
+    .expect("saved pose must enter without spawn resolve")
+    {
+        LoginInitialState::SavedPose(state) => {
+            assert_eq!(state.pose.x, 123.5);
+            assert_eq!(state.pose.y, 70.0);
+            assert_eq!(state.pose.z, -45.5);
+        }
+        other => panic!("saved pose must bypass spawn resolve, got {}", other.kind()),
+    }
+
+    // (2) Без файла — отказ: резолв Err пробрасывается как отказ во входе.
+    let fresh_uuid = uuid::Uuid::from_u128(0x5eed_5a5f);
+    assert!(
+        resolve_login_initial_state(
+            &config,
+            &resources,
+            Some(root.path()),
+            Some(&world_read),
+            &sessions,
+            fresh_uuid,
+        )
+        .await
+        .is_err(),
+        "no pose must refuse entry when the common spawn is unsafe"
+    );
+
+    // (3) Файл без позы: поза проходит резолв. Здесь спавн безопасен —
+    // поза обязана совпасть с резолвом и не содержать фабрикованного Y.
+    let mut safe_world = mc_world::WorldStorage::in_memory(Arc::clone(&blocks));
+    let mut chunk = Chunk::empty(
+        ChunkPos { x: 0, z: 0 },
+        mc_world::BlockStateId(0),
+        mc_data::Identifier::parse("minecraft:plains").unwrap(),
+    );
+    chunk.set_block(0, 64, 0, mc_world::BlockStateId(1));
+    chunk
+        .highest_opaque
+        .set(0, 0, (64 - mc_world::MIN_Y + 1) as u32);
+    safe_world
+        .commit_chunk_snapshot(ChunkPos { x: 0, z: 0 }, chunk)
+        .unwrap();
+    let safe_read = safe_world.read_view();
+    let safe_config = simulation_tick_test_config(
+        Arc::clone(&blocks),
+        safe_world,
+        RandomTickPolicy::default(),
+        Arc::new(fluid_test_facts()),
+    );
+    let poser = uuid::Uuid::from_u128(0x5eed_5a60);
+    crate::play::persistence::tests::write_poseless_playerdata_for_test(root.path(), poser);
+    let expected = resolve_spawn_position(&safe_config, &resources, Some(&safe_read))
+        .await
+        .expect("safe spawn must resolve");
+    match resolve_login_initial_state(
+        &safe_config,
+        &resources,
+        Some(root.path()),
+        Some(&safe_read),
+        &sessions,
+        poser,
+    )
+    .await
+    .expect("poseless file must resolve like a fresh player")
+    {
+        LoginInitialState::FreshDefault(state) => {
+            assert_eq!((state.pose.x, state.pose.y, state.pose.z), expected);
+        }
+        other => panic!("poseless file must resolve, got {}", other.kind()),
+    }
+    let _ = &items;
 }
 
 #[test]

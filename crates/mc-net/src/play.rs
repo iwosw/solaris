@@ -464,7 +464,9 @@ use movement::{
     next_player_teleport_id, normalize_absolute_player_movement, note_teleport_confirm_mismatch,
     player_collision_context, refresh_player_fall_state, validate_player_rotation,
 };
-use persistence::{PlayerPersistedState, load_player_state, xp_packet};
+use persistence::{
+    PlayerPersistedState, load_player_state, load_player_state_with_pose_loaded, xp_packet,
+};
 #[cfg(test)]
 use player_damage_adapter::apply_unhooked_player_damage_for_test;
 use player_damage_adapter::{
@@ -626,13 +628,10 @@ const TELEPORT_RESEND_DELAY_TICKS: u64 = 20;
 
 #[cfg(test)]
 const SPAWN_X: f64 = 0.5;
-// The bundled test world uses vanilla's flat-preset surface: bedrock
-// at Y=-64, dirt at Y=-63..-62, grass at Y=-61. Spawn one block
-// above the grass so the client lands cleanly without freefall.
-// (M3's old SPAWN_Y=64 worked only because the chunk burst was fast
-// enough to land before the client picked up physics; M4's slower
-// debug-mode burst exposed the latent bug.)
-const DEFAULT_SPAWN_Y: f64 = -59.0;
+// Fallback default when no baked chunk answers; vanilla overworld-like
+// surface height. Real worlds resolve via safe scan / prepared chunk.
+#[cfg(test)]
+const DEFAULT_SPAWN_Y: f64 = 64.0;
 #[cfg(test)]
 const SPAWN_Z: f64 = 0.5;
 const DEFAULT_SEA_LEVEL: i32 = 63;
@@ -1472,19 +1471,97 @@ impl ScriptZoneObserver {
     }
 }
 
-// Дешёвый дефолт для уже сохранённых игроков: поза на диске всё равно
-// перезапишет её через `load_player_state`, резолв чанков здесь не нужен.
-pub(crate) fn world_read_spawn_fallback(
-    world_read: Option<&mc_world::WorldReadView>,
-) -> (f64, f64, f64) {
-    let spawn = world_read.map_or_else(mc_world::WorldSpawn::default, |view| view.spawn());
-    (
-        f64::from(spawn.block_x) + 0.5,
-        DEFAULT_SPAWN_Y,
-        f64::from(spawn.block_z) + 0.5,
-    )
+/// Исход ветвления входа (`resolve_login_initial_state`): поза из файла
+/// впускает без резолва общего спавна, остальные идут через
+/// `resolve_spawn_position` (дефолт строится только после резолва).
+pub(crate) enum LoginInitialState {
+    Recovered(PlayerPersistedState),
+    SavedPose(PlayerPersistedState),
+    FreshDefault(PlayerPersistedState),
 }
 
+impl LoginInitialState {
+    #[cfg(test)]
+    pub(crate) fn kind(&self) -> &'static str {
+        match self {
+            Self::Recovered(_) => "recovered",
+            Self::SavedPose(_) => "saved-pose",
+            Self::FreshDefault(_) => "fresh-default",
+        }
+    }
+}
+
+/// Ветвление входа из `handle`, выделено ради тестов: файл с позой впускает
+/// без резолва общего спавна; отсутствие файла либо файл без позы идут через
+/// `resolve_spawn_position` (его `Err` = отказ во входе).
+pub(crate) async fn resolve_login_initial_state(
+    config: &ServerConfig,
+    chunk_pipeline_resources: &ChunkPipelineResources,
+    world_root: Option<&std::path::Path>,
+    world_read: Option<&mc_world::WorldReadView>,
+    sessions: &SessionRegistry,
+    uuid: uuid::Uuid,
+) -> Result<LoginInitialState, ConnectionError> {
+    if let Some(state) = sessions.recoverable_player_state(uuid) {
+        return Ok(LoginInitialState::Recovered(state));
+    }
+    let Some(root) = world_root else {
+        let (spawn_x, spawn_y, spawn_z) =
+            resolve_spawn_position(config, chunk_pipeline_resources, world_read)
+                .await
+                .map_err(std::io::Error::other)?;
+        return Ok(LoginInitialState::FreshDefault(
+            PlayerPersistedState::new_default(PlayerPose::new(spawn_x, spawn_y, spawn_z)),
+        ));
+    };
+    // Сначала грузим тем же `load_player_state`-путём, с инертным дефолтом:
+    // поза из файла (если есть) перезапишет его целиком, а Y дефолта никуда
+    // не попадёт — дефолт отбрасывается во всех трёх исходах ниже.
+    let probe_default = PlayerPersistedState::new_default(PlayerPose::new(0.5, 0.0, 0.5));
+    let loaded = load_player_state_with_pose_loaded(root, uuid, &config.items, probe_default)
+        .map_err(|error| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("player state load failed: {error}"),
+            )
+        })?;
+    match loaded {
+        Some((state, true)) => Ok(LoginInitialState::SavedPose(state)),
+        Some((_state, false)) => {
+            // Файл без позы: поза обязана пройти тот же безопасный резолв,
+            // что и у новичка. Перечитываем тем же `load_player_state`-путём
+            // с резолвленным дефолтом: поза (её в файле нет) и спавн (если его
+            // в файле нет) берутся из резолва, остальное — из файла.
+            let (spawn_x, spawn_y, spawn_z) =
+                resolve_spawn_position(config, chunk_pipeline_resources, world_read)
+                    .await
+                    .map_err(std::io::Error::other)?;
+            let resolved_default =
+                PlayerPersistedState::new_default(PlayerPose::new(spawn_x, spawn_y, spawn_z));
+            let reloaded = load_player_state(root, uuid, &config.items, resolved_default.clone())
+                .map_err(|error| {
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!("player state load failed: {error}"),
+                )
+            })?;
+            Ok(LoginInitialState::FreshDefault(
+                reloaded.unwrap_or(resolved_default),
+            ))
+        }
+        None => {
+            let (spawn_x, spawn_y, spawn_z) =
+                resolve_spawn_position(config, chunk_pipeline_resources, world_read)
+                    .await
+                    .map_err(std::io::Error::other)?;
+            Ok(LoginInitialState::FreshDefault(
+                PlayerPersistedState::new_default(PlayerPose::new(spawn_x, spawn_y, spawn_z)),
+            ))
+        }
+    }
+}
+
+#[allow(dead_code)]
 fn load_player_state_for_login(
     world_root: &std::path::Path,
     uuid: uuid::Uuid,
@@ -1550,55 +1627,33 @@ where
     // Default-spawn резолв ленивый и только когда дефолт реально нужен:
     // recoverable-состояние и сохранённая playerdata-поза впускают даже при
     // небезопасном общем спавне; `resolve_spawn_position` отказывает во входе
-    // только игроку без сохранённой позы.
+    // только игроку без сохранённой позы (нет файла либо файл без `Pos`).
     let world_root = connection_world.root;
     let world_read = connection_world.read;
     let world_mutation = connection_world.mutation;
     let chunk_source = connection_world.chunk_source;
-    let saved_pose_on_disk = world_root.as_deref().is_some_and(|root| {
-        mc_simulation::persistence::playerdata_path(root, profile.uuid).is_file()
-    });
-    let mut player_state = if let Some(state) = sessions.recoverable_player_state(profile.uuid) {
-        info!(player = %profile.name, state = %state, "recovered disconnected player state");
-        state
-    } else if saved_pose_on_disk {
-        // Поза уже на диске: грузим без дефолт-резолва. Неуспех чтения —
-        // всё ещё жёсткая ошибка входа (как раньше), но отказ общего спавна
-        // игрока с сохранённой позой не касается.
-        let root = world_root
-            .as_deref()
-            .expect("playerdata root checked above");
-        let fallback_spawn = world_read_spawn_fallback(world_read.as_ref());
-        let default_player_state = PlayerPersistedState::new_default(PlayerPose::new(
-            fallback_spawn.0,
-            fallback_spawn.1,
-            fallback_spawn.2,
-        ));
-        let state =
-            load_player_state_for_login(root, profile.uuid, &config.items, default_player_state)?;
-        info!(player = %profile.name, state = %state, "initialized player state");
-        state
-    } else if let Some(root) = world_root.as_deref() {
-        let (spawn_x, spawn_y, spawn_z) =
-            resolve_spawn_position(config, &chunk_pipeline_resources, world_read.as_ref())
-                .await
-                .map_err(std::io::Error::other)?;
-        let default_player_state =
-            PlayerPersistedState::new_default(PlayerPose::new(spawn_x, spawn_y, spawn_z));
-        let state = load_player_state_for_login(
-            root,
-            profile.uuid,
-            &config.items,
-            default_player_state.clone(),
-        )?;
-        info!(player = %profile.name, state = %state, "initialized player state");
-        state
-    } else {
-        let (spawn_x, spawn_y, spawn_z) =
-            resolve_spawn_position(config, &chunk_pipeline_resources, world_read.as_ref())
-                .await
-                .map_err(std::io::Error::other)?;
-        PlayerPersistedState::new_default(PlayerPose::new(spawn_x, spawn_y, spawn_z))
+    let mut player_state = match resolve_login_initial_state(
+        config,
+        &chunk_pipeline_resources,
+        world_root.as_deref().map(|root| root.as_path()),
+        world_read.as_ref(),
+        &sessions,
+        profile.uuid,
+    )
+    .await?
+    {
+        LoginInitialState::Recovered(state) => {
+            info!(player = %profile.name, state = %state, "recovered disconnected player state");
+            state
+        }
+        LoginInitialState::SavedPose(state) => {
+            info!(player = %profile.name, state = %state, "initialized player state");
+            state
+        }
+        LoginInitialState::FreshDefault(state) => {
+            info!(player = %profile.name, state = %state, "initialized player state");
+            state
+        }
     };
     player_state.pose = clamp_player_pose(player_state.pose);
     let respawn_pose = clamp_player_pose(PlayerPose::from_persisted(player_state.spawn.pose()));
