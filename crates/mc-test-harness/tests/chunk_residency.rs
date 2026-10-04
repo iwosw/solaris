@@ -84,7 +84,6 @@ impl ChunkGenerator for FixtureGenerator {
 struct DiskFixture {
     directory: tempfile::TempDir,
     blocks: Arc<BlockRegistry>,
-    table: Arc<mc_data::block_light::BlockLightTable>,
 }
 
 impl DiskFixture {
@@ -129,11 +128,7 @@ impl DiskFixture {
             assert_eq!(surface, Some(0));
         }
         drop(seed);
-        Self {
-            directory,
-            blocks,
-            table,
-        }
+        Self { directory, blocks }
     }
 
     fn byte_budget_only_storage(&self) -> WorldStorage {
