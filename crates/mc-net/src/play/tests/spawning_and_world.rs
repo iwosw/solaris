@@ -987,11 +987,11 @@ async fn saved_player_pose_bypasses_unsafe_common_spawn_resolve() {
         }
         other => panic!("poseless file must resolve, got {}", other.kind()),
     }
-    // (3b) Файл с валидным Pos, но БЕЗ Spawn*: поза из файла, спавн — из
-    // резолва, probe-default (0.5,0.0,0.5) в респаун не утекает. Такого
-    // файла нет в природе pair-писателя (save пишет Pos+Spawn парой), но
-    // внешний редактор/старая версия могут его дать: SavedPose обязан
-    // нести файловую позу + резолвленный спавн.
+    // (3b) Файл с валидным Pos, но БЕЗ Spawn*: вход НЕ блокируется даже при
+    // небезопасном общем спавне (unsafe_config ниже). Поза из файла впускает
+    // сама; респаун — инертный дефолт из позы (123,70,-46), а НЕ резолв и НЕ
+    // probe (0.5,0.0,0.5). Проверка респауна — отдельно в
+    // `command_execution::validate_respawn_pose`.
     let nospec_uuid = uuid::Uuid::from_u128(0x5eed_5a61);
     {
         use crate::play::persistence::save_player_state;
@@ -1019,31 +1019,28 @@ async fn saved_player_pose_bypasses_unsafe_common_spawn_resolve() {
         enc.write_all(&out).unwrap();
         std::fs::write(&path, enc.finish().unwrap()).unwrap();
     }
+    // Тот же файл — на НЕБЕЗОПАСНОМ общем спавне: вход обязан состояться
+    // (регрессия на relog-зависимость: будущий респаун не блокирует вход).
     match resolve_login_initial_state(
-        &safe_config,
+        &config,
         &resources,
         Some(root.path()),
-        Some(&safe_read),
+        Some(&world_read),
         &sessions,
         nospec_uuid,
     )
     .await
-    .expect("pose-without-spawn must enter")
+    .expect("pose-without-spawn must enter even when common spawn is unsafe")
     {
         LoginInitialState::SavedPose(state) => {
             assert_eq!(
                 (state.pose.x, state.pose.y, state.pose.z),
                 (123.5, 70.0, -45.5)
             );
-            // Респаун обязан прийти из резолва (expected), а не из
-            // probe-default (0.5,0.0,0.5).
+            // Респаун — инертный из позы, не probe (0,0,0) и не отказ входа.
             assert_eq!(
                 (state.spawn.x, state.spawn.y, state.spawn.z),
-                (
-                    expected.0.floor() as i32,
-                    expected.1.floor() as i32,
-                    expected.2.floor() as i32
-                )
+                (123, 70, -46)
             );
         }
         other => panic!("pose-without-spawn must be SavedPose, got {}", other.kind()),

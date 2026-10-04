@@ -1528,18 +1528,16 @@ pub(crate) async fn resolve_login_initial_state(
         })?;
     match loaded {
         Some((mut state, true, spawn_loaded)) => {
-            // Валидный Pos, но без Spawn*: probe-default (0.5,0.0,0.5) утёк
-            // бы в респаун через `new_default`->`from_pose`. Резолвим спавн
-            // тем же безопасным путём, позу из файла не трогаем.
+            // Валидный Pos, но без Spawn*: вход НЕ блокируем — поза из файла
+            // впускает сама по себе. Респаун правим лениво: если файла нет,
+            // ставим инертный дефолт (совпадает с позой — save его не
+            // зафиксирует как чужой), а `validate_respawn_pose` при смерти
+            // проверит/резолвит его отдельно (command_execution.rs:787).
             if !spawn_loaded {
-                let (spawn_x, spawn_y, spawn_z) =
-                    resolve_spawn_position(config, chunk_pipeline_resources, world_read)
-                        .await
-                        .map_err(std::io::Error::other)?;
                 state.spawn = mc_simulation::persistence::SpawnState {
-                    x: spawn_x.floor() as i32,
-                    y: spawn_y.floor() as i32,
-                    z: spawn_z.floor() as i32,
+                    x: state.pose.x.floor() as i32,
+                    y: state.pose.y.floor() as i32,
+                    z: state.pose.z.floor() as i32,
                     angle: state.pose.yaw,
                 };
             }
