@@ -1,0 +1,48 @@
+{
+  "id": "combat",
+  "description": "96 staggered persisted primed TNT explosions, chain TNT targets and hostile combat against survival respawning players",
+  "fixture": "combat",
+  "clients": 16,
+  "view_distance": 6,
+  "spacing": 256,
+  "group_size": 16,
+  "warmup_ticks": 200,
+  "measure_ticks": 1200,
+  "client_args": [
+    "--no-edits",
+    "--survival",
+    "--respawn"
+  ],
+  "commands": {
+    "setup": [
+      "gamemode survival",
+      "time set 18000",
+      "gamerule do_daylight_cycle false"
+    ],
+    "recurring": [
+      {
+        "every_ticks": 120,
+        "commands": [
+          "summon minecraft:creeper 8 64 8"
+        ]
+      }
+    ]
+  },
+  "activity_requirements": [
+    {
+      "source": "bots",
+      "path": "explosions_received",
+      "minimum_delta": 1
+    },
+    {
+      "source": "bots",
+      "path": "commands_sent",
+      "minimum_delta": 1
+    },
+    {
+      "source": "saved_world",
+      "path": "activity_samples.primed_tnt_count",
+      "comparison": "changed"
+    }
+  ]
+}

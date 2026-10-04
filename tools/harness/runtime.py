@@ -63,8 +63,8 @@ def _inotify_for(parent: Path) -> int:
     fd = init(os.O_CLOEXEC | os.O_NONBLOCK)
     if fd < 0:
         return -1
-    # IN_MODIFY | IN_CREATE | IN_MOVED_TO | IN_DELETE_SELF.
-    watch = add(int(fd), os.fsencode(parent), 0x2 | 0x100 | 0x80 | 0x400)
+    # IN_MODIFY | IN_ATTRIB | IN_CLOSE_WRITE | IN_CREATE | IN_MOVED_TO | IN_DELETE_SELF.
+    watch = add(int(fd), os.fsencode(parent), 0x2 | 0x4 | 0x8 | 0x100 | 0x80 | 0x400)
     if watch < 0:
         os.close(int(fd))
         return -1
@@ -185,28 +185,33 @@ def wait_port(
                 )
             if _probe_port(port, remaining):
                 return
-            if process.poll() is not None:
-                tail = _tail_log(log_path)
-                raise RuntimeError(
-                    f"process exited with {process.returncode} before port "
-                    f"{port} became ready; log {log_path}: {tail[-2000:]}"
-                )
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                tail = _tail_log(log_path)
-                raise RuntimeError(
-                    f"port {port} did not become ready within "
-                    f"{timeout_seconds:.1f}s; log {log_path}: {tail[-2000:]}"
-                )
-            # Block for the full remaining time; only log growth or process
-            # exit wakes us to probe again.
-            for key, _ in selector.select(remaining):
+            # Only log growth or process exit wakes us to probe again.
+            for key, _ in selector.select(max(0.0, deadline - time.monotonic())):
                 _drain(key.fd)
     finally:
         selector.close()
         os.close(notify_fd)
         if pid_fd >= 0:
             os.close(pid_fd)
+
+
+def wait_for_path_condition(path: Path, timeout_seconds: float, condition: Any) -> Any:
+    """Evaluate a filesystem condition again only when its parent changes."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    selector, notify_fd, _ = _require_event_fds(None, path.parent)
+    try:
+        deadline = time.monotonic() + timeout_seconds
+        while True:
+            matched, value = condition()
+            if matched:
+                return value
+            remaining = deadline - time.monotonic()
+            if remaining <= 0.0 or not selector.select(remaining):
+                raise TimeoutError(f"filesystem event timeout for {path}")
+            _drain(notify_fd)
+    finally:
+        selector.close()
+        os.close(notify_fd)
 
 
 def stop_process(process: subprocess.Popen[Any] | None, *, interrupt: bool = False) -> None:
@@ -297,9 +302,6 @@ def start_xvfb(artifact_dir: Path) -> tuple[subprocess.Popen[Any], str, Any]:
             while True:
                 if process.poll() is not None:
                     # -displayfd unsupported or Xvfb failed: fall back to scan.
-                    selector.close()
-                    if pid_fd >= 0:
-                        os.close(pid_fd)
                     stop_process(process)
                     return _start_xvfb_scan(artifact_dir, log_handle)
                 remaining = deadline - time.monotonic()
@@ -309,28 +311,24 @@ def start_xvfb(artifact_dir: Path) -> tuple[subprocess.Popen[Any], str, Any]:
                 for key, _ in selector.select(remaining):
                     if key.fd == read_fd:
                         chunk = os.read(read_fd, 64)
-                        if chunk:
-                            display_number += chunk
-                            if display_number.endswith(b"\n"):
-                                display = f":{display_number.decode().strip()}"
-                                return process, display, log_handle
+                        if not chunk:
+                            stop_process(process)
+                            return _start_xvfb_scan(artifact_dir, log_handle)
+                        display_number += chunk
+                        if display_number.endswith(b"\n"):
+                            display = f":{display_number.decode().strip()}"
+                            return process, display, log_handle
                     else:
                         _drain(key.fd)
         finally:
-            try:
-                selector.close()
-            except Exception:
-                pass
+            selector.close()
             if pid_fd >= 0:
-                try:
-                    os.close(pid_fd)
-                except OSError:
-                    pass
+                os.close(pid_fd)
+    except BaseException:
+        log_handle.close()
+        raise
     finally:
-        try:
-            os.close(read_fd)
-        except OSError:
-            pass
+        os.close(read_fd)
 
 
 def _start_xvfb_scan(

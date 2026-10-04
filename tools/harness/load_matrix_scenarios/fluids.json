@@ -1,0 +1,21 @@
+{
+  "id": "fluids",
+  "description": "128 independent elevated water/lava sources released by persisted deadlines throughout the measurement interval",
+  "fixture": "fluids",
+  "clients": 16,
+  "view_distance": 6,
+  "spacing": 256,
+  "group_size": 16,
+  "warmup_ticks": 200,
+  "measure_ticks": 1200,
+  "client_args": [
+    "--no-edits"
+  ],
+  "activity_requirements": [
+    {
+      "source": "saved_world",
+      "path": "activity_samples.flowing_fluid_blocks",
+      "minimum_delta": 1
+    }
+  ]
+}

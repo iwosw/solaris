@@ -1,0 +1,32 @@
+{
+  "id": "explore",
+  "description": "Straight exploring players stream and generate fresh seed42 terrain from externally certified dry anchors; no fixture pregeneration",
+  "fixture": "explore",
+  "clients": 16,
+  "view_distance": 6,
+  "spacing": 256,
+  "group_size": 16,
+  "warmup_ticks": 200,
+  "measure_ticks": 1200,
+  "client_args": [
+    "--no-edits",
+    "--explore"
+  ],
+  "activity_requirements": [
+    {
+      "source": "bots",
+      "path": "chunks_received",
+      "minimum_delta": 16
+    },
+    {
+      "source": "bots",
+      "path": "chunk_boundaries_crossed",
+      "minimum_delta": 16
+    },
+    {
+      "source": "saved_world",
+      "path": "activity_samples.stored_chunks",
+      "minimum_delta": 1
+    }
+  ]
+}

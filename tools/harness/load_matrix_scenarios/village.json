@@ -1,0 +1,33 @@
+{
+  "id": "village",
+  "description": "64 farmer villagers with persisted bed/job/meeting POIs and physically present beds, composters and bells",
+  "fixture": "village",
+  "clients": 16,
+  "view_distance": 6,
+  "spacing": 256,
+  "group_size": 16,
+  "warmup_ticks": 200,
+  "measure_ticks": 1200,
+  "client_args": [
+    "--no-edits"
+  ],
+  "commands": {
+    "setup": [
+      "time set 2000",
+      "gamerule do_daylight_cycle true"
+    ],
+    "recurring": []
+  },
+  "activity_requirements": [
+    {
+      "source": "bots",
+      "path": "entity_moves_received",
+      "minimum_delta": 1
+    },
+    {
+      "source": "saved_world",
+      "path": "activity_samples.entity_positions",
+      "comparison": "changed"
+    }
+  ]
+}

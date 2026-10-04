@@ -203,7 +203,6 @@ expected = ["hook-a", "hook-b"]
 [data]
 world_dir = "{(run_dir / 'world').relative_to(runtime.REPO_ROOT).as_posix()}"
 seed = 0
-worldgen_mode = "tellus_like"
 [simulation]
 random_tick_speed = 0
 friendly_spawn_interval_ticks = 0

@@ -301,13 +301,20 @@ def cmd_run(argv: list[str]) -> int:
     parser.add_argument("--release", action="store_true")
     parser.add_argument("--timeout-seconds", type=float, default=None)
     parser.add_argument("--platform", default=None)
+    parser.add_argument("--client", choices=("java", "native"), default="java")
+    parser.add_argument("--plugins-dir", type=Path, default=None,
+                        help="existing candidate plugin directory for native gameplay profiles")
+    parser.add_argument("--windowed", action="store_true",
+                        help="native graphical validation under owned Xvfb, with GPU capture")
     if scenario_error is None:
         args, extra = parser.parse_known_args(argv)
         profile = args.profile
         release, timeout_seconds, platform = args.release, args.timeout_seconds, args.platform
+        client = args.client
     else:
         profile, extra = "scenario", []
         release, timeout_seconds, platform = False, None, None
+        client = "java"
     if scenario is not None and scenario_error is None:
         # The catalog owns the exact selector; only the typed options above and
         # no free-form trailing arguments are accepted for a named scenario.
@@ -354,12 +361,14 @@ def cmd_run(argv: list[str]) -> int:
         commands = [list(c) for c in (evidence.commands if evidence else [])]
         exits = list(evidence.exits if evidence else [])
         logs = list(evidence.logs if evidence else [])
+        details = {**(evidence.client_evidence if evidence else {}), **details}
         if named_scenario is not None:
             details = dict(details)
             named_scenario["commands_cwd"] = list(evidence.cwds) if evidence else []
             details["named_scenario"] = dict(named_scenario)
         receipt = {
             "profile": profile,
+            "client": client,
             "status": status,
             "scope": scope,
             "commands": commands,
@@ -414,8 +423,21 @@ def cmd_run(argv: list[str]) -> int:
         platform=platform,
         scenario_id=None if scenario is None else scenario.scenario_id,
         manifest=None if scenario is None else scenario.manifest,
+        client=client,
+        plugins_dir=args.plugins_dir,
+        windowed=args.windowed,
     )
     try:
+        if ctx.plugins_dir is not None and client != "native":
+            raise ValueError("--plugins-dir requires --client native")
+        if ctx.windowed and client != "native":
+            raise ValueError("--windowed requires --client native")
+        if client == "native" and profile not in {"survival", "inventory", "entities", "core-client", "native-lifecycle", "logical-native", "native-scale"}:
+            raise RuntimeError(
+                f"profile {profile!r} is not enabled for native; "
+                "supported shared Python minecraft_* profiles: survival, inventory, entities, core-client subset, native-lifecycle, logical-native, native-scale. "
+                "Java-only minecraft_run_scenario definitions are not executed natively."
+            )
         details = spec["run"](ctx)
     except KeyboardInterrupt:
         return finish("interrupted", spec["scope"], {}, "interrupted by user",

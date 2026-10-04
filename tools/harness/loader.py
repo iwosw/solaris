@@ -239,7 +239,18 @@ def request_sound(client: Any, owner: str, action: str) -> dict[str, Any]:
     return wait_chat_after(client, before, [f"{owner.capitalize()} sound: {label}."])
 
 
-def run(platform: str, timeout_seconds: float, artifact_dir: Path) -> dict[str, Any]:
+def run(
+    platform: str,
+    timeout_seconds: float,
+    artifact_dir: Path,
+    scenario: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Run the two-owner fixture, or one named first-party ``scenario``.
+
+    A named sibling scenario supplies ``deploy`` and ``run`` and may supply
+    ``configure`` to choose ordinary server settings. The server, Loader client,
+    permission and cleanup lifecycle stay this module's.
+    """
     if platform not in PLATFORMS:
         raise RuntimeError(f"unsupported platform {platform!r}")
     if runtime.port_open(25567):
@@ -268,10 +279,21 @@ def run(platform: str, timeout_seconds: float, artifact_dir: Path) -> dict[str, 
         'world_dir = ".analysis/loader-live-gate/world"',
         f'world_dir = "{world_dir.relative_to(REPO_ROOT).as_posix()}"',
     )
+    username = {"fabric": "GateFabric", "neoforge": "GateNeoForge", "forge": "GateForge"}[platform]
+    owners: tuple[str, ...] = FIXTURE_OWNERS
+    if scenario is not None:
+        plugins_dir = artifact_dir / "plugins"
+        owners = scenario["deploy"](plugins_dir)
+        config_text = config_text.replace(
+            'directory = ".analysis/loader-live-gate/plugins"',
+            f'directory = "{plugins_dir.relative_to(REPO_ROOT).as_posix()}"',
+        ).replace("operators = []", f'operators = ["{username}"]')
+        if configure := scenario.get("configure"):
+            config_text = configure(config_text)
     run_config.write_text(config_text)
     fixture_root = REPO_ROOT / tomllib.loads(config_text)["plugins"]["directory"]
     expected_bundle_cache_files = []
-    for owner in FIXTURE_OWNERS:
+    for owner in owners:
         manifest = tomllib.loads((fixture_root / owner / "plugin.toml").read_text())
         if manifest["id"] != owner:
             raise RuntimeError(f"Loader fixture directory {owner} declares a different owner")
@@ -282,7 +304,6 @@ def run(platform: str, timeout_seconds: float, artifact_dir: Path) -> dict[str, 
     expected_bundle_cache_files.sort()
     token = f"solaris-loader-{platform}-{time.time_ns()}"
     mcp_port = runtime.reserve_port()
-    username = {"fabric": "GateFabric", "neoforge": "GateNeoForge", "forge": "GateForge"}[platform]
 
     xvfb = server = client_process = None
     xvfb_log = server_log_handle = client_log_handle = None
@@ -364,6 +385,12 @@ def run(platform: str, timeout_seconds: float, artifact_dir: Path) -> dict[str, 
         if not play.get("in_play"):
             raise RuntimeError(f"real {platform} client did not reach Play: {play}")
         result["in_play"] = True
+        if scenario is not None:
+            result["named_scenario"] = scenario["run"](mcp, runtime, artifact_dir, server_log_path)
+            mcp.call_tool("minecraft_disconnect")
+            result["passed"] = True
+            (artifact_dir / "scenario.json").write_text(json.dumps(result, indent=2, sort_keys=True) + "\n")
+            return result
 
         # A unique offline username keeps this gate's persisted inventory isolated.
         mcp.call_tool(

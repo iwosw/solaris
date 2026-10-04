@@ -1,0 +1,28 @@
+{
+  "id": "farms",
+  "description": "Irrigated 80x160 field of age-zero wheat, carrots, potatoes and beetroots exercising actual random-tick growth",
+  "fixture": "farms",
+  "clients": 16,
+  "view_distance": 6,
+  "spacing": 256,
+  "group_size": 16,
+  "warmup_ticks": 200,
+  "measure_ticks": 1200,
+  "client_args": [
+    "--no-edits"
+  ],
+  "commands": {
+    "setup": [
+      "time set 6000",
+      "gamerule do_daylight_cycle false"
+    ],
+    "recurring": []
+  },
+  "activity_requirements": [
+    {
+      "source": "saved_world",
+      "path": "activity_samples.crop_age_sum",
+      "minimum_delta": 1
+    }
+  ]
+}

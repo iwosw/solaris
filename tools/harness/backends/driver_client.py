@@ -3,58 +3,19 @@
 from __future__ import annotations
 
 import binascii
-import ctypes
 import json
-import os
-import select
+import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from urllib import error, parse, request
 
-INOTIFY_MASK = 0x00000002 | 0x00000004 | 0x00000008 | 0x00000080 | 0x00000100
-
-
-def wait_for_path_condition(path: Path, timeout_seconds: float, condition: Any) -> Any:
-    parent = path.parent
-    parent.mkdir(parents=True, exist_ok=True)
-    libc = ctypes.CDLL(None, use_errno=True)
-    inotify_init1 = libc.inotify_init1
-    inotify_init1.argtypes = [ctypes.c_int]
-    inotify_init1.restype = ctypes.c_int
-    inotify_add_watch = libc.inotify_add_watch
-    inotify_add_watch.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_uint32]
-    inotify_add_watch.restype = ctypes.c_int
-
-    descriptor = inotify_init1(os.O_CLOEXEC)
-    if descriptor < 0:
-        error_number = ctypes.get_errno()
-        raise OSError(error_number, os.strerror(error_number))
-    try:
-        watch = inotify_add_watch(
-            descriptor,
-            os.fsencode(parent),
-            INOTIFY_MASK,
-        )
-        if watch < 0:
-            error_number = ctypes.get_errno()
-            raise OSError(error_number, os.strerror(error_number), parent)
-
-        deadline = time.monotonic() + timeout_seconds
-        while True:
-            matched, value = condition()
-            if matched:
-                return value
-            remaining = deadline - time.monotonic()
-            if remaining <= 0.0:
-                raise TimeoutError(f"filesystem event timeout for {path}")
-            readable, _, _ = select.select([descriptor], [], [], remaining)
-            if not readable:
-                raise TimeoutError(f"filesystem event timeout for {path}")
-            os.read(descriptor, 64 * 1024)
-    finally:
-        os.close(descriptor)
+if __package__:
+    from ..runtime import wait_for_path_condition
+else:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
+    from tools.harness.runtime import wait_for_path_condition
 
 
 class AgentClient:

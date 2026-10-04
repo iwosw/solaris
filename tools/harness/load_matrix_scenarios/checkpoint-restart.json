@@ -1,0 +1,51 @@
+{
+  "id": "checkpoint-restart",
+  "description": "Rich persistent furnaces/hoppers/crops/villagers/passive-mob world; save-all under load then clean restart reuses exact world and stable markers",
+  "fixture": "checkpoint-restart",
+  "restart": true,
+  "clients": 32,
+  "view_distance": 6,
+  "spacing": 256,
+  "group_size": 32,
+  "warmup_ticks": 200,
+  "measure_ticks": 1200,
+  "client_args": [
+    "--no-edits"
+  ],
+  "commands": {
+    "setup": [
+      "time set 6000",
+      "gamerule do_daylight_cycle false"
+    ],
+    "recurring": [
+      {
+        "every_ticks": 200,
+        "commands": [
+          "save-all"
+        ]
+      }
+    ]
+  },
+  "activity_requirements": [
+    {
+      "source": "bots",
+      "path": "commands_sent",
+      "minimum_delta": 1
+    },
+    {
+      "source": "saved_world",
+      "path": "activity_samples.furnace_output_items",
+      "minimum_delta": 1
+    },
+    {
+      "source": "saved_world",
+      "path": "activity_samples.crop_age_sum",
+      "minimum_delta": 1
+    },
+    {
+      "source": "saved_world",
+      "path": "activity_samples.entity_positions",
+      "comparison": "changed"
+    }
+  ]
+}

@@ -1,0 +1,46 @@
+{
+  "id": "dense-hostile",
+  "description": "1024 hostile mobs chasing survival players in one loaded flat arena at night",
+  "fixture": "dense-hostile",
+  "clients": 32,
+  "view_distance": 6,
+  "spacing": 256,
+  "group_size": 32,
+  "warmup_ticks": 200,
+  "measure_ticks": 1200,
+  "client_args": [
+    "--no-edits",
+    "--survival",
+    "--respawn"
+  ],
+  "commands": {
+    "setup": [
+      "gamemode survival",
+      "time set 18000",
+      "gamerule do_daylight_cycle false"
+    ],
+    "recurring": []
+  },
+  "activity_requirements": [
+    {
+      "source": "bots",
+      "path": "health_damage_received",
+      "minimum_delta": 1
+    },
+    {
+      "source": "bots",
+      "path": "entity_moves_received",
+      "minimum_delta": 10
+    },
+    {
+      "source": "bots",
+      "path": "movements_sent",
+      "minimum_delta": 100
+    },
+    {
+      "source": "saved_world",
+      "path": "activity_samples.entity_positions",
+      "comparison": "changed"
+    }
+  ]
+}

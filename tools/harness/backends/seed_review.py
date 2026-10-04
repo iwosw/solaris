@@ -29,15 +29,22 @@ def sha256_file(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def write_config(run_dir: Path, server_port: int) -> tuple[Path, Path]:
+def write_config(run_dir: Path, server_port: int, seed: int, vanilla_village: bool) -> tuple[Path, Path]:
     world_dir = run_dir / "world"
     source = (REPO_ROOT / "playable.toml").read_text()
     world_rel = world_dir.relative_to(REPO_ROOT).as_posix()
     replacements = [
         ("port = 25565", f"port = {server_port}"),
         ('world_dir = ".analysis/test-world-v11"', f'world_dir = "{world_rel}"'),
-        ("seed = 0", f"seed = {SEED}"),
+        ("seed = 0", f"seed = {seed}"),
     ]
+    if vanilla_village:
+        replacements.extend([
+            ('worldgen_mode = "tellus_like"', 'worldgen_mode = "vanilla_like"'),
+            ("operators = []", 'operators = ["SeedOwnerReview"]'),
+            ('directory = "plugins"', f'directory = "{run_dir / "plugins"}"'),
+        ])
+        (run_dir / "plugins").mkdir()
     for old, new in replacements:
         if source.count(old) != 1:
             raise RuntimeError(f"expected exactly one config token: {old}")
@@ -67,10 +74,11 @@ def capture_views(
     screenshots_dir: Path,
     label: str,
     position: dict[str, float],
+    pitch: float = -8,
 ) -> list[dict[str, Any]]:
     captures: list[dict[str, Any]] = []
     for direction, yaw in YAW_VIEWS:
-        client.call_tool("minecraft_look", {"yaw_deg": yaw, "pitch_deg": -8})
+        client.call_tool("minecraft_look", {"yaw_deg": yaw, "pitch_deg": pitch})
         client.call_tool("minecraft_wait_ticks", {"ticks": 2})
         frame_observation = client.call_tool("minecraft_observe")
         frame_position = player_position(frame_observation)
@@ -88,7 +96,7 @@ def capture_views(
             {
                 "direction": direction,
                 "requested_yaw": yaw,
-                "requested_pitch": -8,
+                "requested_pitch": pitch,
                 "yaw": observed_yaw,
                 "pitch": observed_pitch,
                 "stage_position": position,
@@ -150,7 +158,7 @@ def move_ordinary(
     )
 
 
-def run(timeout_seconds: float) -> dict[str, Any]:
+def run(timeout_seconds: float, seed: int = SEED, village_view: list[float] | None = None) -> dict[str, Any]:
 
     run_id = time.strftime("%Y%m%dT%H%M%S")
     evidence_root = os.environ.get("SOLARIS_VALIDATION_RUN_DIR")
@@ -164,17 +172,17 @@ def run(timeout_seconds: float) -> dict[str, Any]:
     screenshots_dir.mkdir()
     server_port = helpers.reserve_port()
     mcp_port = helpers.reserve_port()
-    config, world_dir = write_config(run_dir, server_port)
+    config, world_dir = write_config(run_dir, server_port, seed, village_view is not None)
     if world_dir.exists():
         raise RuntimeError(f"fresh-world path already exists before server start: {world_dir}")
-    token = f"seed-owner-{SEED}-{os.getpid()}-{time.time_ns()}"
+    token = f"seed-owner-{seed}-{os.getpid()}-{time.time_ns()}"
 
     xvfb = server = client_process = None
     xvfb_log = server_log = client_log = None
     mcp = None
     result: dict[str, Any] = {
         "run_id": run_id,
-        "seed": SEED,
+        "seed": seed,
         "artifact_dir": str(run_dir.relative_to(REPO_ROOT)),
         "world_dir": str(world_dir.relative_to(REPO_ROOT)),
         "world_dir_preexisting": False,
@@ -182,12 +190,14 @@ def run(timeout_seconds: float) -> dict[str, Any]:
         "config_sha256": sha256_file(config),
         "server_port": server_port,
         "mcp_port": mcp_port,
-        "operators": [],
+        "operators": ["SeedOwnerReview"] if village_view is not None else [],
+        "worldgen_mode": "vanilla_like" if village_view is not None else "tellus_like",
+        "requested_village_view": village_view,
         "captures": [],
         "movements": [],
     }
     try:
-        subprocess.run(["cargo", "build", "-p", "mc-server"], cwd=REPO_ROOT, check=True)
+        subprocess.run(["nice", "-n", "19", "cargo", "build", "-j", "4", "-p", "mc-server"], cwd=REPO_ROOT, check=True)
         xvfb, display, xvfb_log = helpers.start_xvfb(run_dir)
         server_log = (run_dir / "server.log").open("wb")
         server = subprocess.Popen(
@@ -230,6 +240,15 @@ def run(timeout_seconds: float) -> dict[str, Any]:
         if not play.get("in_play"):
             raise RuntimeError(f"client did not reach Play: {play}")
         mcp.call_tool("minecraft_wait_ticks", {"ticks": 20})
+        if village_view is not None:
+            mcp.call_tool("minecraft_send_chat", {"message": "gamemode spectator", "command": True})
+            target = " ".join(str(value) for value in village_view)
+            mcp.call_tool("minecraft_send_chat", {"message": f"tp {target}", "command": True})
+            deadline = time.monotonic() + timeout_seconds
+            observed = mcp.call_tool("minecraft_observe")
+            while horizontal_distance(player_position(observed), {"x": village_view[0], "z": village_view[2]}) > 2.0:
+                observed = helpers.next_client_state(mcp, observed, deadline)
+            mcp.call_tool("minecraft_wait_ticks", {"ticks": 40})
 
         spawn_observation = mcp.call_tool("minecraft_observe")
         spawn_position = player_position(spawn_observation)
@@ -239,13 +258,14 @@ def run(timeout_seconds: float) -> dict[str, Any]:
                 "label": "spawn",
                 "position": spawn_position,
                 "screenshots": capture_views(
-                    mcp, screenshots_dir, "spawn", spawn_position
+                    mcp, screenshots_dir, "spawn", spawn_position,
+                    pitch=30 if village_view is not None else -8,
                 ),
             }
         )
 
         prior_positions = [spawn_position]
-        for label, candidate_yaws in MOVE_STAGES:
+        for label, candidate_yaws in ([] if village_view is not None else MOVE_STAGES):
             movement = move_ordinary(mcp, candidate_yaws, prior_positions)
             result["movements"].append({"label": label, **movement})
             position = movement["position"]
@@ -285,9 +305,12 @@ def main() -> int:
 
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--timeout-seconds", type=float, default=120.0)
+    parser.add_argument("--seed", type=int, default=SEED)
+    parser.add_argument("--vanilla-village", type=float, nargs=3, metavar=("X", "Y", "Z"),
+                        help="Inspect a measured vanilla village with an operator spectator camera")
     args = parser.parse_args()
     try:
-        result = run(args.timeout_seconds)
+        result = run(args.timeout_seconds, args.seed, args.vanilla_village)
     except Exception as error:
         print(f"seed owner review failed: {error}", file=os.sys.stderr)
         return 1

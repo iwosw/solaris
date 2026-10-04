@@ -1,0 +1,33 @@
+{
+  "id": "built-base",
+  "description": "Stocked furnaces, circulating hoppers, loose item stacks and staggered scheduled redstone releases",
+  "fixture": "built-base",
+  "clients": 32,
+  "view_distance": 6,
+  "spacing": 256,
+  "group_size": 32,
+  "warmup_ticks": 200,
+  "measure_ticks": 1200,
+  "activity_requirements": [
+    {
+      "source": "saved_world",
+      "path": "activity_samples.powered_buttons",
+      "comparison": "changed"
+    },
+    {
+      "source": "bots",
+      "path": "break_updates_observed",
+      "minimum_delta": 1
+    },
+    {
+      "source": "bots",
+      "path": "place_updates_observed",
+      "minimum_delta": 1
+    },
+    {
+      "source": "saved_world",
+      "path": "activity_samples.furnace_output_items",
+      "minimum_delta": 1
+    }
+  ]
+}

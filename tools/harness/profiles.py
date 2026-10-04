@@ -8,7 +8,9 @@ profiles, nonzero commands, exceptions, and prepared-only runs never pass.
 
 from __future__ import annotations
 
+import json
 import os
+import runpy
 import subprocess
 import sys
 import time
@@ -45,6 +47,10 @@ class ProfileContext:
     exits: list[int | None] = field(default_factory=list)
     logs: list[str] = field(default_factory=list)
     cwds: list[str] = field(default_factory=list)
+    client: str = "java"
+    client_evidence: dict[str, Any] = field(default_factory=dict)
+    plugins_dir: Path | None = None
+    windowed: bool = False
 
 
 def _run_command(
@@ -156,10 +162,15 @@ def run_code_health(ctx: ProfileContext) -> dict[str, Any]:
 
 
 def run_test(ctx: ProfileContext) -> dict[str, Any]:
+    # NOTE: benches excluded on purpose (`--benches` never here): the
+    # mc-world criterion `light_engine` bench (harness=false) executes on
+    # `cargo test --all-targets` and burns the heavy slot. Benches run only
+    # via explicit `cargo bench -p <crate>`. `#[ignore]` stress/benchmark
+    # tests stay ignored by default cargo semantics — no module disables.
     argv = (
         ["cargo", "test", *ctx.extra_args]
         if ctx.extra_args
-        else ["cargo", "test", "--workspace", "--all-targets"]
+        else ["cargo", "test", "--workspace", "--lib", "--bins", "--tests", "--examples"]
     )
     return _run_command(argv, ctx, "test.log")
 
@@ -261,8 +272,18 @@ def _prepare_loader_fixture(ctx: ProfileContext) -> None:
     )
 
 
+def run_survival(ctx: ProfileContext) -> dict[str, Any]:
+    """One ordinary survival scenario, driven over MCP for either client."""
+    from .backends import gameplay
+
+    return gameplay.run(ctx)
+
 def run_core_client(ctx: ProfileContext) -> dict[str, Any]:
     from . import compatibility
+    if ctx.client == "native":
+        from .backends import client_probes
+
+        return client_probes.run(ctx, "core-client")
 
     _prepare_loader_fixture(ctx)
     details = _build_mc_server(ctx)
@@ -276,6 +297,10 @@ def run_core_client(ctx: ProfileContext) -> dict[str, Any]:
 
 def run_inventory(ctx: ProfileContext) -> dict[str, Any]:
     from . import compatibility
+    if ctx.client == "native" or ctx.scenario_id == compatibility.INVENTORY_SCENARIO_ID:
+        from .backends import client_probes
+
+        return client_probes.run(ctx, "inventory")
 
     _prepare_loader_fixture(ctx)
     details = _build_mc_server(ctx)
@@ -285,6 +310,30 @@ def run_inventory(ctx: ProfileContext) -> dict[str, Any]:
     if result.get("passed") is not True:
         raise RuntimeError(f"inventory scenario did not pass: {result}")
     return details
+
+
+def run_entities(ctx: ProfileContext) -> dict[str, Any]:
+    from .backends import client_probes
+
+    return client_probes.run(ctx, "entities")
+
+
+def run_native_lifecycle(ctx: ProfileContext) -> dict[str, Any]:
+    from .backends import client_probes
+
+    return client_probes.run(ctx, "native-lifecycle")
+
+
+def run_native_logical(ctx: ProfileContext) -> dict[str, Any]:
+    from .backends import native_logical
+
+    return native_logical.run(ctx)
+
+
+def run_native_scale(ctx: ProfileContext) -> dict[str, Any]:
+    from .backends import native_scale
+
+    return native_scale.run(ctx)
 
 
 def run_loader_live(ctx: ProfileContext) -> dict[str, Any]:
@@ -299,7 +348,15 @@ def run_loader_live(ctx: ProfileContext) -> dict[str, Any]:
     _prepare_loader_fixture(ctx)
     details = _build_mc_server(ctx)
     timeout = ctx.timeout_seconds or LOADER_LIVE_TIMEOUT_SECONDS
-    result = loader.run(platform, timeout, ctx.artifact_dir)
+    scenario = None
+    if ctx.scenario_id is not None:
+        # A named first-party scenario lives beside its package in the sibling
+        # repository; core supplies only this Loader lifecycle.
+        plugins_root = Path(
+            os.environ.get("SOLARIS_DEFAULT_PLUGINS_ROOT", str(DEFAULT_PLUGINS_ROOT))
+        )
+        scenario = runpy.run_path(str(plugins_root / "tools" / f"{ctx.scenario_id}.py"))
+    result = loader.run(platform, timeout, ctx.artifact_dir, scenario)
     details["scenario"] = result
     if result.get("passed") is not True:
         raise RuntimeError(f"loader-live scenario did not pass: {result}")
@@ -449,6 +506,64 @@ def run_living_world_scale(ctx: ProfileContext) -> dict[str, Any]:
     )
 
 
+def run_player_scale(ctx: ProfileContext) -> dict[str, Any]:
+    env = _backend_env(ctx)
+    env.setdefault("CARGO_PROFILE_RELEASE_DEBUG", "0")
+    env.setdefault("CARGO_PROFILE_RELEASE_STRIP", "false")
+    env.setdefault("RUSTFLAGS", "-C force-frame-pointers=yes")
+    _run_command(
+        [
+            "cargo", "build", "--release",
+            "-p", "mc-server", "--bin", "mc-server",
+            "-p", "mc-test-harness", "--bin", "player-scale-bots",
+        ],
+        ctx,
+        "player-scale-build.log",
+        env=env,
+    )
+    details = _run_command(
+        [
+            sys.executable,
+            "-m",
+            "tools.harness.backends.player_scale",
+            "--out",
+            str(ctx.artifact_dir / "bench"),
+        ] + ctx.extra_args,
+        ctx,
+        "player-scale.log",
+        env=env,
+    )
+    final_event = json.loads((ctx.artifact_dir / "player-scale.log").read_text().splitlines()[-1])
+    receipt_path = Path(final_event["receipt"])
+    backend = json.loads(receipt_path.read_text())
+    details["backend_receipt"] = str(receipt_path)
+    details["backend_status"] = backend["status"]
+    if backend["status"] == "smoke_only":
+        details["mode"] = "prepared"
+    elif backend["status"] != "passed":
+        raise RuntimeError(f"player-scale backend did not pass: {backend['status']}")
+    return details
+
+
+def run_load_matrix(ctx: ProfileContext) -> dict[str, Any]:
+    """Use explicit prebuilt artifacts; Main owns the one combined release build."""
+    details = _run_command(
+        [sys.executable, "-m", "tools.harness.backends.load_matrix",
+         "--out", str(ctx.artifact_dir / "bench")] + ctx.extra_args,
+        ctx, "load-matrix.log", env=_backend_env(ctx),
+    )
+    final_event = json.loads((ctx.artifact_dir / "load-matrix.log").read_text().splitlines()[-1])
+    receipt_path = Path(final_event["receipt"])
+    backend = json.loads(receipt_path.read_text())
+    details.update({"backend_receipt": str(receipt_path), "backend_status": backend["status"],
+                    "summary": final_event["summary"]})
+    if backend["status"] == "smoke_only":
+        details["mode"] = "prepared"
+    elif backend["status"] != "passed":
+        raise RuntimeError(f"load-matrix backend did not pass: {backend['status']}")
+    return details
+
+
 def run_seed_review(ctx: ProfileContext) -> dict[str, Any]:
     return _run_command(
         ["python3", "-m", "tools.harness.backends.seed_review"] + ctx.extra_args,
@@ -502,7 +617,7 @@ PROFILES: dict[str, dict[str, Any]] = {
     },
     "correctness": {
         "scope": "rust",
-        "description": "L2 gates: fmt, code-health, clippy, test --workspace --all-targets",
+        "description": "L2 gates: fmt, code-health, clippy, test --workspace (--lib --bins --tests --examples; benches excluded)",
         "run": run_correctness,
     },
     "fmt": {
@@ -522,7 +637,7 @@ PROFILES: dict[str, dict[str, Any]] = {
     },
     "test": {
         "scope": "rust",
-        "description": "cargo test --workspace --all-targets; trailing arguments run a focused Cargo test",
+        "description": "cargo test --workspace (--lib --bins --tests --examples; benches excluded); trailing arguments run a focused Cargo test",
         "run": run_test,
     },
     "build": {
@@ -555,15 +670,40 @@ PROFILES: dict[str, dict[str, Any]] = {
         "description": "installer self-test backend",
         "run": run_installer,
     },
+    "survival": {
+        "scope": "real-client",
+        "description": "Shared MCP survival mining, pickup and placement (--client java|native)",
+        "run": run_survival,
+    },
     "core-client": {
         "scope": "real-client",
-        "description": "server-only plugin gate via compatibility.run (direct call)",
+        "description": "Java compatibility gate; native is explicitly a cheap server/own-chat subset",
         "run": run_core_client,
     },
     "inventory": {
         "scope": "real-client",
-        "description": "inventory-path gate via compatibility.run(inventory=True)",
+        "description": "Java compatibility default; native/named inventory-client share Python crafting/cursor/selection",
         "run": run_inventory,
+    },
+    "entities": {
+        "scope": "real-client",
+        "description": "Shared MCP bounded entity feeding, damage, death and pickup (--client java|native)",
+        "run": run_entities,
+    },
+    "native-lifecycle": {
+        "scope": "real-client",
+        "description": "Native reconnect, received death/respawn and 30-minute RSS soak (--soak-seconds 0 is smoke-only)",
+        "run": run_native_lifecycle,
+    },
+    "logical-native": {
+        "scope": "functional-native",
+        "description": "Cheap headless movement/look and rejected-use state subset; excludes original graphical/20-minute contracts",
+        "run": run_native_logical,
+    },
+    "native-scale": {
+        "scope": "functional-native",
+        "description": "Headless native CPU/RSS canaries beside real Rust protocol bots; non-exclusive diagnostic only",
+        "run": run_native_scale,
     },
     "loader-live": {
         "scope": "real-client",
@@ -604,6 +744,16 @@ PROFILES: dict[str, dict[str, Any]] = {
         "scope": "scale",
         "description": "living-world-scale backend; evidence under the run artifact dir",
         "run": run_living_world_scale,
+    },
+    "player-scale": {
+        "scope": "scale",
+        "description": "Two-core many-player ladder using lightweight Rust protocol bots",
+        "run": run_player_scale,
+    },
+    "load-matrix": {
+        "scope": "scale",
+        "description": "Diverse external-release single-core load matrix (explicit prebuilt binaries; no build)",
+        "run": run_load_matrix,
     },
     "seed-review": {
         "scope": "terrain",
