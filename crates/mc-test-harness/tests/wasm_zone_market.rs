@@ -55,7 +55,7 @@ use mc_protocol::packets::play::{
     ServerboundMovePlayerPos, ServerboundPlayerLoaded, SynchronizePlayerPosition,
 };
 use mc_script::{CommandCapabilities, ScriptPluginManifest};
-use mc_test_harness::client::Client;
+use mc_server::wire_client::Client;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 
 /// The one package that owns the zone and the market.
@@ -268,23 +268,54 @@ impl Registries {
     }
 }
 
-/// A generator that produces empty chunks.
+/// A generator that produces empty chunks with one safe login column.
 ///
 /// The contract's fixed box sits at y 80..84 in the overworld, and this run needs
 /// air around it: a terrain generator would put the ground wherever its noise says,
 /// and a player embedded in stone is refused by the server's own movement authority
 /// before any boundary could be crossed. Every chunk is still a full chunk of the
 /// overworld's own geometry, so the world's residency, collision and lighting paths
-/// all run exactly as they do over generated terrain.
+/// all run exactly as they do over generated terrain. The login scan needs one
+/// registered support column (world spawn defaults to block 0,0): chunk (0,0)
+/// carries a stone floor at y=0 with its heightmap published, everything else
+/// stays air.
 struct EmptyTerrain;
 
 impl mc_world::ChunkGenerator for EmptyTerrain {
     fn generate(&self, pos: mc_world::ChunkPos) -> mc_world::Chunk {
+        let report = mc_data::blocks::solaris_required_blocks_report();
+        let registry =
+            mc_world::BlockRegistry::from_report(&report).expect("required block registry");
+        let stone = registry
+            .by_name_and_props(
+                &Identifier::parse("minecraft:stone").expect("checked block identifier"),
+                &[],
+            )
+            .expect("stone state registered");
+        let air = registry
+            .by_name_and_props(
+                &Identifier::parse("minecraft:air").expect("checked block identifier"),
+                &[],
+            )
+            .expect("air state registered");
         let mut chunk = mc_world::Chunk::empty(
             pos,
-            mc_world::BlockStateId(0),
+            air,
             Identifier::parse("minecraft:plains").expect("checked biome identifier"),
         );
+        if pos.x == 0 && pos.z == 0 {
+            for lx in 0..16u8 {
+                for lz in 0..16u8 {
+                    chunk.set_block(lx, 0, lz, stone);
+                }
+            }
+            let table =
+                mc_data::block_light::BlockLightTable::conservative_from_blocks_report(&report);
+            chunk.rebuild_highest_opaque(&table);
+            chunk
+                .heightmaps
+                .insert("MOTION_BLOCKING".to_string(), chunk.highest_opaque.clone());
+        }
         chunk.status = "minecraft:full".to_owned();
         chunk.mark_dirty();
         chunk
@@ -1244,7 +1275,7 @@ fn server_config(
         entity_types: Arc::clone(&registries.entity_types),
         biome_spawns: Arc::new(mc_data::biomes::BiomeSpawnRules::default()),
         chunk_pipeline: mc_net::ChunkPipelinePolicy::default(),
-        random_tick: mc_net::RandomTickPolicy::default(),
+        random_tick: mc_simulation::tick_policy::RandomTickPolicy::default(),
         command_permissions: mc_net::CommandPermissionConfig::new(Vec::<String>::new(), true),
         loader_manifest: None,
         shutdown: shutdown.clone(),
