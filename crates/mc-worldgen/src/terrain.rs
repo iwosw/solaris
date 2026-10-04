@@ -101,7 +101,7 @@ static HEIGHT_CACHE_HITS: AtomicU64 = AtomicU64::new(0);
 #[cfg(feature = "worldgen-counters")]
 static HEIGHT_COLUMN_SEARCHES: AtomicU64 = AtomicU64::new(0);
 #[cfg(feature = "worldgen-counters")]
-static HEIGHT_NOISE_SAMPLES: AtomicU64 = AtomicU64::new(0);
+static HEIGHT_COLUMN_ITERATIONS: AtomicU64 = AtomicU64::new(0);
 
 /// Snapshot of the generation-local height-context cache counters.
 ///
@@ -109,15 +109,14 @@ static HEIGHT_NOISE_SAMPLES: AtomicU64 = AtomicU64::new(0);
 /// increment below compiles out and collection costs nothing.
 ///
 /// Field semantics: `base_height_requests` counts every `source_height`
-/// entry; `unique_height_keys` counts distinct columns ever resolved (one
-/// insert each); `height_cache_hits` counts map hits; each column search
-/// walks the density column top-down one `sample_terrain` per Y, so
-/// `noise_samples_from_height_queries` is the exact mathematical count of
-/// those evaluations (`max_y - raw_height` per native miss, `1` per
-/// own-router column), and `actual_density_column_searches` counts the
-/// searches. The `source_hits`/`source_misses` pair is the seeding/hit
-/// split of the same lookups (`misses == unique_height_keys` whenever
-/// every key is inserted once).
+/// entry; `unique_height_keys` counts distinct columns ever inserted (one
+/// insert each — NOT counting `for_chunk` seeding, which inserts without a
+/// request); `height_cache_hits` counts map hits on the request path;
+/// `column_iterations_from_height_queries` counts top-down Y-steps of the
+/// column search (`max_y - 1 - raw`, off by one vs successful samples by
+/// construction — a diagnostic shape metric, NOT noise evaluations: memo
+/// and Min/Max change actual evaluations independently; use DensityCounters
+/// for those); `actual_density_column_searches` counts the searches.
 #[cfg(feature = "worldgen-counters")]
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct HeightContextStats {
@@ -129,7 +128,7 @@ pub struct HeightContextStats {
     pub unique_height_keys: u64,
     pub height_cache_hits: u64,
     pub actual_density_column_searches: u64,
-    pub noise_samples_from_height_queries: u64,
+    pub column_iterations_from_height_queries: u64,
 }
 
 /// Read the height-context counters accumulated so far.
@@ -145,7 +144,7 @@ pub fn height_context_stats() -> HeightContextStats {
         unique_height_keys: HEIGHT_UNIQUE_KEYS.load(Ordering::Relaxed),
         height_cache_hits: HEIGHT_CACHE_HITS.load(Ordering::Relaxed),
         actual_density_column_searches: HEIGHT_COLUMN_SEARCHES.load(Ordering::Relaxed),
-        noise_samples_from_height_queries: HEIGHT_NOISE_SAMPLES.load(Ordering::Relaxed),
+        column_iterations_from_height_queries: HEIGHT_COLUMN_ITERATIONS.load(Ordering::Relaxed),
     }
 }
 
@@ -156,7 +155,7 @@ pub fn reset_height_context_stats() {
     HEIGHT_UNIQUE_KEYS.store(0, Ordering::Relaxed);
     HEIGHT_CACHE_HITS.store(0, Ordering::Relaxed);
     HEIGHT_COLUMN_SEARCHES.store(0, Ordering::Relaxed);
-    HEIGHT_NOISE_SAMPLES.store(0, Ordering::Relaxed);
+    HEIGHT_COLUMN_ITERATIONS.store(0, Ordering::Relaxed);
 }
 
 #[inline]
@@ -178,14 +177,14 @@ fn count_height_cache_hit() {
 }
 
 #[inline]
-fn count_height_column_search(noise_samples: u64) {
+fn count_height_column_search(column_iterations: u64) {
     #[cfg(feature = "worldgen-counters")]
     {
         HEIGHT_COLUMN_SEARCHES.fetch_add(1, Ordering::Relaxed);
-        HEIGHT_NOISE_SAMPLES.fetch_add(noise_samples, Ordering::Relaxed);
+        HEIGHT_COLUMN_ITERATIONS.fetch_add(column_iterations, Ordering::Relaxed);
     }
     #[cfg(not(feature = "worldgen-counters"))]
-    let _ = noise_samples;
+    let _ = column_iterations;
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -371,8 +370,6 @@ impl<'h> HeightContext<'h> {
         let mut source_heights = HashMap::with_capacity(source_columns.len().max(256));
         for &(wx, wz, base) in source_columns {
             source_heights.insert((wx, wz), base);
-            count_height_request();
-            count_height_cache_hit();
         }
         let _ = pos;
         Self {
@@ -404,15 +401,18 @@ impl<'h> HeightContext<'h> {
         // clamp the sampler path identically so every stored value is final.
         let clamped = raw.clamp(self.geometry_min_y, self.geometry_max_y - 1);
         // The column search walks top-down one `sample_terrain` per Y until
-        // the first solid, so the mathematical evaluation count is exact:
-        // native sampler iterations = max_y - raw. The own-router path is a
-        // single closed-form column query, counted as one search of one.
-        let noise_samples = if self.native_sampler.is_some() {
+        // the first solid: `column_iterations = max_y - 1 - raw` by
+        // construction (off by one vs successful samples — the successful
+        // sample yields 0 further steps). Diagnostic shape metric, NOT a
+        // noise-evaluation count (see DensityCounters for actual evaluations).
+        // The own-router path is a single closed-form column query, counted
+        // as one search of one iteration.
+        let column_iterations = if self.native_sampler.is_some() {
             (self.geometry_max_y - 1 - raw.min(self.geometry_max_y - 1)).max(0) as u64
         } else {
             1
         };
-        count_height_column_search(noise_samples);
+        count_height_column_search(column_iterations);
         count_height_unique_key();
         self.source_heights.insert((world_x, world_z), clamped);
         clamped
