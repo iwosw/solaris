@@ -16,7 +16,7 @@ use mc_protocol::packets::Packet;
 use mc_protocol::packets::handshake::{Handshake, NextState};
 use mc_protocol::packets::status::{PingRequest, PongResponse, StatusRequest, StatusResponse};
 use mc_protocol::{PROTOCOL_VERSION, TARGET_RELEASE};
-use mc_test_harness::client::Client;
+use mc_server::wire_client::Client;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 
@@ -25,9 +25,50 @@ use tokio::net::TcpStream;
 /// after the fact because it owns the listener internally; instead we
 /// peek the address before launching the server with the real config.
 async fn start_server(motd: &str) -> SocketAddr {
+    // Real block registry: the login spawn scan rejects support states
+    // missing from the registry (spawn.rs safe_spawn_support), so an empty
+    // registry can never admit any spawn column. Same for block_facts:
+    // default table must know the support/body states.
+    let report = mc_data::blocks::solaris_required_blocks_report();
     let blocks = std::sync::Arc::new(
-        mc_world::BlockRegistry::from_report(&[]).expect("empty registry builds"),
+        mc_world::BlockRegistry::from_report(&report).expect("required registry builds"),
     );
+    let stone = blocks
+        .by_name_and_props(
+            &mc_data::Identifier::parse("minecraft:stone").expect("valid block id"),
+            &[],
+        )
+        .expect("stone state registered");
+    let air = blocks
+        .by_name_and_props(
+            &mc_data::Identifier::parse("minecraft:air").expect("valid block id"),
+            &[],
+        )
+        .expect("air state registered");
+    // One resident spawn chunk: stone floor at y=0 with clear air above,
+    // so the safe-spawn scan admits column (0,0). World spawn defaults
+    // to (0,0) in the fresh in-memory storage.
+    let pos = mc_world::ChunkPos { x: 0, z: 0 };
+    let mut chunk = mc_world::Chunk::empty(
+        pos,
+        air,
+        mc_data::Identifier::parse("minecraft:plains").expect("valid biome id"),
+    );
+    for lx in 0..16u8 {
+        for lz in 0..16u8 {
+            chunk.set_block(lx, 0, lz, stone);
+        }
+    }
+    // Chunk::empty leaves a zeroed heightmap and set_block does not update
+    // it — build it explicitly with the same conservative table the server
+    // config uses, before the chunk becomes resident.
+    let table = mc_data::block_light::BlockLightTable::conservative_from_blocks_report(&report);
+    chunk.rebuild_highest_opaque(&table);
+    assert_eq!(chunk.highest_opaque_y(0, 0), Some(0));
+    let mut storage = mc_world::WorldStorage::in_memory(std::sync::Arc::clone(&blocks));
+    storage
+        .commit_chunk_snapshot(pos, chunk)
+        .expect("resident spawn chunk");
     let cfg = mc_net::ServerConfig {
         tab_list: mc_net::TabListConfig::default(),
         bind_address: "127.0.0.1:0".parse().unwrap(),
@@ -36,20 +77,21 @@ async fn start_server(motd: &str) -> SocketAddr {
         view_distance: 10,
         data: std::sync::Arc::new(mc_data::testing::stub()),
         blocks: std::sync::Arc::clone(&blocks),
-        world: Some(std::sync::Arc::new(tokio::sync::Mutex::new(
-            mc_world::WorldStorage::in_memory(blocks),
-        ))),
+        world: Some(std::sync::Arc::new(tokio::sync::Mutex::new(storage))),
         tags: std::sync::Arc::new(mc_data::tags::TagsData::default()),
         recipes: std::sync::Arc::new(Vec::new()),
         loot: std::sync::Arc::new(mc_data::loot::LootTables::default()),
-        block_light: None,
+        // Same conservative table the fixture chunk heightmap was built with.
+        block_light: Some(std::sync::Arc::new(
+            mc_data::block_light::BlockLightTable::conservative_from_blocks_report(&report),
+        )),
         items: std::sync::Arc::new(mc_data::items::ItemRegistry::default()),
         item_facts: std::sync::Arc::new(mc_data::item_components::ItemFactsTable::default()),
         block_facts: std::sync::Arc::new(mc_data::block_facts::BlockFactsTable::default()),
         entity_types: std::sync::Arc::new(mc_data::entity_types::solaris_required_entity_types()),
         biome_spawns: std::sync::Arc::new(mc_data::biomes::BiomeSpawnRules::default()),
         chunk_pipeline: mc_net::ChunkPipelinePolicy::default(),
-        random_tick: mc_net::RandomTickPolicy::default(),
+        random_tick: mc_simulation::tick_policy::RandomTickPolicy::default(),
         command_permissions: mc_net::CommandPermissionConfig::new(Vec::<String>::new(), true),
         loader_manifest: None,
         shutdown: mc_net::ShutdownHandle::default(),
