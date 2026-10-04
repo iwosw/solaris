@@ -93,18 +93,31 @@ const DIAGNOSTIC_CACHE_SHARDS: usize = 64;
 const DIAGNOSTIC_CACHE_ENTRIES_PER_SHARD: usize = 2_048;
 
 #[cfg(feature = "worldgen-counters")]
-static HEIGHT_SOURCE_HITS: AtomicU64 = AtomicU64::new(0);
+static HEIGHT_REQUESTS: AtomicU64 = AtomicU64::new(0);
 #[cfg(feature = "worldgen-counters")]
-static HEIGHT_SOURCE_MISSES: AtomicU64 = AtomicU64::new(0);
+static HEIGHT_UNIQUE_KEYS: AtomicU64 = AtomicU64::new(0);
 #[cfg(feature = "worldgen-counters")]
-static HEIGHT_PLAN_HITS: AtomicU64 = AtomicU64::new(0);
+static HEIGHT_CACHE_HITS: AtomicU64 = AtomicU64::new(0);
 #[cfg(feature = "worldgen-counters")]
-static HEIGHT_PLAN_MISSES: AtomicU64 = AtomicU64::new(0);
+static HEIGHT_COLUMN_SEARCHES: AtomicU64 = AtomicU64::new(0);
+#[cfg(feature = "worldgen-counters")]
+static HEIGHT_NOISE_SAMPLES: AtomicU64 = AtomicU64::new(0);
 
 /// Snapshot of the generation-local height-context cache counters.
 ///
 /// Only populated with the `worldgen-counters` feature; without it every
 /// increment below compiles out and collection costs nothing.
+///
+/// Field semantics: `base_height_requests` counts every `source_height`
+/// entry; `unique_height_keys` counts distinct columns ever resolved (one
+/// insert each); `height_cache_hits` counts map hits; each column search
+/// walks the density column top-down one `sample_terrain` per Y, so
+/// `noise_samples_from_height_queries` is the exact mathematical count of
+/// those evaluations (`max_y - raw_height` per native miss, `1` per
+/// own-router column), and `actual_density_column_searches` counts the
+/// searches. The `source_hits`/`source_misses` pair is the seeding/hit
+/// split of the same lookups (`misses == unique_height_keys` whenever
+/// every key is inserted once).
 #[cfg(feature = "worldgen-counters")]
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct HeightContextStats {
@@ -112,6 +125,11 @@ pub struct HeightContextStats {
     pub source_misses: u64,
     pub plan_hits: u64,
     pub plan_misses: u64,
+    pub base_height_requests: u64,
+    pub unique_height_keys: u64,
+    pub height_cache_hits: u64,
+    pub actual_density_column_searches: u64,
+    pub noise_samples_from_height_queries: u64,
 }
 
 /// Read the height-context counters accumulated so far.
@@ -119,44 +137,55 @@ pub struct HeightContextStats {
 #[must_use]
 pub fn height_context_stats() -> HeightContextStats {
     HeightContextStats {
-        source_hits: HEIGHT_SOURCE_HITS.load(Ordering::Relaxed),
-        source_misses: HEIGHT_SOURCE_MISSES.load(Ordering::Relaxed),
-        plan_hits: HEIGHT_PLAN_HITS.load(Ordering::Relaxed),
-        plan_misses: HEIGHT_PLAN_MISSES.load(Ordering::Relaxed),
+        source_hits: HEIGHT_REQUESTS.load(Ordering::Relaxed),
+        source_misses: HEIGHT_UNIQUE_KEYS.load(Ordering::Relaxed),
+        plan_hits: HEIGHT_CACHE_HITS.load(Ordering::Relaxed),
+        plan_misses: HEIGHT_COLUMN_SEARCHES.load(Ordering::Relaxed),
+        base_height_requests: HEIGHT_REQUESTS.load(Ordering::Relaxed),
+        unique_height_keys: HEIGHT_UNIQUE_KEYS.load(Ordering::Relaxed),
+        height_cache_hits: HEIGHT_CACHE_HITS.load(Ordering::Relaxed),
+        actual_density_column_searches: HEIGHT_COLUMN_SEARCHES.load(Ordering::Relaxed),
+        noise_samples_from_height_queries: HEIGHT_NOISE_SAMPLES.load(Ordering::Relaxed),
     }
 }
 
 /// Zero the height-context counters, e.g. between benchmark rounds.
 #[cfg(feature = "worldgen-counters")]
 pub fn reset_height_context_stats() {
-    HEIGHT_SOURCE_HITS.store(0, Ordering::Relaxed);
-    HEIGHT_SOURCE_MISSES.store(0, Ordering::Relaxed);
-    HEIGHT_PLAN_HITS.store(0, Ordering::Relaxed);
-    HEIGHT_PLAN_MISSES.store(0, Ordering::Relaxed);
+    HEIGHT_REQUESTS.store(0, Ordering::Relaxed);
+    HEIGHT_UNIQUE_KEYS.store(0, Ordering::Relaxed);
+    HEIGHT_CACHE_HITS.store(0, Ordering::Relaxed);
+    HEIGHT_COLUMN_SEARCHES.store(0, Ordering::Relaxed);
+    HEIGHT_NOISE_SAMPLES.store(0, Ordering::Relaxed);
 }
 
 #[inline]
-fn count_height_source_hit() {
+fn count_height_request() {
     #[cfg(feature = "worldgen-counters")]
-    HEIGHT_SOURCE_HITS.fetch_add(1, Ordering::Relaxed);
+    HEIGHT_REQUESTS.fetch_add(1, Ordering::Relaxed);
 }
 
 #[inline]
-fn count_height_source_miss() {
+fn count_height_unique_key() {
     #[cfg(feature = "worldgen-counters")]
-    HEIGHT_SOURCE_MISSES.fetch_add(1, Ordering::Relaxed);
+    HEIGHT_UNIQUE_KEYS.fetch_add(1, Ordering::Relaxed);
 }
 
 #[inline]
-fn count_height_plan_hit() {
+fn count_height_cache_hit() {
     #[cfg(feature = "worldgen-counters")]
-    HEIGHT_PLAN_HITS.fetch_add(1, Ordering::Relaxed);
+    HEIGHT_CACHE_HITS.fetch_add(1, Ordering::Relaxed);
 }
 
 #[inline]
-fn count_height_plan_miss() {
+fn count_height_column_search(noise_samples: u64) {
     #[cfg(feature = "worldgen-counters")]
-    HEIGHT_PLAN_MISSES.fetch_add(1, Ordering::Relaxed);
+    {
+        HEIGHT_COLUMN_SEARCHES.fetch_add(1, Ordering::Relaxed);
+        HEIGHT_NOISE_SAMPLES.fetch_add(noise_samples, Ordering::Relaxed);
+    }
+    #[cfg(not(feature = "worldgen-counters"))]
+    let _ = noise_samples;
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -329,11 +358,10 @@ pub(crate) struct HeightContext<'h> {
 
 impl<'h> HeightContext<'h> {
     /// Build a context seeded with the central chunk's ready SOURCE heights.
-    /// `columns` are the chunk's own final plans; only their pre-village
-    /// bases (`plan_column`'s diagnostic minus the village analogue is not
-    /// observable, but `base_surface_y` recomputes the same value) seed the
-    /// map — the context re-applies the village set per read so planned and
-    /// unplanned readers agree.
+    /// `source_columns` are the chunk's own entries straight from the
+    /// diagnostic cache the fill-density pass inserted (the same entries
+    /// `plan_column` planned from); the context re-applies the village set
+    /// per read so planned and unplanned readers agree.
     pub(crate) fn for_chunk(
         generator: &'h TerrainGenerator,
         pos: ChunkPos,
@@ -343,7 +371,8 @@ impl<'h> HeightContext<'h> {
         let mut source_heights = HashMap::with_capacity(source_columns.len().max(256));
         for &(wx, wz, base) in source_columns {
             source_heights.insert((wx, wz), base);
-            count_height_source_hit();
+            count_height_request();
+            count_height_cache_hit();
         }
         let _ = pos;
         Self {
@@ -359,32 +388,43 @@ impl<'h> HeightContext<'h> {
     /// The SOURCE (pre-village) surface for one column: ready central-chunk
     /// values first, then the shared sampler, then the per-column query.
     fn source_height(&mut self, world_x: i32, world_z: i32) -> i32 {
+        count_height_request();
         if let Some(&height) = self.source_heights.get(&(world_x, world_z)) {
-            count_height_source_hit();
+            count_height_cache_hit();
             return height;
         }
-        count_height_source_miss();
         // ONE shared sampler: lazily computed halo columns retain lattice
         // corners across columns instead of one sampler per column.
-        let height = if let Some(sampler) = self.native_sampler.as_mut() {
+        let raw = if let Some(sampler) = self.native_sampler.as_mut() {
             sampler.surface_height(world_x, world_z)
         } else {
             self.generator.base_surface_y(world_x, world_z)
         };
         // `base_surface_y` already clamps vanilla heights to the geometry;
         // clamp the sampler path identically so every stored value is final.
-        let clamped = height.clamp(self.geometry_min_y, self.geometry_max_y - 1);
+        let clamped = raw.clamp(self.geometry_min_y, self.geometry_max_y - 1);
+        // The column search walks top-down one `sample_terrain` per Y until
+        // the first solid, so the mathematical evaluation count is exact:
+        // native sampler iterations = max_y - raw. The own-router path is a
+        // single closed-form column query, counted as one search of one.
+        let noise_samples = if self.native_sampler.is_some() {
+            (self.geometry_max_y - 1 - raw.min(self.geometry_max_y - 1)).max(0) as u64
+        } else {
+            1
+        };
+        count_height_column_search(noise_samples);
+        count_height_unique_key();
         self.source_heights.insert((world_x, world_z), clamped);
         clamped
     }
 
     /// The chunk's plan set, memoized: one lookup per chunk reached.
+    /// (No height counters: the plan memo is village work, not a height
+    /// query; the required five counters live on the SOURCE path above.)
     fn plans_for_chunk(&mut self, chunk: ChunkPos) -> Option<VillagePlanSet> {
         if let Some(hit) = self.plans.get(&(chunk.x, chunk.z)) {
-            count_height_plan_hit();
             return hit.clone();
         }
-        count_height_plan_miss();
         let set = self.generator.village_plans_for_chunk(chunk);
         self.plans.insert((chunk.x, chunk.z), set.clone());
         set
@@ -423,6 +463,11 @@ impl<'h> HeightContext<'h> {
     pub(crate) fn structure_surface(&mut self, world_x: i32, world_z: i32) -> i32 {
         self.source_height(world_x, world_z)
     }
+    /// Map entries held (seeded + lazily resolved). Test hook only.
+    #[cfg(test)]
+    pub(crate) fn len(&self) -> usize {
+        self.source_heights.len()
+    }
 }
 
 struct OreColumnCache<'a, 'h> {
@@ -455,7 +500,7 @@ impl OreColumnCache<'_, '_> {
         Some(local_z * self.side + local_x)
     }
 
-    fn get_or_plan<'a>(&'a mut self, world_x: i32, world_z: i32) -> Option<&'a ColumnPlan> {
+    fn get_or_plan(&mut self, world_x: i32, world_z: i32) -> Option<&ColumnPlan> {
         let index = self.column_index(world_x, world_z)?;
         if self.columns[index].is_none() {
             // The halo reaches into neighbouring chunks, so the plan is the
@@ -1607,6 +1652,7 @@ impl TerrainGenerator {
         cache
     }
 
+    #[allow(dead_code)]
     fn apply_ores(&self, chunk: &mut Chunk, chunk_columns: &[ColumnPlan; 256]) {
         if let Some(geological_ores) = &self.geological_ores {
             geological_ores.apply(self, chunk);
@@ -1618,7 +1664,12 @@ impl TerrainGenerator {
         // code path — and the bytes it emits — is one path, not two.
         let source_columns: [(i32, i32, i32); 256] = std::array::from_fn(|idx| {
             let plan = &chunk_columns[idx];
-            (plan.wx, plan.wz, self.base_surface_y(plan.wx, plan.wz))
+            let base = self
+                .diagnostic_cache
+                .get(plan.wx, plan.wz)
+                .map(|sample| sample.surface_y)
+                .unwrap_or_else(|| self.base_surface_y(plan.wx, plan.wz));
+            (plan.wx, plan.wz, base)
         });
         let mut heights = HeightContext::for_chunk(
             self,
@@ -2672,18 +2723,26 @@ impl ChunkGenerator for TerrainGenerator {
             self.plan_column(pos, lx, lz, village.as_ref())
         });
         // The generation-local height context: ready central-chunk SOURCE
-        // heights (recomputed from the same `base_surface_y` the columns
-        // planned from, so no second derivation can disagree) plus ONE
-        // shared native halo sampler for lazily reached neighbours plus the
-        // village-plan memo. Tree, ore-halo and structure readers consult it
-        // instead of re-running the full height + plan pipeline per column.
+        // heights (the diagnostic cache's own entries the columns planned
+        // from, so no second derivation can disagree) plus ONE shared native
+        // halo sampler for lazily reached neighbours plus the village-plan
+        // memo. Tree, ore-halo and structure readers consult it instead of
+        // re-running the full height + plan pipeline per column.
         //
         // The context's sampler covers exactly the columns a chunk fill can
         // read: the halo's reach is `ORE_COLUMN_HALO` (ore veins) inside the
         // ±2 tree-stability footprint; the sampler bound is the union.
         let source_columns: [(i32, i32, i32); 256] = std::array::from_fn(|idx| {
             let plan = &columns[idx];
-            (plan.wx, plan.wz, self.base_surface_y(plan.wx, plan.wz))
+            // The diagnostic cache already holds this column's SOURCE surface
+            // (the fill-density pass inserted it above); `plan_column` read
+            // the same entry, so no second derivation can disagree.
+            let base = self
+                .diagnostic_cache
+                .get(plan.wx, plan.wz)
+                .map(|sample| sample.surface_y)
+                .unwrap_or_else(|| self.base_surface_y(plan.wx, plan.wz));
+            (plan.wx, plan.wz, base)
         });
         let mut heights = HeightContext::for_chunk(
             self,

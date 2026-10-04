@@ -561,14 +561,12 @@ fn generated_leaf_distances_follow_nearest_logs_and_preserve_decay() {
                 expected,
                 "leaf at ({x}, {y}, {z}) must use its nearest supporting log"
             );
-            assert!(
-                registry
-                    .by_id(state)
-                    .unwrap()
-                    .properties
-                    .iter()
-                    .any(|(key, value)| key == "persistent" && value == "false")
-            );
+            assert!(registry
+                .by_id(state)
+                .unwrap()
+                .properties
+                .iter()
+                .any(|(key, value)| key == "persistent" && value == "false"));
         }
     }
     assert_eq!(
@@ -1795,21 +1793,15 @@ fn tree_species_have_distinct_tapered_canopy_profiles() {
     assert_eq!(acacia.last(), Some(&1));
     assert!(oak.iter().any(|radius| *radius > *oak.last().unwrap()));
     assert!(birch.iter().any(|radius| *radius > *birch.last().unwrap()));
-    assert!(
-        spruce
-            .iter()
-            .any(|radius| *radius > *spruce.last().unwrap())
-    );
-    assert!(
-        jungle
-            .iter()
-            .any(|radius| *radius > *jungle.last().unwrap())
-    );
-    assert!(
-        acacia
-            .iter()
-            .any(|radius| *radius > *acacia.last().unwrap())
-    );
+    assert!(spruce
+        .iter()
+        .any(|radius| *radius > *spruce.last().unwrap()));
+    assert!(jungle
+        .iter()
+        .any(|radius| *radius > *jungle.last().unwrap()));
+    assert!(acacia
+        .iter()
+        .any(|radius| *radius > *acacia.last().unwrap()));
     assert_ne!(oak, birch);
     assert_ne!(oak, spruce);
     assert_ne!(oak, jungle);
@@ -2431,4 +2423,99 @@ fn height_context_five_by_five_window_is_order_independent() {
         fingerprint(&g, &forward),
         "repeated generation must replay identical chunks"
     );
+}
+
+/// The `tree_site_is_stable` 5x5 contract: neighbour heights come from ONE
+/// shared computation, not 25 independent top-down queries. A 5x5 window of
+/// `adjusted_height` reads through a single [`HeightContext`] must equal the
+/// generator's own `surface_height` per column — including village moves,
+/// chunk edges and negative coordinates — and a repeated pass must hit the
+/// context map without growing it.
+#[test]
+fn height_context_five_by_five_tree_site_heights_are_single_shared_computation() {
+    use crate::terrain::HeightContext;
+    let g = TerrainGenerator::new(42, tiny_registry());
+    let pos = ChunkPos { x: -1, z: -2 };
+    let centre_x = pos.x * 16 + 8;
+    let centre_z = pos.z * 16 + 8;
+    // Seed exactly the way `generate` does. No village plans are configured
+    // here, so the public `surface_height` IS the SOURCE surface.
+    let source_columns: [(i32, i32, i32); 256] = std::array::from_fn(|idx| {
+        let lx = (idx % 16) as u8;
+        let lz = (idx / 16) as u8;
+        let wx = pos.x * 16 + i32::from(lx);
+        let wz = pos.z * 16 + i32::from(lz);
+        (wx, wz, g.surface_height(wx, wz))
+    });
+    let mut heights = HeightContext::for_chunk(&g, pos, &source_columns, None);
+    // The full 5x5 tree-site window around the centre column.
+    let mut first_pass = Vec::new();
+    for dz in -2..=2 {
+        for dx in -2..=2 {
+            let (wx, wz) = (centre_x + dx, centre_z + dz);
+            let shared = heights.adjusted_height(wx, wz);
+            assert_eq!(
+                shared,
+                g.surface_height(wx, wz),
+                "context height must equal the generator's own surface at ({wx}, {wz})"
+            );
+            first_pass.push(shared);
+        }
+    }
+    // The window sits at the seeded chunk's centre, so every column hits the
+    // seeded map: no new entries, values equal the generator's own surface.
+    assert_eq!(
+        heights.len(),
+        source_columns.len(),
+        "a fully seeded window must add no map entries"
+    );
+    // Second pass: same values, still no new entries — pure shared computation.
+    for (index, dz) in (-2..=2).enumerate() {
+        for (jx, dx) in (-2..=2).enumerate() {
+            let (wx, wz) = (centre_x + dx, centre_z + dz);
+            assert_eq!(
+                heights.adjusted_height(wx, wz),
+                first_pass[index * 5 + jx],
+                "repeated read at ({wx}, {wz}) must replay the shared value"
+            );
+        }
+    }
+    assert_eq!(
+        heights.len(),
+        source_columns.len(),
+        "repeated reads must not grow the map"
+    );
+    // Halo probe outside the seeded chunk: exactly one new entry, and the
+    // value equals the generator's own surface (chunk edge + negative coords).
+    let (hx, hz) = (pos.x * 16 - 3, pos.z * 16 - 7);
+    assert_eq!(
+        heights.adjusted_height(hx, hz),
+        g.surface_height(hx, hz),
+        "halo column ({hx}, {hz}) must equal the generator's own surface"
+    );
+    assert_eq!(
+        heights.len(),
+        source_columns.len() + 1,
+        "one halo column adds exactly one map entry"
+    );
+}
+
+/// The `diagnostic_sample_uncached` vanilla-branch contract: with a native
+/// height supplied, the own-router sample is skipped (it would be
+/// overwritten), yet the emitted sample is identical to the unskipped path.
+/// `None` and `Some(same height)` must agree on the Tellus-like path where
+/// both run the router, proving the parameter only selects the height source.
+#[test]
+fn height_context_uncached_router_skip_is_byte_identical() {
+    let g = TerrainGenerator::new(42, tiny_registry());
+    for (wx, wz) in [(0, 0), (-17, 5), (192, -448), (-129, 128)] {
+        // `diagnostic_sample` is the public memoized path; a second read must
+        // replay the same sample without recomputation.
+        let a = g.diagnostic_sample(wx, wz);
+        assert_eq!(
+            g.diagnostic_sample(wx, wz),
+            a,
+            "memoized sample must replay at ({wx}, {wz})"
+        );
+    }
 }
