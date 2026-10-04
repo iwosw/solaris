@@ -1529,15 +1529,20 @@ pub(crate) async fn resolve_login_initial_state(
     match loaded {
         Some((mut state, true, spawn_loaded)) => {
             // Валидный Pos, но без Spawn*: вход НЕ блокируем — поза из файла
-            // впускает сама по себе. Респаун правим лениво: если файла нет,
-            // ставим инертный дефолт (совпадает с позой — save его не
-            // зафиксирует как чужой), а `validate_respawn_pose` при смерти
-            // проверит/резолвит его отдельно (command_execution.rs:787).
+            // впускает сама по себе. Личного спавна в файле нет — берём
+            // WORLD spawn (не позу выхода: иначе logout-точка стала бы
+            // постоянным личным респауном и save бы его зафиксировал).
+            // Terrain-проверка — при реальном respawn через
+            // `validate_respawn_pose` (command_execution.rs:787), здесь
+            // только координаты столба мирового спавна без Y-валидации.
             if !spawn_loaded {
+                let world_spawn = world_read
+                    .as_ref()
+                    .map_or_else(mc_world::WorldSpawn::default, |view| view.spawn());
                 state.spawn = mc_simulation::persistence::SpawnState {
-                    x: state.pose.x.floor() as i32,
+                    x: world_spawn.block_x,
                     y: state.pose.y.floor() as i32,
-                    z: state.pose.z.floor() as i32,
+                    z: world_spawn.block_z,
                     angle: state.pose.yaw,
                 };
             }

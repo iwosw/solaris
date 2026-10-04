@@ -1037,15 +1037,26 @@ async fn saved_player_pose_bypasses_unsafe_common_spawn_resolve() {
                 (state.pose.x, state.pose.y, state.pose.z),
                 (123.5, 70.0, -45.5)
             );
-            // Респаун — инертный из позы, не probe (0,0,0) и не отказ входа.
-            assert_eq!(
-                (state.spawn.x, state.spawn.y, state.spawn.z),
-                (123, 70, -46)
-            );
+            // Личного Spawn в файле нет — респаун обязан быть столбом WORLD
+            // spawn (дефолт WorldSpawn (0,0)), а не точкой выхода (123,70,-46)
+            // и не probe (0,0,0). Y здесь невалидирован — terrain-проверка
+            // при реальном respawn через `validate_respawn_pose`.
+            assert_eq!((state.spawn.x, state.spawn.z), (0, 0));
+            // save/load roundtrip: респаун переживает сохранение как есть.
+            crate::play::persistence::save_player_state(root.path(), nospec_uuid, &items, state)
+                .unwrap();
+            let reloaded = crate::play::persistence::load_player_state(
+                root.path(),
+                nospec_uuid,
+                &items,
+                PlayerPersistedState::new_default(PlayerPose::new(0.5, 64.0, 0.5)),
+            )
+            .unwrap()
+            .expect("respawn must survive save/load");
+            assert_eq!((reloaded.spawn.x, reloaded.spawn.z), (0, 0));
         }
         other => panic!("pose-without-spawn must be SavedPose, got {}", other.kind()),
     }
-    let _ = &items;
 }
 
 #[test]
