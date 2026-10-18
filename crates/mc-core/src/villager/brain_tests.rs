@@ -332,6 +332,81 @@ fn village_control_reachable_adjacent_endpoint_acquires_farmer() {
 }
 
 #[test]
+fn village_control_low_cpu_schedule_acquires_farmer_within_days() {
+    let mut state = control_state();
+    // <=2-CPU hosts widen the brain schedule window to 600 ticks (longer
+    // schedule sweep, 63-tick service, 64-tick far period). The allocator's
+    // search admission never reads the window, so a loaded village must
+    // still employ villagers through real brain-ticked walks, well inside
+    // three in-game days (72_000 ticks); the 2400-tick cap is 4x the sweep.
+    state.villager_pois.schedule_window = 600;
+    state.gamerules.insert("advance_time".into(), "true".into());
+    state.day_time = 2000;
+    let composter = block(&state, "minecraft:composter", &[]);
+    state.world.set_block(4, 201, 4, composter);
+    bed(&mut state, 1, 0);
+    let bell = block(&state, "minecraft:bell", &[]);
+    state.world.set_block(8, 201, 8, bell);
+    state.world.fold_overlay();
+    // Spawn a full 7 blocks from the site centre [4.5, 201, 4.5]: outside the
+    // 3-block profession-takeover reach, on loaded flat ground, so the claim
+    // requires a real walk, not a spawn-in-place pickup.
+    let start = [11.5, 201.0, 4.5];
+    let slot = villager(&mut state, start);
+    // Nitwit semantics must survive the same low-CPU schedule: no claim,
+    // no profession, even with a free workstation next door.
+    let nitwit_slot = villager(&mut state, [6.5, 201.0, 6.5]);
+    state
+        .entities
+        .row_mut(nitwit_slot)
+        .villager
+        .as_mut()
+        .unwrap()
+        .data
+        .profession = Profession::Nitwit;
+    let start_day = state.day_time;
+    let mut acquired_at = None;
+    for _ in 0..2400 {
+        crate::tick::run_tick(&mut state, &[]);
+        let v = state.entities.row(slot).villager.as_ref().unwrap();
+        if v.job_site.is_some() && v.data.profession == Profession::Farmer {
+            acquired_at = Some(state.tick);
+            break;
+        }
+    }
+    let end = state.entities.pos(slot);
+    eprintln!(
+        "low_cpu_window600: acquired_at_tick={acquired_at:?} day_time={} (+{} ticks of day clock) pos={end:?} window={}",
+        state.day_time,
+        state.day_time - start_day,
+        state.villager_pois.schedule_window,
+    );
+    assert_eq!(
+        state.villager_pois.schedule_window, 600,
+        "the run must actually exercise the low-CPU schedule window"
+    );
+    let v = state.entities.row(slot).villager.as_ref().unwrap();
+    assert_eq!(
+        v.job_site,
+        Some(BlockPos { x: 4, y: 201, z: 4 }),
+        "unemployed villager must claim the nearby workstation"
+    );
+    assert_eq!(
+        v.data.profession,
+        Profession::Farmer,
+        "reaching the site must confer the profession (first seen at tick {acquired_at:?})"
+    );
+    assert_ne!(
+        state.entities.pos(slot),
+        start,
+        "claiming requires reaching the job site on foot"
+    );
+    let nitwit = state.entities.row(nitwit_slot).villager.as_ref().unwrap();
+    assert!(nitwit.job_site.is_none());
+    assert_eq!(nitwit.data.profession, Profession::Nitwit);
+}
+
+#[test]
 fn village_control_workers_keep_publishing_movement_after_arrival() {
     let mut state = control_state();
     state.day_time = 2000;
@@ -2931,6 +3006,35 @@ fn short_wander_ignores_astar_budget_and_blocked_stroll_retries_after_forty_tick
         v.navigation_repath_at, 40,
         "do not renew the retry every tick"
     );
+}
+
+#[test]
+fn villager_walks_onto_one_block_rise_and_settles_at_target() {
+    let mut state = test_state();
+    for x in 8..12 {
+        for z in 1..15 {
+            state
+                .world
+                .set_block(x, 201, z, state.registry.states.stone);
+        }
+    }
+    let slot = villager(&mut state, [5.5, 201.0, 8.5]);
+    state.entities.set_ground(slot, true);
+    let target = BlockPos {
+        x: 10,
+        y: 202,
+        z: 8,
+    };
+    let mut v = VillagerState::default();
+    for tick in 0..100 {
+        state.tick = tick;
+        wander_to(&mut state, slot, &mut v, Some(target), Activity::Idle);
+    }
+    let pos = state.entities.pos(slot);
+    assert!(pos[0] > 10.0, "must cross the ledge, not bump it: {pos:?}");
+    assert!((pos[1] - 202.0).abs() < 1.0e-7, "{pos:?}");
+    assert!(state.entities.ground(slot), "must land on the raised floor");
+    assert!(v.navigation_path.is_empty(), "must finish the route");
 }
 
 #[test]

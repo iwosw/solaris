@@ -1831,6 +1831,9 @@ fn resolve_body_motion(
         state.entities.horizontal_impulse(slot),
     );
     let mut velocity = state.entities.vel(slot);
+    let dt = mc_physics::TICK_SECONDS;
+    velocity[1] = (velocity[1] - mc_physics::GRAVITY_BLOCKS_PER_SECOND_SQUARED * dt)
+        .max(mc_physics::TERMINAL_VELOCITY_BLOCKS_PER_SECOND);
     let mut horizontal = [0.0; 2];
     if let Some(next) = next {
         let dx = next[0] - pos[0];
@@ -1840,14 +1843,14 @@ fn resolve_body_motion(
             horizontal = [dx / length * speed, dz / length * speed];
         }
         if next[1] > pos[1] + mc_physics::STEP_HEIGHT && state.entities.ground(slot) {
-            velocity[1] = 8.4;
+            // JumpControl replaces vertical velocity after gravity: subtracting
+            // gravity from the launch impulse prevents clearing a full block.
+            velocity[1] = mc_physics::LIVING_JUMP_SPEED_BLOCKS_PER_SECOND;
         }
     }
-    let dt = mc_physics::TICK_SECONDS;
     velocity = [
         horizontal[0] + impulse[0],
-        (velocity[1] - mc_physics::GRAVITY_BLOCKS_PER_SECOND_SQUARED * dt)
-            .max(mc_physics::TERMINAL_VELOCITY_BLOCKS_PER_SECOND),
+        velocity[1],
         horizontal[1] + impulse[1],
     ];
     let requested = mc_physics::Vec3::new(velocity[0] * dt, velocity[1] * dt, velocity[2] * dt);

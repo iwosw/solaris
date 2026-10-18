@@ -186,3 +186,69 @@ fn hostile_attempts_run_between_twenty_tick_passes() {
         "hostiles attempt spawning every tick, not once per second"
     );
 }
+
+#[test]
+fn local_counts_use_128_block_circle_from_chunk_centers() {
+    let mut state = flat("minecraft:plains", 65);
+    let zombie = state.registry.zombie_type_id;
+    // Chunk (8, 8) sits inside the 17x17 square around the observer's chunk,
+    // but its center (136, 136) is ~192 blocks away: outside vanilla's
+    // 128-block horizontal circle.
+    state.spawn_mob(zombie, [128.5, 65.0, 128.5], 20.0);
+    // Chunk (7, 0) center (120, 8) is ~120 blocks away: inside the circle.
+    state.spawn_mob(zombie, [112.5, 65.0, 0.5], 20.0);
+    let global = census(&mut state, &[[0.5, 65.0, 0.5]]);
+    assert_eq!(global[0], 2, "global cap still counts every loaded mob");
+    assert_eq!(
+        state.spawn_census.local_count(0, 0),
+        1,
+        "only the mob whose chunk center is within 128 blocks counts locally"
+    );
+    // Players in the same chunk can lie on opposite sides of a local-cap
+    // boundary: use actual positions, not the observer's chunk center.
+    state.spawn_mob(zombie, [-127.5, 65.0, 0.5], 20.0);
+    census(&mut state, &[[15.9, 65.0, 8.0], [0.1, 65.0, 8.0]]);
+    assert_eq!(state.spawn_census.local_count(0, 0), 1);
+    assert_eq!(state.spawn_census.local_count(1, 0), 2);
+}
+
+#[test]
+fn spawn_admission_allows_chunk_with_any_uncapped_observer_in_range() {
+    let mut state = flat("minecraft:plains", 65);
+    let zombie = state.registry.zombie_type_id;
+    // Fractional observer posts straddle chunk centers: vanilla measures
+    // from actual x/z, not observer chunk centers.
+    let capped = [15.9, 65.0, 0.5];
+    let free = [150.5, 65.0, 0.5];
+    // Fill the capped observer's circle without entering the other's: chunk
+    // (-7, 0) center (-104, 8) is ~120 blocks from `capped`, ~255 from `free`.
+    for i in 0..70 {
+        state.spawn_mob(zombie, [-111.5 + f64::from(i) * 0.2, 65.0, 0.5], 20.0);
+    }
+    census(&mut state, &[capped, free]);
+    assert_eq!(state.spawn_census.local_count(0, 0), 70);
+    assert_eq!(state.spawn_census.local_count(1, 0), 0);
+    // Chunk (4, 0) center (72, 8) is within 128 blocks of both observers, so
+    // vanilla allows the spawn: at least one in-range observer is uncapped.
+    assert!(
+        !state
+            .spawn_census
+            .local_cap_reached([72.5, 65.0, 0.5], 0, 70),
+        "a capped observer must not veto a chunk that an uncapped observer also covers"
+    );
+    // Chunk (-7, 0) is covered only by the capped observer: spawns stay
+    // blocked there even though an uncapped observer exists elsewhere.
+    assert!(
+        state
+            .spawn_census
+            .local_cap_reached([-111.5, 65.0, 0.5], 0, 70),
+        "a fully capped circle still blocks its own chunks"
+    );
+    // A chunk center beyond 128 blocks of every observer also stays blocked.
+    assert!(
+        state
+            .spawn_census
+            .local_cap_reached([600.5, 65.0, 600.5], 0, 70),
+        "chunks outside every observer circle admit no spawns"
+    );
+}

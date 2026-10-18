@@ -1683,6 +1683,93 @@ fn landing_after_a_fall_hurts_survival_players_only() {
     }
 }
 
+#[test]
+fn player_air_changes_reach_the_owner_before_drowning_damage() {
+    let (mut state, entity, pos) = flat_player_fixture();
+    let eye = [
+        pos[0].floor() as i32,
+        (pos[1] + 1.62).floor() as i32,
+        pos[2].floor() as i32,
+    ];
+    state
+        .world
+        .set_block(eye[0], eye[1], eye[2], state.registry.states.water);
+    let (_, drains, _) = run_tick(&mut state, &[]);
+    assert_eq!(state.players[&entity].vitals.air, 299);
+    assert_eq!(state.players[&entity].vitals.health, 20.0);
+    let changes: Vec<_> = drains
+        .into_iter()
+        .filter(|(connection, _)| *connection == ConnectionId(1))
+        .flat_map(|(_, changes)| changes)
+        .collect();
+    assert_eq!(
+        changes,
+        vec![crate::boundary::PlayerChange::AirSupply { air: 299 }],
+        "changing air must publish before health falls"
+    );
+    state
+        .world
+        .set_block(eye[0], eye[1], eye[2], state.registry.states.air);
+    let (_, drains, _) = run_tick(&mut state, &[]);
+    assert_eq!(state.players[&entity].vitals.air, 300);
+    let changes: Vec<_> = drains
+        .into_iter()
+        .flat_map(|(_, changes)| changes)
+        .collect();
+    assert_eq!(
+        changes,
+        vec![crate::boundary::PlayerChange::AirSupply { air: 300 }],
+        "air recovery also reaches the owner"
+    );
+    let (_, drains, _) = run_tick(&mut state, &[]);
+    assert!(
+        drains.iter().all(|(_, changes)| changes.is_empty()),
+        "unchanged air is quiet"
+    );
+}
+
+#[test]
+fn player_air_is_initialized_on_join_and_reset_on_respawn() {
+    use crate::boundary::PlayerChange;
+    let mut state = test_state();
+    let (_, drains, _) = run_tick(
+        &mut state,
+        &[PlayerInput::Join {
+            connection: ConnectionId(1),
+            uuid: uuid::Uuid::new_v4(),
+            name: "air-test".into(),
+            permission_level: 0,
+        }],
+    );
+    assert!(
+        drains
+            .iter()
+            .flat_map(|(_, changes)| changes)
+            .any(|change| *change == PlayerChange::AirSupply { air: 300 })
+    );
+    state.world.ensure_blocking(&state.desired_chunks());
+    let entity = state.connections.entity_of(ConnectionId(1)).unwrap();
+    let slot = state.entities.slot_of(entity).unwrap();
+    let player = state.players.get_mut(&entity).unwrap();
+    player.vitals.air = 17;
+    player.vitals.health = 0.0;
+    state.entities.body_mut(slot).alive = false;
+    state.entities.row_mut(slot).health = 0.0;
+    let (_, drains, _) = run_tick(
+        &mut state,
+        &[PlayerInput::Respawn {
+            connection: ConnectionId(1),
+        }],
+    );
+    assert_eq!(state.players[&entity].vitals.air, 300);
+    assert!(
+        drains
+            .iter()
+            .flat_map(|(_, changes)| changes)
+            .any(|change| *change == PlayerChange::AirSupply { air: 300 })
+    );
+}
+
 /// REQUIRED 2: an item entity carrying a damaged/enchanted/named stack keeps
 /// its full components through drop -> journal -> restart.
 #[test]
@@ -2343,10 +2430,9 @@ fn torn_checkpoint_publishes_nothing() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// Blocker #3: after manifest c, batches in (prev, c] still exist (prune
-/// goes back to the previous manifest, never to c).
+/// Every batch covered by a durable shutdown checkpoint is redundant.
 #[test]
-fn prune_retains_back_to_previous_manifest() {
+fn shutdown_checkpoint_prunes_all_covered_batches() {
     use crate::boundary::{ConnectionId, PlayerInput};
     use crate::config::CoreConfig;
     use crate::core::Core;
@@ -2378,7 +2464,8 @@ fn prune_retains_back_to_previous_manifest() {
         }
     }
     assert!(manifests.len() >= 2, "two checkpoints published");
-    // Batches covering (prev, c] must still exist on disk.
+    core.shutdown();
+    // Shutdown joins the native writer, including pruning after its final commit.
     let journal_dir = dir.join("journal");
     let names: Vec<String> = std::fs::read_dir(&journal_dir)
         .expect("journal dir")
@@ -2387,10 +2474,9 @@ fn prune_retains_back_to_previous_manifest() {
         .filter(|name| name.starts_with("batch-"))
         .collect();
     assert!(
-        !names.is_empty(),
-        "batches in (prev, c] retained, got {names:?}"
+        names.is_empty(),
+        "durable shutdown checkpoint must leave no covered batches, got {names:?}"
     );
-    core.shutdown();
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -2625,22 +2711,39 @@ fn custody_survives_checkpoint_crash() {
         .expect("custody child readiness deadline")
         .expect("custody child readiness");
     stdout_reader.join().expect("custody stdout reader");
-    let batches =
-        read_complete_batches_after(&dir.join("journal"), 0).expect("durable custody WAL");
+    // Freeze disk before inspecting it: the observer holds the journal owner,
+    // but an earlier native checkpoint can still commit and prune its prefix.
+    child.child.kill().expect("SIGKILL custody child");
+    let status = child.child.wait().expect("reap custody child");
+    assert!(!status.success(), "child died by signal, exit {status:?}");
+    let mut config = CoreConfig::new(dir.clone(), 11);
+    config.checkpoint_every_ticks = 5;
+    let manifest: crate::journal::CheckpointManifest = {
+        // Open read/write once to repair redb allocator metadata after SIGKILL.
+        // No core threads or checkpoint writer run while this reader is pinned.
+        let store = mc_world::native::NativeStore::open(
+            &dir.join("native/state.redb"),
+            crate::native_checkpoint::native_identity(&config),
+        )
+        .expect("open crashed custody native store");
+        let reader = store.checkpoint_reader().expect("custody native reader");
+        let checkpoint = reader
+            .read_checkpoint_metadata()
+            .expect("custody checkpoint metadata");
+        serde_json::from_slice(&checkpoint.globals["checkpoint"].payload)
+            .expect("custody native manifest")
+    };
+    // Batches at/below this durable checkpoint may already have been removed.
+    let batches = read_complete_batches_after(&dir.join("journal"), manifest.tick)
+        .expect("durable custody WAL tail");
     assert!(
-        boundary_tick > 0
+        boundary_tick > manifest.tick
             && batches
                 .iter()
                 .any(|(_, hi, entries)| *hi == boundary_tick && custody_complete(entries, &names)),
         "custody state durable in WAL"
     );
-    // KILL at the observed durability point (real SIGKILL, not forget).
-    child.child.kill().expect("SIGKILL custody child");
-    let status = child.child.wait().expect("reap custody child");
-    assert!(!status.success(), "child died by signal, exit {status:?}");
     // Reopen + rejoin: every named stack exactly once (inventory or ground).
-    let mut config = CoreConfig::new(dir.clone(), 11);
-    config.checkpoint_every_ticks = 5;
     let core2 = Core::open(config).expect("reopen");
     let mut rx2 = core2.subscribe();
     core2.submit(PlayerInput::Join {

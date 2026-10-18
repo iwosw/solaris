@@ -1113,3 +1113,74 @@ fn settlement_commands_keep_native_identity_and_enforce_owner_or_operator() {
         "binding never creates a replacement NPC"
     );
 }
+
+#[test]
+fn settlement_nearest_binding_is_bounded_and_preserves_owner_checks() {
+    let (mut state, alice, bob) = fixture();
+    command(&mut state, alice, "settlement create town");
+    let id = state.settlements.find("town").unwrap().id;
+    let villager_type = state
+        .registry
+        .entity_types
+        .id_of(&mc_data::Identifier::parse("minecraft:villager").unwrap())
+        .unwrap();
+    let mut residents = Vec::new();
+    for x in [2.0, 3.0, 9.0] {
+        let entity = state.spawn_mob(villager_type, [x, 80.0, 0.0], 20.0);
+        let slot = state.entities.slot_of(entity).unwrap();
+        state.entities.row_mut(slot).villager =
+            Some(Box::new(crate::villager::VillagerState::default()));
+        residents.push(slot);
+    }
+    command(&mut state, alice, "settlement bind town");
+    assert_eq!(crate::settlements::member_count(&state, id), 1);
+    assert_eq!(
+        state
+            .entities
+            .row(residents[0])
+            .villager
+            .as_ref()
+            .unwrap()
+            .settlement,
+        Some(id)
+    );
+    assert_eq!(
+        state
+            .entities
+            .row(residents[1])
+            .villager
+            .as_ref()
+            .unwrap()
+            .settlement,
+        None
+    );
+    let bob_slot = state.entities.slot_of(bob).unwrap();
+    state.entities.set_pos(bob_slot, [0.0, 80.0, 0.0]);
+    command(&mut state, bob, "settlement unbind");
+    assert_eq!(
+        crate::settlements::member_count(&state, id),
+        1,
+        "strangers cannot unbind nearest"
+    );
+    command(&mut state, alice, "settlement unbind");
+    assert_eq!(crate::settlements::member_count(&state, id), 0);
+    command(&mut state, bob, "settlement bind town");
+    assert_eq!(
+        crate::settlements::member_count(&state, id),
+        0,
+        "strangers cannot bind nearest"
+    );
+    // Exactly eight blocks is admitted; further bodies are not.
+    state.entities.set_pos(residents[0], [8.0, 80.0, 0.0]);
+    state.entities.set_pos(residents[1], [8.01, 80.0, 0.0]);
+    command(&mut state, alice, "settlement bind town");
+    assert_eq!(crate::settlements::member_count(&state, id), 1);
+    command(&mut state, alice, "settlement unbind");
+    state.entities.set_pos(residents[0], [8.01, 80.0, 0.0]);
+    command(&mut state, alice, "settlement bind town");
+    assert_eq!(
+        crate::settlements::member_count(&state, id),
+        0,
+        "no target outside eight blocks"
+    );
+}

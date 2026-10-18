@@ -1485,6 +1485,7 @@ fn tick_loop(mut state: TickState, mut channels: TickChannels) {
         // refuse new inputs, publish nothing further.
         let entries = journal_entries_for_tick(&mut state, &output);
         let journal_time = tick_start.elapsed();
+        let journal_queue_start = std::time::Instant::now();
         let tick = output.tick;
         let out_tick = tick;
         let plugin_effects = match crate::plugin::seal_events(&mut state, tick) {
@@ -1511,6 +1512,8 @@ fn tick_loop(mut state: TickState, mut channels: TickChannels) {
             );
             break;
         }
+        let journal_queue_time = journal_queue_start.elapsed();
+        let generated_start = std::time::Instant::now();
         // Generated chunks to their empty region slots, a batch at a time
         // (each batch rewrites the regions it touches). A dead journal shows
         // on the next Append.
@@ -1529,9 +1532,14 @@ fn tick_loop(mut state: TickState, mut channels: TickChannels) {
         // last-tick slot a reader could pair with the wrong tick).
         output.times = TickTimes {
             wall_start_unix_ns,
+            owner_pre_us: tick_start.duration_since(wall_start).as_micros() as u64,
+            journal_build_us: (journal_time - run_time).as_micros() as u64,
+            journal_queue_us: journal_queue_time.as_micros() as u64,
+            generated_us: generated_start.elapsed().as_micros() as u64,
             total_us: tick_start.elapsed().as_micros().min(u64::MAX as u128) as u64,
             ..times
         };
+        let owner_post_start = std::time::Instant::now();
         // Hand off before waking edge subscribers. The receiver coalesces
         // batches in FIFO order and never extends a sealed Disconnect queue.
         if !drains.is_empty() {
@@ -1583,10 +1591,12 @@ fn tick_loop(mut state: TickState, mut channels: TickChannels) {
         if channels.shutdown_rx.try_recv().is_ok() {
             start_checkpoint(&mut state, &channels.work_tx, &checkpoint_done_tx, out_tick);
             send_shutdown(&mut state, &channels.work_tx);
+            tick_times.owner_post_us = owner_post_start.elapsed().as_micros() as u64;
             tick_times.wall_us = wall_start.elapsed().as_micros().min(u128::from(u64::MAX)) as u64;
             let _ = channels.timing_broadcast.send((tick, tick_times));
             break;
         }
+        tick_times.owner_post_us = owner_post_start.elapsed().as_micros() as u64;
         tick_times.wall_us = wall_start.elapsed().as_micros().min(u128::from(u64::MAX)) as u64;
         if std::env::var("MC_CORE_PHASE_LOG").is_ok() {
             let pre_time = tick_start.duration_since(wall_start);
@@ -2915,8 +2925,8 @@ fn journal_loop(
     // before it acknowledges. In normal running a gate only follows the previous
     // checkpoint's ACK (`checkpoint_in_flight`), so it reads that tick. A
     // shutdown may start its final checkpoint with one still in flight; the gate
-    // then reads the older tick P0, which is safe: it verifies coverage above P0
-    // and prune only ever deletes at/below P0.
+    // then reads an older tick. The writer's verified startup interval and
+    // contiguous append coverage keep that gate independent of pruned files.
     let committed_tick = std::sync::atomic::AtomicU64::new(initial_manifest.tick);
     // Set by the native writer after a panic; the journal side then halts exactly
     // like an append failure.
@@ -3020,8 +3030,8 @@ fn journal_loop(
 /// saves. In normal running at most one checkpoint and one generated save are
 /// outstanding (`checkpoint_in_flight`, `generated_busy`); shutdown may add a
 /// final checkpoint and more generated saves, which this FIFO drains before the
-/// journal scope exits. Prune follows the covering commit's ACK exactly as
-/// before: batches at/below the **previous** checkpoint only.
+/// journal scope exits. Only a successful Immediate commit permits pruning
+/// batches wholly covered by that newly durable checkpoint.
 ///
 /// A panic in one job fails closed: the job reports failure on `done`/`reply`,
 /// `native_failed` makes the journal side halt, and this thread stops.
@@ -3033,8 +3043,7 @@ fn native_writer_loop(
     native_failed: &std::sync::atomic::AtomicBool,
     initial_manifest: CheckpointManifest,
 ) {
-    // Previous complete manifest: the journal is retained back to it; prune
-    // deletes batches at/below it (never at/below the new tick `c`).
+    // The current complete manifest is the recovery/pruning authority.
     let mut prev_manifest = initial_manifest;
     while let Ok(work) = work_rx.recv() {
         let notify = match &work {
@@ -3073,7 +3082,6 @@ fn run_native_work(
 ) {
     match work {
         NativeWork::Checkpoint { job, plugins } => {
-            let previous_tick = prev_manifest.tick;
             let started = std::time::Instant::now();
             let written = plugins
                 .and_then(|plugins| commit_checkpoint(world_dir, &job, &plugins, prev_manifest));
@@ -3125,12 +3133,12 @@ fn run_native_work(
                     .collect();
                 (written, block_ticks, fluid_ticks, dimensions)
             });
-            let acknowledged = done.send(ack).is_ok();
+            let _ = done.send(ack);
             if let Some(reply) = reply {
                 let _ = reply.send(committed);
             }
-            if committed && acknowledged {
-                prune_batches_through(&world_dir.join("journal"), previous_tick);
+            if committed {
+                prune_batches_through(&world_dir.join("journal"), prev_manifest.tick);
             }
         }
         NativeWork::SaveGenerated(chunks) => {
@@ -3144,7 +3152,7 @@ fn run_native_work(
 }
 
 /// Gate the WAL, commit every dimension/domain in one Immediate native txn,
-/// then retain WAL back to the previous committed checkpoint.
+/// without acknowledging or pruning the captured revisions here.
 fn write_checkpoint(
     world_dir: &std::path::Path,
     job: &CheckpointJob,

@@ -191,6 +191,9 @@ pub struct VillagePlan {
     affected_min: BlockPos,
     affected_max: BlockPos,
     pieces: Vec<PlanPiece>,
+    /// Maximum solid-terrain Y at rigid entrance steps and their approach.
+    /// Legacy templates ignore air, so the beard analogue must clear it.
+    entrance_terrain_caps: Vec<BlockPos>,
 }
 
 impl VillagePlan {
@@ -387,7 +390,35 @@ impl VillagePlanSet {
     ) -> Vec<BeardColumn> {
         let sources: Vec<BeardSource<'_>> =
             self.plans.iter().map(|plan| plan.beard_source()).collect();
-        apply_columns_over(&sources, columns, min_y, max_y)
+        let mut moved = apply_columns_over(&sources, columns, min_y, max_y);
+        for &(x, z, surface_y) in columns {
+            let cap = self
+                .plans
+                .iter()
+                .flat_map(|plan| &plan.entrance_terrain_caps)
+                .filter(|cap| cap.x == x && cap.z == z)
+                .map(|cap| cap.y)
+                .min();
+            let Some(cap) = cap else {
+                continue;
+            };
+            let cap = cap.clamp(min_y + 1, max_y - 1);
+            if let Some(column) = moved
+                .iter_mut()
+                .find(|column| column.x == x && column.z == z)
+            {
+                column.adjusted_y = column.adjusted_y.min(cap);
+            } else if surface_y > cap {
+                moved.push(BeardColumn {
+                    x,
+                    z,
+                    surface_y,
+                    adjusted_y: cap,
+                });
+            }
+        }
+        moved.retain(|column| column.adjusted_y != column.surface_y);
+        moved
     }
 }
 
@@ -729,12 +760,35 @@ impl VillagePlanSource {
             }
         });
         let mut pieces = Vec::with_capacity(assembly.pieces.len());
+        let mut entrance_terrain_caps = Vec::new();
         let mut bounds: Option<(BlockPos, BlockPos)> = None;
         for piece in &assembly.pieces {
             bounds = Some(match bounds {
                 None => (piece.bounds_min, piece.bounds_max),
                 Some((min, max)) => (min_of(min, piece.bounds_min), max_of(max, piece.bounds_max)),
             });
+            if piece.projection == Projection::Rigid
+                && let PlacedElement::Single { template, .. } = &piece.element
+            {
+                for jigsaw in self.closure.piece(template)?.jigsaws() {
+                    if jigsaw.name.as_str() != "minecraft:building_entrance" {
+                        continue;
+                    }
+                    let local = piece.rotation.transform(jigsaw.pos);
+                    let [dx, _, dz] = piece.rotation.rotate_face(jigsaw.front).step();
+                    let cap = BlockPos {
+                        x: piece.position.x + local[0],
+                        y: piece.position.y + local[1] - 1,
+                        z: piece.position.z + local[2],
+                    };
+                    entrance_terrain_caps.push(cap);
+                    entrance_terrain_caps.push(BlockPos {
+                        x: cap.x + dx,
+                        z: cap.z + dz,
+                        ..cap
+                    });
+                }
+            }
             let element = match &piece.element {
                 PlacedElement::Single {
                     template,
@@ -789,6 +843,7 @@ impl VillagePlanSource {
             affected_min,
             affected_max,
             pieces,
+            entrance_terrain_caps,
         })
     }
 
@@ -1186,9 +1241,9 @@ impl ProcessLevel for ChunkPieceWriter<'_, '_> {
     fn height(&self, _heightmap: HeightmapType, x: i32, z: i32) -> i32 {
         // Only `WORLD_SURFACE_WG` is reachable from the village closure (the
         // `terrain_matching` projection's gravity processor); every other
-        // heightmap type reports the same noise surface rather than a heightmap
-        // this generator has not built. Vanilla's `getHeight` is the first free
-        // block, i.e. one above the surface block.
+        // heightmap type reports this same adapted, water-inclusive surface
+        // rather than a heightmap this generator has not built. Vanilla's
+        // `getHeight` is the first free block, one above the surface block.
         (self.surface)(x, z).saturating_add(1)
     }
 }

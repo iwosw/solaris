@@ -298,7 +298,31 @@ impl EdgeServer {
         packet_id: i32,
         body: &[u8],
     ) -> anyhow::Result<bool> {
-        use mc_protocol::packets::{Packet, play::ServerboundCommandSuggestion};
+        use mc_protocol::packets::{
+            Packet,
+            play::{ServerboundClientInformation, ServerboundCommandSuggestion},
+        };
+        if packet_id == ServerboundClientInformation::ID {
+            let mut input = body;
+            let request = ServerboundClientInformation::decode(&mut input)?;
+            anyhow::ensure!(input.is_empty(), "trailing client information data");
+            let view_distance = effective_view_distance(
+                request.information.view_distance,
+                self.cfg.server.view_distance,
+            );
+            let mut registry = self.connections.inner.lock();
+            if registry.view_distances.get(&id) != Some(&view_distance) {
+                anyhow::ensure!(
+                    self.hub.submit(PlayerInput::SetViewDistance {
+                        connection: id,
+                        view_distance: view_distance as u8,
+                    }),
+                    "view distance admission queue is full"
+                );
+                registry.view_distances.insert(id, view_distance);
+            }
+            return Ok(true);
+        }
         if packet_id != ServerboundCommandSuggestion::ID {
             return Ok(false);
         }
@@ -349,6 +373,10 @@ impl EdgeServer {
             .any(|(name, _)| name == root)
         {
             return Ok(false);
+        }
+        if root == "settlement" && words.clone().eq(["guide"]) {
+            self.feedback(id, crate::command_tree::SETTLEMENT_GUIDE)?;
+            return Ok(true);
         }
         if root == "list" {
             let option = words.next();
@@ -580,6 +608,7 @@ pub struct ConnectionRegistry {
 struct RegistryInner {
     handles: HashMap<ConnectionId, ConnectionHandles>,
     names: HashMap<ConnectionId, String>,
+    view_distances: HashMap<ConnectionId, i32>,
     roster_dirty: bool,
     // Join state and its waiters share the queue registry's atomic removal.
     pending_joins: HashMap<ConnectionId, JoinedSpawn>,
@@ -760,6 +789,7 @@ impl ConnectionRegistry {
         inner.pending_reliable.remove(&id);
         inner.join_waiters.remove(&id);
         inner.disconnect_reasons.remove(&id);
+        inner.view_distances.remove(&id);
     }
 
     /// Look up one connection's handles.
@@ -1046,23 +1076,36 @@ async fn handle_connection(stream: TcpStream, server: Arc<EdgeServer>) -> anyhow
         }
     };
 
-    // --- Join: submit via the hub (retry-then-drop on shed). ---
-    let mut sheds = 0u32;
-    loop {
-        if server.hub.submit(PlayerInput::Join {
+    // The radius precedes Join on the reliable queue, so the first residency
+    // reconciliation never expands this client to the server-wide maximum.
+    let view_distance = effective_view_distance(
+        config_outcome.client_view_distance,
+        server.cfg.server.view_distance,
+    );
+    for input in [
+        PlayerInput::SetViewDistance {
+            connection: id,
+            view_distance: view_distance as u8,
+        },
+        PlayerInput::Join {
             connection: id,
             uuid: outcome.uuid,
             name: outcome.name.clone(),
             permission_level: server.admin.level(outcome.uuid),
-        }) {
-            break;
+        },
+    ] {
+        let mut sheds = 0u32;
+        loop {
+            if server.hub.submit(input.clone()) {
+                break;
+            }
+            sheds += 1;
+            if sheds >= MAX_SUBMIT_SHEDS {
+                warn!(%peer, connection = id.0, stage = "join-submit", name = %outcome.name, "hub queue full; connection closed");
+                return Ok(());
+            }
+            tokio::task::yield_now().await;
         }
-        sheds += 1;
-        if sheds >= MAX_SUBMIT_SHEDS {
-            warn!(%peer, connection = id.0, stage = "join-submit", name = %outcome.name, "hub queue full; connection closed");
-            return Ok(());
-        }
-        tokio::task::yield_now().await;
     }
 
     // --- Wait for our Joined (bounded): the tick loop answers with the
@@ -1100,7 +1143,6 @@ async fn handle_connection(stream: TcpStream, server: Arc<EdgeServer>) -> anyhow
     }
 
     // --- Join burst (compressed from here on). ---
-    let view_distance = i32::from(server.cfg.server.view_distance);
     let simulation_distance = i32::from(server.cfg.server.simulation_distance);
     let latest = latest_output(&server);
     if let Err(error) = crate::play::send_join_burst(crate::play::JoinBurst {
@@ -1181,6 +1223,7 @@ async fn handle_connection(stream: TcpStream, server: Arc<EdgeServer>) -> anyhow
             .admin
             .register(id, outcome.uuid, outcome.name.clone(), ip);
     }
+    server.feedback(id, "Поселения: /settlement guide")?;
     if *server.stop.borrow() {
         server.kick(
             id,
@@ -1517,6 +1560,13 @@ fn configured_viewer(
 ) -> crate::plan::ViewerState {
     let mut viewer = crate::plan::ViewerState::new(connection, entity, position);
     viewer.dimension = dimension;
+    viewer.view_distance = server
+        .connections
+        .inner
+        .lock()
+        .view_distances
+        .get(&connection)
+        .copied();
     viewer.dimension_type_ids = server.wire.dimension_type_ids;
     viewer.advancements = Arc::clone(&server.recipes.advancements);
     viewer
@@ -1628,10 +1678,14 @@ async fn publish_and_route(
     viewers.retain(|id, _| connections.contains_key(id));
     // Only the pump sends world packets; available slots can only grow
     // between this credit read and routing.
-    for (id, viewer) in viewers.iter_mut() {
-        viewer.world_credit = connections
-            .get(id)
-            .map_or(0, |handles| handles.world_tx.capacity());
+    {
+        let registry = server.connections.inner.lock();
+        for (id, viewer) in viewers.iter_mut() {
+            viewer.view_distance = registry.view_distances.get(id).copied();
+            viewer.world_credit = connections
+                .get(id)
+                .map_or(0, |handles| handles.world_tx.capacity());
+        }
     }
 
     let view_distance = i32::from(server.cfg.server.view_distance);
@@ -1689,6 +1743,10 @@ async fn publish_and_route(
     }
 }
 
+fn effective_view_distance(client: i8, server: u8) -> i32 {
+    i32::from(client).max(2).min(i32::from(server))
+}
+
 /// Wait (bounded) for our [`PlayerChange::Joined`]. Only the pump drains
 /// the core outbox; this waiter never touches it. Fast path: the pump may
 /// have stashed our Joined already. Otherwise register a one-shot waiter
@@ -1698,8 +1756,12 @@ async fn wait_for_join(
     server: &Arc<EdgeServer>,
     id: ConnectionId,
     _name: &str,
-    _client_view_distance: i8,
+    client_view_distance: i8,
 ) -> anyhow::Result<JoinedSpawn> {
+    server.connections.inner.lock().view_distances.insert(
+        id,
+        effective_view_distance(client_view_distance, server.cfg.server.view_distance),
+    );
     // Fast path: Joined arrived before we registered interest.
     if let Some(joined) = server.connections.take_join(id) {
         return Ok(joined);
@@ -2132,3 +2194,7 @@ mod lock_tests;
 #[cfg(test)]
 #[path = "core_halt_tests.rs"]
 mod core_halt_tests;
+
+#[cfg(test)]
+#[path = "server_view_distance_tests.rs"]
+mod view_distance_tests;

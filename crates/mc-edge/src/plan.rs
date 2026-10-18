@@ -47,15 +47,14 @@ use mc_protocol::packets::Packet;
 use mc_protocol::packets::play::{
     AGEABLE_ENTITY_DATA_BABY_INDEX, AddEntity, BlockUpdate, ClientboundExplode,
     ClientboundSetEntityData, ClientboundSetEntityEquipment, ClientboundSetTime,
-    ClientboundTakeItemEntity, ENTITY_DATA_AIR_SUPPLY_INDEX, ENTITY_DATA_POSE_INDEX,
-    ENTITY_DATA_SHARED_FLAGS_INDEX, EntityAnimation, EntityAnimationAction,
-    EntityDataValue as WireEntityDataValue, EntityEquipment, EntityEvent as WireEntityEvent,
-    EntityPose, EntityPositionSync, EntityRotations, EntityVec3, EquipmentSlot,
-    ExplosionBlockParticle, ForgetLevelChunk, ITEM_ENTITY_DATA_ITEM_INDEX,
-    LIVING_ENTITY_DATA_EFFECT_AMBIENCE_INDEX, LIVING_ENTITY_DATA_EFFECT_PARTICLES_INDEX,
-    LIVING_ENTITY_DATA_HEALTH_INDEX_26_1_2, MoveEntityPos, MoveEntityPosRot, MoveEntityRot,
-    PLAYER_DATA_ABSORPTION_INDEX, PositionMoveRotation, RemoveEntities, RotateHead, SetCenterChunk,
-    SetChunkCacheRadius,
+    ClientboundTakeItemEntity, ENTITY_DATA_POSE_INDEX, ENTITY_DATA_SHARED_FLAGS_INDEX,
+    EntityAnimation, EntityAnimationAction, EntityDataValue as WireEntityDataValue,
+    EntityEquipment, EntityEvent as WireEntityEvent, EntityPose, EntityPositionSync,
+    EntityRotations, EntityVec3, EquipmentSlot, ExplosionBlockParticle, ForgetLevelChunk,
+    ITEM_ENTITY_DATA_ITEM_INDEX, LIVING_ENTITY_DATA_EFFECT_AMBIENCE_INDEX,
+    LIVING_ENTITY_DATA_EFFECT_PARTICLES_INDEX, LIVING_ENTITY_DATA_HEALTH_INDEX_26_1_2,
+    MoveEntityPos, MoveEntityPosRot, MoveEntityRot, PLAYER_DATA_ABSORPTION_INDEX,
+    PositionMoveRotation, RemoveEntities, RotateHead, SetCenterChunk, SetChunkCacheRadius,
 };
 
 /// Entity's fourth defineId call uses BOOLEAN (26.1.2 javap Entity static ctor).
@@ -292,6 +291,8 @@ pub struct ViewerState {
     pub entity_id: EntityId,
     pub position: [f64; 3],
     pub dimension: mc_core::dimensions::Dimension,
+    /// Negotiated connection radius; None uses the caller's server limit.
+    pub(crate) view_distance: Option<i32>,
     /// Registry indices resolved by the edge from its exact vanilla data.
     pub dimension_type_ids: [i32; 3],
     pub advancements: Arc<crate::advancements::AdvancementPackets>,
@@ -319,6 +320,7 @@ pub struct ViewerState {
     /// change happened): sent by a later plan with the newest state.
     pending_blocks: HashSet<mc_world::chunk::BlockPos>,
     pub center_sent: Option<(i32, i32)>,
+    radius_sent: Option<i32>,
     /// The pump skipped outputs since the last plan: their block changes
     /// never reached this viewer, so every chunk whose revision moved on is
     /// sent again.
@@ -330,9 +332,12 @@ pub struct ViewerState {
     /// client keeps its level across it (`ClientPacketListener.handleRespawn`
     /// builds a new `ClientLevel` only on a dimension change), so, like the
     /// vanilla server, everything held is removed/forgotten on the world
-    /// queue (in order after frames already queued) before the view is sent
-    /// again. A client that wipes its world on Respawn ignores the extras.
     forget_all: bool,
+    /// Connection-local settlement label image (virtual negative ids).
+    pub(crate) labels: crate::settlement_labels::LabelBaseline,
+    /// Snapshot dimension the label image was built from; a mismatch means
+    /// the client's fresh level holds none of these virtual entities.
+    pub(crate) label_dimension: Option<mc_core::dimensions::Dimension>,
     /// Last sent `(tick, day_time, rate)`; None forces an authoritative sync.
     clock_baseline: Option<(u64, i64, f32)>,
     scratch: PlanScratch,
@@ -347,6 +352,7 @@ impl ViewerState {
             entity_id,
             position,
             dimension: mc_core::dimensions::Dimension::Overworld,
+            view_distance: None,
             dimension_type_ids: [0; 3],
             advancements: Arc::default(),
             loaded_chunks: HashMap::default(),
@@ -362,9 +368,12 @@ impl ViewerState {
             entity_interest: entity_interest::EntityInterest::default(),
             pending_blocks: HashSet::default(),
             center_sent: None,
+            radius_sent: None,
             skipped: false,
             world_credit: usize::MAX,
             forget_all: false,
+            labels: crate::settlement_labels::LabelBaseline::default(),
+            label_dimension: None,
             clock_baseline: None,
             scratch: PlanScratch::default(),
             window: ViewWindow::default(),
@@ -427,6 +436,7 @@ fn forget_everything(
     viewer.block_entity_updates.clear();
     viewer.center_sent = None;
     viewer.forget_all = false;
+    crate::settlement_labels::forget_labels(viewer, out);
     true
 }
 
@@ -478,6 +488,10 @@ pub(crate) fn plan_viewer_indexed(
     chunk_cache: &ChunkPacketCache,
     index: &TickPlanIndex,
 ) -> Vec<PlannedPacket> {
+    let view_distance = viewer
+        .view_distance
+        .unwrap_or(view_distance)
+        .min(view_distance);
     let mut scratch = std::mem::take(&mut viewer.scratch);
     let packets = plan_viewer_inner(
         output,
@@ -593,6 +607,10 @@ fn plan_viewer_inner(
                 chunk_z: center.1,
             },
         );
+        viewer.center_sent = Some(center);
+        viewer.radius_sent = None;
+    }
+    if viewer.radius_sent != Some(view_distance.max(0)) {
         push_reliable(
             &mut out,
             conn,
@@ -600,7 +618,7 @@ fn plan_viewer_inner(
                 radius: view_distance.max(0),
             },
         );
-        viewer.center_sent = Some(center);
+        viewer.radius_sent = Some(view_distance.max(0));
     }
 
     // Chunk unloads: a chunk left without credit stays held and is
@@ -702,6 +720,9 @@ fn plan_viewer_inner(
                 .update(pos, &resident.chunk, conn, &mut out, &mut credit);
         }
     }
+    // Labels refer only to chunks held before this plan, never to an unseen
+    // chunk admitted below whose packet has not reached the client yet.
+    crate::settlement_labels::plan_labels(snapshot, viewer, view_distance, &mut out, &mut credit);
 
     // Admit unseen chunks first, then repair held chunks. Both share the same
     // bounded send budget; a deferred repair remains owed across publishes.
@@ -1412,7 +1433,7 @@ fn player_entity_type_id() -> u32 {
 /// 9): sending it hard-fails the vanilla client (`undefined/mismatched
 /// entity accessor minecraft:item index 9`, session dead). Their stack
 /// rides `DATA_ITEM` (index 8) via the dedicated arm below instead.
-fn push_appearance_for(
+pub(crate) fn push_appearance_for(
     out: &mut Vec<PlannedPacket>,
     conn: ConnectionId,
     id: EntityId,
@@ -1505,10 +1526,12 @@ fn push_appearance_with(
             value: appearance.absorption,
         });
     }
-    if let Some(name) = appearance.custom_name.as_ref() {
+    if previous.is_none_or(|old| old.custom_name != appearance.custom_name)
+        && (previous.is_some() || appearance.custom_name.is_some())
+    {
         values.push(WireEntityDataValue::OptionalComponent {
             index: 2,
-            value: Some(name.clone()),
+            value: appearance.custom_name.clone(),
         });
     }
     if previous.is_none_or(|old| old.custom_name_visible != appearance.custom_name_visible) {
@@ -1527,7 +1550,6 @@ fn push_appearance_with(
             value: appearance.baby,
         });
     }
-    let _ = ENTITY_DATA_AIR_SUPPLY_INDEX;
     for (index, value) in appearance.extra.iter() {
         values.push(map_extra(*index, value));
     }
@@ -1755,7 +1777,7 @@ fn push_framed(
     });
 }
 
-pub(super) fn push_reliable<P: Packet>(
+pub(crate) fn push_reliable<P: Packet>(
     out: &mut Vec<PlannedPacket>,
     connection: ConnectionId,
     packet: &P,
@@ -1766,7 +1788,7 @@ pub(super) fn push_reliable<P: Packet>(
     }
 }
 
-pub(super) fn push_best_effort<P: Packet>(
+pub(crate) fn push_best_effort<P: Packet>(
     out: &mut Vec<PlannedPacket>,
     connection: ConnectionId,
     packet: &P,
@@ -1784,7 +1806,6 @@ mod plan_tests;
 #[cfg(test)]
 #[path = "mounts_wire_tests.rs"]
 mod mounts_wire_tests;
-
 #[cfg(test)]
 #[path = "projectile_wire_tests.rs"]
 mod projectile_wire_tests;

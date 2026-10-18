@@ -114,6 +114,13 @@ async fn join_burst_carries_load_start_before_center() {
         login.simulation_distance, 3,
         "G5 radius split: LoginPlay carries independent view/sim radii"
     );
+    let (_, radius_body) = frames
+        .iter()
+        .find(|(id, _)| *id == mc_protocol::packets::play::SetChunkCacheRadius::ID)
+        .expect("join sends the effective cache radius");
+    let radius =
+        mc_protocol::packets::play::SetChunkCacheRadius::decode(&mut &radius_body[..]).unwrap();
+    assert_eq!(radius.radius, login.view_distance);
     let load_start: Vec<usize> = frames
         .iter()
         .enumerate()

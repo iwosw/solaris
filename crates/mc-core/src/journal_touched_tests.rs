@@ -87,6 +87,51 @@ fn spawn_vehicle(state: &mut TickState, name: &str, pos: [f64; 3]) -> EntityId {
 }
 
 #[test]
+fn idle_counter_progression_and_reset_do_not_emit_entity_state_images() {
+    let mut state = fixture();
+    let id = spawn_idle_cow(&mut state, 8.5);
+    assert_eq!(image_ids(&step(&mut state)), vec![id.0]);
+    let slot = state.entities.slot_of(id).unwrap();
+    for elapsed in 1..=100 {
+        let row = state.entities.row_mut(slot);
+        row.no_action_time = elapsed;
+        row.age = elapsed;
+        assert!(
+            image_ids(&step(&mut state)).is_empty(),
+            "idle counter progression alone must not rewrite retained entity state"
+        );
+    }
+    for expected in [100, 0] {
+        state.entities.row_mut(slot).no_action_time = expected;
+        assert!(
+            image_ids(&step(&mut state)).is_empty(),
+            "the despawn idle counter is checkpoint-only, including resets"
+        );
+        let (_, regions, _) = crate::core::checkpoint_data_for(&state, state.tick);
+        let saved = regions
+            .values()
+            .flat_map(|chunk| &chunk.entities)
+            .find(|entity| entity.wire_id == id.0)
+            .unwrap();
+        let image = crate::journal::EntityStateImage::from_record(&state.registry, saved).unwrap();
+        assert_eq!(
+            image.no_action_time, expected,
+            "checkpoint capture retains the current idle counter, including resets"
+        );
+    }
+    // Meaningful retained changes still carry the latest counters incidentally.
+    let row = state.entities.row_mut(slot);
+    row.persistent = false;
+    row.no_action_time = 712;
+    let entries = step(&mut state);
+    assert!(entries.iter().any(|entry| matches!(
+        entry,
+        JournalEntry::EntityState { id: changed, state: image, .. }
+            if *changed == id.0 && !image.persistent && image.no_action_time == 712
+    )));
+}
+
+#[test]
 fn resting_chest_minecarts_emit_no_entity_images_after_first_tick() {
     let mut state = fixture();
     let carts: Vec<_> = (0..100)

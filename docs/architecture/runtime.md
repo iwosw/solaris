@@ -41,6 +41,41 @@ viewer's held world state. Reliable per-player results remain ordered; capacity
 exhaustion disconnects rather than dropping them. Socket completion and client
 rendering are separate from native commit.
 
+### Tick cost accounting
+
+`/load-metrics` preserves the original completed `TickTimes` for each tick.
+`total_us` is the pre-publication core cost: gameplay plus WAL image building,
+bounded writer enqueue and generated-chunk capture. Its disjoint `phase_us`
+fields cover inputs, chunk admission/hydration, entity/merge/block work,
+commit, snapshot/views/publication construction, plugin admission/observations,
+dimension coordination, journal building/queueing and generated saves.
+`coordination_us` is the measured dimension envelope less its local phases;
+it includes routing, travel, global projection, return-time scratch destruction
+and sub-microsecond phase boundaries, not an inferred disk/network cost.
+
+`owner_pre_us` and `owner_post_us` are **outside** `total_us`: acknowledgement
+and input drains before gameplay, then reliable/world handoff and checkpoint
+capture after it. Include them only when comparing the phase sum to `wall_us`
+(the complete active iteration, excluding pacing). Microsecond rounding leaves
+small gaps. The journal worker owns fsync, generation/lighting workers own
+off-tick work, and edge fanout has its separate dashboard `publish` distribution;
+writer backpressure paid by the tick is visible in `journal_queue_us`.
+
+The five-headless-player local exploration profile identified synchronous
+admission seam lighting as a major chunk-phase cost, with the tiny cross-crate
+`LightLayer::get` accessor taking 13% of sampled tick-thread self CPU.
+That accessor permits ordinary cross-crate inlining; light equations, admission
+order, copy-on-write arrays and geometry checks are unchanged. Existing full
+recompute/seam oracle tests remain the correctness fence. This is not a new
+asynchronous lighting path: moving admission off-tick needs a separate
+authoritative revision/reconciliation design. Remove the inline hint if future
+profiles no longer justify it; timing receipts, including tail variance, live
+under `.analysis/codex-logs/tick-budget/`.
+Interleaved local A/B/A/B windows observed pooled tick p50/p99 of
+7.576/22.008 ms before and 6.145/19.864 ms after the inline hint. These are
+two-core-lane diagnostics with variable natural spawning and concurrent shared
+host work, not an isolated causal speedup or a VPS performance guarantee.
+
 ## Persistent and external boundaries
 
 The serving world is native `native/state.redb` plus tick WAL. Player, world,

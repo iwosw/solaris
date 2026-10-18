@@ -10,7 +10,7 @@ fn loaded_plugin_roots_share_permissions_tree_help_and_suggestions() {
     assert!(permitted("/settlement info oak", 0, &plugins));
     assert!(!permitted("audit inspect", 0, &plugins));
     assert!(permitted("audit inspect", 2, &plugins));
-    assert!(!permitted("settlement info oak", 4, &[]));
+    assert!(permitted("settlement info oak", 0, &[]));
 
     let packet = tree(0, &plugins);
     let roots: Vec<_> = packet.nodes[packet.root_index as usize]

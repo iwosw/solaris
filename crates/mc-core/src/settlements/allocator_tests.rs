@@ -8,7 +8,7 @@ use crate::tick::TickState;
 use crate::villager::{VillagerProfession as Profession, VillagerState};
 use std::sync::Arc;
 
-pub(super) fn test_state() -> TickState {
+pub(crate) fn test_state() -> TickState {
     let registry = Arc::new(CoreRegistry::load(None).expect("registry"));
     let generator: Arc<dyn mc_world::ChunkGenerator> = Arc::new(
         mc_worldgen::TerrainGenerator::new(42, Arc::clone(&registry.blocks)),
@@ -40,7 +40,7 @@ pub(super) fn test_state() -> TickState {
     state.refresh_active_chunks(0);
     state
 }
-pub(super) fn block(state: &TickState, name: &str, props: &[(&str, &str)]) -> u32 {
+pub(crate) fn block(state: &TickState, name: &str, props: &[(&str, &str)]) -> u32 {
     let id = mc_data::Identifier::parse(name).unwrap();
     let default = state.registry.blocks.block(&id).unwrap().default;
     let mut full = state
@@ -62,7 +62,7 @@ pub(super) fn block(state: &TickState, name: &str, props: &[(&str, &str)]) -> u3
         .unwrap()
         .0
 }
-pub(super) fn villager(state: &mut TickState, pos: [f64; 3]) -> EntitySlot {
+pub(crate) fn villager(state: &mut TickState, pos: [f64; 3]) -> EntitySlot {
     let type_id = state
         .registry
         .entity_types
@@ -73,7 +73,7 @@ pub(super) fn villager(state: &mut TickState, pos: [f64; 3]) -> EntitySlot {
     state.entities.row_mut(slot).villager = Some(Box::new(VillagerState::default()));
     slot
 }
-pub(super) fn bed(state: &mut TickState, x: i32, z: i32) -> BlockPos {
+pub(crate) fn bed(state: &mut TickState, x: i32, z: i32) -> BlockPos {
     let foot = block(
         state,
         "minecraft:red_bed",

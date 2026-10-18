@@ -38,6 +38,7 @@ const ROOTS: &[(&str, u8)] = &[
     ("msg", 0),
     ("tell", 0),
     ("w", 0),
+    ("settlement", 0),
     ("gamemode", 2),
     ("teleport", 2),
     ("tp", 2),
@@ -74,6 +75,107 @@ const ROOTS: &[(&str, u8)] = &[
     ("deop", 3),
     ("stop", 4),
     ("save-all", 4),
+];
+
+const SETTLEMENT_HELP: &[(&str, &str)] = &[
+    ("guide", "Step-by-step in-game settlement tutorial."),
+    (
+        "create",
+        "Found a settlement here; optional radius 1-256 (default 48).",
+    ),
+    ("list", "List all settlements."),
+    ("info", "Show owner, centre, radius and resident count."),
+    ("rename", "Rename a settlement (owner/operator)."),
+    (
+        "remove",
+        "Dissolve a settlement and release membership (owner/operator).",
+    ),
+    (
+        "bind",
+        "Bind the nearest villager within 8 blocks, or supply a UUID (owner/operator).",
+    ),
+    (
+        "unbind",
+        "Release the nearest villager within 8 blocks, or supply a UUID (owner/operator).",
+    ),
+    (
+        "relocate",
+        "Move a household; requires ownership of both towns or operator.",
+    ),
+    (
+        "production",
+        "Run real worker recipes: status/start/pause/resume/cancel.",
+    ),
+    (
+        "commerce",
+        "Trade and escrow: status/quote/accept/cancel/reserve/payout.",
+    ),
+    (
+        "payroll",
+        "Fund worker contracts: status/employ/stop/dismiss/pay.",
+    ),
+    (
+        "caravan",
+        "Physical transport: status/open/pickup/unload/cancel/block.",
+    ),
+];
+
+pub(crate) const SETTLEMENT_GUIDE: &str = concat!(
+    "Settlements / Поселения — quick start:\n",
+    "1. Stand at your town centre: /settlement create Oak (optional radius 1-256; default 48).\n",
+    "2. Place beds and workstations: composter=Farmer, lectern=Librarian, barrel=Fisherman; /help settlement lists all jobs.\n",
+    "3. Keep the village loaded: adults take free stations during day ticks 2000-8999, within 48 blocks via a walkable path. Nitwits never work; traded villagers keep their profession.\n",
+    "4. Stand next to a villager: /settlement bind Oak (nearest within 8 blocks). /settlement unbind releases the nearest; optional native UUID targets one explicitly. Villagers work without binding; bound villagers search inside the town.\n",
+    "5. Read villagers' nameplates/status labels; /settlement info Oak shows population and jobs, /settlement list shows towns. Changes require owner/operator; reads and founding are public.\n",
+    "6. /settlement production Oak status — real worker recipes (start/pause/resume/cancel).\n",
+    "7. /settlement commerce Oak status — emerald trades and escrow (quote/accept/cancel/reserve/payout).\n",
+    "8. /settlement payroll Oak status — funded worker contracts (employ/stop/dismiss/pay).\n",
+    "9. /settlement caravan Oak status — physical deliveries (open/pickup/unload/cancel/block).\n",
+    "Action syntax: /help settlement <domain> Oak. Short bilingual guide: docs/SETTLEMENTS_GUIDE.md",
+);
+
+// Native economy uses compact endpoint/coordinate/route tokens (":" / "," /
+// ";") that Brigadier's unquoted word parser rejects. Advertise each action's
+// native tail as a greedy string, leaving exact token validation to the tick.
+const SETTLEMENT_ECONOMY: &[(&str, &str, &str)] = &[
+    (
+        "production",
+        "start",
+        "job worker-UUID recipe count building station-x,y,z stand-at-x,y,z",
+    ),
+    ("production", "pause", "job"),
+    ("production", "resume", "job"),
+    ("production", "cancel", "job"),
+    (
+        "commerce",
+        "quote",
+        "quote seller-endpoint buyer-endpoint slot quantity price",
+    ),
+    ("commerce", "accept", "quote"),
+    ("commerce", "cancel", "quote"),
+    (
+        "commerce",
+        "reserve",
+        "mandate shipment payer-endpoint escrow-endpoint payee-endpoint price",
+    ),
+    ("commerce", "payout", "mandate"),
+    (
+        "payroll",
+        "employ",
+        "contract worker-UUID treasury-endpoint wage period budget",
+    ),
+    ("payroll", "stop", "contract"),
+    ("payroll", "dismiss", "contract"),
+    ("payroll", "pay", "contract"),
+    (
+        "caravan",
+        "open",
+        "shipment carrier-UUID src-building src-x,y,z dst-building dst-x,y,z slot quantity ticks waypoints [paid-mandate]",
+    ),
+    ("caravan", "pickup", "shipment"),
+    ("caravan", "unload", "shipment"),
+    ("caravan", "cancel", "shipment"),
+    ("caravan", "block", "shipment reason"),
 ];
 
 pub(crate) fn permitted(command: &str, op_level: u8, plugins: &[(String, u8)]) -> bool {
@@ -120,7 +222,10 @@ pub(crate) fn help(
         index = redirect;
     }
     let parent = &packet.nodes[index as usize];
-    let mut usages = Vec::with_capacity(parent.children.len());
+    let settlement_help =
+        path == Some("settlement") && !plugins.iter().any(|(root, _)| root == "settlement");
+    let mut usages =
+        Vec::with_capacity(parent.children.len() + if settlement_help { 4 } else { 0 });
     for &child in &parent.children {
         let mut line = String::from("/");
         if let Some(path) = path {
@@ -128,7 +233,20 @@ pub(crate) fn help(
             line.push(' ');
         }
         smart_usage(&packet, child, parent.executable, false, &mut line);
+        if settlement_help
+            && let CommandNodeKind::Literal(name) = &packet.nodes[child as usize].kind
+            && let Some((_, description)) = SETTLEMENT_HELP.iter().find(|entry| entry.0 == name)
+        {
+            line.push_str(" — ");
+            line.push_str(description);
+        }
         usages.push(line);
+    }
+    if settlement_help {
+        usages.push("Jobs: adults use free workstations during day ticks 2000-8999, within 48 blocks with a walkable path; keep the village loaded.".into());
+        usages.push("composter=Farmer, lectern=Librarian, barrel=Fisherman, smoker=Butcher, blast_furnace=Armorer, brewing_stand=Cleric.".into());
+        usages.push("cartography_table=Cartographer, fletching_table=Fletcher, cauldron=Leatherworker, stonecutter=Mason, loom=Shepherd, smithing_table=Toolsmith, grindstone=Weaponsmith.".into());
+        usages.push("Unbound villagers need no command; bound villagers search inside their town. Nitwits never work; traded villagers keep their profession. Guide: docs/SETTLEMENTS_GUIDE.md".into());
     }
     Ok(usages)
 }
@@ -417,7 +535,7 @@ impl<'a> Tree<'a> {
         let capacity = if op_level >= 2 {
             rules().len() * 4 + 256
         } else {
-            16
+            256
         };
         let mut nodes = Vec::with_capacity(capacity);
         nodes.push(CommandNode::root(Vec::with_capacity(ROOTS.len())));
@@ -526,6 +644,9 @@ pub(crate) fn tree(op_level: u8, plugins: &[(String, u8)]) -> ClientboundCommand
         t.argument(targets, "message", Parser::Message, true);
         t.alias("tell", root);
         t.alias("w", root);
+    }
+    if let Some(root) = t.root("settlement", false) {
+        settlement_tree(&mut t, root);
     }
     if let Some(root) = t.root("gamemode", false) {
         let mode = t.argument(root, "gamemode", Parser::GameMode, true);
@@ -818,6 +939,53 @@ pub(crate) fn tree(op_level: u8, plugins: &[(String, u8)]) -> ClientboundCommand
     }
 }
 
+fn settlement_tree(t: &mut Tree, root: i32) {
+    t.literal(root, "guide", true);
+    let word = Parser::String(CommandStringKind::SingleWord);
+    let create = t.literal(root, "create", false);
+    let name = t.argument(create, "name", word.clone(), true);
+    t.argument(name, "radius", integer(Some(1), Some(256)), true);
+    t.literal(root, "list", true);
+    for action in ["info", "rename", "remove", "bind", "relocate"] {
+        let operation = t.literal(root, action, action == "info");
+        let name = t.argument(
+            operation,
+            "settlement",
+            word.clone(),
+            matches!(action, "info" | "remove" | "bind"),
+        );
+        match action {
+            "rename" => {
+                t.argument(name, "new_name", word.clone(), true);
+            }
+            "bind" => {
+                t.argument(name, "villager", Parser::Uuid, true);
+            }
+            "relocate" => {
+                let household = t.argument(name, "household", word.clone(), false);
+                t.argument(household, "destination", word.clone(), true);
+            }
+            _ => {}
+        }
+    }
+    let unbind = t.literal(root, "unbind", true);
+    t.argument(unbind, "villager", Parser::Uuid, true);
+    for domain in ["production", "commerce", "payroll", "caravan"] {
+        let operation = t.literal(root, domain, false);
+        let name = t.argument(operation, "settlement", word.clone(), false);
+        t.literal(name, "status", true);
+        for &(_, action, arguments) in SETTLEMENT_ECONOMY.iter().filter(|entry| entry.0 == domain) {
+            let operation = t.literal(name, action, false);
+            t.argument(
+                operation,
+                arguments,
+                Parser::String(CommandStringKind::GreedyPhrase),
+                true,
+            );
+        }
+    }
+}
+
 fn team_tree(t: &mut Tree, root: i32) {
     let list = t.literal(root, "list", true);
     t.argument(list, "team", Parser::Team, true);
@@ -1016,6 +1184,21 @@ pub(crate) fn suggestions(
         .iter()
         .any(|&(name, level)| name == root && op_level >= level)
     {
+        return result;
+    }
+    if root == "settlement" {
+        if argument_index == 1 {
+            for &(action, _) in SETTLEMENT_HELP {
+                add(action);
+            }
+        } else if argument_index == 3
+            && let Some(domain @ ("production" | "commerce" | "payroll" | "caravan")) = second
+        {
+            add("status");
+            for &(_, action, _) in SETTLEMENT_ECONOMY.iter().filter(|entry| entry.0 == domain) {
+                add(action);
+            }
+        }
         return result;
     }
     if root == "effect" {
@@ -1300,14 +1483,17 @@ mod tests {
                 assert!(roots.contains(&root));
             }
             if level < 2 {
-                assert_eq!(roots, ["help", "list", "me", "msg", "tell", "w"]);
+                assert_eq!(
+                    roots,
+                    ["help", "list", "me", "msg", "tell", "w", "settlement"]
+                );
             }
             for &index in &packet.nodes[0].children {
                 let root = &packet.nodes[index as usize];
                 assert_eq!(
                     root.restricted,
                     level >= 2
-                        && !matches!(&root.kind, CommandNodeKind::Literal(name) if ["help", "list", "me", "msg", "tell", "w"].contains(&name.as_str()))
+                        && !matches!(&root.kind, CommandNodeKind::Literal(name) if ["help", "list", "me", "msg", "tell", "w", "settlement"].contains(&name.as_str()))
                 );
             }
         }
@@ -1470,7 +1656,14 @@ mod tests {
         let items = vec!["minecraft:stone".to_owned(), "minecraft:stick".to_owned()];
         let response = suggestions(7, "/s", 0, &names, &items, &[], &[], &[]);
         assert_eq!((response.id, response.start, response.length), (7, 1, 1));
-        assert!(response.suggestions.is_empty());
+        assert_eq!(
+            response
+                .suggestions
+                .iter()
+                .map(|entry| entry.text.as_str())
+                .collect::<Vec<_>>(),
+            ["settlement"]
+        );
         let response = suggestions(8, "/give @s st", 2, &names, &items, &[], &[], &[]);
         assert_eq!((response.start, response.length), (9, 2));
         assert_eq!(response.suggestions.len(), 2);
@@ -1496,7 +1689,7 @@ mod tests {
     #[test]
     fn help_derives_smart_optional_and_alternative_usages_from_the_tree() {
         let public = help(None, 0, &[]).unwrap();
-        assert_eq!(public.len(), 6);
+        assert_eq!(public.len(), 7);
         assert!(public.contains(&"/help [<command>]".to_owned()));
         assert!(public.contains(&"/list [uuids]".to_owned()));
         assert!(public.contains(&"/msg <targets> <message>".to_owned()));

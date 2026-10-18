@@ -177,11 +177,22 @@ pub struct StatsSnapshot {
 /// Original per-tick phase costs, without reconstructing missing samples.
 #[derive(Debug, Clone, Copy, Serialize)]
 pub struct LoadPhaseTimes {
+    pub input_us: u64,
+    pub chunks_us: u64,
     pub entity_us: u64,
     pub merge_us: u64,
     pub block_us: u64,
+    pub commit_us: u64,
     pub snapshot_us: u64,
     pub views_us: u64,
+    pub publish_us: u64,
+    pub plugins_us: u64,
+    pub coordination_us: u64,
+    pub journal_build_us: u64,
+    pub journal_queue_us: u64,
+    pub generated_us: u64,
+    pub owner_pre_us: u64,
+    pub owner_post_us: u64,
 }
 
 /// A completed active core iteration, distinct from edge fanout.
@@ -352,11 +363,22 @@ impl DashboardState {
             wall_us: times.wall_us,
             total_us: times.total_us,
             phase_us: LoadPhaseTimes {
+                input_us: times.input_us,
+                chunks_us: times.chunks_us,
                 entity_us: times.entity_us,
                 merge_us: times.merge_us,
                 block_us: times.block_us,
+                commit_us: times.commit_us,
                 snapshot_us: times.snapshot_us,
                 views_us: times.views_us,
+                publish_us: times.publish_us,
+                plugins_us: times.plugins_us,
+                coordination_us: times.coordination_us,
+                journal_build_us: times.journal_build_us,
+                journal_queue_us: times.journal_queue_us,
+                generated_us: times.generated_us,
+                owner_pre_us: times.owner_pre_us,
+                owner_post_us: times.owner_post_us,
             },
         });
         drop(inner);
@@ -873,6 +895,17 @@ mod tests {
             block_us: 13,
             snapshot_us: 14,
             views_us: 15,
+            input_us: 16,
+            chunks_us: 17,
+            commit_us: 18,
+            publish_us: 19,
+            plugins_us: 20,
+            coordination_us: 21,
+            journal_build_us: 22,
+            journal_queue_us: 23,
+            generated_us: 24,
+            owner_pre_us: 25,
+            owner_post_us: 26,
         };
         state.record_load_tick(41, times);
         state.record_load_skipped(2);
@@ -901,6 +934,22 @@ mod tests {
         assert_eq!(snapshot.samples[0].phase_us.block_us, 13);
         assert_eq!(snapshot.samples[0].phase_us.snapshot_us, 14);
         assert_eq!(snapshot.samples[0].phase_us.views_us, 15);
+        let phases = serde_json::to_value(snapshot.samples[0].phase_us).unwrap();
+        for (name, expected) in [
+            ("input_us", 16),
+            ("chunks_us", 17),
+            ("commit_us", 18),
+            ("publish_us", 19),
+            ("plugins_us", 20),
+            ("coordination_us", 21),
+            ("journal_build_us", 22),
+            ("journal_queue_us", 23),
+            ("generated_us", 24),
+            ("owner_pre_us", 25),
+            ("owner_post_us", 26),
+        ] {
+            assert_eq!(phases[name], expected, "{name}");
+        }
         assert_eq!(snapshot.samples[1].tick, 44);
         assert_eq!(
             snapshot.samples[1].wall_start_unix_ns,
@@ -908,6 +957,29 @@ mod tests {
         );
         assert_eq!(state.snapshot().tick.samples, 0);
         assert_eq!(state.load_snapshot(Some(44)).unwrap().samples.len(), 0);
+    }
+
+    #[test]
+    fn load_phases_include_the_complete_tick_envelope() {
+        let state = test_state();
+        state.record_load_tick(1, TickTimes::default());
+        let snapshot = state.load_snapshot(None).unwrap();
+        let value = serde_json::to_value(snapshot.samples[0]).unwrap();
+        for phase in [
+            "input_us",
+            "chunks_us",
+            "commit_us",
+            "publish_us",
+            "plugins_us",
+            "coordination_us",
+            "journal_build_us",
+            "journal_queue_us",
+            "generated_us",
+            "owner_pre_us",
+            "owner_post_us",
+        ] {
+            assert!(value["phase_us"][phase].is_u64(), "missing phase {phase}");
+        }
     }
 
     #[test]

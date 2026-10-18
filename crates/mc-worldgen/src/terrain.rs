@@ -498,11 +498,22 @@ impl<'h> HeightContext<'h> {
             .plan_column_from_diagnostic(chunk, lx, lz, plans.as_ref(), diagnostic)
     }
 
-    /// The SOURCE surface the village piece writer projects pieces against.
-    /// Identical to `base_surface_y`, but served from the shared context so
-    /// repeated piece-column queries do not re-run the density query.
+    /// WORLD_SURFACE_WG after terrain adaptation, including water. Gravity
+    /// must follow the fitted terrain, not restore dirt across an entrance cut.
     pub(crate) fn structure_surface(&mut self, world_x: i32, world_z: i32) -> i32 {
-        self.source_height(world_x, world_z)
+        let base = self.source_height(world_x, world_z);
+        let chunk = ChunkPos {
+            x: world_x.div_euclid(16),
+            z: world_z.div_euclid(16),
+        };
+        let plans = self
+            .plans
+            .entry((chunk.x, chunk.z))
+            .or_insert_with(|| self.generator.village_plans_for_chunk(chunk));
+        let solid_y = self
+            .generator
+            .village_surface_y(world_x, world_z, base, plans.as_ref());
+        self.generator.world_surface_y(solid_y)
     }
     /// Map entries held (seeded + lazily resolved). Test hook only.
     #[cfg(test)]
@@ -1066,10 +1077,21 @@ impl TerrainGenerator {
         self.density_router().sample(world_x, world_z).surface_y
     }
 
-    /// `WORLD_SURFACE_WG`'s first free height: one above the surface block,
-    /// the height the jigsaw solver projects a start piece to.
+    /// The plan-free WORLD_SURFACE_WG top block includes water; the density
+    /// surface alone is the ocean/river floor. Match the fill lane's water top.
+    fn world_surface_y(&self, solid_y: i32) -> i32 {
+        let water_top = if self.vanilla().is_some() {
+            SEA_LEVEL - 1
+        } else {
+            SEA_LEVEL
+        };
+        solid_y.max(water_top).min(self.geometry.max_y() - 1)
+    }
+
+    /// WORLD_SURFACE_WG's first free height, used by jigsaw assembly.
     fn first_free_height(&self, world_x: i32, world_z: i32) -> i32 {
-        self.base_surface_y(world_x, world_z).saturating_add(1)
+        self.world_surface_y(self.base_surface_y(world_x, world_z))
+            .saturating_add(1)
     }
 
     /// Every vanilla village whose start chunk lies in the inclusive chunk
@@ -2791,3 +2813,7 @@ mod tests;
 #[cfg(test)]
 #[path = "terrain/coastal_tests.rs"]
 mod coastal_tests;
+
+#[cfg(test)]
+#[path = "terrain/village_water_tests.rs"]
+mod village_water_tests;

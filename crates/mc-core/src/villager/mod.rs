@@ -16,6 +16,10 @@ pub(crate) use generated::generated_uuid;
 mod generated_tests;
 #[cfg(test)]
 mod integration_tests;
+#[cfg(test)]
+#[path = "nameplate_tests.rs"]
+mod nameplate_tests;
+pub(crate) mod nameplates;
 pub(crate) mod persistence;
 pub mod trades;
 
@@ -95,6 +99,13 @@ pub(crate) fn sync_appearance(
         None
     };
     if same {
+        let body = state.entities.body(slot);
+        if body.half_width == half_width
+            && body.height == height
+            && speed.is_none_or(|speed| speed == row.speed)
+        {
+            return;
+        }
         state.entities.set_half_width(slot, half_width);
         let (body, row) = state.entities.parts_mut(slot);
         body.height = height;

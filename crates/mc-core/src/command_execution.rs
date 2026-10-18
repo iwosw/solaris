@@ -1170,6 +1170,7 @@ fn settlement(
                 *radius,
             ) {
                 Ok(id) => {
+                    crate::settlements::refresh_owner_names(state);
                     let record = state.settlements.get(id).expect("created record");
                     let revision = record.revision;
                     error(
@@ -1205,7 +1206,8 @@ fn settlement(
                 Some(record) => {
                     let members = crate::settlements::member_count(state, record.id);
                     let message = format!(
-                        "{} | owner={} anchor={:?} radius={} members={} revision={}",
+                        "{}\n{} | owner={} anchor={:?} radius={} members={} revision={}",
+                        crate::settlements::presentation::summary(state, record),
                         record.name,
                         record.owner,
                         record.anchor,
@@ -1336,25 +1338,15 @@ fn settlement(
                 return;
             }
             let id = record.id;
-            let Ok(uuid) = villager.parse::<uuid::Uuid>() else {
-                error(state, connection, "Villager must be a native entity UUID.");
-                return;
-            };
-            let Some(entity) = state
-                .entities
-                .slot_of_uuid(uuid)
-                .filter(|slot| state.entities.row(*slot).uuid == uuid)
-                .map(|slot| state.entities.body(slot).id)
-            else {
-                error(state, connection, "Villager not found.");
-                return;
+            let (entity, uuid) = match settlement_resident(state, executor, villager.as_deref()) {
+                Ok(resident) => resident,
+                Err(message) => {
+                    error(state, connection, message);
+                    return;
+                }
             };
             match crate::settlements::bind(state, id, entity) {
-                Ok(()) => error(
-                    state,
-                    connection,
-                    format!("Bound {villager} to {settlement}."),
-                ),
+                Ok(()) => error(state, connection, format!("Bound {uuid} to {settlement}.")),
                 Err(message) => error(state, connection, message),
             }
         }
@@ -1367,22 +1359,19 @@ fn settlement(
                 );
                 return;
             };
-            let Ok(uuid) = villager.parse::<uuid::Uuid>() else {
-                error(state, connection, "Villager must be a native entity UUID.");
-                return;
-            };
-            let Some((entity, id)) = state.entities.slot_of_uuid(uuid).and_then(|slot| {
-                let body = state.entities.body(slot);
-                let row = state.entities.row(slot);
-                if row.uuid != uuid {
-                    return None;
+            let (entity, uuid) = match settlement_resident(state, executor, villager.as_deref()) {
+                Ok(resident) => resident,
+                Err(message) => {
+                    error(state, connection, message);
+                    return;
                 }
-                let settlement = row.villager.as_ref()?.settlement;
-                Some((body.id, settlement))
-            }) else {
+            };
+            let slot = state.entities.slot_of(entity).expect("resolved resident");
+            let Some(villager) = state.entities.row(slot).villager.as_ref() else {
                 error(state, connection, "Villager not found.");
                 return;
             };
+            let id = villager.settlement;
             let Some(id) = id else {
                 error(state, connection, "Villager belongs to no settlement.");
                 return;
@@ -1400,7 +1389,7 @@ fn settlement(
                 return;
             }
             match crate::settlements::unbind(state, entity) {
-                Ok(()) => error(state, connection, format!("Unbound {villager}.")),
+                Ok(()) => error(state, connection, format!("Unbound {uuid}.")),
                 Err(message) => error(state, connection, message),
             }
         }
@@ -1437,6 +1426,53 @@ fn settlement(
             }
         }
     }
+}
+
+/// Explicit UUIDs retain the native target path. Without one, pick the nearest
+/// living resident in this dimension, within eight blocks of the player.
+fn settlement_resident(
+    state: &TickState,
+    executor: EntityId,
+    target: Option<&str>,
+) -> Result<(EntityId, uuid::Uuid), &'static str> {
+    if let Some(target) = target {
+        let uuid = target
+            .parse::<uuid::Uuid>()
+            .map_err(|_| "Villager must be a native entity UUID.")?;
+        let slot = state
+            .entities
+            .slot_of_uuid(uuid)
+            .filter(|&slot| state.entities.row(slot).uuid == uuid)
+            .ok_or("Villager not found.")?;
+        return Ok((state.entities.body(slot).id, uuid));
+    }
+    let origin = state
+        .entities
+        .slot_of(executor)
+        .map(|slot| state.entities.pos(slot))
+        .ok_or("Stand within 8 blocks of a villager, or supply its native UUID.")?;
+    state
+        .entities
+        .slots()
+        .filter_map(|slot| {
+            let body = state.entities.body(slot);
+            let row = state.entities.row(slot);
+            let villager = row.villager.as_ref()?;
+            if !body.alive || villager.wandering || villager.conversion_time.is_some() {
+                return None;
+            }
+            let distance: f64 = state
+                .entities
+                .pos(slot)
+                .iter()
+                .zip(origin)
+                .map(|(at, origin)| (at - origin).powi(2))
+                .sum();
+            (distance <= 64.0).then_some((distance, body.id, row.uuid))
+        })
+        .min_by(|a, b| a.0.total_cmp(&b.0).then_with(|| a.1.cmp(&b.1)))
+        .map(|(_, entity, uuid)| (entity, uuid))
+        .ok_or("No living villager within 8 blocks. Stand next to one, or supply its native UUID.")
 }
 
 /// Command actor identity: the connection UUID string, never the display

@@ -661,6 +661,14 @@ Tick `t -> t+1`:
   whole-chunk batch with clean recent returns (bounded cache, 2048), then
   settles lighting before returning the resident/publishable batch. Startup
   `ensure_blocking` still joins the complete wanted set.
+  Player view radii are connection-local: Configuration and Play
+  `ClientInformation` negotiate the client/server minimum (floor two, capped by
+  the server). Edge uses that value for cache radius, streaming and forgetting;
+  ordered `SetViewDistance` inputs give the native connection registry the same
+  transient value before Join and on updates. Residency unions each player's
+  negotiated view with simulation distance plus the existing one-chunk margin,
+  then retains the existing spawn/ticket/dirty-pin requirements. Dimension
+  travel preserves the connection's radius; disconnect removes it.
   Generated chunks are saved in bounded batches of at least 64 by the native
   writer thread (the single native DB writer, ordered with checkpoints), at most one
   batch queued or running; while it runs the world holds up to 1024 more and
@@ -1243,14 +1251,18 @@ spawn-breadth coverage uses an authored eligible plains floor and a creative
 observer so worldgen terrain and combat deaths cannot mask biome admission.
 
 Category caps are 70/10/15/5/5/5/20, from the shared contract. The global cap
-is scaled by the union of resident eligible observer chunks /289, never
-multiplied for overlapping players. A local category cap also applies to
-every nearby observer. Persistent, named, tamed or mounted bodies do not
-consume natural caps. Miscellaneous entities do not spawn naturally.
-The spawn pass builds one reusable per-chunk census for all seven categories,
-then sums each observer's 17×17 chunk window once. Global and local counters
-advance with each admitted birth, so later pack members see the same pass's
-newborns without rebuilding the census. Collision admission queries chunk-local
+is scaled by the union of resident eligible 17×17 observer chunk squares /289,
+never multiplied for overlapping players. Each observer's local category count
+includes mobs whose chunk center is within 128 horizontal blocks of that
+player's actual position. A candidate chunk is locally eligible when at least
+one player covering its center remains below the category cap; a capped player
+does not veto an overlapping uncapped player. Persistent, named, tamed or
+mounted bodies do not consume natural caps. Miscellaneous entities do not spawn
+naturally. The spawn pass builds one reusable per-chunk census for all seven
+categories, reusing observer-position and local-count storage between passes.
+Global and local counters advance with each admitted birth, so later pack
+members see the same pass's newborns without rebuilding the census.
+Collision admission queries chunk-local
 entity IDs, expanding by the largest existing half-width to retain exact
 cross-border and giant-body overlap behavior rather than scanning the whole
 population for every candidate.
@@ -1777,6 +1789,21 @@ them with no downtime catch-up.
   the last complete batch for journaled state, but ordinary mob motion remains
   at its last checkpoint capture. This exception is not full motion rollback
   to the replay tick and does not claim per-tick mob-position durability.
+- **Idle despawn counter is checkpoint-durable only (2026-10-18).** Advancing
+  or resetting `no_action_time` alone does not dirty an entity WAL post-image.
+  Native checkpoints still capture its current value; meaningful retained
+  changes also carry the current counter incidentally. A crash may therefore
+  restore a counter preceding increments or resets, moving idle-despawn
+  eligibility earlier or later, rather than emitting a roughly 1 KB state blob
+  per mob per tick. Lifetime
+  age remains derived from existing tick anchors; lifecycle clocks retain their
+  existing projection/event fences. Air, fire, protection, persistence flags,
+  inventories, equipment, health, spawns/removals and all other retained
+  gameplay changes still select their normal WAL images. The owner-world
+  tail contained 353,186 `EntityState` records / 340,211,412 bytes; 351,484 of
+  352,806 consecutive per-entity comparisons changed only age and this idle
+  counter. Excluding the idle counter from equality is the primary growth fix,
+  not a quota or a change to crash consistency of gameplay custody.
 - **Atomic native checkpoints.** The tick freezes immutable chunk/revision,
   player/entity and root/child global images; the native writer thread owns DB
   writes (the journal thread owns the WAL), with one checkpoint in flight. The
@@ -1786,23 +1813,47 @@ them with no downtime catch-up.
   full entity membership/tombstones, scoreboard and globals in **one Immediate
   redb transaction**. All dimensions share tick `c` and that commit; no separate
   chunk/entity commit may publish part of it. Only after durable commit does
-  the writer ACK captured revisions/queue images, prune through the **previous**
-  checkpoint tick, and advance the previous checkpoint to `c`. These steps run
-  on the native writer, so WAL appends of later ticks proceed during the commit
-  and, in normal running, the gate of a later checkpoint reads the tick
-  published before the previous ACK. A shutdown checkpoint may start with one
-  in flight and gate against the older tick P0; that is safe because the gate
-  verifies coverage above P0 and prune only deletes at/below P0.
+  the writer publish committed tick `c`, ACK captured revisions/queue images,
+  and prune batches wholly at or below **that newly durable checkpoint** `c`.
+  Pruning does not depend on delivery of the ACK: the native transaction, not
+  the tick owner's receipt, is the recovery authority. A crash before pruning
+  merely leaves redundant batches that recovery ignores. These steps run on
+  the native writer, so later WAL appends proceed during the commit.
+  In normal running, the next gate reads the tick published before the previous
+  ACK. A shutdown checkpoint may gate against an older tick while a commit is
+  in flight; the live writer's validated pre-open interval and contiguous
+  append coverage make that gate independent of concurrently pruned files.
   Pre-commit failure rolls back every domain, publishes/prunes nothing and
   retains dirty/empty queues. Post-commit ACK loss still recovers DB tick `c`;
   prune failure only retains extra WAL. Chunks cannot evict dirty captured
   revisions before their successful ACK.
   Explicit save requests queue FIFO behind an active capture; the next capture
   starts only after the preceding checkpoint ACK, so saves cannot overtake it.
+  The default checkpoint cadence is **1,200 ticks** (one minute at 20 TPS),
+  formerly 6,000. With successful checkpoints, the journal retains at most
+  that interval plus checkpoint commit/queue lag, rather than an additional
+  entire previous interval. This is a tick/time bound, not a fixed byte cap:
+  emitted gameplay images determine bytes, and failed commits retain all
+  required history. No WAL is deleted to enforce a quota before a durable
+  covering transaction. The 2026-10-18 owner-world investigation and measured
+  copy-only receipts are in `.analysis/codex-logs/wal-growth/`.
 - **Recovery** = one validated committed native checkpoint + every complete
   WAL batch strictly after its tick, routed across all dimensions in one fold.
   WAL at or below the checkpoint is ignored even if pruning or ACK failed.
   No Anvil domain files or JSON manifest participate in runtime recovery.
+- **Plugin compilation cache (2026-10-18).** The host enables Wasmtime's
+  built-in persistent compilation cache using its default cache configuration
+  and OS cache directory. Wasmtime keys compiled components by source content,
+  engine/compiler revision and compilation settings; changed inputs miss the
+  cache, and corrupt entries are recompiled. This cache is disposable host
+  acceleration, not world/plugin authority or part of a backup. Unavailable or
+  malformed cache configuration warns and retains normal compilation, rather
+  than refusing an otherwise valid deployment. Guest validation, fuel/epoch
+  budgets and Cranelift's `Speed` optimization remain unchanged. The copied
+  owner-world startup profile attributed 47.79% self cycle overhead to
+  regalloc2's main allocator alone, versus 0.04% to WAL batch decoding;
+  unchanged plugin recompilation, not replay of covered history, was the
+  observed startup bottleneck.
 - **Plugin native authority (2026-10-14).** `solaris-v2` discovers the complete
   `[plugins].directory` and runs the production `solaris:plugin@0.7.0` component
   host, not the v1 simulation runtime. Invalid packages, duplicate ids/commands,
@@ -2957,6 +3008,12 @@ Self update/remove packets, absorption metadata and other
 viewers' effect particles/ambient/invisibility/glowing use 26.1.2 layouts.
 Vanilla `active_effects`/`AbsorptionAmount` and absolute journal postimages persist
 players and mobs, including hidden effects, through checkpoint and replay.
+
+Player air supply uses the same authoritative vitals state as drowning damage.
+Each depletion/recovery change sends reliable own-entity integer air metadata,
+independent of health changes and world-stream credit, so bubbles can warn
+before damage begins. Join, respawn and dimension transfer resynchronize the
+current supply; unchanged air emits nothing and does not clone appearance rows.
 
 Wave 3 admits mace smash only above 1.5 fallen blocks outside gliding, adds
 tiered fall damage and Density, and applies Breach before armor enchantment

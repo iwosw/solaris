@@ -88,6 +88,51 @@ fn ground_obstacle_jump_finishes_climbing_a_full_block() {
 }
 
 #[test]
+fn zombie_and_animal_blueprints_walk_onto_one_block_rise() {
+    let registry = crate::registry::CoreRegistry::load(None).expect("registry");
+    let world = Habitat(|x, y, _| {
+        if y < 0 || (x >= 1 && y == 0) {
+            BlockMaterial::Solid
+        } else {
+            BlockMaterial::Air
+        }
+    });
+    for name in [
+        "minecraft:zombie",
+        "minecraft:cow",
+        "minecraft:pig",
+        "minecraft:sheep",
+    ] {
+        let type_id = registry
+            .entity_types
+            .id_of(&mc_data::Identifier::parse(name).unwrap())
+            .unwrap();
+        let blueprint = registry.blueprint(type_id).unwrap();
+        assert_eq!(blueprint.movement, MovementClass::Walker, "{name}");
+        let mut body = input(blueprint.movement, Vec3::new(0.5, 0.0, 0.5)).body;
+        body.aabb = Aabb {
+            half_width: blueprint.half_width,
+            height: blueprint.height,
+        };
+        for tick in 0..60 {
+            let mut state = input(blueprint.movement, body.position);
+            state.body = body;
+            state.drive = steer(
+                blueprint.movement,
+                [body.position.x, body.position.y, body.position.z],
+                [3.5, 1.0, 0.5],
+                f64::from(blueprint.params.speed),
+            );
+            state.tick = tick;
+            body = step(state, &world, |_, _| true).body;
+        }
+        assert!(body.position.x > 3.0, "{name}: {body:?}");
+        assert!((body.position.y - 1.0).abs() < 1.0e-7, "{name}: {body:?}");
+        assert!(body.on_ground, "{name} must land on the raised floor");
+    }
+}
+
+#[test]
 fn low_ceiling_prevents_ground_obstacle_jump() {
     let world = Habitat(|x, y, _| {
         if y < 0 || y == 1 || (x == 1 && y == 0) {

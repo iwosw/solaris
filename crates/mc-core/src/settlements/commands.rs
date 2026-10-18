@@ -46,10 +46,10 @@ pub enum SettlementCommand {
     },
     Bind {
         settlement: String,
-        villager: String,
+        villager: Option<String>,
     },
     Unbind {
-        villager: String,
+        villager: Option<String>,
     },
     Relocate {
         settlement: String,
@@ -64,7 +64,7 @@ pub enum SettlementCommand {
 }
 
 pub fn parse(args: &[&str]) -> Result<SettlementCommand, CommandError> {
-    let usage: &'static str = "settlement <create|list|info|rename|remove|bind|unbind|relocate|production|commerce|payroll|caravan>";
+    let usage: &'static str = "settlement <guide|create|list|info|rename|remove|bind|unbind|relocate|production|commerce|payroll|caravan>";
     let [sub, rest @ ..] = args else {
         return Err(CommandError::Usage(usage));
     };
@@ -114,15 +114,20 @@ pub fn parse(args: &[&str]) -> Result<SettlementCommand, CommandError> {
             _ => Err(CommandError::Usage(usage)),
         },
         "bind" => match rest {
+            [settlement] => Ok(SettlementCommand::Bind {
+                settlement: (*settlement).to_owned(),
+                villager: None,
+            }),
             [settlement, villager] => Ok(SettlementCommand::Bind {
                 settlement: (*settlement).to_owned(),
-                villager: (*villager).to_owned(),
+                villager: Some((*villager).to_owned()),
             }),
             _ => Err(CommandError::Usage(usage)),
         },
         "unbind" => match rest {
+            [] => Ok(SettlementCommand::Unbind { villager: None }),
             [villager] => Ok(SettlementCommand::Unbind {
-                villager: (*villager).to_owned(),
+                villager: Some((*villager).to_owned()),
             }),
             _ => Err(CommandError::Usage(usage)),
         },

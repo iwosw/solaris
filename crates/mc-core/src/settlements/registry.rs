@@ -18,6 +18,9 @@ pub struct SettlementRecord {
     pub id: SettlementId,
     pub name: String,
     pub owner: String,
+    /// Last authenticated display name; UUID `owner` remains the authority.
+    #[serde(default)]
+    pub owner_name: Option<String>,
     pub anchor: [i32; 3],
     pub radius: u32,
     pub revision: u64,
@@ -196,6 +199,7 @@ impl SettlementRecord {
             );
         self.name.capacity()
             + self.owner.capacity()
+            + opt(&self.owner_name)
             + roots
             + households
             + district
@@ -234,6 +238,24 @@ pub fn validate_record(record: &SettlementRecord) -> Result<(), &'static str> {
 impl Registry {
     pub fn records(&self) -> impl Iterator<Item = &SettlementRecord> {
         self.records.values()
+    }
+    pub(crate) fn refresh_owner_names<'a>(
+        &mut self,
+        name_of: impl Fn(uuid::Uuid) -> Option<&'a str>,
+    ) {
+        for record in self.records.values_mut() {
+            let Ok(owner) = uuid::Uuid::parse_str(&record.owner) else {
+                continue;
+            };
+            let Some(name) = name_of(owner) else {
+                continue;
+            };
+            if record.owner_name.as_deref() != Some(name) {
+                record.owner_name = Some(name.to_owned());
+                // Display-only: do not invalidate economic/command revisions.
+                self.touched.insert(record.id);
+            }
+        }
     }
 
     pub fn get(&self, id: SettlementId) -> Option<&SettlementRecord> {
@@ -326,6 +348,7 @@ impl Registry {
             id,
             name,
             owner,
+            owner_name: None,
             anchor,
             radius,
             revision: 1,

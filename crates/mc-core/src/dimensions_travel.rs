@@ -198,6 +198,8 @@ fn move_between(
                     portal_cooldown,
                 },
             );
+            let air = destination.players[&id].air_change();
+            destination.push_player(connection, air);
         }
     }
     if alive && destination.players.contains_key(&id) {

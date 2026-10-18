@@ -19,6 +19,18 @@ pub(in crate::tick) fn permission_level(
     }
 }
 
+pub(in crate::tick) fn set_view_distance(
+    state: &mut TickState,
+    (connection, view_distance): (&ConnectionId, &u8),
+) {
+    // Pre-Join friendly: the edge submits the negotiated radius before Join,
+    // so it must record even with no player entity yet. Dimension travel
+    // moves it with the connection; Leave clears it.
+    state
+        .connections
+        .set_view_distance(*connection, *view_distance);
+}
+
 pub(in crate::tick) fn join(
     state: &mut TickState,
     (connection, uuid, name, permission_level): (&ConnectionId, &uuid::Uuid, &String, &u8),
@@ -197,12 +209,14 @@ pub(in crate::tick) fn join(
         (
             player.inventory_contents(),
             player.health_change(),
+            player.air_change(),
             player.experience_change(),
         )
     });
-    if let Some((inventory, health, experience)) = burst {
+    if let Some((inventory, health, air, experience)) = burst {
         state.push_player(*connection, inventory);
         state.push_player(*connection, health);
+        state.push_player(*connection, air);
         state.push_player(*connection, experience);
     }
     // A player who left dead rejoins dead (vanilla death screen):

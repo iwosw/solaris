@@ -50,7 +50,8 @@ pub(crate) struct SpawnCensus {
     chunks: FxHashMap<(i32, i32), SpawnChunk>,
     eligible: FxHashSet<(i32, i32)>,
     global: [usize; 7],
-    observer_chunks: Vec<(i32, i32)>,
+    /// Actual player positions for the 128-block horizontal local cap.
+    local_observers: Vec<[f64; 3]>,
     local_counts: Vec<[usize; 7]>,
     /// Reusable per-pass observer table (sorted by entity id) and the
     /// projected position slice the census/spawn passes consume. Owned here
@@ -63,11 +64,19 @@ pub(crate) struct SpawnCensus {
     pub(crate) dimension_charges: crate::dimensions::spawning::Charges,
 }
 
+/// Local mob caps measure each chunk center against the player's actual X/Z.
+fn local_in_range(observer: [f64; 3], cell: (i32, i32)) -> bool {
+    let center = [f64::from(cell.0 * 16 + 8), f64::from(cell.1 * 16 + 8)];
+    let dx = observer[0] - center[0];
+    let dz = observer[2] - center[1];
+    dx * dx + dz * dz <= SPAWN_MAX * SPAWN_MAX
+}
+
 impl SpawnCensus {
     fn begin(&mut self) {
         self.global.fill(0);
         self.eligible.clear();
-        self.observer_chunks.clear();
+        self.local_observers.clear();
         self.local_counts.clear();
         self.max_half_width = 0.0;
         self.dimension_charges.clear();
@@ -93,8 +102,8 @@ impl SpawnCensus {
         if let Some(index) = category {
             chunk.counts[index] += 1;
             self.global[index] += 1;
-            for (observer, counts) in self.observer_chunks.iter().zip(&mut self.local_counts) {
-                if near_chunks(*observer, cell) {
+            for (observer, counts) in self.local_observers.iter().zip(&mut self.local_counts) {
+                if local_in_range(*observer, cell) {
                     counts[index] += 1;
                 }
             }
@@ -105,12 +114,18 @@ impl SpawnCensus {
         self.local_counts[observer][category]
     }
 
+    /// Any uncapped observer covering the chunk permits spawning.
     fn local_cap_reached(&self, position: [f64; 3], category: usize, cap: usize) -> bool {
+        if self.local_observers.is_empty() {
+            return false;
+        }
         let cell = chunk_of(position);
-        self.observer_chunks
-            .iter()
-            .zip(&self.local_counts)
-            .any(|(observer, counts)| counts[category] >= cap && near_chunks(*observer, cell))
+        for (observer, counts) in self.local_observers.iter().zip(&self.local_counts) {
+            if local_in_range(*observer, cell) && counts[category] < cap {
+                return false;
+            }
+        }
+        true
     }
 
     pub(crate) fn overlaps(
@@ -447,6 +462,7 @@ fn observe_slot(state: &mut TickState, slot: EntitySlot) {
 /// Direct pack callers must rebuild after changes outside their spawn pass.
 pub(crate) fn census(state: &mut TickState, players: &[[f64; 3]]) -> [usize; 7] {
     state.spawn_census.begin();
+    // Build chunk totals first; do not multiply the population scan by players.
     for index in 0..state.entities.len() {
         observe_slot(state, EntitySlot(index as u32));
     }
@@ -459,14 +475,16 @@ pub(crate) fn census(state: &mut TickState, players: &[[f64; 3]]) -> [usize; 7] 
                 if state.world.is_active(x, z) {
                     state.spawn_census.eligible.insert((x, z));
                 }
-                if let Some(chunk) = state.spawn_census.chunks.get(&(x, z)) {
+                if local_in_range(*player, (x, z))
+                    && let Some(chunk) = state.spawn_census.chunks.get(&(x, z))
+                {
                     for (count, population) in counts.iter_mut().zip(&chunk.counts) {
                         *count += *population;
                     }
                 }
             }
         }
-        state.spawn_census.observer_chunks.push(cell);
+        state.spawn_census.local_observers.push(*player);
         state.spawn_census.local_counts.push(counts);
     }
     state.spawn_census.tick = Some(state.tick);

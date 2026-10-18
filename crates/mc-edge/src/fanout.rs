@@ -54,8 +54,8 @@ pub struct AddressedPacket {
 ///
 /// `viewers` is consumed as an iterator of `&mut ViewerState` (the server
 /// passes `viewers.values_mut()`); each viewer plans against the same
-/// [`TickOutput`] on its own rayon thread. `view_distance` sizes every
-/// viewer's chunk square.
+/// [`TickOutput`] on its own rayon thread. `view_distance` is the server
+/// limit; negotiated per-connection radii take precedence within that limit.
 ///
 /// Chunk encoding needs block/biome registries; the 3-arg server call site
 /// carries none, so `publish` uses the process-wide required-reports

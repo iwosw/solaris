@@ -171,6 +171,19 @@ pub(crate) fn run_tick(
             )));
         swap_globals(state, world);
         let child_start = phase_start.map(|_| std::time::Instant::now());
+        // Unknown-connection metadata runs in the root before Join resolves
+        // UUID locality to this dimension. Move only that pending value,
+        // rather than copying it into every world's connection registry.
+        for (input, target) in inputs.iter().zip(&routes) {
+            if *target == dimension
+                && let PlayerInput::Join { connection, .. } = input
+                && state.connections.entity_of(*connection).is_none()
+                && let Some(view) = state.connections.view_distance_of(*connection)
+            {
+                state.connections.remove_by_connection(*connection);
+                world.connections.set_view_distance(*connection, view);
+            }
+        }
         let (child_output, mut child_drains, child_times) = crate::tick::run_dimension_tick(
             world,
             inputs
@@ -184,11 +197,15 @@ pub(crate) fn run_tick(
         high_water = world.entities.wire_id_high_water();
         drains.append(&mut child_drains);
         state.disconnects.append(&mut world.disconnects);
+        times.input_us += child_times.input_us;
+        times.chunks_us += child_times.chunks_us;
         times.entity_us += child_times.entity_us;
         times.merge_us += child_times.merge_us;
         times.block_us += child_times.block_us;
+        times.commit_us += child_times.commit_us;
         times.snapshot_us += child_times.snapshot_us;
         times.views_us += child_times.views_us;
+        times.publish_us += child_times.publish_us;
         Arc::get_mut(&mut output.snapshot)
             .expect("unpublished root snapshot")
             .dimensions

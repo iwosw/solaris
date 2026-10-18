@@ -52,6 +52,7 @@ pub(crate) struct ChunkPois {
 #[derive(Default)]
 pub(crate) struct PoiCache {
     pub(crate) kinds: Vec<Option<PoiKind>>,
+    pub(crate) presentation: super::presentation::Cache,
     pub(crate) food: crate::villager::brain::FoodTable,
     pub(crate) chunks: FxHashMap<ChunkPos, ChunkPois>,
     pub(crate) pending_chunks: VecDeque<ChunkPos>,
@@ -1143,7 +1144,7 @@ fn validate_changed_claims(state: &mut TickState, cache: &mut PoiCache) -> usize
 
 #[cfg(test)]
 #[path = "allocator_tests.rs"]
-mod tests;
+pub(crate) mod tests;
 
 #[cfg(test)]
 #[path = "allocator_event_tests.rs"]

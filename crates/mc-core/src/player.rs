@@ -351,6 +351,13 @@ impl PlayerState {
     }
 
     #[must_use]
+    pub fn air_change(&self) -> PlayerChange {
+        PlayerChange::AirSupply {
+            air: self.vitals.air,
+        }
+    }
+
+    #[must_use]
     pub fn experience_change(&self) -> PlayerChange {
         let experience = self.vitals.experience;
         PlayerChange::Experience {
@@ -1061,6 +1068,7 @@ impl PlayerState {
                     game_mode,
                 },
                 self.health_change(),
+                self.air_change(),
                 self.experience_change(),
             ],
             ..PlayerEffects::default()

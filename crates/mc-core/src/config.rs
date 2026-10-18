@@ -24,7 +24,7 @@ pub struct CoreConfig {
     pub player_outbox_cap: usize,
     /// Journal fsync cadence: fsync after this many appended batches.
     pub journal_fsync_every_batches: u32,
-    /// Ticks of journal retained past the last complete checkpoint.
+    /// Checkpoint capture cadence; successful commits prune the covered journal.
     pub checkpoint_every_ticks: u64,
     /// Vanilla content-cache root (`data/minecraft/...`, `reports/...`).
     /// Required outside tests; missing content is a startup error. Only
@@ -47,7 +47,7 @@ impl CoreConfig {
             broadcast_cap: 32,
             player_outbox_cap: 512,
             journal_fsync_every_batches: 10,
-            checkpoint_every_ticks: 6000,
+            checkpoint_every_ticks: 1200,
             vanilla_data_dir: None,
             plugin_directory: None,
         }

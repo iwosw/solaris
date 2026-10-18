@@ -18,10 +18,10 @@ use mc_protocol::packets::play::{
     ClientboundRemoveEntityEffect, ClientboundRespawn, ClientboundSelectAdvancementsTab,
     ClientboundSetCursorItem, ClientboundSetEntityData, ClientboundSetExperience,
     ClientboundSetHealth, ClientboundSystemChat, ClientboundUpdateEntityAttributes,
-    ClientboundUpdateEntityEffect, EntityAttributeModifier, EntityAttributeSnapshot,
-    EntityDataValue as WireEntityDataValue, EntityEffectFlags, EntityEvent as WireEntityEvent,
-    GameEvent, LevelEvent, MerchantItemCost, MerchantOffer, MobEffectId,
-    PLAYER_DATA_ABSORPTION_INDEX, PlayDisconnect, PlayerInfoActions, PlayerInfoEntry,
+    ClientboundUpdateEntityEffect, ENTITY_DATA_AIR_SUPPLY_INDEX, EntityAttributeModifier,
+    EntityAttributeSnapshot, EntityDataValue as WireEntityDataValue, EntityEffectFlags,
+    EntityEvent as WireEntityEvent, GameEvent, LevelEvent, MerchantItemCost, MerchantOffer,
+    MobEffectId, PLAYER_DATA_ABSORPTION_INDEX, PlayDisconnect, PlayerInfoActions, PlayerInfoEntry,
     PlayerInfoRemove, PlayerInfoUpdate, SetEntityMotion, SynchronizePlayerPosition, pack_block_pos,
 };
 
@@ -163,6 +163,17 @@ fn plan_change(change: &PlayerChange, viewer: &mut ViewerState, out: &mut Vec<Pl
                 values: vec![WireEntityDataValue::Float {
                     index: PLAYER_DATA_ABSORPTION_INDEX,
                     value: *amount,
+                }],
+            },
+        ),
+        PlayerChange::AirSupply { air } => push_reliable(
+            out,
+            conn,
+            &ClientboundSetEntityData {
+                entity_id: viewer.entity_id.0,
+                values: vec![WireEntityDataValue::Int {
+                    index: ENTITY_DATA_AIR_SUPPLY_INDEX,
+                    value: *air,
                 }],
             },
         ),
@@ -675,6 +686,7 @@ fn plan_respawn(respawn: &Respawn, viewer: &mut ViewerState, out: &mut Vec<Plann
         viewer.border_baseline = None;
         viewer.center_sent = None;
         viewer.forget_all = false;
+        crate::settlement_labels::forget_labels(viewer, out);
     } else {
         // Same-dimension death respawn: the client keeps its level, so the
         // next plan forgets everything held (see `ViewerState::forget_all`).

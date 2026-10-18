@@ -350,6 +350,14 @@ impl CompiledPlugin {
 ///
 /// Compilation is bounded and sequential per engine call; the epoch mechanism is
 /// enabled here so a `Store` can set a deadline before it runs guest code.
+///
+/// The engine carries Wasmtime's builtin compilation cache, so an unchanged
+/// component is not recompiled on the next restart. The builtin keys each entry
+/// by content hash plus the engine revision and every compile setting, so
+/// changed bytes or a changed compiler can never reuse stale code, and entries
+/// it cannot decode are recompiled instead of served. Unavailable or malformed
+/// cache configuration falls back to compilation. Wasmtime's default
+/// `OptLevel::Speed` is unchanged.
 pub fn engine(limits: &PluginLimits) -> Result<Engine, HostError> {
     let mut config = Config::new();
     config
@@ -359,6 +367,14 @@ pub fn engine(limits: &PluginLimits) -> Result<Engine, HostError> {
         .wasm_backtrace(false)
         .parallel_compilation(false)
         .max_wasm_stack(usize::try_from(limits.wasm_stack_bytes).unwrap_or(usize::MAX));
+    match wasmtime::Cache::from_file(None) {
+        Ok(cache) => {
+            config.cache(Some(cache));
+        }
+        Err(error) => {
+            tracing::warn!("plugin compilation cache unavailable, compiling without it: {error:#}");
+        }
+    }
     Engine::new(&config).map_err(|error| HostError::Engine(error.to_string()))
 }
 

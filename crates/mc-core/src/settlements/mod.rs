@@ -12,6 +12,7 @@ mod commerce;
 pub(crate) mod economy;
 pub(crate) mod economy_commands;
 pub(crate) mod economy_customization;
+pub mod presentation;
 mod production;
 pub(crate) use crate::plugin_inventories::native as inventory;
 pub mod districts;
@@ -120,9 +121,42 @@ pub(crate) fn remove(state: &mut TickState, id: SettlementId) -> bool {
     true
 }
 
+/// Retain authenticated names for offline presentation without changing the
+/// UUID used for ownership checks. No string copies or dirty idle-tick images.
+pub(crate) fn refresh_owner_names(state: &mut TickState) {
+    let roster = std::sync::Arc::clone(&state.dimension_globals.roster);
+    let refresh = |world: &mut TickState| {
+        let connections = &world.connections;
+        world.settlements.refresh_owner_names(|uuid| {
+            connections
+                .all_connections()
+                .find_map(|connection| {
+                    (connections.uuid_of(connection) == Some(uuid))
+                        .then(|| {
+                            connections
+                                .entity_of(connection)
+                                .and_then(|entity| connections.name_of(entity))
+                        })
+                        .flatten()
+                })
+                .or_else(|| {
+                    roster
+                        .iter()
+                        .find(|player| player.uuid == uuid)
+                        .map(|player| player.name.as_str())
+                })
+        });
+    };
+    for world in state.other_dimensions.values_mut() {
+        refresh(world);
+    }
+    refresh(state);
+}
+
 /// Dimension ticks temporarily take sibling worlds out of the owner. Resolve
 /// deletion against all restored worlds before the shared tick WAL is captured.
 pub(crate) fn finish(state: &mut TickState) {
+    refresh_owner_names(state);
     households::finish(state);
     let removed: Vec<_> = std::iter::once(&*state)
         .chain(state.other_dimensions.values().map(|world| &**world))

@@ -693,7 +693,7 @@ impl EffectParticle {
 
 /// Entity-data serializers implemented for 26.1.2.
 ///
-/// Supported serializer ids are 0-4, 6-20, and 42. Particle serializers
+/// Supported serializer ids are 0-6, 7-20, and 42. Particle serializers
 /// support the options used by built-in effects; other particle types and
 /// variant, global-position, vector, quaternion, and resolvable-profile
 /// serializers are rejected explicitly.
@@ -726,6 +726,13 @@ pub enum EntityDataValue {
         value: f32,
     },
     String {
+        index: u8,
+        value: String,
+    },
+    /// `Component` serializer (id 5): `Display$TextDisplay.DATA_TEXT_ID`
+    /// (index 23). Vanilla `TRUSTED_STREAM_CODEC`; the supported literal-text
+    /// shape encodes exactly like `OptionalComponent`'s payload: network NBT.
+    Component {
         index: u8,
         value: String,
     },
@@ -822,6 +829,9 @@ impl PartialEq for EntityDataValue {
                 java_float_equals(*left, *right)
             }
             (Self::String { value: left, .. }, Self::String { value: right, .. }) => left == right,
+            (Self::Component { value: left, .. }, Self::Component { value: right, .. }) => {
+                left == right
+            }
             (
                 Self::OptionalComponent { value: left, .. },
                 Self::OptionalComponent { value: right, .. },
@@ -912,6 +922,7 @@ impl EntityDataValue {
             | Self::Long { index, .. }
             | Self::Float { index, .. }
             | Self::String { index, .. }
+            | Self::Component { index, .. }
             | Self::OptionalComponent { index, .. }
             | Self::ItemStack { index, .. }
             | Self::Boolean { index, .. }
@@ -941,6 +952,7 @@ impl EntityDataValue {
             Self::Long { .. } => ENTITY_DATA_LONG_SERIALIZER_ID,
             Self::Float { .. } => ENTITY_DATA_FLOAT_SERIALIZER_ID,
             Self::String { .. } => ENTITY_DATA_STRING_SERIALIZER_ID,
+            Self::Component { .. } => 5,
             Self::OptionalComponent { .. } => 6,
             Self::ItemStack { .. } => ENTITY_DATA_ITEM_STACK_SERIALIZER_ID,
             Self::Boolean { .. } => ENTITY_DATA_BOOLEAN_SERIALIZER_ID,
@@ -975,6 +987,9 @@ impl EntityDataValue {
             Self::Float { value, .. } => buf.write_f32(*value),
             Self::String { value, .. } => {
                 buf.write_string(value, DEFAULT_MAX_STRING_LEN)?;
+            }
+            Self::Component { value, .. } => {
+                write_literal_text_component(buf, value)?;
             }
             Self::OptionalComponent { value, .. } => {
                 buf.write_bool(value.is_some());
@@ -1075,6 +1090,10 @@ impl EntityDataValue {
             ENTITY_DATA_STRING_SERIALIZER_ID => Self::String {
                 index,
                 value: buf.read_string(DEFAULT_MAX_STRING_LEN)?,
+            },
+            5 => Self::Component {
+                index,
+                value: read_literal_text_component(buf)?,
             },
             6 => Self::OptionalComponent {
                 index,

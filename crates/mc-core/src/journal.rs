@@ -1,17 +1,16 @@
 //! Tick journal: framed batches of absolute post-images + tombstones,
-//! manifest-gated checkpoints, recovery by replay (ADR 0013 "Durability").
+//! native-transaction checkpoints, recovery by replay (ADR 0013 "Durability").
 //!
 //! Layout under `<world_dir>/`:
 //! - `journal/batch-<first_tick>-<last_tick>.bin`: framed batches. One batch
-//!   holds whole ticks: `[magic u32][tick_lo u64][tick_hi u64][len u32][crc32 u32][payload]`.
+//!   holds whole ticks: `[magic u32][version u32][tick_lo u64][tick_hi u64][len u32][crc32 u32][payload]`.
 //!   Payload is JSON lines of [`JournalEntry`]. Unpublished `.tmp` files are ignored.
-//! - `players/<uuid>.dat`: NBT player records (vanilla-ish).
-//! - `region/`: Anvil chunks (written by [`ChunkWorld`](crate::world::ChunkWorld)).
-//! - `CHECKPOINT-MANIFEST.json`: `{ "tick": c }`, written + fsynced + renamed
-//!   only after every domain file and its directory entry are fsynced.
+//! - `native/state.redb`: one atomic checkpoint of chunks, entities, players,
+//!   globals and the committed tick across all dimensions.
 //!
-//! Write-ahead rule: no checkpoint-`c` file is touched until journal batches
-//! through tick `c` are fsynced; the manifest goes last.
+//! Write-ahead rule: batches through checkpoint tick `c` are durable before
+//! the native transaction starts. Only its Immediate commit makes pruning
+//! batches at or below `c` safe; recovery folds only batches above that tick.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{File, OpenOptions};
@@ -2034,6 +2033,7 @@ pub struct EntityStateImage {
     pub age: u32,
     pub protected_until: u64,
     pub persistent: bool,
+    /// Checkpoint-durable idle/despawn counter; never a WAL dirty key by itself.
     pub no_action_time: u32,
     pub air_supply: i32,
     pub burn_ticks: u32,
@@ -2157,7 +2157,6 @@ impl EntityStateImage {
     ) -> bool {
         self.protected_until == row.protected_until
             && self.persistent == row.persistent
-            && self.no_action_time == row.no_action_time
             && self.air_supply == body.air_supply
             && self.burn_ticks == body.burn_ticks
             && self.love == row.love

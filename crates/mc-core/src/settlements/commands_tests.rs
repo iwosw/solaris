@@ -63,17 +63,29 @@ fn mutations_require_exact_names_and_uuids_shape() {
         parse(&["bind", "town", "12345678-1234-1234-1234-123456789012"]).unwrap(),
         SettlementCommand::Bind {
             settlement: "town".into(),
-            villager: "12345678-1234-1234-1234-123456789012".into(),
+            villager: Some("12345678-1234-1234-1234-123456789012".into()),
         }
     );
-    assert!(parse(&["bind", "town"]).is_err());
+    assert_eq!(
+        parse(&["bind", "town"]).unwrap(),
+        SettlementCommand::Bind {
+            settlement: "town".into(),
+            villager: None,
+        }
+    );
     assert_eq!(
         parse(&["unbind", "12345678-1234-1234-1234-123456789012"]).unwrap(),
         SettlementCommand::Unbind {
-            villager: "12345678-1234-1234-1234-123456789012".into(),
+            villager: Some("12345678-1234-1234-1234-123456789012".into()),
         }
     );
-    assert!(parse(&["unbind"]).is_err());
+    assert_eq!(
+        parse(&["unbind"]).unwrap(),
+        SettlementCommand::Unbind { villager: None }
+    );
+    assert!(parse(&["bind"]).is_err());
+    assert!(parse(&["bind", "town", "uuid", "extra"]).is_err());
+    assert!(parse(&["unbind", "uuid", "extra"]).is_err());
     assert!(parse(&[]).is_err());
     assert!(parse(&["raze", "town"]).is_err());
 }

@@ -105,6 +105,7 @@ impl LightLayer {
         }
     }
 
+    #[inline]
     #[must_use]
     pub fn get(&self, x: usize, local_y: usize, z: usize) -> u8 {
         debug_assert!(x < SECTION_DIM);

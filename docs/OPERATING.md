@@ -72,6 +72,14 @@ beside the selected config. Missing sections use native defaults: loopback TCP
 25565, world `world`, seed 0, view distance 8, simulation distance 6, max players
 20 and offline authentication. Use explicit operator-controlled values.
 
+`view_distance` is the server's upper bound, not a forced client radius. Each
+connection uses the smaller of its requested view distance and this limit
+(minimum two chunks, without exceeding the server limit). Changing the client's
+render distance during Play updates its cache radius and streams or forgets
+chunks without reconnecting. World residency unions those per-player views,
+the simulation radius and the existing extra chunk margin; explicit tickets
+and dirty-chunk pins can keep additional chunks resident without sending them.
+
 The old `[admin]`, `[simulation]`, `[autoscale]`, `[chunk_pipeline]`, worldgen-mode,
 per-package grants/expected roster and reload knobs are not supported settings.
 Do not carry them forward expecting old behavior. Use the source `EdgeConfig`

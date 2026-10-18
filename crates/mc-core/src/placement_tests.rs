@@ -929,3 +929,111 @@ fn common_attachment_support_removal_matrix() {
         "support-removal failures: {failures:#?}"
     );
 }
+/// Ilya (swarm): a valid oak door survived placement, then popped on its own
+/// with only an adjacent interior y67 clear nearby. The door's support is its
+/// floor cell; an adjacent same-level edit must not pop either half.
+#[test]
+fn oak_door_survives_adjacent_interior_clear() {
+    use crate::crafter::tests::{block, fixture};
+
+    let (mut state, _) = fixture(None);
+    // Full vanilla loot so the support-loss drop asserts exactly one item.
+    let vanilla = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../data/vanilla");
+    state.registry = std::sync::Arc::new(
+        crate::registry::CoreRegistry::load(Some(&vanilla)).expect("full vanilla block loot"),
+    );
+    let air = state.registry.states.air;
+    let stone = state.registry.states.stone;
+    let lower_pos = BlockPos { x: 3, y: 201, z: 3 };
+    let upper_pos = BlockPos {
+        y: lower_pos.y + 1,
+        ..lower_pos
+    };
+    let lower = block(
+        &state,
+        "oak_door",
+        &[("facing", "west"), ("half", "lower"), ("hinge", "left")],
+    );
+    let upper = block(
+        &state,
+        "oak_door",
+        &[("facing", "west"), ("half", "upper"), ("hinge", "left")],
+    );
+    state
+        .world
+        .set_block(lower_pos.x, lower_pos.y - 1, lower_pos.z, stone);
+    state
+        .world
+        .set_block(lower_pos.x, lower_pos.y, lower_pos.z, lower);
+    state
+        .world
+        .set_block(upper_pos.x, upper_pos.y, upper_pos.z, upper);
+    // Adjacent interior cell with stray fill, as in the Ilya hut.
+    let interior = BlockPos {
+        x: lower_pos.x + 1,
+        ..lower_pos
+    };
+    state
+        .world
+        .set_block(interior.x, interior.y, interior.z, stone);
+    // Clearing that adjacent interior cell must not disturb the door.
+    // Convention (matrix above): apply the source edit to the world first,
+    // then hand the same write to pop_unsupported.
+    state
+        .world
+        .set_block(interior.x, interior.y, interior.z, air);
+    state.world.fold_overlay();
+    let mut writes = vec![(interior, air)];
+    let mut spawned = Vec::new();
+    crate::tick::pop_unsupported(&mut state, &mut writes, &mut spawned);
+    assert_eq!(
+        state.world.block_at(lower_pos.x, lower_pos.y, lower_pos.z),
+        Some(lower),
+        "adjacent interior clear must not pop the door lower half"
+    );
+    assert_eq!(
+        state.world.block_at(upper_pos.x, upper_pos.y, upper_pos.z),
+        Some(upper),
+        "adjacent interior clear must not pop the door upper half"
+    );
+    assert!(
+        spawned.is_empty(),
+        "adjacent interior clear must not drop a door item"
+    );
+    // Removing the floor under the door pops both halves whole with one item.
+    let floor = BlockPos {
+        y: lower_pos.y - 1,
+        ..lower_pos
+    };
+    state.world.set_block(floor.x, floor.y, floor.z, air);
+    state.world.fold_overlay();
+    let mut writes = vec![(floor, air)];
+    let mut spawned = Vec::new();
+    crate::tick::pop_unsupported(&mut state, &mut writes, &mut spawned);
+    assert_eq!(
+        state.world.block_at(lower_pos.x, lower_pos.y, lower_pos.z),
+        Some(air),
+        "floor removal pops the door lower half"
+    );
+    assert_eq!(
+        state.world.block_at(upper_pos.x, upper_pos.y, upper_pos.z),
+        Some(air),
+        "floor removal pops the door upper half with its pair"
+    );
+    let wanted = state
+        .registry
+        .items
+        .id_of(&mc_data::Identifier::parse("minecraft:oak_door").unwrap())
+        .unwrap();
+    let drops: Vec<_> = spawned
+        .iter()
+        .filter_map(|id| state.entities.slot_of(*id))
+        .filter_map(|slot| state.entities.row(slot).item.as_ref())
+        .map(|stack| (stack.item_id, stack.count))
+        .collect();
+    assert_eq!(
+        drops,
+        vec![(wanted, 1)],
+        "legitimate support loss must drop exactly one oak_door item"
+    );
+}

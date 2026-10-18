@@ -132,6 +132,74 @@ fn crash_after_durable_native_commit_recovers_complete_world_without_ack_or_prun
     );
 }
 
+#[test]
+fn durable_checkpoint_prunes_covered_batches_and_crash_replays_only_tail() {
+    for lose_ack in [false, true] {
+        let directory = tempfile::tempdir().unwrap();
+        let config = CoreConfig::new(directory.path().to_path_buf(), 42);
+        let (state, job, done_rx) = captured_world(&config, 2);
+        let mut manifest = read_manifest(&config).unwrap();
+        let mut writer = JournalWriter::open(directory.path(), 1).unwrap();
+        writer.append(1, 1, &[]).unwrap();
+        writer.append(2, 2, &[]).unwrap();
+        writer.gate(manifest.tick, job.tick).unwrap();
+        // Later appends may already exist while the native transaction commits.
+        // An unchanged tick still has a complete frame, not a recovery hole.
+        writer.append(3, 3, &[]).unwrap();
+        writer
+            .append(
+                4,
+                4,
+                &[JournalEntry::Difficulty {
+                    value: crate::survival::Difficulty::Hard,
+                }],
+            )
+            .unwrap();
+        let done_rx = (!lose_ack).then_some(done_rx);
+        run_native_work(
+            NativeWork::Checkpoint {
+                job,
+                plugins: Ok(Box::new(state.plugins.clone())),
+            },
+            directory.path(),
+            &std::sync::atomic::AtomicBool::new(false),
+            &std::sync::atomic::AtomicU64::new(manifest.tick),
+            &mut manifest,
+        );
+        if let Some(done_rx) = done_rx {
+            assert!(done_rx.recv().unwrap().is_some());
+        }
+        let journal = directory.path().join("journal");
+        for tick in 1..=2 {
+            assert!(
+                !journal
+                    .join(format!("batch-{tick:020}-{tick:020}.bin"))
+                    .exists(),
+                "batch {tick} is covered by the durable checkpoint (lost ACK: {lose_ack})",
+            );
+        }
+        let batches = read_complete_batches_after(&journal, manifest.tick).unwrap();
+        assert_eq!(
+            batches
+                .iter()
+                .map(|(lo, hi, _)| (*lo, *hi))
+                .collect::<Vec<_>>(),
+            vec![(3, 3), (4, 4)],
+            "only the tail above the durable checkpoint may remain (lost ACK: {lose_ack})",
+        );
+        assert!(batches[0].2.is_empty(), "unchanged tick remains replayable");
+        drop(state);
+        drop(writer);
+        // Abrupt reopen: no graceful final checkpoint can hide a missing tail.
+        let recovered = crate::native_checkpoint::recover_offline(&config).unwrap();
+        assert_eq!(recovered.manifest.tick, 2);
+        for replay in recovered.dimensions.values() {
+            assert_eq!(replay.tick, 4);
+            assert_eq!(replay.difficulty, crate::survival::Difficulty::Hard);
+        }
+    }
+}
+
 #[tokio::test]
 async fn queued_save_requests_keep_one_capture_in_flight_and_both_receive_durable_ack() {
     let directory = tempfile::tempdir().unwrap();

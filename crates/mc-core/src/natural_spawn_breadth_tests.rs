@@ -607,16 +607,14 @@ fn spawn_census_matches_population_oracle_for_all_categories_and_observers() {
             }
             expected_global += 1;
             let pos = state.entities.pos(slot);
-            let cell = [
-                (pos[0].floor() as i32).div_euclid(16),
-                (pos[2].floor() as i32).div_euclid(16),
+            let center = [
+                f64::from((pos[0].floor() as i32).div_euclid(16) * 16 + 8),
+                f64::from((pos[2].floor() as i32).div_euclid(16) * 16 + 8),
             ];
             for (observer, player) in players.iter().enumerate() {
-                let origin = [
-                    (player[0].floor() as i32).div_euclid(16),
-                    (player[2].floor() as i32).div_euclid(16),
-                ];
-                if (cell[0] - origin[0]).abs() <= 8 && (cell[1] - origin[1]).abs() <= 8 {
+                let dx = player[0] - center[0];
+                let dz = player[2] - center[1];
+                if dx * dx + dz * dz <= 128.0 * 128.0 {
                     expected_local[observer] += 1;
                 }
             }

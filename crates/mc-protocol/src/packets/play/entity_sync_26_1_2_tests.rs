@@ -343,7 +343,7 @@ fn entity_data_rejects_reserved_indices_and_over_cap_collections() {
 
 #[test]
 fn entity_data_explicitly_rejects_unsupported_serializers() {
-    let unsupported = [5, 21, 34, 39, 40, 41, 43];
+    let unsupported = [21, 34, 39, 40, 41, 43];
     for serializer_id in unsupported {
         let mut encoded = vec![1, 0];
         encoded.write_varint(serializer_id);

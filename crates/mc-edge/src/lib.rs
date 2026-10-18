@@ -49,6 +49,7 @@ pub mod play;
 mod plugin_loader;
 pub mod recipes;
 pub mod server;
+pub(crate) mod settlement_labels;
 pub mod startup_data;
 pub mod status;
 
@@ -57,6 +58,9 @@ mod plugin_tests;
 
 #[cfg(test)]
 mod plugin_command_tree_tests;
+
+#[cfg(test)]
+mod settlement_command_tree_tests;
 
 #[cfg(test)]
 mod plugin_wire_tests;

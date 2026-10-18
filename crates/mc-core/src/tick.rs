@@ -174,6 +174,12 @@ pub struct Connections {
     by_entity: HashMap<EntityId, ConnectionId>,
     names: HashMap<ConnectionId, String>,
     uuids: HashMap<ConnectionId, uuid::Uuid>,
+    /// Transient negotiated client view radii, keyed by live connection.
+    /// Recorded on [`PlayerInput::SetViewDistance`](crate::boundary::PlayerInput::SetViewDistance)
+    /// (which precedes Join), moved with the connection across dimensions,
+    /// and cleared on leave/remove. Never persisted: unnegotiated callers
+    /// fall back to the configured server view.
+    view_distances: HashMap<ConnectionId, u8>,
 }
 
 impl Connections {
@@ -211,7 +217,19 @@ impl Connections {
             .map(String::as_str)
     }
 
+    /// Negotiated client view radius for a connection, if the edge admitted one.
+    /// Unnegotiated callers get `None` and fall back to the configured view.
+    #[must_use]
+    pub fn view_distance_of(&self, connection: ConnectionId) -> Option<u8> {
+        self.view_distances.get(&connection).copied()
+    }
+
+    pub(crate) fn set_view_distance(&mut self, connection: ConnectionId, view_distance: u8) {
+        self.view_distances.insert(connection, view_distance);
+    }
+
     pub(crate) fn remove_by_connection(&mut self, connection: ConnectionId) -> Option<EntityId> {
+        self.view_distances.remove(&connection);
         let entity = self.by_connection.remove(&connection)?;
         self.by_entity.remove(&entity);
         self.names.remove(&connection);
@@ -228,6 +246,9 @@ impl Connections {
         let uuid = self.uuids.remove(&connection).expect("joined UUID");
         let name = self.names.remove(&connection).expect("joined name");
         destination.insert(connection, entity, uuid, name);
+        if let Some(view_distance) = self.view_distances.remove(&connection) {
+            destination.view_distances.insert(connection, view_distance);
+        }
     }
 
     /// Player entity for a connection, if joined.
@@ -1841,6 +1862,7 @@ impl TickState {
         {
             self.connections.by_connection.remove(&connection);
             self.connections.by_entity.remove(&id);
+            self.connections.view_distances.remove(&connection);
             self.outbox.remove(&connection);
         }
         self.players.remove(&id);
@@ -2036,9 +2058,12 @@ impl TickState {
         self.world.finish_inhabited_tick(tick);
     }
 
-    /// The sole residency demand: client view plus one chunk of margin,
-    /// active chunks, explicit/respawn tickets and unacknowledged dirty pins.
-    /// Load priorities prefer the nearest player/ticket centre.
+    /// The sole residency demand: per-player effective view (negotiated client
+    /// radius, capped at the configured view, floored by the simulation
+    /// radius) plus one chunk of margin, active chunks, explicit/respawn
+    /// tickets and unacknowledged dirty pins. Unnegotiated players use the
+    /// configured view. Load priorities prefer the nearest player/ticket
+    /// centre; demands union across players.
     pub fn desired_chunks(&self) -> HashMap<ChunkPos, i32> {
         let mut want: HashMap<ChunkPos, i32> = HashMap::default();
         let mut add = |center: ChunkPos, radius: i32| {
@@ -2061,7 +2086,7 @@ impl TickState {
                 x: (mc_physics::mth::floor_i32(pos[0])).div_euclid(16),
                 z: (mc_physics::mth::floor_i32(pos[2])).div_euclid(16),
             };
-            add(center, self.config_view_distance.max(0).saturating_add(1));
+            add(center, self.residency_radius_for(*id));
             if !self.entities.body(slot).alive {
                 let spawn = self.world.world_spawn();
                 add(
@@ -2089,6 +2114,24 @@ impl TickState {
             want.entry(chunk).or_insert(i32::MAX);
         }
         want
+    }
+
+    /// Effective residency radius for one joined player: negotiated client
+    /// view capped at the configured view, floored by the configured
+    /// simulation radius, plus one chunk of margin. Unnegotiated players
+    /// use the configured view (so `max` keeps at least simulation).
+    fn residency_radius_for(&self, id: EntityId) -> i32 {
+        let negotiated = self
+            .connections
+            .entity_connection(id)
+            .and_then(|connection| self.connections.view_distance_of(connection))
+            .map(i32::from);
+        let effective_view = match negotiated {
+            Some(view) => view.min(self.config_view_distance.max(0)),
+            None => self.config_view_distance.max(0),
+        }
+        .max(self.config_sim_distance.max(0));
+        effective_view.saturating_add(1)
     }
 }
 
@@ -2302,16 +2345,35 @@ pub fn run_tick(
     Vec<(ConnectionId, Vec<PlayerChange>)>,
     TickTimes,
 ) {
+    let wrapper_start = std::time::Instant::now();
     let phase_start = std::env::var_os("MC_CORE_PHASE_LOG")
         .is_some()
         .then(std::time::Instant::now);
     crate::plugin::pump(state);
     let pump_done = phase_start.map(|start| start.elapsed()).unwrap_or_default();
-    let result = crate::dimensions::run_tick(state, inputs);
+    let dimensions_start = std::time::Instant::now();
+    let mut result = crate::dimensions::run_tick(state, inputs);
+    let dimensions_time = dimensions_start.elapsed();
+    let wrapper_tail_start = std::time::Instant::now();
     let dimensions_done = phase_start.map(|start| start.elapsed()).unwrap_or_default();
     crate::build_precommit::answer_previews(state);
     let previews_done = phase_start.map(|start| start.elapsed()).unwrap_or_default();
     crate::plugin::observe_players(state);
+    result.2.plugins_us = dimensions_start.duration_since(wrapper_start).as_micros() as u64
+        + wrapper_tail_start.elapsed().as_micros() as u64;
+    // This envelope includes routing/travel/globals and destruction of local
+    // phase scratch after the dimension function returns. It is not disk I/O
+    // or edge network fanout.
+    let local_us = result.2.input_us
+        + result.2.chunks_us
+        + result.2.entity_us
+        + result.2.merge_us
+        + result.2.block_us
+        + result.2.commit_us
+        + result.2.snapshot_us
+        + result.2.views_us
+        + result.2.publish_us;
+    result.2.coordination_us = (dimensions_time.as_micros() as u64).saturating_sub(local_us);
     if let Some(start) = phase_start {
         let total = start.elapsed();
         eprintln!(
@@ -2469,14 +2531,12 @@ fn run_dimension_tick_inner<'a>(
     crate::mob_lanes::snowballs(state);
     let entity_intents = run_entity_phase(state);
     let entity_time = entity_start.elapsed();
-    let entity_tail_start = phase_log.as_ref().map(|_| std::time::Instant::now());
+    let entity_tail_start = std::time::Instant::now();
     intents.extend(entity_intents);
     crate::special_mobs::raiders::run(state, &mut intents);
     crate::vehicles::run(state, &mut intents, &mut changes);
     crate::end_fight::run(state, &mut intents, &mut changes);
-    let entity_tail_time = entity_tail_start
-        .map(|start| start.elapsed())
-        .unwrap_or_default();
+    let entity_tail_time = entity_tail_start.elapsed();
 
     // 3. Merge (deterministic, fixed order, whole-intent rejection).
     let merge_start = std::time::Instant::now();
@@ -2484,15 +2544,13 @@ fn run_dimension_tick_inner<'a>(
     state.merge_damage.append(&mut state.plugin_damage);
     crate::end_fight::crystal_hits(state);
     let merge_time = merge_start.elapsed();
-    let block_prepare_start = phase_log.as_ref().map(|_| std::time::Instant::now());
+    let block_prepare_start = std::time::Instant::now();
 
     // 4. Block phase: ordered merge writes, retained falling lifecycle.
     let mut block_writes = std::mem::take(&mut state.block_phase_writes);
     block_writes.extend_from_slice(&state.merge_block_writes);
     let early_merge_writes = state.merge_block_writes.len();
-    let block_prepare_time = block_prepare_start
-        .map(|start| start.elapsed())
-        .unwrap_or_default();
+    let block_prepare_time = block_prepare_start.elapsed();
     let block_start = std::time::Instant::now();
     for (pos, write_state) in &block_writes {
         state.world.set_block(pos.x, pos.y, pos.z, *write_state);
@@ -2711,6 +2769,7 @@ fn run_dimension_tick_inner<'a>(
         chunks,
         entities: views,
         raid_bars: crate::raids::bars(state),
+        settlement_labels: crate::settlements::presentation::snapshot(state),
     });
     let output = TickOutput {
         tick: state.tick,
@@ -2727,11 +2786,11 @@ fn run_dimension_tick_inner<'a>(
             drains.push((connection, queue));
         }
     }
+    let publish_tail_time = publish_start
+        .elapsed()
+        .saturating_sub(snapshot_time)
+        .saturating_sub(views_time);
     if let Some(log) = phase_log {
-        let publish_tail_time = publish_start
-            .elapsed()
-            .saturating_sub(snapshot_time)
-            .saturating_sub(views_time);
         log.before_return = log.start.elapsed();
         let measured = input_time
             + chunk_time
@@ -2768,11 +2827,15 @@ fn run_dimension_tick_inner<'a>(
         log.logging = log_start.elapsed();
     }
     let times = TickTimes {
-        entity_us: entity_time.as_micros() as u64,
+        input_us: input_time.as_micros() as u64,
+        chunks_us: chunk_time.as_micros() as u64,
+        entity_us: (entity_time + entity_tail_time).as_micros() as u64,
         merge_us: merge_time.as_micros() as u64,
-        block_us: block_time.as_micros() as u64,
+        block_us: (block_prepare_time + block_time).as_micros() as u64,
+        commit_us: commit_time.as_micros() as u64,
         snapshot_us: snapshot_time.as_micros() as u64,
         views_us: views_time.as_micros() as u64,
+        publish_us: publish_tail_time.as_micros() as u64,
         total_us: 0,
         ..Default::default()
     };
@@ -4338,6 +4401,10 @@ fn apply_inputs<'a>(
             PlayerInput::PermissionLevel { connection, level } => {
                 input::session::permission_level(state, (connection, level))
             }
+            PlayerInput::SetViewDistance {
+                connection,
+                view_distance,
+            } => input::session::set_view_distance(state, (connection, view_distance)),
             PlayerInput::Join {
                 connection,
                 uuid,
@@ -4783,6 +4850,12 @@ fn tick_players(state: &mut TickState, changes: &mut ChangeSet, intents: &mut Ve
                 )
             })
             .unwrap_or_default();
+        if vitals_tick.air_changed
+            && let Some(player) = state.players.get(&entity)
+        {
+            let change = player.air_change();
+            state.push_player(connection, change);
+        }
         // Vitals damage through merge (footprinted on the player).
         for (kind, amount) in vitals_tick.damage {
             let seq = state.next_seq(entity);

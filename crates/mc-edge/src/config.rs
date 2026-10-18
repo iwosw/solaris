@@ -56,7 +56,7 @@ pub struct ServerSection {
     /// Maximum concurrent Play sessions admitted.
     #[serde(default = "default_max_players")]
     pub max_players: u32,
-    /// Chunk view radius sent to each player.
+    /// Upper bound on each client's negotiated chunk view radius.
     #[serde(default = "default_view_distance")]
     pub view_distance: u8,
     /// Gameplay simulation radius (mob ticking, random ticks, spawning).

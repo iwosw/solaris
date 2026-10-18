@@ -56,6 +56,9 @@ vanilla bugs are not reproduced. The network protocol and world file formats
 Not there yet: command blocks, `/function` datapacks, `/data` / `/clone` and
 similar map-making commands.
 
+For native settlements and villager professions, see the short
+[player guide (English / Русский)](docs/SETTLEMENTS_GUIDE.md), or `/settlement guide` and `/help settlement` in game.
+
 ## How it works
 
 ```mermaid

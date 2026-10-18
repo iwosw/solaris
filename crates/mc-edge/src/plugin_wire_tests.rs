@@ -25,12 +25,12 @@ use mc_protocol::packets::configuration::{
 use mc_protocol::packets::handshake::{Handshake, NextState};
 use mc_protocol::packets::login::{LoginAcknowledged, LoginStart, LoginSuccess, SetCompression};
 use mc_protocol::packets::play::{
-    BlockChangedAck, BlockUpdate, ClientboundContainerSetContent, ClientboundContainerSetSlot,
-    ClientboundKeepAlive, ClientboundOpenScreen, ClientboundSystemChat, ConfirmTeleportation,
-    Direction, InteractionHand, ItemStack, PlayDisconnect, PlayerActionKind,
-    ServerboundChatCommand, ServerboundContainerClose, ServerboundKeepAlive,
-    ServerboundPlayerAction, ServerboundSetCarriedItem, ServerboundUseItemOn,
-    SynchronizePlayerPosition, pack_block_pos,
+    BlockChangedAck, BlockUpdate, ClientboundCommandSuggestions, ClientboundContainerSetContent,
+    ClientboundContainerSetSlot, ClientboundKeepAlive, ClientboundOpenScreen,
+    ClientboundSystemChat, ConfirmTeleportation, Direction, InteractionHand, ItemStack,
+    PlayDisconnect, PlayerActionKind, ServerboundChatCommand, ServerboundCommandSuggestion,
+    ServerboundContainerClose, ServerboundKeepAlive, ServerboundPlayerAction,
+    ServerboundSetCarriedItem, ServerboundUseItemOn, SynchronizePlayerPosition, pack_block_pos,
 };
 use mc_protocol::packets::{CustomPayload, Packet};
 use tokio::net::{TcpListener, TcpStream};
@@ -92,6 +92,7 @@ enum WireEvent {
     Contents(ClientboundContainerSetContent),
     Slot(ClientboundContainerSetSlot),
     Chat(String),
+    Suggestions(ClientboundCommandSuggestions),
     Block(BlockUpdate),
     Ack(BlockChangedAck),
     Disconnect,
@@ -306,8 +307,8 @@ impl WireClient {
             } else if frame.id == FinishConfiguration::ID {
                 let _ = exact::<FinishConfiguration>(frame.body);
                 assert!(
-                    acknowledged,
-                    "six-package deployment must negotiate its genuine client bundles before finish"
+                    acknowledged || expected.bundles.is_empty(),
+                    "nonempty deployment must negotiate its genuine client bundles before finish"
                 );
                 assert_eq!(artifacts.len(), expected.bundles.len());
                 connection
@@ -365,6 +366,9 @@ impl WireClient {
                             Some(WireEvent::Contents(exact(frame.body)))
                         }
                         ClientboundContainerSetSlot::ID => Some(WireEvent::Slot(exact(frame.body))),
+                        ClientboundCommandSuggestions::ID => {
+                            Some(WireEvent::Suggestions(exact(frame.body)))
+                        }
                         ClientboundSystemChat::ID => {
                             let chat = exact::<ClientboundSystemChat>(frame.body);
                             let content = mc_nbt::read_network(&mut chat.content_nbt.as_slice())?;
@@ -989,4 +993,126 @@ async fn genuine_claim_gate() {
     drop(stranger);
     drop(leader);
     drop(running);
+}
+
+#[test]
+fn native_settlement_list_from_player_session_reaches_tick() {
+    tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .thread_stack_size(16 * 1024 * 1024)
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(async {
+            let directory = TestDirectory::new();
+            let mut cfg = EdgeConfig {
+                server_dir: directory.0.clone(),
+                ..EdgeConfig::default()
+            };
+            cfg.data.world_dir = directory.0.join("world");
+            cfg.data.seed = 42;
+            cfg.data.vanilla_data_dir =
+                Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data/vanilla");
+            cfg.server.view_distance = 1;
+            cfg.server.simulation_distance = 1;
+            let data = load_vanilla_data(&cfg).unwrap();
+            let tags = load_tags(&cfg, &data).unwrap();
+            let mut native = core_config(&cfg);
+            native.checkpoint_every_ticks = u64::MAX;
+            let core = Arc::new(
+                tokio::task::spawn_blocking(move || Core::open(native))
+                    .await
+                    .unwrap()
+                    .unwrap(),
+            );
+            let running = RunningCore(Arc::clone(&core));
+            assert!(core.plugin_commands().is_empty());
+            let manifest =
+                mc_loader::LoaderManifest::from_script_bundles(core.plugin_client_bundles())
+                    .unwrap();
+            let server = EdgeServer::new(Arc::clone(&core), data, tags, cfg).unwrap();
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let address = listener.local_addr().unwrap();
+            let server_task = tokio::spawn(serve(listener, server));
+            // No operator privileges or console injection: real login/config/play.
+            let mut player = WireClient::connect(address, "SettlementPlayer", &manifest).await;
+            player.matching("settlement join tip", |event|
+                matches!(event, WireEvent::Chat(text) if text.contains("Поселения: /settlement guide"))).await;
+            player.command("settlement guide", &[
+                "1. Stand at your town centre", "2. Place beds",
+                "2000-8999", "settlement bind Oak", "settlement info Oak",
+                "production Oak status", "commerce Oak status",
+                "payroll Oak status", "caravan Oak status",
+            ]).await;
+            player
+                .command("settlement list", &["No settlements."])
+                .await;
+            player
+                .command("settlement create Oak", &["Founded Oak"])
+                .await;
+            // Fixture setup only: spawn one real body at the safe world spawn.
+            // Membership itself is changed exclusively by this non-op TCP player.
+            let villager_type = core.registry().entity_types
+                .id_of(&mc_data::Identifier::parse("minecraft:villager").unwrap()).unwrap();
+            let mut ticks = core.subscribe();
+            assert!(core.debug_spawn(mc_core::core::SpawnRequest {
+                type_id: villager_type, count: 1, spread: true, start: 0, total: 1,
+            }));
+            tokio::time::timeout(DEADLINE, async {
+                loop {
+                    let output = ticks.recv().await.unwrap();
+                    if output.snapshot.entities.iter().any(|entity| entity.type_id == villager_type) {
+                        break;
+                    }
+                }
+            }).await.expect("loaded nearby villager fixture");
+            player.command("settlement bind Oak", &["Bound ", " to Oak."]).await;
+            player.command("settlement info Oak", &["«Oak» · глава:", "жителей 1", "Oak |", "members=1"]).await;
+            player.command("settlement unbind", &["Unbound "]).await;
+            player.command("settlement info Oak", &["«Oak» · глава:", "жителей 0", "members=0"]).await;
+            player.command("settlement bind Oak", &["Bound ", " to Oak."]).await;
+            player
+                .command("settlement list", &["Settlements: Oak."])
+                .await;
+            player
+                .send(&ServerboundCommandSuggestion {
+                    id: 41,
+                    command: "/settlement li".into(),
+                })
+                .await;
+            let response = player
+                .matching(
+                    "live native settlement tab completion",
+                    |event| matches!(event, WireEvent::Suggestions(response) if response.id == 41),
+                )
+                .await;
+            let WireEvent::Suggestions(response) = response else {
+                unreachable!()
+            };
+            assert_eq!(
+                response
+                    .suggestions
+                    .iter()
+                    .map(|entry| entry.text.as_str())
+                    .collect::<Vec<_>>(),
+                ["list"]
+            );
+            player
+                .command("help settlement", &["/settlement create", "2000-8999"])
+                .await;
+            let mut stranger = WireClient::connect(address, "SettleGuest", &manifest).await;
+            stranger
+                .command("settlement remove Oak", &["Only the owner or an operator"])
+                .await;
+            player
+                .command("settlement rename Oak Birch", &["Renamed Oak to Birch"])
+                .await;
+            player
+                .command("settlement remove Birch", &["Removed Birch"])
+                .await;
+            drop(stranger);
+            drop(player);
+            drop(running);
+            server_task.abort();
+        });
 }

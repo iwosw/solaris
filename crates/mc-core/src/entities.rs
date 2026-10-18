@@ -204,6 +204,8 @@ pub struct EntityStore {
     /// Dense, mark-time-deduplicated queue with validated source-slot hints.
     wire_pending: Vec<(EntityId, EntitySlot)>,
     wire_views: crate::boundary::EntityViews,
+    /// Outgoing-only labels; never stored in native rows, WAL, or checkpoints.
+    nameplates: rustc_hash::FxHashMap<EntityId, crate::villager::nameplates::Nameplate>,
     #[cfg(test)]
     touch_sites: std::collections::BTreeMap<(&'static str, u32), [usize; 3]>,
 }
@@ -884,6 +886,30 @@ impl EntityStore {
         } else {
             pending.sort_unstable_by_key(|&(id, _)| id);
         }
+        for &(id, hint) in &pending {
+            let slot = if self
+                .bodies
+                .get(hint.0 as usize)
+                .is_some_and(|body| body.id == id)
+            {
+                Some(hint)
+            } else {
+                self.slot_of_any(id)
+            };
+            let Some(slot) = slot else {
+                self.nameplates.remove(&id);
+                continue;
+            };
+            let row = &self.cold[slot.0 as usize];
+            if row.villager.is_some() {
+                self.nameplates
+                    .entry(id)
+                    .and_modify(|plate| plate.refresh(row))
+                    .or_insert_with(|| crate::villager::nameplates::Nameplate::new(row));
+            } else {
+                self.nameplates.remove(&id);
+            }
+        }
         // All queued identities are consumed, including removal tombstones.
         self.wire_marked.fill(false);
         self.wire_removed.clear();
@@ -932,7 +958,17 @@ impl EntityStore {
             pitch: rot[1],
             head_yaw: rot[2],
             on_ground: self.ground[slot],
-            appearance: Arc::clone(&row.appearance),
+            appearance: if row.villager.is_some() {
+                Arc::clone(
+                    &self
+                        .nameplates
+                        .get(&body.id)
+                        .expect("projected villager nameplate")
+                        .appearance,
+                )
+            } else {
+                Arc::clone(&row.appearance)
+            },
         }
     }
 

@@ -133,6 +133,26 @@ Piece blocks are written with their rotation, projection and processor list.
 are leaves of the growth, and each is run through the placed-feature executor
 with the random vanilla's `FEATURES` step seeds (see [Village decor](#village-decor)).
 
+The production terrain adapter must distinguish solid terrain height from
+`WORLD_SURFACE_WG`: that heightmap includes water. Start/child assembly and
+`terrain_matching` gravity therefore use the top of the water column when the
+solid terrain lies below it, not the ocean or river bed. Rigid children retain
+their parent's jigsaw-relative Y; they are not independently projected.
+
+The column-height beard analogue is not a full vanilla density beardifier.
+At a rigid template's authored `minecraft:building_entrance`, its step column
+and the immediately outward approach are capped below the step, so ignored
+template air cannot leave hillside dirt blocking the entrance. This is a
+bounded terrain cut at the rotated connector, not flattening the entire village
+to one height.
+
+Regression `terrain::village_water_tests::owner_seed_village_floors_stay_above_water`
+uses the production content/router/tag wiring on seed `8674276330747006396`,
+checking starts `(16, 6)`, `(-18, 0)`, and `(18, 69)` for submerged rigid floors
+and terrain blocking their entrances. It needs the local content cache.
+These generation changes apply only to newly generated chunks/worlds:
+existing chunks in `~/play-v008` keep their saved terrain and structures.
+
 These are vanilla's own numbers and are read from the derived content cache, not
 from Solaris constants: `data/minecraft/worldgen/structure_set/villages.json`,
 `data/minecraft/worldgen/structure/village_*.json`, the

@@ -41,6 +41,15 @@ pub enum PlayerInput {
     PluginClientReady { connection: ConnectionId },
     /// Trusted edge snapshot of this live connection's actual permission level.
     PermissionLevel { connection: ConnectionId, level: u8 },
+    /// Trusted edge admission of this live connection's negotiated client view
+    /// radius (already clamped by the edge; the core additionally caps it at
+    /// the configured server view). Recorded before [`PlayerInput::Join`] and
+    /// re-sent on every Play ClientInformation: transient per-connection
+    /// state, cleared on [`PlayerInput::Leave`].
+    SetViewDistance {
+        connection: ConnectionId,
+        view_distance: u8,
+    },
     /// Connection closed for any reason; the core saves and removes the player.
     Leave { connection: ConnectionId },
     /// Client-reported movement; the core validates and may correct it.
@@ -273,6 +282,7 @@ impl PlayerInput {
             Self::Join { connection, .. }
             | Self::PluginClientReady { connection }
             | Self::PermissionLevel { connection, .. }
+            | Self::SetViewDistance { connection, .. }
             | Self::Leave { connection }
             | Self::Move { connection, .. }
             | Self::MoveRotation { connection, .. }
@@ -380,14 +390,36 @@ pub struct TickTimes {
     /// capture, excluding pacing. Available only from `subscribe_tick_times`;
     /// the earlier world publication carries zero because work is ongoing.
     pub wall_us: u64,
+    /// Player inputs, natural spawning and player/environment updates.
+    pub input_us: u64,
+    /// Chunk admission/eviction/hydration, resident services and respawn retries.
+    pub chunks_us: u64,
     pub entity_us: u64,
     pub merge_us: u64,
     pub block_us: u64,
+    /// Post-merge effects, block overlay folding and gameplay commit.
+    pub commit_us: u64,
     /// Resident chunk list build for the snapshot.
     pub snapshot_us: u64,
     /// Entity wire views + chunk index build.
     pub views_us: u64,
-    /// `run_tick` + journal build/send, measured before the broadcast.
+    /// Snapshot metadata and reliable outbox construction (not edge fanout).
+    pub publish_us: u64,
+    /// Plugin admission/observations and read-only build previews.
+    pub plugins_us: u64,
+    /// Dimension routing/travel/globals, local return cleanup and phase boundaries.
+    pub coordination_us: u64,
+    /// Build the tick's native WAL post-images; no disk I/O.
+    pub journal_build_us: u64,
+    /// Seal plugin events and enqueue WAL, including bounded writer backpressure.
+    pub journal_queue_us: u64,
+    /// Capture/enqueue generated chunk saves; writer I/O remains off-tick.
+    pub generated_us: u64,
+    /// Acknowledgements/input drains before `total_us` begins.
+    pub owner_pre_us: u64,
+    /// Broadcast/reliable handoff and checkpoint capture after `total_us`.
+    pub owner_post_us: u64,
+    /// `run_tick` + WAL build/enqueue + generated capture, before the broadcast.
     pub total_us: u64,
 }
 
@@ -416,6 +448,8 @@ pub struct WorldSnapshot {
     /// Unchanged rows and spatial membership are shared with earlier snapshots.
     pub entities: EntityViews,
     pub raid_bars: Vec<crate::raids::RaidBar>,
+    /// Derived POI labels sorted by unique anchor; never persisted gameplay entities.
+    pub settlement_labels: Arc<Vec<crate::settlements::presentation::SettlementLabel>>,
 }
 
 /// One resident chunk in a snapshot.
@@ -660,6 +694,10 @@ pub enum PlayerChange {
     },
     Absorption {
         amount: f32,
+    },
+    /// Authoritative air supply for this connection's player metadata.
+    AirSupply {
+        air: i32,
     },
     Scoreboard {
         event: crate::scoreboard::ScoreboardEvent,

@@ -177,7 +177,8 @@ mod species_tests;
 mod target_grid_tests;
 #[cfg(test)]
 mod tick_tests;
-
+#[cfg(test)]
+mod view_negotiation_tests;
 pub mod world_conversion;
 
 pub use config::{CoreConfig, CoreError};

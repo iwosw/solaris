@@ -785,6 +785,66 @@ async fn denied_two_cell_door_repairs_even_the_unwritten_upper_prediction() {
     assert_no_build_journal(&mut state, &output);
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn hook_free_contended_door_keeps_winner_and_acknowledges_rejection() {
+    let (mut state, first) = fixture(None);
+    let second_connection = ConnectionId(2);
+    run_tick(
+        &mut state,
+        &[PlayerInput::Join {
+            connection: second_connection,
+            uuid: uuid::Uuid::new_v4(),
+            name: "door-builder".into(),
+            permission_level: 0,
+        }],
+    );
+    let second = state.connections.entity_of(second_connection).unwrap();
+    let slot = state.entities.slot_of(second).unwrap();
+    state.entities.set_pos(slot, [10.5, 201.0, 8.5]);
+    held(&mut state, first, "oak_planks", 2);
+    held(&mut state, second, "oak_door", 3);
+    let door = PlayerInput::UseItemOn {
+        connection: second_connection,
+        hand: Hand::Main,
+        position: BASE,
+        face: 1,
+        cursor: [0.5; 3],
+        sequence: SEQUENCE,
+    };
+    assert!(crate::tick::plan_client_build(&state, first, &place()).is_some());
+    assert_eq!(
+        crate::tick::plan_client_build(&state, second, &door)
+            .unwrap()
+            .footprint
+            .block_write
+            .len(),
+        2
+    );
+    let (output, drains, _) = run_tick(&mut state, &[place(), door]);
+    let planks = block(&state, "oak_planks", &[]);
+    assert_eq!(state.world.block_at(POS.x, POS.y, POS.z), Some(planks));
+    assert_eq!(
+        state.world.block_at(UPPER.x, UPPER.y, UPPER.z),
+        Some(state.registry.states.air)
+    );
+    assert_eq!(state.players[&first].inventory.slots[0].count, 1);
+    assert_eq!(state.players[&second].inventory.slots[0].count, 3);
+    assert_eq!(
+        output.changes.blocks.len(),
+        1,
+        "only the winner changes the world"
+    );
+    let changes: Vec<_> = drains
+        .into_iter()
+        .filter(|(connection, _)| *connection == second_connection)
+        .flat_map(|(_, changes)| changes)
+        .collect();
+    // The acknowledgement rolls both client-predicted door cells back; only
+    // the winning plank placement belongs in the world change stream.
+    assert_ack(&changes);
+    assert!(changes.contains(&state.players[&second].inventory_contents()));
+}
+
 async fn direct_interaction(
     state: &mut TickState,
     gateway: &Gateway,

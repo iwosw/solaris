@@ -46,6 +46,30 @@ fn body_of(packet: &PlannedPacket) -> bytes::Bytes {
 }
 
 #[test]
+fn player_air_supply_is_reliable_own_metadata_without_world_credit() {
+    let mut viewer = viewer_at(1, [8.0, 64.0, 8.0]);
+    viewer.entity_id = EntityId(3174);
+    viewer.world_credit = 0;
+    for air in [299, 0, -19, 300] {
+        let packets = plan_player_changes(&[PlayerChange::AirSupply { air }], &mut viewer);
+        assert_eq!(packets.len(), 1);
+        assert_eq!(packets[0].connection, viewer.connection);
+        assert!(packets[0].reliable);
+        assert_eq!(packets[0].id, ClientboundSetEntityData::ID);
+        let decoded = ClientboundSetEntityData::decode(&mut &body_of(&packets[0])[..]).unwrap();
+        assert_eq!(decoded.entity_id, viewer.entity_id.0);
+        assert_eq!(
+            decoded.values,
+            vec![WireEntityDataValue::Int {
+                index: mc_protocol::packets::play::ENTITY_DATA_AIR_SUPPLY_INDEX,
+                value: air,
+            }]
+        );
+    }
+    assert_eq!(viewer.world_credit, 0);
+}
+
+#[test]
 fn one_shot_explosions_precede_resumable_world_work_with_bounded_credit() {
     with_cache(|cache| {
         for forget_all in [false, true] {
