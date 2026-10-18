@@ -11,10 +11,11 @@ things the vanilla server is bad at:
 - **Using every CPU core.** Vanilla simulates a world on essentially one thread.
   Solaris runs the expensive per-entity work in parallel on all cores. The result
   stays deterministic: the same inputs always produce the same world.
-- **Never losing or duplicating items.** Every durable change (inventories,
-  blocks, containers, plugin data) is written to a write-ahead log before players
-  see it, so a crash or `kill -9` resumes from the last committed tick. There is
-  no rollback to the last autosave and no duped chests.
+- **Crash-consistent saves.** World, inventories, containers and plugin data
+  commit together in a write-ahead log. After a crash or `kill -9` everything
+  recovers to the same durable tick: items cannot be duplicated or lost between
+  a player and a chest. Only the last few ticks that had not reached the disk
+  yet may roll back.
 
 > **Status: early preview (v0.0.8, prerelease).** Good for testing, benchmarking
 > and plugin development. Not yet a drop-in replacement for a production server.
