@@ -47,8 +47,12 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: python3 -m tools.harness run code-health
   test:
-    name: cargo test
+    name: cargo test (shard ${{ matrix.shard }}/4)
     runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
     env:
       SOLARIS_HARNESS_MEMORY_MAX: 8G
       # Short run; the full suite is the local L2 `run correctness` gate.
@@ -111,12 +115,12 @@ jobs:
           print(f"Verified Minecraft {version} server: {server['sha1']}")
           PY
           tools/extract-vanilla-data.sh .analysis/server.jar
-      - run: python3 -m tools.harness run test
+      - run: python3 -m tools.harness run test --workspace --all-targets --partition count:${{ matrix.shard }}/4
       - name: Retain failed test receipts
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: test-failure-receipts
+          name: test-failure-receipts-${{ matrix.shard }}
           path: solaris/.analysis/validation/
           include-hidden-files: true
           if-no-files-found: warn

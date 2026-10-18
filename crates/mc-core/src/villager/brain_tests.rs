@@ -233,6 +233,9 @@ fn control_state() -> TickState {
     state
         .gamerules
         .insert("advance_time".into(), "false".into());
+    // The brain widens its schedule window to 600 ticks on <=2-CPU hosts (CI
+    // runners, small servers); these control scenarios assert 200-tick timing.
+    state.villager_pois.schedule_window = 200;
     state
 }
 
