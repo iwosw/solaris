@@ -3,7 +3,7 @@
   "pack_id": "core-v2-java-wave-qa",
   "quality_label": "bounded-real-client-smoke",
   "minecraft_version": "26.1.2",
-  "server_command": "python3 -m tools.harness run playable --client java --server-variant v2",
+  "server_command": "python3 -m tools.harness run playable --client java",
   "client_requirement": "A vanilla 26.1.2 real client must connect to playable.toml through the repo-native Gradle runClient adapter; protocol harnesses do not satisfy this gate, and prepared artifacts are not passing evidence.",
   "forbidden_client_evidence": [
     "wire-probe",

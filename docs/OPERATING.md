@@ -199,7 +199,7 @@ client-rendering evidence, and do not implement the deleted autoscale policy.
 
 ## Evidence boundaries
 
-Use [AGENT_TOOLING.md](AGENT_TOOLING.md#validation-harness) for registered
+Use [AGENT_TOOLING.md](AGENT_TOOLING.md#harness-entrypoint) for registered
 validation profiles. Historical preliminary-release instructions, regional-owner
 benchmarks, multi-journal recovery receipts and prior console profile captures
 retain their original meaning; they are not current operator commands or proof

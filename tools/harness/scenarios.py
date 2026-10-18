@@ -176,10 +176,7 @@ SCENARIOS: dict[str, Scenario] = {
         seed="81",
         requires=("sibling:solaris-loader", "client-token", "xvfb"),
         fixture="fresh per-run world; the manifest names the seed-81 action sequence",
-        sources=(
-            "docs/real-client-regression/manifests/core-replay-seed-81.json",
-            "../solaris-loader/README.md",
-        ),
+        sources=("docs/real-client-regression/manifests/core-replay-seed-81.json",),
         proves="the recorded seed-81 action sequence still runs against the current server",
         limits="deferred_by_owner until CP-096",
     ),

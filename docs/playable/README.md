@@ -1,42 +1,41 @@
-# Playable Loop
+# Playable manifests and profiles
 
-Goal: make Solaris feel playable for one 20-minute vanilla-client session.
+Run the playable gate through the canonical harness (`python3 -m tools.harness`
+profiles; see [agent tooling](../AGENT_TOOLING.md#harness-entrypoint)).
+Protocol harnesses, wire probes and prepared artifacts are not passing evidence:
+a real vanilla 26.1.2 client must
+connect through the repo-native Gradle `runClient` adapter and record the
+required artifacts (`manifest.json`, `client.log`, `server.log`,
+`observations.json`, screenshots where required, plus run metadata).
 
-Default manual profile: `playable.toml`.
+## Current inputs
 
-Read this file once, then use `ACTIVE.md` as the **only mutable source of
-truth** for playable status, the current checkpoint, recent evidence, and the
-next action. Do not duplicate playable progress into milestones, readiness
-ledgers, or archive files.
+- [`playable.toml`](../../playable.toml): default manual profile. Copy it
+  to a per-run config rather than editing it in place.
+- [`real-client-playable-loop.json`](real-client-playable-loop.json): bounded
+  natural-progression real-client scenario pack (join, wood to tools, crafting,
+  save/restart/rejoin, furnace smelt, food, storage, sleep, combat and two-client
+  visibility routes). Every scenario is `manual-pending` until a real-client
+  run records passing observations.
+- [`real-client-v2-java-qa.json`](real-client-v2-java-qa.json): bounded core
+  v2 Java-client smoke pack. Select its manifest and a declared scenario with
+  the environment overrides in the tooling guide; no server-variant flag is needed.
+- [`worldgen-seed-712816-preflight.json`](worldgen-seed-712816-preflight.json):
+  seed-712816 graphical worldgen preflight input.
 
-Do not read `docs/VALIDATION_LEDGER.md` or `docs/REPLACEMENT_READINESS.md`
-unless the owner explicitly asks for readiness or ledger work.
+Do not treat these packs as shorthand for readiness, M100 progress, or the
+VALIDATION_LEDGER numerator. Keep run evidence in ignored
+`.analysis/real-client-runs/<run_id>/` directories, not in tracked docs.
 
-## Non-Goals
+## Target loop
 
-- Vanilla replacement readiness.
-- M100 numerator progress.
-- Full parity.
-- Redstone.
-- Vehicles.
-- Broad plugin API expansion before the baseline loop is stable. Once common
-  gameplay is green, the first production plugin slice comes before
-  optimization and rare hardening.
-- Autoscale.
-- Broad ledger updates.
+The packs above cover one ordinary 20-minute vanilla-client survival session:
+quick join; walk/jump/collide without rage bugs; break/place without
+ghost/desync; drops/pickup/inventory/hotbar through wood to tools; crafting
+table and basic recipes; save/restart/rejoin preserving player, inventory and
+edited blocks; no crash, disconnect or catastrophic tick stall.
 
-## Target Loop
-
-1. Vanilla client joins quickly enough.
-2. Player can walk/jump/collide without rage bugs.
-3. Break/place common blocks works without ghost/desync.
-4. Drops/pickup/inventory/hotbar work enough for wood -> tools.
-5. Crafting table and basic recipes work.
-6. Save/restart/rejoin preserves player, inventory, and edited blocks.
-7. One 20-minute real-client session has no crash, disconnect, or
-   catastrophic tick stalls.
-
-## Furnace Startup Contract
+## Furnace startup contract
 
 The v2 core's full-content-cache startup must attach vanilla furnace fuel
 values to the resolved tags using the same item registry as the inventory
@@ -48,25 +47,3 @@ operator-selectable content-cache fallback.
 `inventory::furnace_tests::full_data_furnace_accepts_acacia_planks_and_cooks_charcoal`
 covers full-data startup, hotbar-to-furnace pickup clicks, acacia planks' 300-tick
 burn duration, and charcoal output after 200 cooking ticks.
-
-## Allowed Cuts
-
-- View-distance 4.
-- Pregenerated, superflat, or island world.
-- Peaceful only.
-- Starter kit.
-- Deterministic drops.
-- No mobs until P0-P4 are good.
-- No water unless movement/feel is good.
-
-## Navigation
-
-- Use one CodeGraph call for symbols, callers/callees, mutation paths, and
-  blast radius when available.
-- Use bounded `rg`/reads for docs, config, logs, generated artifacts, and stale
-  files. Do not run both discovery paths by default.
-- Good CodeGraph questions: callers of block mutation, inventory truth,
-  chunk-send/light-update emitters, world/session lock holders, and blast
-  radius of chunk streaming changes.
-- Refresh the index with `codegraph sync .` after edits before relying on
-  graph answers.

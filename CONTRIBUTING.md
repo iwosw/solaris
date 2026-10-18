@@ -1,44 +1,56 @@
 # Contributing to Solaris
 
-Solaris is developed by the owner; `AGENTS.md` is the working contract for
-every change, human or agent.
+Solaris is a draft project developed by the owner. Read [AGENTS.md](AGENTS.md)
+for the working contract, project invariants and validation tiers, and use the
+[documentation index](docs/README.md) to find the guide for the area you change.
+Keep changes focused; discuss material scope or design choices before expanding
+an issue. Core production builds must not require sibling repositories.
 
-## Before you change anything
+## Development setup
 
-- Read [`AGENTS.md`](AGENTS.md) — owner contract, validation tiers, and the
-  project invariants.
-- Read [`docs/AGENT_ROUTES.md`](docs/AGENT_ROUTES.md) to see which document owns
-  the area you touch.
-- Core builds must never require the sibling repositories; integration gates
-  explicitly need the one they exercise.
+Follow the [source quick start](README.md#quick-start-from-source). Use debug
+builds for normal development. The workspace's [Cargo config](.cargo/config.toml)
+selects Clang/mold on Linux x86-64 and the debug test stack size. Content import
+requires JDK 25; downloaded/extracted Mojang content must never enter Git.
 
-## Local checks
+## Validation
 
-Every gate runs through the canonical harness from the repository root, which
-leaves a receipt under `.analysis/validation/`:
+Run the canonical harness from the repository root:
 
 ```sh
 python3 -m tools.harness list
-python3 -m tools.harness run correctness   # L2: fmt, code-health, clippy, workspace tests
+python3 -m tools.harness run test -p mc-edge --lib <filter>
+python3 -m tools.harness run correctness
 ```
 
-Focused development runs the affected crate's own tests instead of the
-workspace scope. Graphical, oracle, and scale gates run only for the scope they
-cover; see [`docs/AGENT_TOOLING.md`](docs/AGENT_TOOLING.md) before launching
-one. Do not hand-roll the flags the harness owns, and do not widen a bound or
-add a retry to turn a red gate green.
+Use focused tests for the edit loop. `correctness` is the L2 baseline: formatting,
+code-health, strict workspace Clippy and workspace/all-target nextest tests.
+Nextest policy lives in [`.config/nextest.toml`](.config/nextest.toml). Runs leave
+receipts under `.analysis/validation/`; preparation-only output is not a pass.
+On the shared owner workstation, use the memory runner described in AGENTS.md.
+Documentation-only changes need static path/link checks, not a Cargo build.
 
-## Commits
+Graphical, oracle and performance gates prove only their named scope. Consult
+[agent tooling](docs/AGENT_TOOLING.md) and the [QA protocol](docs/QA_AGENT_PROTOCOL.md)
+for prerequisites. Do not widen a bound, add retries or replace real-client
+coverage with protocol bots to turn a failing gate green.
 
-Conventional Commits, one revertible commit per completed checkpoint. Never
-push, merge to `main`, or tag without explicit owner authorization, and never
-skip hooks or signing.
+## Changes and commits
+
+- Add focused regression coverage for behavior changes and update the owning
+  operator guide or ADR in the same change. Remove superseded paths rather than
+  keeping duplicate authorities or compatibility shims.
+- Preserve unrelated local changes. Do not stage ignored agent state, runtime
+  worlds or Mojang content; change `Cargo.lock` only for a concrete dependency reason.
+- Commits require explicit owner authorization. When authorized, use one
+  revertible Conventional Commit per completed checkpoint. Pushing, merging to
+  `main`, tagging and publication each require explicit permission; preserve hooks
+  and signing.
 
 ## Documentation
 
-`docs/` root holds the documents that describe current behaviour; dated
-evidence, milestone logs, and phase reviews live under `docs/milestones/`,
-`docs/evidence/`, `docs/memory/`, and `docs/performance/`. Update the owning
-document — architecture, ADR, or operator guide — in the same change as the
-behaviour it describes, and delete what the change supersedes instead of
-leaving a second version behind.
+The [documentation index](docs/README.md) separates operator/developer guides,
+ADRs, harness inputs and release notes. Historical process logs are local archives,
+not current specifications. Architecture, authority, threading or persistence
+policy changes must update the owning ADR; do not treat a planned migration as
+current runtime behavior.

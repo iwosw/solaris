@@ -96,14 +96,14 @@ impl HordeBench {
     const SEED: u64 = 0x4852_4F44_4531;
 
     /// 10k zombies and 5k villagers hunted by/among `players`.
-    pub fn horde(players: usize) -> Result<Self, CoreError> {
-        Self::build(players, 10_000, 5_000, 0)
+    pub fn horde(players: usize, vanilla_data_dir: &std::path::Path) -> Result<Self, CoreError> {
+        Self::build(players, 10_000, 5_000, 0, vanilla_data_dir)
     }
 
     /// No-regression scene without a single hostile mob: 50k villagers and
     /// 20k cows (no chaser ever searches for a target).
-    pub fn peaceful(players: usize) -> Result<Self, CoreError> {
-        Self::build(players, 0, 50_000, 20_000)
+    pub fn peaceful(players: usize, vanilla_data_dir: &std::path::Path) -> Result<Self, CoreError> {
+        Self::build(players, 0, 50_000, 20_000, vanilla_data_dir)
     }
 
     fn build(
@@ -111,10 +111,9 @@ impl HordeBench {
         zombies: usize,
         villagers: usize,
         cows: usize,
+        vanilla_data_dir: &std::path::Path,
     ) -> Result<Self, CoreError> {
-        let registry = Arc::new(CoreRegistry::load(Some(
-            &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data/vanilla"),
-        ))?);
+        let registry = Arc::new(CoreRegistry::load(Some(vanilla_data_dir))?);
         let world = flat_world(&registry);
         let mut state = TickState::new(Arc::clone(&registry), world, 2, 512);
         state.gamerules.insert("spawn_mobs".into(), "false".into());

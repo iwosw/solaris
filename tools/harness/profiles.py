@@ -218,7 +218,7 @@ def _test_scope_memory(
     return details
 
 
-def run_test(ctx: ProfileContext) -> dict[str, Any]:
+def run_test(ctx: ProfileContext, *, full: bool = False) -> dict[str, Any]:
     # One runner for both the full L2 gate and focused selectors. Nextest rejects
     # unsupported Cargo/libtest arguments rather than changing execution engines.
     non_execution = {"--no-run", "--help", "-h", "--version", "-V"}
@@ -228,10 +228,14 @@ def run_test(ctx: ProfileContext) -> dict[str, Any]:
     env["NEXTEST_TEST_THREADS"] = env.get(
         "RUST_TEST_THREADS", env.get("NEXTEST_TEST_THREADS", "num-cpus")
     )
+    # CI sets SOLARIS_NEXTEST_PROFILE=ci (short run, slow tests filtered out)
+    # for `run test`; the L2 `run correctness` gate always runs the full suite.
+    profile = "default" if full else env.get("SOLARIS_NEXTEST_PROFILE", "default")
     argv = [
         "cargo", "nextest", "run",
-        "--profile", "default", "--ignore-default-filter", "--no-fail-fast",
-        "--no-tests=fail",
+        "--profile", profile,
+        *(["--ignore-default-filter"] if profile == "default" else []),
+        "--no-fail-fast", "--no-tests=fail",
         *(ctx.extra_args or ["--workspace", "--all-targets"]),
     ]
     details = _run_command(argv, ctx, "test.log", env=env)
@@ -239,6 +243,7 @@ def run_test(ctx: ProfileContext) -> dict[str, Any]:
     details["rust_test_threads_env"] = env.get("RUST_TEST_THREADS")
     details["test_runner"] = "nextest"
     details["nextest_test_threads_env"] = env["NEXTEST_TEST_THREADS"]
+    details["nextest_profile"] = profile
     return details
 
 
@@ -248,7 +253,7 @@ def run_correctness(ctx: ProfileContext) -> dict[str, Any]:
     _merge_details(details, run_fmt(ctx))
     _merge_details(details, run_clippy(ctx))
     _merge_details(details, run_code_health(ctx))
-    _merge_details(details, run_test(ctx))
+    _merge_details(details, run_test(ctx, full=True))
     return details
 
 

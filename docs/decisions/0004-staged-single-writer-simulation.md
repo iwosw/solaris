@@ -374,8 +374,9 @@ full-volume six-neighbour scan; propagation, opacity, missing-neighbour handling
 and publication fences do not change. Bounds are local to one computation, not
 a retained cache. Full-source propagation comparison guards the optimization.
 If direct sky no longer forms a top-open interval, replace this seeding rule;
-there is no legacy scan fallback or runtime switch. Measurement and client
-evidence live in the `streaming-light` checkpoint linked from `docs/MEMORY.md`.
+there is no legacy scan fallback or runtime switch. Historical measurement and
+client evidence for this v1 change is in the `streaming-light` checkpoint of the
+[pre-cleanup cursor](https://github.com/kaiserproger/solaris/blob/1ada2ceb93688adf35d0869111743d4d231e8b62/docs/MEMORY.md).
 
 ## Invariants
 

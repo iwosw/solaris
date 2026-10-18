@@ -262,8 +262,9 @@ the mc-entity lane code, whose `VersionFence::admit` holds a region phase while
 taking the same mutex).
 
 This records implementation ownership, not completed graphical acceptance or
-release readiness. P5 evidence and remaining gates are tracked in `MEMORY.md`;
-component reload and final Luau removal remain later migration outcomes.
+release readiness. Historical P5 evidence and remaining gates for this v1 design
+are in the [pre-cleanup cursor](https://github.com/kaiserproger/solaris/blob/1ada2ceb93688adf35d0869111743d4d231e8b62/docs/MEMORY.md);
+component reload and final Luau removal were later migration outcomes.
 
 ## Event and mutation classes
 

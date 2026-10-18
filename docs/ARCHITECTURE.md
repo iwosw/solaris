@@ -118,8 +118,8 @@ or a historical load result as a current v2 capability.
 
 Current routes: [runtime](architecture/runtime.md),
 [state ownership](architecture/state-ownership.md),
-[mutations](architecture/mutations.md), [operating](OPERATING.md),
-[program closeout](CORE_ARCHITECTURE_PLAN.md). Generated indexes are navigation,
-not semantics; regenerate them from the existing `xtask architecture` command.
-Dated evidence, superseded ADR bodies and milestone/memory/night-run logs keep
-their original runtime identities and do not establish current acceptance.
+[mutations](architecture/mutations.md), [operating](OPERATING.md).
+Generated indexes are navigation, not semantics; regenerate them from the
+existing `xtask architecture` command. Dated evidence and superseded ADR
+bodies keep their original runtime identities and do not establish current
+acceptance.

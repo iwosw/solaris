@@ -393,9 +393,9 @@ fn run_containers(ticks: usize) -> serde_json::Value {
 fn run_horde(ticks: usize, players: usize, scenario: Scenario) -> serde_json::Value {
     const WARMUP_TICKS: usize = 30;
     let mut scene = if scenario == Scenario::Peaceful100 {
-        mc_core::HordeBench::peaceful(players)
+        mc_core::HordeBench::peaceful(players, &content_dir())
     } else {
-        mc_core::HordeBench::horde(players)
+        mc_core::HordeBench::horde(players, &content_dir())
     }
     .expect("horde scene");
     for _ in 0..WARMUP_TICKS {

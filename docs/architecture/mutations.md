@@ -64,7 +64,7 @@ prerequisites, owns server/client/Xvfb lifecycle where needed, and records
 `passed`, `failed`, `prepared` or `interrupted` plus commands/logs/errors under
 `.analysis/validation/`. Every actual server launch uses `solaris-v2`; there is
 no variant selector. Preparation and timeouts never count as gameplay passes.
-See [AGENT_TOOLING.md](../AGENT_TOOLING.md#validation-harness).
+See [AGENT_TOOLING.md](../AGENT_TOOLING.md#harness-entrypoint).
 
 ## Extending this map
 

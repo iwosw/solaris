@@ -1,7 +1,7 @@
 # Solaris product contract
 
 This document states what Solaris must deliver, not what the current tree has
-already proved. [MEMORY.md](MEMORY.md) owns the evidence cursor;
+already proved. `.analysis/MEMORY.md` owns the live agent checkpoint cursor;
 [ARCHITECTURE.md](ARCHITECTURE.md) and ADR 0013/0014 own the sole native runtime.
 
 ## Product
@@ -103,8 +103,9 @@ and protocol evidence by [ADR 0002](decisions/0002-vanilla-protocol-metadata-as-
 ## Acceptance evidence
 
 - Exercise the real server and graphical client, including ordinary survival,
-  multiplayer publication and save/restart. Raw-TCP tests do not replace the
-  graphical gate in [playable/ACTIVE.md](playable/ACTIVE.md).
+  multiplayer publication and save/restart. Raw-TCP tests do not replace a
+  real-client run; use the current harness playable/real-client profiles for
+  any playable evidence.
 - Preserve workload populations, tick counts, assertions and measurement scope
   when comparing implementations. Report hardware, affinity, build mode and
   failures; one host is not a heterogeneous fleet.

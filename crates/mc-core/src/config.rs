@@ -27,9 +27,8 @@ pub struct CoreConfig {
     /// Ticks of journal retained past the last complete checkpoint.
     pub checkpoint_every_ticks: u64,
     /// Vanilla content-cache root (`data/minecraft/...`, `reports/...`).
-    /// `Some` loads full game data and the vanilla worldgen router (missing
-    /// data is a startup error); `None` uses embedded gameplay subsets and
-    /// the built-in terrain analogue (tests/bench).
+    /// Required outside tests; missing content is a startup error. Only
+    /// `#[cfg(test)]` builds fall back to the checkout's `data/vanilla`.
     pub vanilla_data_dir: Option<PathBuf>,
     /// Strictly discovered production component package directory supplied by edge.
     pub plugin_directory: Option<PathBuf>,

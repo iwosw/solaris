@@ -8,12 +8,13 @@ are historical, not a second current backend. ADR 0013 owns native persistence;
 this proposal does not authorize an Earth or Anvil serving fallback.
 **Scope:** Earth-like spec v3, immutable base and native overlays; future native
 adoption requires its own owner decision and acceptance.
-[Delta audit and real call graphs](../evidence/worldgen-w0-audit.md).
-[W1 definition/publication and operator evidence](../evidence/worldgen-w1.md).
-[W2 physical solvers, resource measurements and remaining scope](../evidence/worldgen-w2.md).
-[W3 boundary/budget/geology fixtures and real cold-path measurements](../evidence/worldgen-w3.md).
-[W4 native state, lifecycle/recovery and cache-purge evidence](../evidence/worldgen-w4.md).
-[W5 startup/runtime/spawn/content cutover and acceptance evidence](../evidence/worldgen-w5.md).
+Historical evidence (pre-cleanup tree, commit `1ada2ce`):
+[W0 delta audit](https://github.com/kaiserproger/solaris/blob/1ada2ceb93688adf35d0869111743d4d231e8b62/docs/evidence/worldgen-w0-audit.md),
+[W1 definition/publication](https://github.com/kaiserproger/solaris/blob/1ada2ceb93688adf35d0869111743d4d231e8b62/docs/evidence/worldgen-w1.md),
+[W2 solvers/measurements](https://github.com/kaiserproger/solaris/blob/1ada2ceb93688adf35d0869111743d4d231e8b62/docs/evidence/worldgen-w2.md),
+[W3 boundary/budget/geology](https://github.com/kaiserproger/solaris/blob/1ada2ceb93688adf35d0869111743d4d231e8b62/docs/evidence/worldgen-w3.md),
+[W4 native state/recovery](https://github.com/kaiserproger/solaris/blob/1ada2ceb93688adf35d0869111743d4d231e8b62/docs/evidence/worldgen-w4.md),
+[W5 cutover/acceptance](https://github.com/kaiserproger/solaris/blob/1ada2ceb93688adf35d0869111743d4d231e8b62/docs/evidence/worldgen-w5.md).
 
 ## Context
 
@@ -251,8 +252,8 @@ restore it. Metadata acknowledgements cannot revive an invalidated proof, so a
 lost or late receipt cannot hide a same-LSN block mutation or revert. The existing
 owner barrier, pending-journal, captured-image and dirty-generation fences remain.
 The actual 25-chunk inhabited-time flush fell from 8.49 s to 40–43 ms, with zero
-base materializations; [W5 evidence](../evidence/worldgen-w5.md) distinguishes
-measured IO from the serialization/transaction/acknowledgement upper bound.
+base materializations; [W5 evidence](https://github.com/kaiserproger/solaris/blob/1ada2ceb93688adf35d0869111743d4d231e8b62/docs/evidence/worldgen-w5.md)
+distinguishes measured IO from the serialization/transaction/acknowledgement upper bound.
 
 Immutable ready base handles consume the checked basin or W3 leaf water/geology
 facts. They sample synchronously without IO, gameplay initialization or solving,

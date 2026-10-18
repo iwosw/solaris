@@ -51,6 +51,8 @@ jobs:
     runs-on: ubuntu-24.04
     env:
       SOLARIS_HARNESS_MEMORY_MAX: 8G
+      # Short run; the full suite is the local L2 `run correctness` gate.
+      SOLARIS_NEXTEST_PROFILE: ci
     defaults:
       run:
         working-directory: solaris
@@ -118,7 +120,7 @@ jobs:
           path: solaris/.analysis/validation/
           include-hidden-files: true
           if-no-files-found: warn
-          retention-days: 7
+          retention-days: 2
 
   wasm-host-arm:
     name: Wasmtime component host (Linux AArch64)
@@ -207,7 +209,7 @@ jobs:
           path: solaris/.analysis/validation/
           include-hidden-files: true
           if-no-files-found: warn
-          retention-days: 7
+          retention-days: 2
       - name: Capture scope kill evidence
         if: failure()
         run: |
@@ -297,7 +299,8 @@ jobs:
             dist/solaris-${{ matrix.target }}.tar.gz
             dist/solaris-${{ matrix.target }}.tar.gz.sha256
           if-no-files-found: error
-          retention-days: 7
+          # Consumed by the release job in the same run; release assets live on the GitHub release.
+          retention-days: 1
 
   release:
     name: Publish GitHub release

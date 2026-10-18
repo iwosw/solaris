@@ -1,6 +1,7 @@
 # ADR 0011 - Core crate topology and threading model
 
-**Date:** 2026-09-28  
+**Date:** 2026-09-28
+
 **Status:** The v1 crate topology, extraction queue, threading and multi-stream
 durability model are superseded by [ADR 0013](0013-core-model-v2.md) and
 [ADR 0014](0014-v1-core-retirement.md), Phase 5 (2026-10-15).
@@ -8,7 +9,8 @@ The body records the retired implementation, not an active migration plan.
 General constraints (one gameplay authority, protocol ownership, no production
 dependency on the test harness) remain reflected in the current model; the
 specific v1 crates, owners and durable streams no longer exist.
-**Evidence:** [`core-architecture-audit-2026-09-28.md`](../evidence/core-architecture-audit-2026-09-28.md).
+**Evidence:** historical
+[`core-architecture-audit-2026-09-28.md`](https://github.com/kaiserproger/solaris/blob/1ada2ceb93688adf35d0869111743d4d231e8b62/docs/evidence/core-architecture-audit-2026-09-28.md).
 
 ## Decision
 
@@ -47,7 +49,8 @@ Rules, each of which is a Cargo edge or its absence:
    DTOs (`ClientboundBlockEvent`, `PlayerInfoUpdate`, `ClientboundExplode`);
    its ingress commands (script teleport, script inventory, Loader grant) became
    owner commands in CP-ARCH-030. The migration splits it rather than moving it
-   (`CORE_ARCHITECTURE_PLAN.md` §3).
+   (historical plan §3 of the archived `CORE_ARCHITECTURE_PLAN.md` at commit
+   `1ada2ce`).
 2. `mc-net` depends on `mc-simulation` and `mc-protocol`. It owns no gameplay
    rule, no canonical player/entity/world/container state, and no journal. Its
    `SessionRegistry` is a session index: connection membership, visibility and
@@ -200,5 +203,6 @@ without its journal. There is no universal transaction.
 Ownership questions get compiler answers: gameplay code that imports a session
 or packet type does not build; a second inventory writer has no reachable
 private field. Focused tests of the game no longer link networking. `mc-net`
-becomes reviewable as a protocol adapter. The cost is one large staged
-migration; its order and acceptance are in `CORE_ARCHITECTURE_PLAN.md`.
+becomes reviewable as a protocol adapter. The cost was one large staged
+migration; its historical order and acceptance are archived with
+`CORE_ARCHITECTURE_PLAN.md` at commit `1ada2ce`.

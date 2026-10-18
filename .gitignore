@@ -18,13 +18,8 @@
 # Local oracle, benchmark and scratch output at any crate depth.
 .analysis/
 
-# Vanilla Mojang data files (per ADR 0001) are not redistributed via git.
-# They are repopulated locally from .analysis/server.jar by
-# tools/extract-vanilla-data.sh. The README and any future schema docs
-# stay tracked.
-/data/vanilla/data/
-/data/vanilla/version.json
-/data/vanilla/reports/
+# Local Mojang extraction target; Mojang bytes never enter Git.
+/data/vanilla/
 
 # Runtime output, including server subprocesses launched from crate directories.
 # Local-only runtime state must never enter source control.
@@ -42,6 +37,10 @@ logs/
 # Agent/runtime scratch and generated local launch state.
 /.ai-bridge/
 /.codex/
+/.memory/
+/.rpiv/
+/WATCHDOG.yml
+/opencode.json
 /.agent-loom/
 /.pi/
 /.serena/

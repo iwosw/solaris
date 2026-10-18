@@ -128,8 +128,8 @@ Negative:
 - `ClientboundSetTime` publishes a monotonic `gameTime` plus the typed
   `world_clock` map. Local 26.1.2 metadata proves registry-holder keys are VarInt
   ids and each clock update is VarLong total ticks plus two floats. The exact
-  oracle fingerprint and client ticking boundary are recorded in
-  `docs/evidence/world-clock-26.1.2.md`.
+  oracle fingerprint and client ticking boundary were recorded in the
+  [historical clock evidence](https://github.com/kaiserproger/solaris/blob/1ada2ceb93688adf35d0869111743d4d231e8b62/docs/evidence/world-clock-26.1.2.md).
 
 ## Notes
 
