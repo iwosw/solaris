@@ -1,10 +1,8 @@
 use std::io::{BufRead as _, Read as _, Write as _};
 use std::process::{Child, Command, Stdio};
-use std::sync::Arc;
 
-use super::WORLD_LEASE_FILE_NAME;
-use crate::storage::test_support::single_air_registry;
-use crate::storage::{WorldError, WorldStorage};
+use super::{WORLD_LEASE_FILE_NAME, acquire_exclusive_world_root_lease};
+use crate::storage::WorldError;
 
 const HELPER_ROOT_ENV: &str = "SOLARIS_WORLD_LEASE_HELPER_ROOT";
 const READY_MARKER: &str = "SOLARIS_WORLD_LEASE_READY";
@@ -31,7 +29,8 @@ fn world_lease_subprocess_helper() {
     let Some(root) = std::env::var_os(HELPER_ROOT_ENV) else {
         return;
     };
-    let _world = WorldStorage::open(root, single_air_registry()).expect("helper acquires lease");
+    let _lease = acquire_exclusive_world_root_lease(std::path::Path::new(&root))
+        .expect("helper acquires lease");
     println!("{READY_MARKER} pid={}", std::process::id());
     std::io::stdout().flush().unwrap();
 
@@ -43,8 +42,6 @@ fn world_lease_subprocess_helper() {
 fn writable_world_lease_is_process_exclusive_and_recovers_after_crash() {
     let first_root = tempfile::tempdir().unwrap();
     let second_root = tempfile::tempdir().unwrap();
-    std::fs::create_dir_all(first_root.path().join("region")).unwrap();
-    std::fs::create_dir_all(second_root.path().join("region")).unwrap();
 
     let mut child = Command::new(std::env::current_exe().unwrap())
         .args([
@@ -77,8 +74,7 @@ fn writable_world_lease_is_process_exclusive_and_recovers_after_crash() {
     }
     assert!(ready, "lease helper exited before publishing readiness");
 
-    let registry = single_air_registry();
-    let error = match WorldStorage::open(first_root.path(), Arc::clone(&registry)) {
+    let error = match acquire_exclusive_world_root_lease(first_root.path()) {
         Ok(_) => panic!("second process unexpectedly acquired writable world lease"),
         Err(error) => error,
     };
@@ -90,15 +86,7 @@ fn writable_world_lease_is_process_exclusive_and_recovers_after_crash() {
                 && metadata.contains("instance=")
     ));
 
-    let mut read_only =
-        WorldStorage::open_read_only(first_root.path(), Arc::clone(&registry)).unwrap();
-    assert!(matches!(
-        read_only.plan_dirty_flush(),
-        Err(WorldError::ReadOnlyWorld(path)) if path == first_root.path()
-    ));
-    drop(read_only);
-
-    let distinct = WorldStorage::open(second_root.path(), Arc::clone(&registry)).unwrap();
+    let distinct = acquire_exclusive_world_root_lease(second_root.path()).unwrap();
     drop(distinct);
 
     let lease_path = first_root.path().join(WORLD_LEASE_FILE_NAME);
@@ -107,7 +95,7 @@ fn writable_world_lease_is_process_exclusive_and_recovers_after_crash() {
 
     child.terminate();
 
-    let reopened = WorldStorage::open(first_root.path(), registry).unwrap();
+    let reopened = acquire_exclusive_world_root_lease(first_root.path()).unwrap();
     let refreshed_metadata = std::fs::read_to_string(&lease_path).unwrap();
     assert!(refreshed_metadata.contains(&format!("pid={}", std::process::id())));
     assert_ne!(refreshed_metadata, stale_metadata);
@@ -117,36 +105,23 @@ fn writable_world_lease_is_process_exclusive_and_recovers_after_crash() {
 #[test]
 fn world_reopen_releases_lease_with_inherited_file_description() {
     let root = tempfile::tempdir().unwrap();
-    std::fs::create_dir_all(root.path().join("region")).unwrap();
-    let registry = single_air_registry();
-    let mut world = WorldStorage::open(root.path(), Arc::clone(&registry)).unwrap();
-    let position = crate::ChunkPos { x: -1, z: 2 };
-    let mut chunk = crate::Chunk::empty(
-        position,
-        crate::block::BlockStateId(0),
-        mc_data::Identifier::parse("minecraft:plains").unwrap(),
-    );
-    chunk.set_world_journal_lsn(73);
-    world.insert_chunk(position, chunk).unwrap();
-    assert_eq!(world.flush_dirty().unwrap(), 1);
+    let lease = acquire_exclusive_world_root_lease(root.path()).unwrap();
     // dup and fork share the same open file description on Unix. A concurrent
     // process spawn may retain it until exec, despite close-on-exec on our fd.
-    let inherited_file = world
-        ._world_lease
-        .as_ref()
-        .unwrap()
-        ._file
-        .try_clone()
-        .unwrap();
-    drop(world);
-    let mut reopened = WorldStorage::open(root.path(), registry).unwrap();
-    assert_eq!(
-        reopened
-            .get_chunk(position)
-            .unwrap()
-            .unwrap()
-            .world_journal_lsn(),
-        73
-    );
+    let inherited_file = lease._file.try_clone().unwrap();
+    drop(lease);
+    let _reopened = acquire_exclusive_world_root_lease(root.path()).unwrap();
     drop(inherited_file);
+}
+
+#[test]
+fn world_lease_excludes_other_owners_until_release() {
+    let root = tempfile::tempdir().unwrap();
+    let lease = acquire_exclusive_world_root_lease(root.path()).unwrap();
+    assert!(matches!(
+        acquire_exclusive_world_root_lease(root.path()),
+        Err(WorldError::WorldLocked { .. })
+    ));
+    drop(lease);
+    let _reopened = acquire_exclusive_world_root_lease(root.path()).unwrap();
 }

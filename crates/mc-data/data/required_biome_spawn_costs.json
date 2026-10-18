@@ -1,0 +1,34 @@
+{
+  "minecraft:nether_wastes": {},
+  "minecraft:soul_sand_valley": {
+    "minecraft:enderman": {
+      "charge": 0.7,
+      "energy_budget": 0.15
+    },
+    "minecraft:ghast": {
+      "charge": 0.7,
+      "energy_budget": 0.15
+    },
+    "minecraft:skeleton": {
+      "charge": 0.7,
+      "energy_budget": 0.15
+    },
+    "minecraft:strider": {
+      "charge": 0.7,
+      "energy_budget": 0.15
+    }
+  },
+  "minecraft:crimson_forest": {},
+  "minecraft:warped_forest": {
+    "minecraft:enderman": {
+      "charge": 1.0,
+      "energy_budget": 0.12
+    }
+  },
+  "minecraft:basalt_deltas": {},
+  "minecraft:the_end": {},
+  "minecraft:end_highlands": {},
+  "minecraft:end_midlands": {},
+  "minecraft:small_end_islands": {},
+  "minecraft:end_barrens": {}
+}

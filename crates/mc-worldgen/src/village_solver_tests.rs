@@ -251,7 +251,7 @@ fn desert_village_assembles_deterministically() {
     // formula accepts holds a desert village.
     let seed = 4242;
     let desert_tag = identifier("minecraft:has_structure/village_desert");
-    let biome_at = |_x: i32, _z: i32| identifier("minecraft:desert");
+    let biome_at = |_x: i32, _y: i32, _z: i32| identifier("minecraft:desert");
     let biome_matches = |tag: &Identifier, _biome: &Identifier| {
         tag.as_str().trim_start_matches('#') == desert_tag.as_str()
     };
@@ -297,7 +297,7 @@ fn desert_village_assembles_deterministically() {
     );
     assert!(!assembly.pieces.is_empty());
     assert_eq!(assembly.structure, identifier("minecraft:village_desert"));
-    assert!(biome_matches(&assembly.biome_tag, &biome_at(0, 0)));
+    assert!(biome_matches(&assembly.biome_tag, &biome_at(0, 0, 0)));
     let size = closure
         .structures
         .iter()
@@ -362,7 +362,7 @@ fn selection_retries_until_an_entry_passes_its_biome_gate() {
         tag.as_str().trim_start_matches('#') == taiga_tag.as_str()
     };
     let surface = |_x: i32, _z: i32| 64;
-    let biome_at = |_x: i32, _z: i32| identifier("minecraft:taiga");
+    let biome_at = |_x: i32, _y: i32, _z: i32| identifier("minecraft:taiga");
     let candidate = (0..400)
         .find(|chunk_x| closure.placement.is_placement_chunk(seed, *chunk_x, 0))
         .expect("the seed has a placement chunk near the origin");
@@ -400,7 +400,7 @@ fn non_placement_chunks_produce_no_village() {
             seed,
             non_placement,
             0,
-            |_, _| identifier("minecraft:plains"),
+            |_, _, _| identifier("minecraft:plains"),
             |_, _| true,
             |_, _| 64,
         )
@@ -477,7 +477,7 @@ fn the_start_piece_is_anchored_on_its_named_connector() {
         start_pool: pool_id.clone(),
         start_jigsaw_name: Some(identifier("test:anchor")),
         size: 0,
-        start_height: HeightProviderSpec::Constant(VerticalAnchor::Absolute(0)),
+        start_height: HeightProviderSpec::Constant(VerticalAnchor::Absolute(7)),
         use_expansion_hack: true,
         project_start_to_heightmap: Some(mc_data::village_data::HeightmapType::WorldSurfaceWg),
         max_distance_from_center: MaxDistance {
@@ -500,7 +500,7 @@ fn the_start_piece_is_anchored_on_its_named_connector() {
             id: structure_id.clone(),
             weight: 1,
             spec,
-            start_height: 0,
+            start_height: 7,
         }],
         pools: BTreeMap::from([(
             pool_id.clone(),
@@ -531,7 +531,10 @@ fn the_start_piece_is_anchored_on_its_named_connector() {
         4242,
         chunk_x,
         chunk_z,
-        |_x, _z| identifier("minecraft:plains"),
+        |_x, y, _z| {
+            assert_eq!(y, surface + 7 + anchor_local[1]);
+            identifier("minecraft:plains")
+        },
         |_tag, _biome| true,
         |_x, _z| surface,
     )
@@ -543,6 +546,7 @@ fn the_start_piece_is_anchored_on_its_named_connector() {
         "an absent connector pool grows nothing"
     );
     let piece = &assembly.pieces[0];
+    assert_eq!(piece.bounds_min.y, surface + 7 - piece.ground_level_delta);
     let anchor = jigsaws_for(
         &piece.element,
         &closure,

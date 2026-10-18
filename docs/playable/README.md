@@ -36,6 +36,19 @@ unless the owner explicitly asks for readiness or ledger work.
 7. One 20-minute real-client session has no crash, disconnect, or
    catastrophic tick stalls.
 
+## Furnace Startup Contract
+
+The v2 core's full-content-cache startup must attach vanilla furnace fuel
+values to the resolved tags using the same item registry as the inventory
+rules. Loading wire tags alone leaves the burn-time table empty: even an item
+in `#minecraft:planks` is then rejected by the fuel slot and cannot burn.
+The embedded-data test fixture initializes the same table; it is not an
+operator-selectable content-cache fallback.
+
+`inventory::furnace_tests::full_data_furnace_accepts_acacia_planks_and_cooks_charcoal`
+covers full-data startup, hotbar-to-furnace pickup clicks, acacia planks' 300-tick
+burn duration, and charcoal output after 200 cooking ticks.
+
 ## Allowed Cuts
 
 - View-distance 4.

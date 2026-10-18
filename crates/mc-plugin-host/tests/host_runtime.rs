@@ -483,6 +483,7 @@ async fn a_full_command_queue_drops_the_batch_and_keeps_the_instance() {
         HostQueues {
             events: 16,
             commands: 1,
+            ..HostQueues::default()
         },
         Arc::new(Sessions),
     )

@@ -1,5 +1,12 @@
 # Replacement Readiness
 
+**Runtime-era notice (ADR 0014 Phase 5):** the setup commands and M77–M100
+assessments below describe the retired v1 server and retain their historical
+meaning. They are not current operator instructions or v2 acceptance receipts.
+For the native `mc-edge` / `mc-core` server use [OPERATING.md](OPERATING.md);
+current maturity remains `draft`. No old pass or readiness label transfers
+automatically across the cutover.
+
 Solaris can be evaluated as a scoped vanilla 26.1.2 overworld-survival server,
 not as a bit-perfect vanilla clone.
 
@@ -185,12 +192,16 @@ The same review keeps these blockers canonical for replacement claims:
   animation, sounds/events, furnace lit-state, hopper/comparator automation,
   real-client stale-click or malformed-click coverage, and exact state-machine
   parity are not claimed.
-- Common survival stations beyond crafting/furnace-family support are safe
-  rejected in M87: brewing stand, anvil variants, enchanting table, smithing
-  table, grindstone, stonecutter, loom, cartography table, composter,
-  cauldron variants, lectern, fletching table, beacon, and crafter right-clicks
-  are acknowledged without opening unimplemented menus or placing a held block
-  through the station interaction. Their actual gameplay remains deferred.
+- Smithing (21), loom (18), anvil variants (8), grindstone (15), and brewing
+  stand (11) now use native station packet/slot layouts. Focused raw-TCP
+  scenarios prove output/input debits, anvil rename/XP, grindstone XP, stale
+  output replay rejection, input close refunds, and background brewing across
+  a disk save/restart. Resident/storage tests cover atomic five-slot brewing
+  removal with `block_drops` enabled/disabled; world tests cover brewing NBT/CAS
+  and facing-preserving anvil degradation with canonical light invalidation
+  on removal. These are functional proofs, not native graphical evidence.
+  Other station gameplay, broad sounds, particles, automation, and native-client
+  UI captures remain outside this station shipment's validation.
 - Recipe loading and runtime support are partial for furnace, blasting, smoking,
   and campfire variants. A 2026-06-22 Java-agent run drove a real vanilla
   26.1.2 client through `m94-03a-inventory-oak-log-to-planks` and validated
@@ -211,10 +222,15 @@ The same review keeps these blockers canonical for replacement claims:
   `Items` block-entity updates, cooked item drops, and pickup. In-flight
   persistence, automation, smoke/sound/particles, and exact ejection behavior are
   not claimed.
-- Loot/drop support is scoped to deterministic one-stack block/entity drops from
-  embedded fallback data or a configured local sidecar simple subset. Full
-  vanilla loot execution, random rolls, predicates, fortune/silk touch, looting,
-  equipment drops, exact XP, sounds/particles/statistics/events are not claimed.
+- Loot/drop support executes embedded 26.1.2 entity tables with damage-source,
+  player and looting context; retained saddles honor vanishing and `mob_drops`.
+  Worldgen chest loot preserves canonical components; saved pending
+  `LootTable`/`LootTableSeed` materializes once on opening, including stored
+  enchanted-book components. Functional raw-TCP proof covers a live melee cow
+  death with beef metadata, pending ruin chest enchanted-book metadata,
+  inventory transfer, and save/restart without
+  rerolling. Native graphical validation, full block loot parity, recent-player
+  credit, exact XP, sounds/particles/statistics/events are not claimed.
 - Farming and plants have partial deterministic Solaris support for common crops,
   nether wart, stems, sweet berries, cocoa, saplings, sugar cane, cactus, and
   bamboo. Cactus now clears visible existing columns when a player places a side

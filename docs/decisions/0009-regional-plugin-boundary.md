@@ -1,17 +1,17 @@
 # ADR 0009 - Regional simulation behind the plugin boundary
 
 **Date:** 2026-07-22
-**Status:** Accepted, staged implementation
+**Status:** Plugin isolation/value/admission principles retained; v1 regional,
+actor, multi-journal, Luau and reload implementation details superseded by
+[ADR 0013](0013-core-model-v2.md) and [ADR 0014](0014-v1-core-retirement.md).
 
-**Historical note (added 2026-09-26, CP-REFACTOR-000).** This ADR was written for
-the Luau plugin runtime. Luau is retired: `mc-plugin-host` no longer contains the
-`legacy_luau` module or the `legacy-luau` feature, and production plugins are
-Wasmtime components over the WIT contract `solaris:plugin@0.7.0`
-([PLUGINS.md](../PLUGINS.md)). The ownership, admission, routing and commit
-decisions below still bind the current runtime; the Luau-specific implementation,
-reload and `solaris.d.luau` paragraphs are history, not current behavior. Actual
-runtime state is in [`MEMORY.md`](../MEMORY.md) and
-[`ARCHITECTURE.md`](../ARCHITECTURE.md).
+The current runtime uses `mc-core` native tick authority with a production
+Wasmtime worker outside the tick, `mc-script` bounded WIT/DTO admission and
+`mc-loader` wire contracts. There are no region leases in the plugin API,
+independent plugin-storage journal, v1 routing adapters or SIGHUP deployment
+reload. [PLUGINS.md](../PLUGINS.md) is the current deployment contract.
+The body below preserves the evolving decision record, including historical
+v1 source paths/commands; present-tense v1 descriptions apply only to their era.
 
 ## Problem
 
@@ -104,6 +104,100 @@ Migration is incomplete. P2's graphical hello/join acceptance is recorded in
 timers, but remaining operations, Loader/startup metadata, precommit hooks,
 reload and final Luau removal still need their own acceptance evidence.
 
+### Native core v2 deployment (2026-10-14)
+
+`solaris-v2` now composes the same production component host through the
+existing bounded `mc-script` boundary. It does not instantiate v1 regions,
+storage actors or `mc-server`. One serial Wasmtime worker remains outside
+the native tick; admission delivers owned commands that the native owner
+revalidates and commits. Native tick events drive timers and world observations.
+The edge reuses the existing `mc-net` Loader manifest, artifact, ACK and sound
+wire codecs only; configuration negotiation binds the actual client bundle
+before native session-scoped sound admission.
+
+Core v2's plugin KV, receipts and physical-domain custody are native global
+authority captured with world/player/entity effects (ADR 0013 Q6). The tick WAL
+contains touched-key absolute post-images and explicit domain removals,
+not a copy of accumulated history. The journal worker applies successfully
+appended deltas to its committed plugin-state mirror and serializes that mirror
+at the FIFO checkpoint boundary, outside the tick.
+Operation receipts remain durable for the world's lifetime: age and receipt count
+never make an existing id executable again. Retry returns its original outcome;
+conflicting reuse is refused across checkpoint and WAL recovery. Receipt storage
+is intentionally unbounded. Eviction is unsupported without a durable rule that
+rejects forgotten older ids rather than executing them again.
+
+Targeted completion callbacks, command replies and commit traces wait in bounded
+sealed batches until journal append completion is acknowledged. Prepared
+player-command events use the required FIFO. These messages are not shed:
+terminal failure or exhausted retained capacity fails closed. Observations use
+separate bounded queues of 256 per registered plugin, round-robin dispatch and
+drop-newest overload, counted by
+`ScriptBoundary::observation_events_dropped(plugin_id)`; observation overload does
+not halt native simulation. Neither the tick nor a reply waits for or requests
+fsync; the usual unflushed-tail crash semantics remain unchanged.
+
+Before startup callbacks the native owner pushes the recovered tick. The host
+anchors `init` timer delays to that clock once; reload already uses the current
+clock. Each acknowledged tick reaches the host clock before its result callbacks,
+so timers scheduled by those callbacks measure their delay from the correct
+native tick. Observations are likewise released only after their native batch
+has been acknowledged.
+
+Directory-only v2 configuration strictly loads every package present. Unlike
+the v1 explicit grant/expected/hook roster, selecting that directory authorizes
+its manifest-declared ordinary capabilities and automatically registers declared
+`before-build` hooks in deterministic package-id order with Deny failure policy.
+Unsupported kinds, including `before-damage`, fail before component compilation
+or native world admission. Declarations never silently load without authority.
+Unused unsupported requests produce explicit native refusal, not successful
+no-ops. Product policy remains in independently deployed packages; generic
+inventories, structures, zones, NPC execution and physical profiles remain native.
+
+Inventory authority bounds active/structure-bound reservation references to 4096
+globally and retains at most 256 unbound terminal references in a FIFO. Bound
+committed references stay pinned for structure stages; exhausted protected
+capacity returns `Busy`. Releasing a cancelled plan clears its binding so its
+terminal references can be evicted. Source/custody indexes provide narrow native
+admission checks, and reservation mutations journal per-record post-images, not
+the whole ledger. NPC custody likewise uses per-record keys and indexed entity
+UUID lookup, avoiding a records-by-entities scan on every tick.
+
+V2 edge build admission obtains an owned read-only native preview and awaits
+the production component chain outside the tick. One queue-inclusive 100 ms
+deadline covers preview and the hook chain through host answer receipt, not
+subsequent tick-boundary scheduling. A timely answer remains consumable after
+that clock deadline; roster/generation, live source, single-use and native/KV
+guards still fail closed. The native owner rechecks identity/session/dimension,
+exact selected held stack, geometry, protection/custody and plugin-KV versions
+before consuming the single-use Keep
+approval and applying the frozen native intent at actual merge, after later
+inputs and the entity phase. Click orientation/sneaking, ray origin and growth
+seed remain frozen while native reach/occupancy/support remain live. Dimension
+previews reuse the existing global-authority swap. Previews see applied inputs;
+idle requests unpark the same native owner, with no extra tick or deadline reset.
+Earlier queued inputs defer preview to preserve FIFO input semantics. No guest
+executes on the tick, and the tick never awaits a decision. Client refusals repair
+predicted blocks/inventory through the reliable per-viewer queue; they do not
+enter the world change set or block WAL.
+
+The covered set is the old build-hook set: player break/placement (including
+paired/construction cells), bone meal, successful composter fills, clicked and
+raycast bucket edits, and server-owned edits (`SetWorldBlock`, plugin/NPC
+physical structure portions and NPC harvest/tree-cut/mine/replant work). Other
+interactions, hoe/ignition operations, environmental simulation and damage are
+not newly hooked. Guest structure
+advances, NPC construction and block-set requests share at most 64 pending
+decisions and poll nonblocking. Exact-operation retries coalesce; native plans,
+custody and caller/handler guards revalidate before the unchanged receipt commit.
+Pending NPC work retains its assignment/deadline without counting progress; only
+the still-current live work assignment may consume its approval. Hook-free paths
+remain direct.
+
+For the genuine seven-package wire gate, towns owns the actor-or-operator claim
+policy; settlements remains loaded with its real `before-build` implementation.
+That ordinary claim gate is not evidence of a settlements siege veto.
+
 ### Bounded precommit ownership (P5)
 
 `mc-script::precommit` owns immutable build/damage contexts, operator-ordered
@@ -128,6 +222,44 @@ and transfer only when an actual continuation is created. A native refusal
 cannot be reported before a later hidden mutation. A failed mandatory guest
 does not unregister protection; operator removal is separate from Store
 retirement. No-handler actions retain their direct native path.
+
+#### Build storage-version guards
+
+The following storage-actor version-counter discussion describes v1 only.
+V2 checks handler guards directly against its sole native global plugin-KV
+authority in the same synchronous owner turn as the native mutation; there is
+no storage-actor binding, mirrored counter cache or second writer.
+
+A v1 `before-build` handler may return plugin storage-version guards in its own
+namespace (`expected-plugin-storage-versions`). The v1 damage path carries them
+in the native physical decision's `hook_storage_versions`, so the storage actor
+checks them atomically with the durable commit. A v1 build does not: its edits
+are applied in memory by the simulation owner or a regional worker, never through
+a storage batch, so there is no durable batch for the guards to ride.
+
+Builds therefore enforce guards with one shared function,
+`refuse_build_approval`, called by every build commit (player survival
+break/placement/bucket, resident and regional block edits, the journaled
+structure portion and the server-owned plugin edit path) immediately before its
+apply. When the approval carries guards, the storage actor first binds them to
+its shared version counters (`register_version_guards`), and the commit reads
+those counters; a moved key refuses the build as `Stale` exactly like a non-Keep
+decision, with the ticket already spent. Approvals without guards, and the
+direct path with no hook, behave as before. A guarded build the storage actor
+itself drives (structure portions, npc work) refuses as `Unavailable`, because
+the actor cannot wait for a binding only it can answer.
+
+This is NOT atomic: the residual window is the guard read -> apply inside one
+synchronous turn, during which a storage-actor CAS can bump the counter. A
+revoke acknowledged before the read is always seen; one that lands inside the
+window is not, and at the journaled structure portion the window also spans its
+reserved-decision journal append. This does not meet the "checked atomically
+with the final native decision" wording of `precommit.wit` for builds.
+
+Known hardening path, needing a separate owner decision: hold the
+`VersionCounters` mutex across the apply (about ten files, lock-order risk with
+the mc-entity lane code, whose `VersionFence::admit` holds a region phase while
+taking the same mutex).
 
 This records implementation ownership, not completed graphical acceptance or
 release readiness. P5 evidence and remaining gates are tracked in `MEMORY.md`;
@@ -280,6 +412,45 @@ existing world fail-stop path. Native/session/regional commit preconditions
 check the inventory fence before effects, including callbacks reacquiring the
 mutex after planning. This is a concrete compound recovery mechanism, not a
 claim of global gameplay atomicity.
+
+An actual player's `ConsumeReservation` can exchange a bound reserved container
+with that player's own canonical inventory in both directions under one decision.
+Every endpoint remains fenced. Reservation materials are counted from the actual
+outgoing stacks in sequential planning, not repeatedly from the original source
+slot; other live reservations retain their stock floors. An optional original
+native route witness is an independent causal participant, never a substitute
+player or inventory owner. Its original identity and physical state are fenced
+alongside the player's session, UUID, dimension, pose, inventory and revision.
+Expected plugin-storage versions are admitted before the world decision or any
+debit. The existing native/world inventory composite retains complete participant
+images and the final decision watermark through projection and acknowledgement;
+an unknown acknowledgement freezes the player and resident reads. Recovery
+installs the same after-images and receipt, so replay neither pays nor debits twice.
+Contract, escort and settlement policy remain entirely in the Wasm guest.
+
+The inventory dispatcher heap-bounds the suspended container composite on both
+selected mutation paths: the player/container composite and the zero-actor
+server-owned NPC/container composite. Lightweight queries do not carry either
+composite's large future state or allocate its future. This boundary is required
+for bounded debug stacks through nested owner requests; increasing thread stacks
+does not fix the production path. Native-vector, actual-player recovery, and the
+committed route handoff/cancel recovery regressions use the default test-thread
+stack, with the larger fixture future pinned on the heap rather than a custom
+oversized thread. No test scenario keeps an unbounded 16 MiB helper thread.
+
+The native NPC dispatcher likewise heap-bounds the admitted mutation future,
+without imposing it on NPC queries or refused admission. Work assignment uses
+the same boundary in explicit assign/resume commands and eligible retained-work
+continuations. Empty, ineligible and replay-fenced wake scans do not allocate an
+assignment future. This contains the physical-owner future state without
+changing owner admission, retained-work fairness, receipt fences or replay.
+Debug Wasm owner-path regressions run single-threaded on default stacks.
+
+Regional checkpoint/WAL restoration is boot-only hydration of an empty owner,
+not a new gameplay mutation. It preserves recovered identity and ordering
+without journaling another restoration decision; existing WAL records remain
+until durable checkpointing and normal shutdown compaction. Recovery fixtures
+must hydrate before live entity spawns and must not require duplicate decisions.
 
 The server-owned warehouse-to-resident equipment/carry transfer has no player
 session participant (`actor_id = 0`). The inventory owner resolves the plugin's

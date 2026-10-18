@@ -6,8 +6,8 @@
 //! linked in. Nothing here knows how a rule was evaluated.
 //!
 //! The component host materializes this metadata from the package it validated
-//! before startup. Client bundles, worldgen profiles and settlement plans share
-//! this one representation with the server's startup and Loader consumers.
+//! before startup. Client bundles and generic worldgen profiles share this
+//! representation with the server's startup and Loader consumers.
 //!
 //! Fields are private and every read goes through an accessor. The constructors
 //! take the parts a runtime already validated during discovery; they are the way
@@ -34,18 +34,13 @@ impl PluginWorldgenOreProfile {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum PluginWorldgenSettlementProfile {
-    PlainsVillagePrototype,
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum ClientLoader {
     Fabric,
     NeoForge,
     Forge,
+    Native,
 }
 
 impl ClientLoader {
@@ -55,6 +50,7 @@ impl ClientLoader {
             Self::Fabric => "fabric",
             Self::NeoForge => "neoforge",
             Self::Forge => "forge",
+            Self::Native => "native",
         }
     }
 }
@@ -408,318 +404,4 @@ impl ClientBundle {
             self.owner_plugin_id, self.id, self.version, self.sha256
         )
     }
-}
-
-impl PluginWorldgenSettlementProfile {
-    #[must_use]
-    pub const fn contract_name(self) -> &'static str {
-        match self {
-            Self::PlainsVillagePrototype => "plains_village_prototype",
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[non_exhaustive]
-pub enum PluginSettlementBuildingTemplate {
-    PlainsFountain,
-    PlainsSmallHouse,
-    PlainsToolsmith,
-}
-
-impl PluginSettlementBuildingTemplate {
-    #[must_use]
-    pub const fn contract_name(self) -> &'static str {
-        match self {
-            Self::PlainsFountain => "plains_fountain",
-            Self::PlainsSmallHouse => "plains_small_house",
-            Self::PlainsToolsmith => "plains_toolsmith",
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum PluginSettlementBuildingRole {
-    MeetingPoint,
-    Home,
-    Workplace,
-}
-
-impl PluginSettlementBuildingRole {
-    #[must_use]
-    pub const fn contract_name(self) -> &'static str {
-        match self {
-            Self::MeetingPoint => "meeting_point",
-            Self::Home => "home",
-            Self::Workplace => "workplace",
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum PluginSettlementInhabitantKind {
-    Villager,
-}
-
-impl PluginSettlementInhabitantKind {
-    #[must_use]
-    pub const fn entity_type(self) -> &'static str {
-        match self {
-            Self::Villager => "minecraft:villager",
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum PluginSettlementJob {
-    Unemployed,
-    Toolsmith,
-}
-
-impl PluginSettlementJob {
-    #[must_use]
-    pub const fn contract_name(self) -> &'static str {
-        match self {
-            Self::Unemployed => "unemployed",
-            Self::Toolsmith => "toolsmith",
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PluginSettlementBuilding {
-    id: String,
-    template: PluginSettlementBuildingTemplate,
-    role: PluginSettlementBuildingRole,
-}
-
-impl PluginSettlementBuilding {
-    /// Build one already-validated settlement building.
-    #[must_use]
-    pub fn new(
-        id: impl Into<String>,
-        template: PluginSettlementBuildingTemplate,
-        role: PluginSettlementBuildingRole,
-    ) -> Self {
-        Self {
-            id: id.into(),
-            template,
-            role,
-        }
-    }
-    #[must_use]
-    pub fn id(&self) -> &str {
-        &self.id
-    }
-
-    #[must_use]
-    pub const fn template(&self) -> PluginSettlementBuildingTemplate {
-        self.template
-    }
-
-    #[must_use]
-    pub const fn role(&self) -> PluginSettlementBuildingRole {
-        self.role
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PluginSettlementInhabitant {
-    id: String,
-    kind: PluginSettlementInhabitantKind,
-    building_id: String,
-    job: PluginSettlementJob,
-}
-
-impl PluginSettlementInhabitant {
-    /// Build one already-validated settlement inhabitant.
-    #[must_use]
-    pub fn new(
-        id: impl Into<String>,
-        kind: PluginSettlementInhabitantKind,
-        building_id: impl Into<String>,
-        job: PluginSettlementJob,
-    ) -> Self {
-        Self {
-            id: id.into(),
-            kind,
-            building_id: building_id.into(),
-            job,
-        }
-    }
-    #[must_use]
-    pub fn id(&self) -> &str {
-        &self.id
-    }
-
-    #[must_use]
-    pub const fn kind(&self) -> PluginSettlementInhabitantKind {
-        self.kind
-    }
-
-    #[must_use]
-    pub fn building_id(&self) -> &str {
-        &self.building_id
-    }
-
-    #[must_use]
-    pub const fn job(&self) -> PluginSettlementJob {
-        self.job
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PluginSettlementExtension {
-    id: String,
-    building_id: String,
-}
-
-impl PluginSettlementExtension {
-    /// Build one already-validated settlement extension.
-    #[must_use]
-    pub fn new(id: impl Into<String>, building_id: impl Into<String>) -> Self {
-        Self {
-            id: id.into(),
-            building_id: building_id.into(),
-        }
-    }
-    #[must_use]
-    pub fn id(&self) -> &str {
-        &self.id
-    }
-
-    #[must_use]
-    pub fn building_id(&self) -> &str {
-        &self.building_id
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PluginSettlementPlan {
-    owner_plugin_id: String,
-    profile: PluginWorldgenSettlementProfile,
-    buildings: Vec<PluginSettlementBuilding>,
-    inhabitants: Vec<PluginSettlementInhabitant>,
-    extensions: Vec<PluginSettlementExtension>,
-}
-
-impl PluginSettlementPlan {
-    /// Build one already-validated settlement plan.
-    #[must_use]
-    pub fn new(
-        owner_plugin_id: impl Into<String>,
-        profile: PluginWorldgenSettlementProfile,
-        buildings: Vec<PluginSettlementBuilding>,
-        inhabitants: Vec<PluginSettlementInhabitant>,
-        extensions: Vec<PluginSettlementExtension>,
-    ) -> Self {
-        Self {
-            owner_plugin_id: owner_plugin_id.into(),
-            profile,
-            buildings,
-            inhabitants,
-            extensions,
-        }
-    }
-    #[must_use]
-    pub fn plains_village_prototype(owner_plugin_id: impl Into<String>) -> Self {
-        Self {
-            owner_plugin_id: owner_plugin_id.into(),
-            profile: PluginWorldgenSettlementProfile::PlainsVillagePrototype,
-            buildings: default_plains_village_buildings(),
-            inhabitants: Vec::new(),
-            extensions: Vec::new(),
-        }
-    }
-
-    #[must_use]
-    pub fn owner_plugin_id(&self) -> &str {
-        &self.owner_plugin_id
-    }
-
-    #[must_use]
-    pub const fn profile(&self) -> PluginWorldgenSettlementProfile {
-        self.profile
-    }
-
-    #[must_use]
-    pub fn buildings(&self) -> &[PluginSettlementBuilding] {
-        &self.buildings
-    }
-
-    #[must_use]
-    pub fn inhabitants(&self) -> &[PluginSettlementInhabitant] {
-        &self.inhabitants
-    }
-
-    #[must_use]
-    pub fn extensions(&self) -> &[PluginSettlementExtension] {
-        &self.extensions
-    }
-
-    #[must_use]
-    pub fn contract_name(&self) -> String {
-        let mut contract = format!(
-            "{}|owner={}|buildings=",
-            self.profile.contract_name(),
-            self.owner_plugin_id
-        );
-        for building in &self.buildings {
-            contract.push_str(&format!(
-                "{},{},{};",
-                building.id,
-                building.template.contract_name(),
-                building.role.contract_name()
-            ));
-        }
-        contract.push_str("|inhabitants=");
-        for inhabitant in &self.inhabitants {
-            contract.push_str(&format!(
-                "{},{},{},{};",
-                inhabitant.id,
-                inhabitant.kind.entity_type(),
-                inhabitant.building_id,
-                inhabitant.job.contract_name()
-            ));
-        }
-        contract.push_str("|extensions=");
-        for extension in &self.extensions {
-            contract.push_str(&format!("{},{};", extension.id, extension.building_id));
-        }
-        contract
-    }
-}
-/// The buildings a plains village prototype starts from.
-///
-/// Shared by direct prototype construction and component packages that declare a
-/// settlement profile without naming buildings. One list keeps both paths on the
-/// same village layout.
-pub fn default_plains_village_buildings() -> Vec<PluginSettlementBuilding> {
-    [
-        (
-            "meeting-point",
-            PluginSettlementBuildingTemplate::PlainsFountain,
-            PluginSettlementBuildingRole::MeetingPoint,
-        ),
-        (
-            "home",
-            PluginSettlementBuildingTemplate::PlainsSmallHouse,
-            PluginSettlementBuildingRole::Home,
-        ),
-        (
-            "toolsmith",
-            PluginSettlementBuildingTemplate::PlainsToolsmith,
-            PluginSettlementBuildingRole::Workplace,
-        ),
-    ]
-    .into_iter()
-    .map(|(id, template, role)| PluginSettlementBuilding {
-        id: id.to_owned(),
-        template,
-        role,
-    })
-    .collect()
 }

@@ -80,11 +80,6 @@ impl EntityTypeFlags {
     pub const CAN_SPAWN_FAR_FROM_PLAYER: Self = Self(1 << 3);
     pub const ALLOWED_IN_PEACEFUL: Self = Self(1 << 4);
 
-    #[cfg(test)]
-    pub(crate) const fn bits(self) -> u8 {
-        self.0
-    }
-
     #[must_use]
     pub const fn contains(self, flag: Self) -> bool {
         self.0 & flag.0 == flag.0
@@ -446,8 +441,10 @@ pub struct EntityTypeContract {
     pub name: &'static str,
     pub behavior: EntityBehaviorContract,
     pub(crate) dimensions: EntityDimensions,
-    pub(crate) tracking_range: u8,
-    pub(crate) update_interval: u32,
+    /// Vanilla tracking radius in chunks; the edge also caps it by view distance.
+    pub tracking_range: u8,
+    /// Vanilla movement update interval in ticks (appearance is not cadence-gated).
+    pub update_interval: u32,
     pub(crate) category: MobCategory,
     pub(crate) flags: EntityTypeFlags,
 }
@@ -690,6 +687,7 @@ define_entity_contract! {
     156, "minecraft:fishing_bobber", 0.25, 0.25, default, 1.0, 4, 5, Misc, FLAGS_RUNTIME_ONLY;
 }
 
+#[inline]
 #[must_use]
 pub(crate) fn by_protocol_id(protocol_id: u32) -> Option<EntityTypeContract> {
     let index = usize::try_from(protocol_id).ok()?;
@@ -704,6 +702,7 @@ pub(crate) fn by_name(name: &str) -> Option<EntityTypeContract> {
         .copied()
 }
 
+#[inline]
 #[must_use]
 pub fn entity_type_contract_26_1_2_by_protocol_id(protocol_id: u32) -> Option<EntityTypeContract> {
     by_protocol_id(protocol_id)

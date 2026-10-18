@@ -5,7 +5,7 @@
 
 use mc_world::chunk::ChunkGeometry;
 
-use super::{SEA_LEVEL, TellusWorldgenSettings, WorldgenMode};
+use super::SEA_LEVEL;
 
 mod caves;
 mod drainage;
@@ -34,20 +34,11 @@ pub(in crate::terrain) struct TerrainSample {
 pub(in crate::terrain) struct OverworldRouter {
     seed: i64,
     geometry: ChunkGeometry,
-    mode: WorldgenMode,
 }
 
 impl OverworldRouter {
-    pub(in crate::terrain) const fn new(
-        seed: i64,
-        geometry: ChunkGeometry,
-        mode: WorldgenMode,
-    ) -> Self {
-        Self {
-            seed,
-            geometry,
-            mode,
-        }
+    pub(in crate::terrain) const fn new(seed: i64, geometry: ChunkGeometry) -> Self {
+        Self { seed, geometry }
     }
 
     pub(in crate::terrain) fn sample(self, block_x: i32, block_z: i32) -> TerrainSample {
@@ -73,27 +64,8 @@ impl OverworldRouter {
         caves::fill_raw_layer(self, min_world_x, min_world_z, side, y, output);
     }
 
-    #[cfg(test)]
-    fn temperature(
-        self,
-        x: f64,
-        height: f64,
-        z: f64,
-        _settings: Option<TellusWorldgenSettings>,
-    ) -> f64 {
-        landforms::temperature(self, x, height, z)
-    }
-
-    fn settings(self) -> Option<TellusWorldgenSettings> {
-        match self.mode {
-            WorldgenMode::VanillaLike => None,
-            WorldgenMode::TellusLike(settings) => Some(settings),
-        }
-    }
-
     fn sea_level(self) -> i32 {
-        self.settings()
-            .map_or(SEA_LEVEL, |settings| settings.sea_level)
+        SEA_LEVEL
     }
 
     fn clamp_height(self, height: f64) -> i32 {

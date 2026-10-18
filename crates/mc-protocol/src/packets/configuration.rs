@@ -13,10 +13,6 @@
 //!        → state transitions to Play
 //! ```
 //!
-//! Resource Pack push/pop, Client Information, Plugin Messages, and
-//! Cookie storage are still deferred — see `docs/milestones/M1.md` for
-//! the full deferral list. The handler in `mc-net` reads but does not
-//! act on any other clientbound-in-Conf packets the client may send.
 
 use std::sync::Arc;
 

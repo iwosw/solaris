@@ -6,8 +6,8 @@
 //!
 //! Single-biome (`minecraft:nether_wastes`) for now. Multi-biome regions
 //! (basalt deltas, soul sand valley, crimson/warped forests), ores, glowstone
-//! and fortresses are queued. No portals, travel, or respawn: the server is
-//! still single-dimension (see the dimensions scout in `docs/MEMORY.md`).
+//! and fortresses are outside this router. The v2 core owns the independent
+//! Nether world, command travel and dimension-specific respawn rules.
 
 use mc_data::Identifier;
 use mc_world::{BlockRegistry, BlockStateId, Chunk, ChunkGenerator, ChunkGeometry, ChunkPos};

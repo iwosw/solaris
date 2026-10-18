@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use mc_world::BlockRegistry;
 
-use crate::{MosaicConfig, TellusWorldgenSettings, TerrainGenerator, WorldgenMode, render_mosaic};
+use crate::{MosaicConfig, TerrainGenerator, render_mosaic};
 
 const PNG_SIGNATURE: &[u8; 8] = b"\x89PNG\r\n\x1a\n";
 
@@ -10,11 +10,7 @@ fn generator() -> TerrainGenerator {
     let registry = Arc::new(
         BlockRegistry::from_report(&mc_data::blocks::solaris_required_blocks_report()).unwrap(),
     );
-    TerrainGenerator::with_worldgen_mode(
-        712_816,
-        registry,
-        WorldgenMode::TellusLike(TellusWorldgenSettings::default()),
-    )
+    TerrainGenerator::new(712_816, registry)
 }
 
 #[test]

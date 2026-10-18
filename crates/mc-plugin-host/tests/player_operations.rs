@@ -531,7 +531,7 @@ async fn the_servers_typed_teleport_answer_returns_to_the_guest_that_asked() {
     boundary
         .try_enqueue_event(
             admitted
-                .player_teleport_result(Some(ScriptPlayerTeleportFailure::TeleportPending))
+                .player_teleport_result(Some(ScriptPlayerTeleportFailure::PlayerUnavailable))
                 .expect("a teleport result answers a teleport"),
         )
         .expect("result queued");
@@ -543,7 +543,7 @@ async fn the_servers_typed_teleport_answer_returns_to_the_guest_that_asked() {
         chat_answer(&refused),
         (
             "hello",
-            "Hi there warp-home 7 refused teleport-pending at 12.5/70/-4.5"
+            "Hi there warp-home 7 refused player-unavailable at 12.5/70/-4.5"
         ),
         "the plugin reads the request it chose, the session it named, the exact \
          coordinates and the server's own reason"

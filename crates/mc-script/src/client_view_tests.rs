@@ -116,6 +116,7 @@ fn model_rejects_duplicate_ids_and_tokens() {
             Some("place".to_owned()),
             None,
             Some(4.0),
+            None,
         )
         .unwrap()
     };
@@ -145,9 +146,36 @@ fn model_rejects_duplicate_ids_and_tokens() {
 #[test]
 fn marker_requires_an_action_when_it_carries_a_selection_token() {
     assert!(matches!(
-        ScriptClientViewMarker::try_new("anchor", Some("ctx-1".to_owned()), None, None, None),
+        ScriptClientViewMarker::try_new("anchor", Some("ctx-1".to_owned()), None, None, None, None),
         Err(ScriptDtoError::EmptyValue { .. })
     ));
+}
+
+#[test]
+fn marker_geometry_uses_world_position_bounds_and_dimension_ids() {
+    assert!(
+        ScriptClientViewMarkerPosition::try_new(
+            "minecraft:overworld",
+            -30_000_000.0,
+            20_000_000.0,
+            30_000_000.0,
+        )
+        .is_ok()
+    );
+    for (x, y, z) in [
+        (30_000_001.0, 0.0, 0.0),
+        (0.0, -20_000_001.0, 0.0),
+        (0.0, 0.0, -30_000_001.0),
+        (f64::NAN, 0.0, 0.0),
+        (0.0, f64::INFINITY, 0.0),
+    ] {
+        assert_eq!(
+            ScriptClientViewMarkerPosition::try_new("minecraft:overworld", x, y, z),
+            Err(ScriptDtoError::InvalidBounds),
+        );
+    }
+    assert!(ScriptClientViewMarkerPosition::try_new("", 0.0, 0.0, 0.0).is_err());
+    assert!(ScriptClientViewMarkerPosition::try_new("not a dimension", 0.0, 0.0, 0.0).is_err());
 }
 
 #[test]
@@ -185,4 +213,20 @@ fn selection_constraints_enforce_range_and_ttl() {
         )
         .is_err()
     );
+}
+
+#[test]
+fn plugin_view_keys_are_open_but_bounded_resource_identifiers() {
+    assert!(ScriptClientViewKey::try_new("example:custom/tool-panel").is_ok());
+    for invalid in [
+        "",
+        "example:",
+        "example:panel:other",
+        "Example:panel",
+        "example:bad key",
+    ] {
+        assert!(ScriptClientViewKey::try_new(invalid).is_err());
+    }
+    let oversized = format!("example:{}", "p".repeat(MAX_CLIENT_VIEW_ID_BYTES));
+    assert!(ScriptClientViewKey::try_new(&oversized).is_err());
 }

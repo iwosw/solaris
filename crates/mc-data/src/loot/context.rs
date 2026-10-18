@@ -277,6 +277,7 @@ pub struct BlockLootContext<'a> {
     properties: LootBlockProperties,
     tool: &'a LootContextItem,
     explosion: Option<LootExplosion>,
+    block_entity: Option<&'a mc_nbt::Tag>,
     random: LootRandomBinding,
 }
 
@@ -295,8 +296,20 @@ impl<'a> BlockLootContext<'a> {
             properties: LootBlockProperties::try_from_pairs(properties)?,
             tool,
             explosion: None,
+            block_entity: None,
             random,
         })
+    }
+
+    #[must_use]
+    pub fn with_block_entity(mut self, entity: &'a mc_nbt::Tag) -> Self {
+        self.block_entity = Some(entity);
+        self
+    }
+
+    #[must_use]
+    pub fn block_entity(&self) -> Option<&'a mc_nbt::Tag> {
+        self.block_entity
     }
 
     #[must_use]

@@ -1,8 +1,8 @@
 # Solaris product contract
 
-Updated 2026-09-05. This document states what Solaris must deliver, not what the
-current tree has already proved. [MEMORY.md](MEMORY.md) owns current state;
-[ARCHITECTURE.md](ARCHITECTURE.md) owns the replacement design.
+This document states what Solaris must deliver, not what the current tree has
+already proved. [MEMORY.md](MEMORY.md) owns the evidence cursor;
+[ARCHITECTURE.md](ARCHITECTURE.md) and ADR 0013/0014 own the sole native runtime.
 
 ## Product
 
@@ -22,7 +22,7 @@ Priority order:
 
 1. Ordinary vanilla-client gameplay, multiplayer and normal save integrity.
 2. Production addon API, gameplay adapters and Loader-backed client functions.
-3. Measured performance, regional ownership, ECS and autoscaling.
+3. Measured performance, data-parallel simulation, ECS and bounded admission.
 4. Uncommon parity edges and rare error interleavings.
 
 ## Compatibility and invariants

@@ -346,7 +346,7 @@ impl EntityLootPlayerAttribution {
     pub fn try_new(player: EntityLootEntity) -> Result<Self, EntityLootContextError> {
         if !player.is_living || player.entity_type.as_str() != "minecraft:player" {
             return Err(EntityLootContextError::InvalidPlayerAttribution {
-                entity_type: player.entity_type.clone(),
+                entity_type: player.entity_type,
             });
         }
         Ok(Self { player })
@@ -587,6 +587,11 @@ pub struct EntityLootCatalog {
 }
 
 impl EntityLootCatalog {
+    #[must_use]
+    pub fn has_root(&self, table: &Identifier) -> bool {
+        self.roots.contains(table)
+    }
+
     #[must_use]
     pub fn random_sequence(&self, table: &Identifier) -> Option<&Identifier> {
         self.roots

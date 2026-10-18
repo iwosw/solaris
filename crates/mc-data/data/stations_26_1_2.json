@@ -1,0 +1,1847 @@
+{
+  "smithing": [
+    {
+      "type": "minecraft:smithing_trim",
+      "addition": "#minecraft:trim_materials",
+      "base": "#minecraft:trimmable_armor",
+      "pattern": "minecraft:vex",
+      "template": "minecraft:vex_armor_trim_smithing_template"
+    },
+    {
+      "type": "minecraft:smithing_trim",
+      "addition": "#minecraft:trim_materials",
+      "base": "#minecraft:trimmable_armor",
+      "pattern": "minecraft:raiser",
+      "template": "minecraft:raiser_armor_trim_smithing_template"
+    },
+    {
+      "type": "minecraft:smithing_transform",
+      "addition": "#minecraft:netherite_tool_materials",
+      "base": "minecraft:diamond_axe",
+      "result": {
+        "id": "minecraft:netherite_axe"
+      },
+      "template": "minecraft:netherite_upgrade_smithing_template"
+    },
+    {
+      "type": "minecraft:smithing_transform",
+      "addition": "#minecraft:netherite_tool_materials",
+      "base": "minecraft:diamond_spear",
+      "result": {
+        "id": "minecraft:netherite_spear"
+      },
+      "template": "minecraft:netherite_upgrade_smithing_template"
+    },
+    {
+      "type": "minecraft:smithing_transform",
+      "addition": "#minecraft:netherite_tool_materials",
+      "base": "minecraft:diamond_chestplate",
+      "result": {
+        "id": "minecraft:netherite_chestplate"
+      },
+      "template": "minecraft:netherite_upgrade_smithing_template"
+    },
+    {
+      "type": "minecraft:smithing_trim",
+      "addition": "#minecraft:trim_materials",
+      "base": "#minecraft:trimmable_armor",
+      "pattern": "minecraft:rib",
+      "template": "minecraft:rib_armor_trim_smithing_template"
+    },
+    {
+      "type": "minecraft:smithing_trim",
+      "addition": "#minecraft:trim_materials",
+      "base": "#minecraft:trimmable_armor",
+      "pattern": "minecraft:coast",
+      "template": "minecraft:coast_armor_trim_smithing_template"
+    },
+    {
+      "type": "minecraft:smithing_transform",
+      "addition": "#minecraft:netherite_tool_materials",
+      "base": "minecraft:diamond_hoe",
+      "result": {
+        "id": "minecraft:netherite_hoe"
+      },
+      "template": "minecraft:netherite_upgrade_smithing_template"
+    },
+    {
+      "type": "minecraft:smithing_transform",
+      "addition": "#minecraft:netherite_tool_materials",
+      "base": "minecraft:diamond_boots",
+      "result": {
+        "id": "minecraft:netherite_boots"
+      },
+      "template": "minecraft:netherite_upgrade_smithing_template"
+    },
+    {
+      "type": "minecraft:smithing_trim",
+      "addition": "#minecraft:trim_materials",
+      "base": "#minecraft:trimmable_armor",
+      "pattern": "minecraft:wayfinder",
+      "template": "minecraft:wayfinder_armor_trim_smithing_template"
+    },
+    {
+      "type": "minecraft:smithing_trim",
+      "addition": "#minecraft:trim_materials",
+      "base": "#minecraft:trimmable_armor",
+      "pattern": "minecraft:eye",
+      "template": "minecraft:eye_armor_trim_smithing_template"
+    },
+    {
+      "type": "minecraft:smithing_trim",
+      "addition": "#minecraft:trim_materials",
+      "base": "#minecraft:trimmable_armor",
+      "pattern": "minecraft:shaper",
+      "template": "minecraft:shaper_armor_trim_smithing_template"
+    },
+    {
+      "type": "minecraft:smithing_trim",
+      "addition": "#minecraft:trim_materials",
+      "base": "#minecraft:trimmable_armor",
+      "pattern": "minecraft:sentry",
+      "template": "minecraft:sentry_armor_trim_smithing_template"
+    },
+    {
+      "type": "minecraft:smithing_trim",
+      "addition": "#minecraft:trim_materials",
+      "base": "#minecraft:trimmable_armor",
+      "pattern": "minecraft:wild",
+      "template": "minecraft:wild_armor_trim_smithing_template"
+    },
+    {
+      "type": "minecraft:smithing_transform",
+      "addition": "#minecraft:netherite_tool_materials",
+      "base": "minecraft:diamond_leggings",
+      "result": {
+        "id": "minecraft:netherite_leggings"
+      },
+      "template": "minecraft:netherite_upgrade_smithing_template"
+    },
+    {
+      "type": "minecraft:smithing_trim",
+      "addition": "#minecraft:trim_materials",
+      "base": "#minecraft:trimmable_armor",
+      "pattern": "minecraft:tide",
+      "template": "minecraft:tide_armor_trim_smithing_template"
+    },
+    {
+      "type": "minecraft:smithing_transform",
+      "addition": "#minecraft:netherite_tool_materials",
+      "base": "minecraft:diamond_horse_armor",
+      "result": {
+        "id": "minecraft:netherite_horse_armor"
+      },
+      "template": "minecraft:netherite_upgrade_smithing_template"
+    },
+    {
+      "type": "minecraft:smithing_trim",
+      "addition": "#minecraft:trim_materials",
+      "base": "#minecraft:trimmable_armor",
+      "pattern": "minecraft:host",
+      "template": "minecraft:host_armor_trim_smithing_template"
+    },
+    {
+      "type": "minecraft:smithing_transform",
+      "addition": "#minecraft:netherite_tool_materials",
+      "base": "minecraft:diamond_pickaxe",
+      "result": {
+        "id": "minecraft:netherite_pickaxe"
+      },
+      "template": "minecraft:netherite_upgrade_smithing_template"
+    },
+    {
+      "type": "minecraft:smithing_trim",
+      "addition": "#minecraft:trim_materials",
+      "base": "#minecraft:trimmable_armor",
+      "pattern": "minecraft:bolt",
+      "template": "minecraft:bolt_armor_trim_smithing_template"
+    },
+    {
+      "type": "minecraft:smithing_transform",
+      "addition": "#minecraft:netherite_tool_materials",
+      "base": "minecraft:diamond_sword",
+      "result": {
+        "id": "minecraft:netherite_sword"
+      },
+      "template": "minecraft:netherite_upgrade_smithing_template"
+    },
+    {
+      "type": "minecraft:smithing_transform",
+      "addition": "#minecraft:netherite_tool_materials",
+      "base": "minecraft:diamond_shovel",
+      "result": {
+        "id": "minecraft:netherite_shovel"
+      },
+      "template": "minecraft:netherite_upgrade_smithing_template"
+    },
+    {
+      "type": "minecraft:smithing_trim",
+      "addition": "#minecraft:trim_materials",
+      "base": "#minecraft:trimmable_armor",
+      "pattern": "minecraft:flow",
+      "template": "minecraft:flow_armor_trim_smithing_template"
+    },
+    {
+      "type": "minecraft:smithing_trim",
+      "addition": "#minecraft:trim_materials",
+      "base": "#minecraft:trimmable_armor",
+      "pattern": "minecraft:ward",
+      "template": "minecraft:ward_armor_trim_smithing_template"
+    },
+    {
+      "type": "minecraft:smithing_trim",
+      "addition": "#minecraft:trim_materials",
+      "base": "#minecraft:trimmable_armor",
+      "pattern": "minecraft:snout",
+      "template": "minecraft:snout_armor_trim_smithing_template"
+    },
+    {
+      "type": "minecraft:smithing_transform",
+      "addition": "#minecraft:netherite_tool_materials",
+      "base": "minecraft:diamond_helmet",
+      "result": {
+        "id": "minecraft:netherite_helmet"
+      },
+      "template": "minecraft:netherite_upgrade_smithing_template"
+    },
+    {
+      "type": "minecraft:smithing_transform",
+      "addition": "#minecraft:netherite_tool_materials",
+      "base": "minecraft:diamond_nautilus_armor",
+      "result": {
+        "id": "minecraft:netherite_nautilus_armor"
+      },
+      "template": "minecraft:netherite_upgrade_smithing_template"
+    },
+    {
+      "type": "minecraft:smithing_trim",
+      "addition": "#minecraft:trim_materials",
+      "base": "#minecraft:trimmable_armor",
+      "pattern": "minecraft:dune",
+      "template": "minecraft:dune_armor_trim_smithing_template"
+    },
+    {
+      "type": "minecraft:smithing_trim",
+      "addition": "#minecraft:trim_materials",
+      "base": "#minecraft:trimmable_armor",
+      "pattern": "minecraft:silence",
+      "template": "minecraft:silence_armor_trim_smithing_template"
+    },
+    {
+      "type": "minecraft:smithing_trim",
+      "addition": "#minecraft:trim_materials",
+      "base": "#minecraft:trimmable_armor",
+      "pattern": "minecraft:spire",
+      "template": "minecraft:spire_armor_trim_smithing_template"
+    }
+  ],
+  "brewing": [
+    {
+      "from": "potion",
+      "ingredient": "gunpowder",
+      "to": "splash_potion",
+      "container": true
+    },
+    {
+      "from": "splash_potion",
+      "ingredient": "dragon_breath",
+      "to": "lingering_potion",
+      "container": true
+    },
+    {
+      "from": "water",
+      "ingredient": "glowstone_dust",
+      "to": "thick",
+      "container": false
+    },
+    {
+      "from": "water",
+      "ingredient": "redstone",
+      "to": "mundane",
+      "container": false
+    },
+    {
+      "from": "water",
+      "ingredient": "nether_wart",
+      "to": "awkward",
+      "container": false
+    },
+    {
+      "from": "water",
+      "ingredient": "breeze_rod",
+      "to": "mundane",
+      "container": false
+    },
+    {
+      "from": "awkward",
+      "ingredient": "breeze_rod",
+      "to": "wind_charged",
+      "container": false
+    },
+    {
+      "from": "water",
+      "ingredient": "slime_block",
+      "to": "mundane",
+      "container": false
+    },
+    {
+      "from": "awkward",
+      "ingredient": "slime_block",
+      "to": "oozing",
+      "container": false
+    },
+    {
+      "from": "water",
+      "ingredient": "stone",
+      "to": "mundane",
+      "container": false
+    },
+    {
+      "from": "awkward",
+      "ingredient": "stone",
+      "to": "infested",
+      "container": false
+    },
+    {
+      "from": "water",
+      "ingredient": "cobweb",
+      "to": "mundane",
+      "container": false
+    },
+    {
+      "from": "awkward",
+      "ingredient": "cobweb",
+      "to": "weaving",
+      "container": false
+    },
+    {
+      "from": "awkward",
+      "ingredient": "golden_carrot",
+      "to": "night_vision",
+      "container": false
+    },
+    {
+      "from": "night_vision",
+      "ingredient": "redstone",
+      "to": "long_night_vision",
+      "container": false
+    },
+    {
+      "from": "night_vision",
+      "ingredient": "fermented_spider_eye",
+      "to": "invisibility",
+      "container": false
+    },
+    {
+      "from": "long_night_vision",
+      "ingredient": "fermented_spider_eye",
+      "to": "long_invisibility",
+      "container": false
+    },
+    {
+      "from": "invisibility",
+      "ingredient": "redstone",
+      "to": "long_invisibility",
+      "container": false
+    },
+    {
+      "from": "water",
+      "ingredient": "magma_cream",
+      "to": "mundane",
+      "container": false
+    },
+    {
+      "from": "awkward",
+      "ingredient": "magma_cream",
+      "to": "fire_resistance",
+      "container": false
+    },
+    {
+      "from": "fire_resistance",
+      "ingredient": "redstone",
+      "to": "long_fire_resistance",
+      "container": false
+    },
+    {
+      "from": "water",
+      "ingredient": "rabbit_foot",
+      "to": "mundane",
+      "container": false
+    },
+    {
+      "from": "awkward",
+      "ingredient": "rabbit_foot",
+      "to": "leaping",
+      "container": false
+    },
+    {
+      "from": "leaping",
+      "ingredient": "redstone",
+      "to": "long_leaping",
+      "container": false
+    },
+    {
+      "from": "leaping",
+      "ingredient": "glowstone_dust",
+      "to": "strong_leaping",
+      "container": false
+    },
+    {
+      "from": "leaping",
+      "ingredient": "fermented_spider_eye",
+      "to": "slowness",
+      "container": false
+    },
+    {
+      "from": "long_leaping",
+      "ingredient": "fermented_spider_eye",
+      "to": "long_slowness",
+      "container": false
+    },
+    {
+      "from": "slowness",
+      "ingredient": "redstone",
+      "to": "long_slowness",
+      "container": false
+    },
+    {
+      "from": "slowness",
+      "ingredient": "glowstone_dust",
+      "to": "strong_slowness",
+      "container": false
+    },
+    {
+      "from": "awkward",
+      "ingredient": "turtle_helmet",
+      "to": "turtle_master",
+      "container": false
+    },
+    {
+      "from": "turtle_master",
+      "ingredient": "redstone",
+      "to": "long_turtle_master",
+      "container": false
+    },
+    {
+      "from": "turtle_master",
+      "ingredient": "glowstone_dust",
+      "to": "strong_turtle_master",
+      "container": false
+    },
+    {
+      "from": "swiftness",
+      "ingredient": "fermented_spider_eye",
+      "to": "slowness",
+      "container": false
+    },
+    {
+      "from": "long_swiftness",
+      "ingredient": "fermented_spider_eye",
+      "to": "long_slowness",
+      "container": false
+    },
+    {
+      "from": "water",
+      "ingredient": "sugar",
+      "to": "mundane",
+      "container": false
+    },
+    {
+      "from": "awkward",
+      "ingredient": "sugar",
+      "to": "swiftness",
+      "container": false
+    },
+    {
+      "from": "swiftness",
+      "ingredient": "redstone",
+      "to": "long_swiftness",
+      "container": false
+    },
+    {
+      "from": "swiftness",
+      "ingredient": "glowstone_dust",
+      "to": "strong_swiftness",
+      "container": false
+    },
+    {
+      "from": "awkward",
+      "ingredient": "pufferfish",
+      "to": "water_breathing",
+      "container": false
+    },
+    {
+      "from": "water_breathing",
+      "ingredient": "redstone",
+      "to": "long_water_breathing",
+      "container": false
+    },
+    {
+      "from": "water",
+      "ingredient": "glistering_melon_slice",
+      "to": "mundane",
+      "container": false
+    },
+    {
+      "from": "awkward",
+      "ingredient": "glistering_melon_slice",
+      "to": "healing",
+      "container": false
+    },
+    {
+      "from": "healing",
+      "ingredient": "glowstone_dust",
+      "to": "strong_healing",
+      "container": false
+    },
+    {
+      "from": "healing",
+      "ingredient": "fermented_spider_eye",
+      "to": "harming",
+      "container": false
+    },
+    {
+      "from": "strong_healing",
+      "ingredient": "fermented_spider_eye",
+      "to": "strong_harming",
+      "container": false
+    },
+    {
+      "from": "harming",
+      "ingredient": "glowstone_dust",
+      "to": "strong_harming",
+      "container": false
+    },
+    {
+      "from": "poison",
+      "ingredient": "fermented_spider_eye",
+      "to": "harming",
+      "container": false
+    },
+    {
+      "from": "long_poison",
+      "ingredient": "fermented_spider_eye",
+      "to": "harming",
+      "container": false
+    },
+    {
+      "from": "strong_poison",
+      "ingredient": "fermented_spider_eye",
+      "to": "strong_harming",
+      "container": false
+    },
+    {
+      "from": "water",
+      "ingredient": "spider_eye",
+      "to": "mundane",
+      "container": false
+    },
+    {
+      "from": "awkward",
+      "ingredient": "spider_eye",
+      "to": "poison",
+      "container": false
+    },
+    {
+      "from": "poison",
+      "ingredient": "redstone",
+      "to": "long_poison",
+      "container": false
+    },
+    {
+      "from": "poison",
+      "ingredient": "glowstone_dust",
+      "to": "strong_poison",
+      "container": false
+    },
+    {
+      "from": "water",
+      "ingredient": "ghast_tear",
+      "to": "mundane",
+      "container": false
+    },
+    {
+      "from": "awkward",
+      "ingredient": "ghast_tear",
+      "to": "regeneration",
+      "container": false
+    },
+    {
+      "from": "regeneration",
+      "ingredient": "redstone",
+      "to": "long_regeneration",
+      "container": false
+    },
+    {
+      "from": "regeneration",
+      "ingredient": "glowstone_dust",
+      "to": "strong_regeneration",
+      "container": false
+    },
+    {
+      "from": "water",
+      "ingredient": "blaze_powder",
+      "to": "mundane",
+      "container": false
+    },
+    {
+      "from": "awkward",
+      "ingredient": "blaze_powder",
+      "to": "strength",
+      "container": false
+    },
+    {
+      "from": "strength",
+      "ingredient": "redstone",
+      "to": "long_strength",
+      "container": false
+    },
+    {
+      "from": "strength",
+      "ingredient": "glowstone_dust",
+      "to": "strong_strength",
+      "container": false
+    },
+    {
+      "from": "water",
+      "ingredient": "fermented_spider_eye",
+      "to": "weakness",
+      "container": false
+    },
+    {
+      "from": "weakness",
+      "ingredient": "redstone",
+      "to": "long_weakness",
+      "container": false
+    },
+    {
+      "from": "awkward",
+      "ingredient": "phantom_membrane",
+      "to": "slow_falling",
+      "container": false
+    },
+    {
+      "from": "slow_falling",
+      "ingredient": "redstone",
+      "to": "long_slow_falling",
+      "container": false
+    }
+  ],
+  "potion_ids": [
+    "minecraft:water",
+    "minecraft:mundane",
+    "minecraft:thick",
+    "minecraft:awkward",
+    "minecraft:night_vision",
+    "minecraft:long_night_vision",
+    "minecraft:invisibility",
+    "minecraft:long_invisibility",
+    "minecraft:leaping",
+    "minecraft:long_leaping",
+    "minecraft:strong_leaping",
+    "minecraft:fire_resistance",
+    "minecraft:long_fire_resistance",
+    "minecraft:swiftness",
+    "minecraft:long_swiftness",
+    "minecraft:strong_swiftness",
+    "minecraft:slowness",
+    "minecraft:long_slowness",
+    "minecraft:strong_slowness",
+    "minecraft:turtle_master",
+    "minecraft:long_turtle_master",
+    "minecraft:strong_turtle_master",
+    "minecraft:water_breathing",
+    "minecraft:long_water_breathing",
+    "minecraft:healing",
+    "minecraft:strong_healing",
+    "minecraft:harming",
+    "minecraft:strong_harming",
+    "minecraft:poison",
+    "minecraft:long_poison",
+    "minecraft:strong_poison",
+    "minecraft:regeneration",
+    "minecraft:long_regeneration",
+    "minecraft:strong_regeneration",
+    "minecraft:strength",
+    "minecraft:long_strength",
+    "minecraft:strong_strength",
+    "minecraft:weakness",
+    "minecraft:long_weakness",
+    "minecraft:luck",
+    "minecraft:slow_falling",
+    "minecraft:long_slow_falling",
+    "minecraft:wind_charged",
+    "minecraft:weaving",
+    "minecraft:oozing",
+    "minecraft:infested"
+  ],
+  "repair_items": {
+    "minecraft:diamond_hoe": "#minecraft:diamond_tool_materials",
+    "minecraft:copper_shovel": "#minecraft:copper_tool_materials",
+    "minecraft:copper_helmet": "#minecraft:repairs_copper_armor",
+    "minecraft:copper_axe": "#minecraft:copper_tool_materials",
+    "minecraft:diamond_helmet": "#minecraft:repairs_diamond_armor",
+    "minecraft:leather_chestplate": "#minecraft:repairs_leather_armor",
+    "minecraft:elytra": "minecraft:phantom_membrane",
+    "minecraft:turtle_helmet": "#minecraft:repairs_turtle_helmet",
+    "minecraft:wooden_spear": "#minecraft:wooden_tool_materials",
+    "minecraft:golden_helmet": "#minecraft:repairs_gold_armor",
+    "minecraft:wooden_hoe": "#minecraft:wooden_tool_materials",
+    "minecraft:wooden_shovel": "#minecraft:wooden_tool_materials",
+    "minecraft:golden_leggings": "#minecraft:repairs_gold_armor",
+    "minecraft:iron_hoe": "#minecraft:iron_tool_materials",
+    "minecraft:iron_shovel": "#minecraft:iron_tool_materials",
+    "minecraft:netherite_chestplate": "#minecraft:repairs_netherite_armor",
+    "minecraft:diamond_axe": "#minecraft:diamond_tool_materials",
+    "minecraft:stone_hoe": "#minecraft:stone_tool_materials",
+    "minecraft:wolf_armor": "#minecraft:repairs_wolf_armor",
+    "minecraft:iron_leggings": "#minecraft:repairs_iron_armor",
+    "minecraft:wooden_sword": "#minecraft:wooden_tool_materials",
+    "minecraft:leather_boots": "#minecraft:repairs_leather_armor",
+    "minecraft:chainmail_leggings": "#minecraft:repairs_chain_armor",
+    "minecraft:iron_sword": "#minecraft:iron_tool_materials",
+    "minecraft:diamond_spear": "#minecraft:diamond_tool_materials",
+    "minecraft:golden_pickaxe": "#minecraft:gold_tool_materials",
+    "minecraft:chainmail_boots": "#minecraft:repairs_chain_armor",
+    "minecraft:diamond_pickaxe": "#minecraft:diamond_tool_materials",
+    "minecraft:diamond_leggings": "#minecraft:repairs_diamond_armor",
+    "minecraft:copper_spear": "#minecraft:copper_tool_materials",
+    "minecraft:chainmail_helmet": "#minecraft:repairs_chain_armor",
+    "minecraft:golden_shovel": "#minecraft:gold_tool_materials",
+    "minecraft:leather_helmet": "#minecraft:repairs_leather_armor",
+    "minecraft:copper_hoe": "#minecraft:copper_tool_materials",
+    "minecraft:iron_axe": "#minecraft:iron_tool_materials",
+    "minecraft:golden_hoe": "#minecraft:gold_tool_materials",
+    "minecraft:iron_helmet": "#minecraft:repairs_iron_armor",
+    "minecraft:mace": "minecraft:breeze_rod",
+    "minecraft:iron_pickaxe": "#minecraft:iron_tool_materials",
+    "minecraft:copper_boots": "#minecraft:repairs_copper_armor",
+    "minecraft:leather_leggings": "#minecraft:repairs_leather_armor",
+    "minecraft:netherite_pickaxe": "#minecraft:netherite_tool_materials",
+    "minecraft:diamond_shovel": "#minecraft:diamond_tool_materials",
+    "minecraft:netherite_boots": "#minecraft:repairs_netherite_armor",
+    "minecraft:diamond_chestplate": "#minecraft:repairs_diamond_armor",
+    "minecraft:diamond_sword": "#minecraft:diamond_tool_materials",
+    "minecraft:chainmail_chestplate": "#minecraft:repairs_chain_armor",
+    "minecraft:stone_spear": "#minecraft:stone_tool_materials",
+    "minecraft:copper_pickaxe": "#minecraft:copper_tool_materials",
+    "minecraft:stone_pickaxe": "#minecraft:stone_tool_materials",
+    "minecraft:iron_chestplate": "#minecraft:repairs_iron_armor",
+    "minecraft:golden_chestplate": "#minecraft:repairs_gold_armor",
+    "minecraft:netherite_shovel": "#minecraft:netherite_tool_materials",
+    "minecraft:netherite_sword": "#minecraft:netherite_tool_materials",
+    "minecraft:netherite_axe": "#minecraft:netherite_tool_materials",
+    "minecraft:wooden_axe": "#minecraft:wooden_tool_materials",
+    "minecraft:golden_spear": "#minecraft:gold_tool_materials",
+    "minecraft:iron_spear": "#minecraft:iron_tool_materials",
+    "minecraft:golden_axe": "#minecraft:gold_tool_materials",
+    "minecraft:stone_shovel": "#minecraft:stone_tool_materials",
+    "minecraft:iron_boots": "#minecraft:repairs_iron_armor",
+    "minecraft:copper_sword": "#minecraft:copper_tool_materials",
+    "minecraft:stone_axe": "#minecraft:stone_tool_materials",
+    "minecraft:copper_leggings": "#minecraft:repairs_copper_armor",
+    "minecraft:netherite_leggings": "#minecraft:repairs_netherite_armor",
+    "minecraft:stone_sword": "#minecraft:stone_tool_materials",
+    "minecraft:golden_sword": "#minecraft:gold_tool_materials",
+    "minecraft:wooden_pickaxe": "#minecraft:wooden_tool_materials",
+    "minecraft:netherite_hoe": "#minecraft:netherite_tool_materials",
+    "minecraft:netherite_spear": "#minecraft:netherite_tool_materials",
+    "minecraft:diamond_boots": "#minecraft:repairs_diamond_armor",
+    "minecraft:shield": "#minecraft:wooden_tool_materials",
+    "minecraft:copper_chestplate": "#minecraft:repairs_copper_armor",
+    "minecraft:netherite_helmet": "#minecraft:repairs_netherite_armor",
+    "minecraft:golden_boots": "#minecraft:repairs_gold_armor"
+  },
+  "enchantment_min_cost": {
+    "piercing": [
+      1,
+      10
+    ],
+    "quick_charge": [
+      12,
+      20
+    ],
+    "riptide": [
+      17,
+      7
+    ],
+    "fire_aspect": [
+      10,
+      20
+    ],
+    "fire_protection": [
+      10,
+      8
+    ],
+    "frost_walker": [
+      10,
+      10
+    ],
+    "impaling": [
+      1,
+      8
+    ],
+    "channeling": [
+      25,
+      0
+    ],
+    "blast_protection": [
+      5,
+      8
+    ],
+    "power": [
+      1,
+      10
+    ],
+    "smite": [
+      5,
+      8
+    ],
+    "wind_burst": [
+      15,
+      9
+    ],
+    "looting": [
+      15,
+      9
+    ],
+    "knockback": [
+      5,
+      20
+    ],
+    "binding_curse": [
+      25,
+      0
+    ],
+    "protection": [
+      1,
+      11
+    ],
+    "lunge": [
+      5,
+      8
+    ],
+    "fortune": [
+      15,
+      9
+    ],
+    "vanishing_curse": [
+      25,
+      0
+    ],
+    "aqua_affinity": [
+      1,
+      0
+    ],
+    "unbreaking": [
+      5,
+      8
+    ],
+    "swift_sneak": [
+      25,
+      25
+    ],
+    "infinity": [
+      20,
+      0
+    ],
+    "bane_of_arthropods": [
+      5,
+      8
+    ],
+    "punch": [
+      12,
+      20
+    ],
+    "thorns": [
+      10,
+      20
+    ],
+    "silk_touch": [
+      15,
+      0
+    ],
+    "multishot": [
+      20,
+      0
+    ],
+    "density": [
+      5,
+      8
+    ],
+    "efficiency": [
+      1,
+      10
+    ],
+    "sharpness": [
+      1,
+      11
+    ],
+    "soul_speed": [
+      10,
+      10
+    ],
+    "feather_falling": [
+      5,
+      6
+    ],
+    "lure": [
+      15,
+      9
+    ],
+    "breach": [
+      15,
+      9
+    ],
+    "depth_strider": [
+      10,
+      10
+    ],
+    "respiration": [
+      10,
+      10
+    ],
+    "luck_of_the_sea": [
+      15,
+      9
+    ],
+    "loyalty": [
+      12,
+      7
+    ],
+    "mending": [
+      25,
+      25
+    ],
+    "flame": [
+      20,
+      0
+    ],
+    "projectile_protection": [
+      3,
+      6
+    ],
+    "sweeping_edge": [
+      5,
+      9
+    ]
+  },
+  "enchantments": {
+    "piercing": {
+      "anvil_cost": 1,
+      "exclusive_set": "#minecraft:exclusive_set/crossbow",
+      "max_level": 4,
+      "supported_items": "#minecraft:enchantable/crossbow"
+    },
+    "quick_charge": {
+      "anvil_cost": 2,
+      "max_level": 3,
+      "supported_items": "#minecraft:enchantable/crossbow"
+    },
+    "riptide": {
+      "anvil_cost": 4,
+      "exclusive_set": "#minecraft:exclusive_set/riptide",
+      "max_level": 3,
+      "supported_items": "#minecraft:enchantable/trident"
+    },
+    "fire_aspect": {
+      "anvil_cost": 4,
+      "max_level": 2,
+      "supported_items": "#minecraft:enchantable/fire_aspect"
+    },
+    "fire_protection": {
+      "anvil_cost": 2,
+      "exclusive_set": "#minecraft:exclusive_set/armor",
+      "max_level": 4,
+      "supported_items": "#minecraft:enchantable/armor"
+    },
+    "frost_walker": {
+      "anvil_cost": 4,
+      "exclusive_set": "#minecraft:exclusive_set/boots",
+      "max_level": 2,
+      "supported_items": "#minecraft:enchantable/foot_armor"
+    },
+    "impaling": {
+      "anvil_cost": 4,
+      "exclusive_set": "#minecraft:exclusive_set/damage",
+      "max_level": 5,
+      "supported_items": "#minecraft:enchantable/trident"
+    },
+    "channeling": {
+      "anvil_cost": 8,
+      "max_level": 1,
+      "supported_items": "#minecraft:enchantable/trident"
+    },
+    "blast_protection": {
+      "anvil_cost": 4,
+      "exclusive_set": "#minecraft:exclusive_set/armor",
+      "max_level": 4,
+      "supported_items": "#minecraft:enchantable/armor"
+    },
+    "power": {
+      "anvil_cost": 1,
+      "max_level": 5,
+      "supported_items": "#minecraft:enchantable/bow"
+    },
+    "smite": {
+      "anvil_cost": 2,
+      "exclusive_set": "#minecraft:exclusive_set/damage",
+      "max_level": 5,
+      "supported_items": "#minecraft:enchantable/weapon"
+    },
+    "wind_burst": {
+      "anvil_cost": 4,
+      "max_level": 3,
+      "supported_items": "#minecraft:enchantable/mace"
+    },
+    "looting": {
+      "anvil_cost": 4,
+      "max_level": 3,
+      "supported_items": "#minecraft:enchantable/melee_weapon"
+    },
+    "knockback": {
+      "anvil_cost": 2,
+      "max_level": 2,
+      "supported_items": "#minecraft:enchantable/melee_weapon"
+    },
+    "binding_curse": {
+      "anvil_cost": 8,
+      "max_level": 1,
+      "supported_items": "#minecraft:enchantable/equippable"
+    },
+    "protection": {
+      "anvil_cost": 1,
+      "exclusive_set": "#minecraft:exclusive_set/armor",
+      "max_level": 4,
+      "supported_items": "#minecraft:enchantable/armor"
+    },
+    "lunge": {
+      "anvil_cost": 2,
+      "max_level": 3,
+      "supported_items": "#minecraft:enchantable/lunge"
+    },
+    "fortune": {
+      "anvil_cost": 4,
+      "exclusive_set": "#minecraft:exclusive_set/mining",
+      "max_level": 3,
+      "supported_items": "#minecraft:enchantable/mining_loot"
+    },
+    "vanishing_curse": {
+      "anvil_cost": 8,
+      "max_level": 1,
+      "supported_items": "#minecraft:enchantable/vanishing"
+    },
+    "aqua_affinity": {
+      "anvil_cost": 4,
+      "max_level": 1,
+      "supported_items": "#minecraft:enchantable/head_armor"
+    },
+    "unbreaking": {
+      "anvil_cost": 2,
+      "max_level": 3,
+      "supported_items": "#minecraft:enchantable/durability"
+    },
+    "swift_sneak": {
+      "anvil_cost": 8,
+      "max_level": 3,
+      "supported_items": "#minecraft:enchantable/leg_armor"
+    },
+    "infinity": {
+      "anvil_cost": 8,
+      "exclusive_set": "#minecraft:exclusive_set/bow",
+      "max_level": 1,
+      "supported_items": "#minecraft:enchantable/bow"
+    },
+    "bane_of_arthropods": {
+      "anvil_cost": 2,
+      "exclusive_set": "#minecraft:exclusive_set/damage",
+      "max_level": 5,
+      "supported_items": "#minecraft:enchantable/weapon"
+    },
+    "punch": {
+      "anvil_cost": 4,
+      "max_level": 2,
+      "supported_items": "#minecraft:enchantable/bow"
+    },
+    "thorns": {
+      "anvil_cost": 8,
+      "max_level": 3,
+      "supported_items": "#minecraft:enchantable/armor"
+    },
+    "silk_touch": {
+      "anvil_cost": 8,
+      "exclusive_set": "#minecraft:exclusive_set/mining",
+      "max_level": 1,
+      "supported_items": "#minecraft:enchantable/mining_loot"
+    },
+    "multishot": {
+      "anvil_cost": 4,
+      "exclusive_set": "#minecraft:exclusive_set/crossbow",
+      "max_level": 1,
+      "supported_items": "#minecraft:enchantable/crossbow"
+    },
+    "density": {
+      "anvil_cost": 2,
+      "exclusive_set": "#minecraft:exclusive_set/damage",
+      "max_level": 5,
+      "supported_items": "#minecraft:enchantable/mace"
+    },
+    "efficiency": {
+      "anvil_cost": 1,
+      "max_level": 5,
+      "supported_items": "#minecraft:enchantable/mining"
+    },
+    "sharpness": {
+      "anvil_cost": 1,
+      "exclusive_set": "#minecraft:exclusive_set/damage",
+      "max_level": 5,
+      "supported_items": "#minecraft:enchantable/sharp_weapon"
+    },
+    "soul_speed": {
+      "anvil_cost": 8,
+      "max_level": 3,
+      "supported_items": "#minecraft:enchantable/foot_armor"
+    },
+    "feather_falling": {
+      "anvil_cost": 2,
+      "max_level": 4,
+      "supported_items": "#minecraft:enchantable/foot_armor"
+    },
+    "lure": {
+      "anvil_cost": 4,
+      "max_level": 3,
+      "supported_items": "#minecraft:enchantable/fishing"
+    },
+    "breach": {
+      "anvil_cost": 4,
+      "exclusive_set": "#minecraft:exclusive_set/damage",
+      "max_level": 4,
+      "supported_items": "#minecraft:enchantable/mace"
+    },
+    "depth_strider": {
+      "anvil_cost": 4,
+      "exclusive_set": "#minecraft:exclusive_set/boots",
+      "max_level": 3,
+      "supported_items": "#minecraft:enchantable/foot_armor"
+    },
+    "respiration": {
+      "anvil_cost": 4,
+      "max_level": 3,
+      "supported_items": "#minecraft:enchantable/head_armor"
+    },
+    "luck_of_the_sea": {
+      "anvil_cost": 4,
+      "max_level": 3,
+      "supported_items": "#minecraft:enchantable/fishing"
+    },
+    "loyalty": {
+      "anvil_cost": 2,
+      "max_level": 3,
+      "supported_items": "#minecraft:enchantable/trident"
+    },
+    "mending": {
+      "anvil_cost": 4,
+      "max_level": 1,
+      "supported_items": "#minecraft:enchantable/durability"
+    },
+    "flame": {
+      "anvil_cost": 4,
+      "max_level": 1,
+      "supported_items": "#minecraft:enchantable/bow"
+    },
+    "projectile_protection": {
+      "anvil_cost": 2,
+      "exclusive_set": "#minecraft:exclusive_set/armor",
+      "max_level": 4,
+      "supported_items": "#minecraft:enchantable/armor"
+    },
+    "sweeping_edge": {
+      "anvil_cost": 4,
+      "max_level": 3,
+      "supported_items": "#minecraft:enchantable/sweeping"
+    }
+  },
+  "item_tags": {
+    "minecraft:repairs_turtle_helmet": [
+      "minecraft:turtle_scute"
+    ],
+    "minecraft:enchantable/sharp_weapon": [
+      "minecraft:diamond_sword",
+      "minecraft:stone_sword",
+      "minecraft:golden_sword",
+      "minecraft:netherite_sword",
+      "minecraft:wooden_sword",
+      "minecraft:iron_sword",
+      "minecraft:copper_sword",
+      "minecraft:diamond_spear",
+      "minecraft:stone_spear",
+      "minecraft:golden_spear",
+      "minecraft:netherite_spear",
+      "minecraft:wooden_spear",
+      "minecraft:iron_spear",
+      "minecraft:copper_spear",
+      "minecraft:diamond_axe",
+      "minecraft:stone_axe",
+      "minecraft:golden_axe",
+      "minecraft:netherite_axe",
+      "minecraft:wooden_axe",
+      "minecraft:iron_axe",
+      "minecraft:copper_axe"
+    ],
+    "minecraft:enchantable/trident": [
+      "minecraft:trident"
+    ],
+    "minecraft:enchantable/mace": [
+      "minecraft:mace"
+    ],
+    "minecraft:repairs_iron_armor": [
+      "minecraft:iron_ingot"
+    ],
+    "minecraft:enchantable/mining_loot": [
+      "minecraft:diamond_axe",
+      "minecraft:stone_axe",
+      "minecraft:golden_axe",
+      "minecraft:netherite_axe",
+      "minecraft:wooden_axe",
+      "minecraft:iron_axe",
+      "minecraft:copper_axe",
+      "minecraft:diamond_pickaxe",
+      "minecraft:stone_pickaxe",
+      "minecraft:golden_pickaxe",
+      "minecraft:netherite_pickaxe",
+      "minecraft:wooden_pickaxe",
+      "minecraft:iron_pickaxe",
+      "minecraft:copper_pickaxe",
+      "minecraft:diamond_shovel",
+      "minecraft:stone_shovel",
+      "minecraft:golden_shovel",
+      "minecraft:netherite_shovel",
+      "minecraft:wooden_shovel",
+      "minecraft:iron_shovel",
+      "minecraft:copper_shovel",
+      "minecraft:diamond_hoe",
+      "minecraft:stone_hoe",
+      "minecraft:golden_hoe",
+      "minecraft:netherite_hoe",
+      "minecraft:wooden_hoe",
+      "minecraft:iron_hoe",
+      "minecraft:copper_hoe"
+    ],
+    "minecraft:enchantable/bow": [
+      "minecraft:bow"
+    ],
+    "minecraft:enchantable/durability": [
+      "minecraft:leather_boots",
+      "minecraft:copper_boots",
+      "minecraft:chainmail_boots",
+      "minecraft:golden_boots",
+      "minecraft:iron_boots",
+      "minecraft:diamond_boots",
+      "minecraft:netherite_boots",
+      "minecraft:leather_leggings",
+      "minecraft:copper_leggings",
+      "minecraft:chainmail_leggings",
+      "minecraft:golden_leggings",
+      "minecraft:iron_leggings",
+      "minecraft:diamond_leggings",
+      "minecraft:netherite_leggings",
+      "minecraft:leather_chestplate",
+      "minecraft:copper_chestplate",
+      "minecraft:chainmail_chestplate",
+      "minecraft:golden_chestplate",
+      "minecraft:iron_chestplate",
+      "minecraft:diamond_chestplate",
+      "minecraft:netherite_chestplate",
+      "minecraft:leather_helmet",
+      "minecraft:copper_helmet",
+      "minecraft:chainmail_helmet",
+      "minecraft:golden_helmet",
+      "minecraft:iron_helmet",
+      "minecraft:diamond_helmet",
+      "minecraft:netherite_helmet",
+      "minecraft:turtle_helmet",
+      "minecraft:elytra",
+      "minecraft:shield",
+      "minecraft:diamond_sword",
+      "minecraft:stone_sword",
+      "minecraft:golden_sword",
+      "minecraft:netherite_sword",
+      "minecraft:wooden_sword",
+      "minecraft:iron_sword",
+      "minecraft:copper_sword",
+      "minecraft:diamond_axe",
+      "minecraft:stone_axe",
+      "minecraft:golden_axe",
+      "minecraft:netherite_axe",
+      "minecraft:wooden_axe",
+      "minecraft:iron_axe",
+      "minecraft:copper_axe",
+      "minecraft:diamond_pickaxe",
+      "minecraft:stone_pickaxe",
+      "minecraft:golden_pickaxe",
+      "minecraft:netherite_pickaxe",
+      "minecraft:wooden_pickaxe",
+      "minecraft:iron_pickaxe",
+      "minecraft:copper_pickaxe",
+      "minecraft:diamond_shovel",
+      "minecraft:stone_shovel",
+      "minecraft:golden_shovel",
+      "minecraft:netherite_shovel",
+      "minecraft:wooden_shovel",
+      "minecraft:iron_shovel",
+      "minecraft:copper_shovel",
+      "minecraft:diamond_hoe",
+      "minecraft:stone_hoe",
+      "minecraft:golden_hoe",
+      "minecraft:netherite_hoe",
+      "minecraft:wooden_hoe",
+      "minecraft:iron_hoe",
+      "minecraft:copper_hoe",
+      "minecraft:bow",
+      "minecraft:crossbow",
+      "minecraft:trident",
+      "minecraft:flint_and_steel",
+      "minecraft:shears",
+      "minecraft:brush",
+      "minecraft:fishing_rod",
+      "minecraft:carrot_on_a_stick",
+      "minecraft:warped_fungus_on_a_stick",
+      "minecraft:mace",
+      "minecraft:diamond_spear",
+      "minecraft:stone_spear",
+      "minecraft:golden_spear",
+      "minecraft:netherite_spear",
+      "minecraft:wooden_spear",
+      "minecraft:iron_spear",
+      "minecraft:copper_spear"
+    ],
+    "minecraft:enchantable/crossbow": [
+      "minecraft:crossbow"
+    ],
+    "minecraft:repairs_chain_armor": [
+      "minecraft:iron_ingot"
+    ],
+    "minecraft:repairs_diamond_armor": [
+      "minecraft:diamond"
+    ],
+    "minecraft:enchantable/equippable": [
+      "minecraft:leather_boots",
+      "minecraft:copper_boots",
+      "minecraft:chainmail_boots",
+      "minecraft:golden_boots",
+      "minecraft:iron_boots",
+      "minecraft:diamond_boots",
+      "minecraft:netherite_boots",
+      "minecraft:leather_leggings",
+      "minecraft:copper_leggings",
+      "minecraft:chainmail_leggings",
+      "minecraft:golden_leggings",
+      "minecraft:iron_leggings",
+      "minecraft:diamond_leggings",
+      "minecraft:netherite_leggings",
+      "minecraft:leather_chestplate",
+      "minecraft:copper_chestplate",
+      "minecraft:chainmail_chestplate",
+      "minecraft:golden_chestplate",
+      "minecraft:iron_chestplate",
+      "minecraft:diamond_chestplate",
+      "minecraft:netherite_chestplate",
+      "minecraft:leather_helmet",
+      "minecraft:copper_helmet",
+      "minecraft:chainmail_helmet",
+      "minecraft:golden_helmet",
+      "minecraft:iron_helmet",
+      "minecraft:diamond_helmet",
+      "minecraft:netherite_helmet",
+      "minecraft:turtle_helmet",
+      "minecraft:elytra",
+      "minecraft:player_head",
+      "minecraft:creeper_head",
+      "minecraft:zombie_head",
+      "minecraft:skeleton_skull",
+      "minecraft:wither_skeleton_skull",
+      "minecraft:dragon_head",
+      "minecraft:piglin_head",
+      "minecraft:carved_pumpkin"
+    ],
+    "minecraft:repairs_gold_armor": [
+      "minecraft:gold_ingot"
+    ],
+    "minecraft:repairs_netherite_armor": [
+      "minecraft:netherite_ingot"
+    ],
+    "minecraft:diamond_tool_materials": [
+      "minecraft:diamond"
+    ],
+    "minecraft:iron_tool_materials": [
+      "minecraft:iron_ingot"
+    ],
+    "minecraft:enchantable/sweeping": [
+      "minecraft:diamond_sword",
+      "minecraft:stone_sword",
+      "minecraft:golden_sword",
+      "minecraft:netherite_sword",
+      "minecraft:wooden_sword",
+      "minecraft:iron_sword",
+      "minecraft:copper_sword"
+    ],
+    "minecraft:enchantable/foot_armor": [
+      "minecraft:leather_boots",
+      "minecraft:copper_boots",
+      "minecraft:chainmail_boots",
+      "minecraft:golden_boots",
+      "minecraft:iron_boots",
+      "minecraft:diamond_boots",
+      "minecraft:netherite_boots"
+    ],
+    "minecraft:enchantable/weapon": [
+      "minecraft:diamond_sword",
+      "minecraft:stone_sword",
+      "minecraft:golden_sword",
+      "minecraft:netherite_sword",
+      "minecraft:wooden_sword",
+      "minecraft:iron_sword",
+      "minecraft:copper_sword",
+      "minecraft:diamond_spear",
+      "minecraft:stone_spear",
+      "minecraft:golden_spear",
+      "minecraft:netherite_spear",
+      "minecraft:wooden_spear",
+      "minecraft:iron_spear",
+      "minecraft:copper_spear",
+      "minecraft:diamond_axe",
+      "minecraft:stone_axe",
+      "minecraft:golden_axe",
+      "minecraft:netherite_axe",
+      "minecraft:wooden_axe",
+      "minecraft:iron_axe",
+      "minecraft:copper_axe",
+      "minecraft:mace"
+    ],
+    "minecraft:gold_tool_materials": [
+      "minecraft:gold_ingot"
+    ],
+    "minecraft:enchantable/armor": [
+      "minecraft:leather_boots",
+      "minecraft:copper_boots",
+      "minecraft:chainmail_boots",
+      "minecraft:golden_boots",
+      "minecraft:iron_boots",
+      "minecraft:diamond_boots",
+      "minecraft:netherite_boots",
+      "minecraft:leather_leggings",
+      "minecraft:copper_leggings",
+      "minecraft:chainmail_leggings",
+      "minecraft:golden_leggings",
+      "minecraft:iron_leggings",
+      "minecraft:diamond_leggings",
+      "minecraft:netherite_leggings",
+      "minecraft:leather_chestplate",
+      "minecraft:copper_chestplate",
+      "minecraft:chainmail_chestplate",
+      "minecraft:golden_chestplate",
+      "minecraft:iron_chestplate",
+      "minecraft:diamond_chestplate",
+      "minecraft:netherite_chestplate",
+      "minecraft:leather_helmet",
+      "minecraft:copper_helmet",
+      "minecraft:chainmail_helmet",
+      "minecraft:golden_helmet",
+      "minecraft:iron_helmet",
+      "minecraft:diamond_helmet",
+      "minecraft:netherite_helmet",
+      "minecraft:turtle_helmet"
+    ],
+    "minecraft:repairs_copper_armor": [
+      "minecraft:copper_ingot"
+    ],
+    "minecraft:enchantable/lunge": [
+      "minecraft:diamond_spear",
+      "minecraft:stone_spear",
+      "minecraft:golden_spear",
+      "minecraft:netherite_spear",
+      "minecraft:wooden_spear",
+      "minecraft:iron_spear",
+      "minecraft:copper_spear"
+    ],
+    "minecraft:enchantable/mining": [
+      "minecraft:diamond_axe",
+      "minecraft:stone_axe",
+      "minecraft:golden_axe",
+      "minecraft:netherite_axe",
+      "minecraft:wooden_axe",
+      "minecraft:iron_axe",
+      "minecraft:copper_axe",
+      "minecraft:diamond_pickaxe",
+      "minecraft:stone_pickaxe",
+      "minecraft:golden_pickaxe",
+      "minecraft:netherite_pickaxe",
+      "minecraft:wooden_pickaxe",
+      "minecraft:iron_pickaxe",
+      "minecraft:copper_pickaxe",
+      "minecraft:diamond_shovel",
+      "minecraft:stone_shovel",
+      "minecraft:golden_shovel",
+      "minecraft:netherite_shovel",
+      "minecraft:wooden_shovel",
+      "minecraft:iron_shovel",
+      "minecraft:copper_shovel",
+      "minecraft:diamond_hoe",
+      "minecraft:stone_hoe",
+      "minecraft:golden_hoe",
+      "minecraft:netherite_hoe",
+      "minecraft:wooden_hoe",
+      "minecraft:iron_hoe",
+      "minecraft:copper_hoe",
+      "minecraft:shears"
+    ],
+    "minecraft:enchantable/fishing": [
+      "minecraft:fishing_rod"
+    ],
+    "minecraft:enchantable/vanishing": [
+      "minecraft:leather_boots",
+      "minecraft:copper_boots",
+      "minecraft:chainmail_boots",
+      "minecraft:golden_boots",
+      "minecraft:iron_boots",
+      "minecraft:diamond_boots",
+      "minecraft:netherite_boots",
+      "minecraft:leather_leggings",
+      "minecraft:copper_leggings",
+      "minecraft:chainmail_leggings",
+      "minecraft:golden_leggings",
+      "minecraft:iron_leggings",
+      "minecraft:diamond_leggings",
+      "minecraft:netherite_leggings",
+      "minecraft:leather_chestplate",
+      "minecraft:copper_chestplate",
+      "minecraft:chainmail_chestplate",
+      "minecraft:golden_chestplate",
+      "minecraft:iron_chestplate",
+      "minecraft:diamond_chestplate",
+      "minecraft:netherite_chestplate",
+      "minecraft:leather_helmet",
+      "minecraft:copper_helmet",
+      "minecraft:chainmail_helmet",
+      "minecraft:golden_helmet",
+      "minecraft:iron_helmet",
+      "minecraft:diamond_helmet",
+      "minecraft:netherite_helmet",
+      "minecraft:turtle_helmet",
+      "minecraft:elytra",
+      "minecraft:shield",
+      "minecraft:diamond_sword",
+      "minecraft:stone_sword",
+      "minecraft:golden_sword",
+      "minecraft:netherite_sword",
+      "minecraft:wooden_sword",
+      "minecraft:iron_sword",
+      "minecraft:copper_sword",
+      "minecraft:diamond_axe",
+      "minecraft:stone_axe",
+      "minecraft:golden_axe",
+      "minecraft:netherite_axe",
+      "minecraft:wooden_axe",
+      "minecraft:iron_axe",
+      "minecraft:copper_axe",
+      "minecraft:diamond_pickaxe",
+      "minecraft:stone_pickaxe",
+      "minecraft:golden_pickaxe",
+      "minecraft:netherite_pickaxe",
+      "minecraft:wooden_pickaxe",
+      "minecraft:iron_pickaxe",
+      "minecraft:copper_pickaxe",
+      "minecraft:diamond_shovel",
+      "minecraft:stone_shovel",
+      "minecraft:golden_shovel",
+      "minecraft:netherite_shovel",
+      "minecraft:wooden_shovel",
+      "minecraft:iron_shovel",
+      "minecraft:copper_shovel",
+      "minecraft:diamond_hoe",
+      "minecraft:stone_hoe",
+      "minecraft:golden_hoe",
+      "minecraft:netherite_hoe",
+      "minecraft:wooden_hoe",
+      "minecraft:iron_hoe",
+      "minecraft:copper_hoe",
+      "minecraft:bow",
+      "minecraft:crossbow",
+      "minecraft:trident",
+      "minecraft:flint_and_steel",
+      "minecraft:shears",
+      "minecraft:brush",
+      "minecraft:fishing_rod",
+      "minecraft:carrot_on_a_stick",
+      "minecraft:warped_fungus_on_a_stick",
+      "minecraft:mace",
+      "minecraft:diamond_spear",
+      "minecraft:stone_spear",
+      "minecraft:golden_spear",
+      "minecraft:netherite_spear",
+      "minecraft:wooden_spear",
+      "minecraft:iron_spear",
+      "minecraft:copper_spear",
+      "minecraft:compass",
+      "minecraft:carved_pumpkin",
+      "minecraft:player_head",
+      "minecraft:creeper_head",
+      "minecraft:zombie_head",
+      "minecraft:skeleton_skull",
+      "minecraft:wither_skeleton_skull",
+      "minecraft:dragon_head",
+      "minecraft:piglin_head"
+    ],
+    "minecraft:wooden_tool_materials": [
+      "minecraft:oak_planks",
+      "minecraft:spruce_planks",
+      "minecraft:birch_planks",
+      "minecraft:jungle_planks",
+      "minecraft:acacia_planks",
+      "minecraft:dark_oak_planks",
+      "minecraft:pale_oak_planks",
+      "minecraft:crimson_planks",
+      "minecraft:warped_planks",
+      "minecraft:mangrove_planks",
+      "minecraft:bamboo_planks",
+      "minecraft:cherry_planks"
+    ],
+    "minecraft:enchantable/fire_aspect": [
+      "minecraft:diamond_sword",
+      "minecraft:stone_sword",
+      "minecraft:golden_sword",
+      "minecraft:netherite_sword",
+      "minecraft:wooden_sword",
+      "minecraft:iron_sword",
+      "minecraft:copper_sword",
+      "minecraft:diamond_spear",
+      "minecraft:stone_spear",
+      "minecraft:golden_spear",
+      "minecraft:netherite_spear",
+      "minecraft:wooden_spear",
+      "minecraft:iron_spear",
+      "minecraft:copper_spear",
+      "minecraft:mace"
+    ],
+    "minecraft:repairs_leather_armor": [
+      "minecraft:leather"
+    ],
+    "minecraft:netherite_tool_materials": [
+      "minecraft:netherite_ingot"
+    ],
+    "minecraft:repairs_wolf_armor": [
+      "minecraft:armadillo_scute"
+    ],
+    "minecraft:enchantable/melee_weapon": [
+      "minecraft:diamond_sword",
+      "minecraft:stone_sword",
+      "minecraft:golden_sword",
+      "minecraft:netherite_sword",
+      "minecraft:wooden_sword",
+      "minecraft:iron_sword",
+      "minecraft:copper_sword",
+      "minecraft:diamond_spear",
+      "minecraft:stone_spear",
+      "minecraft:golden_spear",
+      "minecraft:netherite_spear",
+      "minecraft:wooden_spear",
+      "minecraft:iron_spear",
+      "minecraft:copper_spear"
+    ],
+    "minecraft:stone_tool_materials": [
+      "minecraft:cobblestone",
+      "minecraft:blackstone",
+      "minecraft:cobbled_deepslate"
+    ],
+    "minecraft:copper_tool_materials": [
+      "minecraft:copper_ingot"
+    ],
+    "minecraft:enchantable/leg_armor": [
+      "minecraft:leather_leggings",
+      "minecraft:copper_leggings",
+      "minecraft:chainmail_leggings",
+      "minecraft:golden_leggings",
+      "minecraft:iron_leggings",
+      "minecraft:diamond_leggings",
+      "minecraft:netherite_leggings"
+    ],
+    "minecraft:enchantable/head_armor": [
+      "minecraft:leather_helmet",
+      "minecraft:copper_helmet",
+      "minecraft:chainmail_helmet",
+      "minecraft:golden_helmet",
+      "minecraft:iron_helmet",
+      "minecraft:diamond_helmet",
+      "minecraft:netherite_helmet",
+      "minecraft:turtle_helmet"
+    ]
+  },
+  "enchantment_tags": {
+    "minecraft:on_random_loot": [
+      "minecraft:protection",
+      "minecraft:fire_protection",
+      "minecraft:feather_falling",
+      "minecraft:blast_protection",
+      "minecraft:projectile_protection",
+      "minecraft:respiration",
+      "minecraft:aqua_affinity",
+      "minecraft:thorns",
+      "minecraft:depth_strider",
+      "minecraft:sharpness",
+      "minecraft:smite",
+      "minecraft:bane_of_arthropods",
+      "minecraft:knockback",
+      "minecraft:fire_aspect",
+      "minecraft:looting",
+      "minecraft:sweeping_edge",
+      "minecraft:efficiency",
+      "minecraft:silk_touch",
+      "minecraft:unbreaking",
+      "minecraft:fortune",
+      "minecraft:power",
+      "minecraft:punch",
+      "minecraft:flame",
+      "minecraft:infinity",
+      "minecraft:luck_of_the_sea",
+      "minecraft:lure",
+      "minecraft:loyalty",
+      "minecraft:impaling",
+      "minecraft:riptide",
+      "minecraft:channeling",
+      "minecraft:multishot",
+      "minecraft:quick_charge",
+      "minecraft:piercing",
+      "minecraft:density",
+      "minecraft:breach",
+      "minecraft:lunge",
+      "minecraft:binding_curse",
+      "minecraft:vanishing_curse",
+      "minecraft:frost_walker",
+      "minecraft:mending"
+    ],
+    "minecraft:curse": [
+      "minecraft:binding_curse",
+      "minecraft:vanishing_curse"
+    ],
+    "minecraft:exclusive_set/mining": [
+      "minecraft:fortune",
+      "minecraft:silk_touch"
+    ],
+    "minecraft:exclusive_set/riptide": [
+      "minecraft:loyalty",
+      "minecraft:channeling"
+    ],
+    "minecraft:exclusive_set/crossbow": [
+      "minecraft:multishot",
+      "minecraft:piercing"
+    ],
+    "minecraft:exclusive_set/bow": [
+      "minecraft:infinity",
+      "minecraft:mending"
+    ],
+    "minecraft:exclusive_set/armor": [
+      "minecraft:protection",
+      "minecraft:blast_protection",
+      "minecraft:fire_protection",
+      "minecraft:projectile_protection"
+    ],
+    "minecraft:exclusive_set/boots": [
+      "minecraft:frost_walker",
+      "minecraft:depth_strider"
+    ],
+    "minecraft:exclusive_set/damage": [
+      "minecraft:sharpness",
+      "minecraft:smite",
+      "minecraft:bane_of_arthropods",
+      "minecraft:impaling",
+      "minecraft:density",
+      "minecraft:breach"
+    ]
+  },
+  "max_damage": {
+    "minecraft:trident": 250,
+    "minecraft:diamond_hoe": 1561,
+    "minecraft:copper_shovel": 190,
+    "minecraft:copper_helmet": 121,
+    "minecraft:copper_axe": 190,
+    "minecraft:diamond_helmet": 363,
+    "minecraft:leather_chestplate": 80,
+    "minecraft:elytra": 432,
+    "minecraft:turtle_helmet": 275,
+    "minecraft:wooden_spear": 59,
+    "minecraft:warped_fungus_on_a_stick": 100,
+    "minecraft:golden_helmet": 77,
+    "minecraft:wooden_hoe": 59,
+    "minecraft:wooden_shovel": 59,
+    "minecraft:golden_leggings": 105,
+    "minecraft:iron_hoe": 250,
+    "minecraft:iron_shovel": 250,
+    "minecraft:netherite_chestplate": 592,
+    "minecraft:diamond_axe": 1561,
+    "minecraft:stone_hoe": 131,
+    "minecraft:bow": 384,
+    "minecraft:wolf_armor": 64,
+    "minecraft:iron_leggings": 225,
+    "minecraft:wooden_sword": 59,
+    "minecraft:leather_boots": 65,
+    "minecraft:chainmail_leggings": 225,
+    "minecraft:iron_sword": 250,
+    "minecraft:diamond_spear": 1561,
+    "minecraft:golden_pickaxe": 32,
+    "minecraft:chainmail_boots": 195,
+    "minecraft:diamond_pickaxe": 1561,
+    "minecraft:diamond_leggings": 495,
+    "minecraft:brush": 64,
+    "minecraft:copper_spear": 190,
+    "minecraft:chainmail_helmet": 165,
+    "minecraft:golden_shovel": 32,
+    "minecraft:leather_helmet": 55,
+    "minecraft:copper_hoe": 190,
+    "minecraft:iron_axe": 250,
+    "minecraft:fishing_rod": 64,
+    "minecraft:golden_hoe": 32,
+    "minecraft:iron_helmet": 165,
+    "minecraft:mace": 500,
+    "minecraft:iron_pickaxe": 250,
+    "minecraft:copper_boots": 143,
+    "minecraft:leather_leggings": 75,
+    "minecraft:netherite_pickaxe": 2031,
+    "minecraft:diamond_shovel": 1561,
+    "minecraft:netherite_boots": 481,
+    "minecraft:diamond_chestplate": 528,
+    "minecraft:diamond_sword": 1561,
+    "minecraft:chainmail_chestplate": 240,
+    "minecraft:stone_spear": 131,
+    "minecraft:copper_pickaxe": 190,
+    "minecraft:stone_pickaxe": 131,
+    "minecraft:iron_chestplate": 240,
+    "minecraft:golden_chestplate": 112,
+    "minecraft:netherite_shovel": 2031,
+    "minecraft:netherite_sword": 2031,
+    "minecraft:netherite_axe": 2031,
+    "minecraft:wooden_axe": 59,
+    "minecraft:flint_and_steel": 64,
+    "minecraft:golden_spear": 32,
+    "minecraft:iron_spear": 250,
+    "minecraft:golden_axe": 32,
+    "minecraft:stone_shovel": 131,
+    "minecraft:iron_boots": 195,
+    "minecraft:copper_sword": 190,
+    "minecraft:stone_axe": 131,
+    "minecraft:copper_leggings": 165,
+    "minecraft:netherite_leggings": 555,
+    "minecraft:stone_sword": 131,
+    "minecraft:golden_sword": 32,
+    "minecraft:carrot_on_a_stick": 25,
+    "minecraft:wooden_pickaxe": 59,
+    "minecraft:netherite_hoe": 2031,
+    "minecraft:shears": 238,
+    "minecraft:netherite_spear": 2031,
+    "minecraft:diamond_boots": 429,
+    "minecraft:shield": 336,
+    "minecraft:copper_chestplate": 176,
+    "minecraft:netherite_helmet": 407,
+    "minecraft:golden_boots": 91,
+    "minecraft:crossbow": 465
+  }
+}

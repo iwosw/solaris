@@ -10,8 +10,8 @@
 //! - biomes (palette + packed indices)
 //! - heightmaps (long-array view preserved)
 //! - opaque block entities (stored in `Chunk::block_entities` and
-//!   byte-identical on round-trip); typed furnace/chest entities are
-//!   normalized through runtime models
+//!   byte-identical on round-trip); typed container entities are normalized
+//!   through runtime models, accepting vanilla byte and existing Solaris int `Slot` tags
 //! - scheduled block and fluid ticks
 //! - Status string, xPos / zPos
 //! - per-section `BlockLight` / `SkyLight` nibble arrays (decoded
@@ -25,6 +25,7 @@ use std::io::Cursor;
 
 use mc_data::Identifier;
 use mc_data::items::ItemRegistry;
+use mc_data::loot::chest_26_1_2::ChestLootCatalog;
 use mc_nbt::{ListTag, Tag, tag_type};
 use thiserror::Error;
 
@@ -32,18 +33,16 @@ use crate::SECTION_DIM;
 use crate::anvil::ChunkPayload;
 use crate::block::{BlockRegistry, BlockStateId};
 use crate::chunk::{
-    BIOME_VOLUME, BiomeSection, BlockPos, ChestBlockEntity, Chunk, ChunkGeometry, ChunkPos,
-    FurnaceBlockEntity, FurnaceSlot, Heightmap, HopperBlockEntity, LIGHT_LAYER_BYTES,
-    ScheduledBlockTick, ScheduledFluidTick, SectionLight,
+    BIOME_VOLUME, BiomeSection, BlockPos, BrewingStandBlockEntity, ChestBlockEntity, Chunk,
+    ChunkGeometry, ChunkPos, FurnaceBlockEntity, FurnaceSlot, Heightmap, HopperBlockEntity,
+    LIGHT_LAYER_BYTES, ScheduledBlockTick, ScheduledFluidTick, SectionLight,
 };
 use crate::section::{ChunkSection, PackedBitArray, SECTION_VOLUME};
 
 const REGION_AXIS_CHUNKS: i32 = 32;
-const DAMAGE_COMPONENT: &str = "minecraft:damage";
-const ENCHANTMENTS_COMPONENT: &str = "minecraft:enchantments";
-const CUSTOM_NAME_COMPONENT: &str = "minecraft:custom_name";
-const ITEM_MODEL_COMPONENT: &str = "minecraft:item_model";
-const TARGET_DATA_VERSION: i32 = 4_790;
+/// Vanilla `DataVersion` stamped on every chunk we write (26.1.2 world
+/// version; shared with the entity-region writer).
+pub const TARGET_DATA_VERSION: i32 = 4_790;
 const VANILLA_METADATA_KEYS: &[&str] = &["DataVersion", "LastUpdate", "InhabitedTime"];
 
 /// Serialise a chunk to a [`ChunkPayload`] ready for
@@ -115,6 +114,8 @@ pub fn chunk_to_payload_with_items_at_tick_for_position(
 
 #[derive(Debug, Error)]
 pub enum ChunkNbtError {
+    #[error("field {field} has integral value {value} outside the supported Short range")]
+    NumericOutOfRange { field: &'static str, value: i64 },
     #[error("NBT error: {0}")]
     Nbt(#[from] mc_nbt::NbtError),
     #[error("expected root Compound, got tag {0:#x}")]
@@ -138,13 +139,17 @@ pub enum ChunkNbtError {
     UnknownBlockStateId(u32),
     #[error("item {0} not in registry")]
     UnknownItem(String),
+    #[error("invalid storage block entity: {0}")]
+    InvalidStorageBlockEntity(String),
     #[error("invalid enchantment component {0:?}")]
     InvalidEnchantment(String),
-    #[error("section Y={0} is outside the chunk geometry declared by yPos and sections")]
+    #[error("section Y={0} is outside the authoritative chunk geometry")]
     SectionOutOfRange(i32),
     #[error("section Y={0} is duplicated or leaves a gap in the chunk geometry")]
     InvalidSectionShape(i32),
-    #[error("yPos={y_pos} and {section_count} sections do not define a supported chunk geometry")]
+    #[error(
+        "yPos={y_pos} does not match the authoritative chunk geometry ({section_count} sections)"
+    )]
     InvalidChunkGeometry { y_pos: i32, section_count: usize },
     #[error("section Y={0} does not fit the vanilla byte field")]
     SectionYOutOfByteRange(i32),
@@ -156,10 +161,8 @@ pub enum ChunkNbtError {
         expected: usize,
         got: usize,
     },
-    #[error("scheduled block tick delay is negative: {0}")]
-    NegativeTickDelay(i32),
-    #[error("scheduled block tick delay {0} does not fit in Anvil int")]
-    TickDelayOutOfRange(u64),
+    #[error("scheduled tick delay {0} does not fit in Anvil int")]
+    TickDelayOutOfRange(i128),
     #[error(
         "chunk position mismatch: expected ({expected_x},{expected_z}), decoded/held ({actual_x},{actual_z})"
     )]
@@ -171,41 +174,62 @@ pub enum ChunkNbtError {
     },
     #[error("trailing bytes after complete chunk NBT root: {trailing}")]
     TrailingNbtBytes { trailing: usize },
+    #[error("{0}")]
+    InvalidBlockEntity(String),
 }
 
 // ---------------------------------------------------------------------
 // Decode
 // ---------------------------------------------------------------------
 
-pub fn chunk_from_nbt(nbt: &Tag, registry: &BlockRegistry) -> Result<Chunk, ChunkNbtError> {
-    chunk_from_nbt_with_items(nbt, registry, None)
+pub fn chunk_from_nbt(
+    nbt: &Tag,
+    registry: &BlockRegistry,
+    geometry: ChunkGeometry,
+) -> Result<Chunk, ChunkNbtError> {
+    chunk_from_nbt_with_items(nbt, registry, None, &ChestLootCatalog::new(), geometry)
 }
 
 pub fn chunk_from_nbt_with_items(
     nbt: &Tag,
     registry: &BlockRegistry,
     items: Option<&ItemRegistry>,
+    chest_loot: &ChestLootCatalog,
+    geometry: ChunkGeometry,
 ) -> Result<Chunk, ChunkNbtError> {
-    chunk_from_nbt_with_items_impl(nbt, registry, items, None)
+    chunk_from_nbt_with_items_impl(nbt, registry, items, chest_loot, None, geometry, 0)
 }
 
-/// Decode a parsed Anvil chunk only when its embedded coordinates match the
-/// externally selected absolute cache/region key.
-pub fn chunk_from_nbt_with_items_at_position(
+/// Decode positioned Anvil NBT with signed scheduled delays based on its world clock.
+pub fn chunk_from_nbt_with_items_at_position_at_tick(
     nbt: &Tag,
     expected_pos: ChunkPos,
     registry: &BlockRegistry,
     items: Option<&ItemRegistry>,
+    chest_loot: &ChestLootCatalog,
+    geometry: ChunkGeometry,
+    current_tick: u64,
 ) -> Result<Chunk, ChunkNbtError> {
-    chunk_from_nbt_with_items_impl(nbt, registry, items, Some(expected_pos))
+    chunk_from_nbt_with_items_impl(
+        nbt,
+        registry,
+        items,
+        chest_loot,
+        Some(expected_pos),
+        geometry,
+        current_tick,
+    )
 }
 
-/// Parse one exact unnamed Anvil NBT root and enforce its external position.
-pub fn chunk_from_payload_with_items_at_position(
+/// Parse one exact positioned Anvil NBT payload using the persisted world clock.
+pub fn chunk_from_payload_with_items_at_position_at_tick(
     bytes: &[u8],
     expected_pos: ChunkPos,
     registry: &BlockRegistry,
     items: Option<&ItemRegistry>,
+    chest_loot: &ChestLootCatalog,
+    geometry: ChunkGeometry,
+    current_tick: u64,
 ) -> Result<Chunk, ChunkNbtError> {
     let mut cursor = Cursor::new(bytes);
     let (_, root) = mc_nbt::read_named(&mut cursor)?;
@@ -216,14 +240,25 @@ pub fn chunk_from_payload_with_items_at_position(
             trailing: bytes.len() - consumed,
         });
     }
-    chunk_from_nbt_with_items_at_position(&root, expected_pos, registry, items)
+    chunk_from_nbt_with_items_at_position_at_tick(
+        &root,
+        expected_pos,
+        registry,
+        items,
+        chest_loot,
+        geometry,
+        current_tick,
+    )
 }
 
 fn chunk_from_nbt_with_items_impl(
     nbt: &Tag,
     registry: &BlockRegistry,
     items: Option<&ItemRegistry>,
+    chest_loot: &ChestLootCatalog,
     expected_pos: Option<ChunkPos>,
+    geometry: ChunkGeometry,
+    current_tick: u64,
 ) -> Result<Chunk, ChunkNbtError> {
     let root = expect_compound(nbt, "root")?;
 
@@ -241,57 +276,62 @@ fn chunk_from_nbt_with_items_impl(
         .unwrap_or(BlockStateId(0));
     let default_biome = id("minecraft:plains");
 
-    let y_pos = get_int(root, "yPos")?;
-    let sections = get_list(root, "sections")?;
-    let section_count = sections.elements.len();
-    let min_y =
-        y_pos
-            .checked_mul(SECTION_DIM as i32)
-            .ok_or(ChunkNbtError::InvalidChunkGeometry {
-                y_pos,
-                section_count,
-            })?;
-    let height = i32::try_from(section_count)
-        .ok()
-        .and_then(|count| count.checked_mul(SECTION_DIM as i32))
-        .ok_or(ChunkNbtError::InvalidChunkGeometry {
+    let y_pos =
+        get_optional_section_y(root, "yPos")?.unwrap_or(geometry.min_y() / SECTION_DIM as i32);
+    // Vanilla's SerializableChunkData treats absent/sparse sections as empty.
+    let sections = get_optional_list(root, "sections")?;
+    let section_count = geometry.section_count();
+    if y_pos != geometry.min_y() / SECTION_DIM as i32 {
+        return Err(ChunkNbtError::InvalidChunkGeometry {
             y_pos,
             section_count,
-        })?;
-    let geometry =
-        ChunkGeometry::new(min_y, height).ok_or(ChunkNbtError::InvalidChunkGeometry {
-            y_pos,
-            section_count,
-        })?;
+        });
+    }
 
     let mut chunk = Chunk::empty_with_geometry(ChunkPos { x, z }, air, default_biome, geometry);
     chunk.status = status;
 
     let mut seen_sections = vec![false; section_count];
-    for s in &sections.elements {
+    let mut seen_boundaries = [false; 2];
+    for s in sections.into_iter().flat_map(|list| &list.elements) {
         let cmp = expect_compound(s, "sections[]")?;
-        let y = get_byte(cmp, "Y")? as i32;
+        let y = get_section_y(cmp, "Y")?;
         let Some(idx) = y
             .checked_sub(y_pos)
             .and_then(|idx| usize::try_from(idx).ok())
             .filter(|idx| *idx < section_count)
         else {
-            return Err(ChunkNbtError::SectionOutOfRange(y));
+            let boundary = if y == y_pos - 1 {
+                0
+            } else if y == y_pos + section_count as i32 {
+                1
+            } else {
+                return Err(ChunkNbtError::SectionOutOfRange(y));
+            };
+            if cmp
+                .iter()
+                .any(|(name, _)| name == "block_states" || name == "biomes")
+            {
+                return Err(ChunkNbtError::SectionOutOfRange(y));
+            }
+            if seen_boundaries[boundary] {
+                return Err(ChunkNbtError::InvalidSectionShape(y));
+            }
+            seen_boundaries[boundary] = true;
+            chunk.boundary_section_lights[boundary] = decode_section_light(cmp)?;
+            continue;
         };
         if seen_sections[idx] {
             return Err(ChunkNbtError::InvalidSectionShape(y));
         }
         seen_sections[idx] = true;
-        let bs = get_compound(cmp, "block_states")?;
-        chunk.sections[idx] = decode_block_section(bs, registry, air)?;
-        let bi = get_compound(cmp, "biomes")?;
-        chunk.biomes[idx] = decode_biome_section(bi)?;
+        if let Some(bs) = get_optional_compound(cmp, "block_states")? {
+            chunk.sections[idx] = decode_block_section(bs, registry, air)?;
+        }
+        if let Some(bi) = get_optional_compound(cmp, "biomes")? {
+            chunk.biomes[idx] = decode_biome_section(bi)?;
+        }
         chunk.section_lights[idx] = decode_section_light(cmp)?;
-    }
-    if let Some(missing_idx) = seen_sections.iter().position(|seen| !seen) {
-        return Err(ChunkNbtError::InvalidSectionShape(
-            y_pos + missing_idx as i32,
-        ));
     }
 
     if let Some(hms) = get_optional_compound(root, "Heightmaps")? {
@@ -324,6 +364,14 @@ fn chunk_from_nbt_with_items_impl(
             let by = get_int(cmp, "y")?;
             let bz = get_int(cmp, "z")?;
             let block_entity_id = get_string(cmp, "id").ok();
+            if block_entity_id.is_some_and(|id| id == "minecraft:conduit") {
+                mc_data::conduit_nbt::target(cmp).map_err(ChunkNbtError::InvalidBlockEntity)?;
+            }
+            mc_data::trial_nbt::validate(cmp, items).map_err(|error| {
+                ChunkNbtError::InvalidBlockEntity(format!(
+                    "block entity at ({bx},{by},{bz}): {error}"
+                ))
+            })?;
             if block_entity_id.is_some_and(|id| is_furnace_block_entity_id(id))
                 && let Some(items) = items
             {
@@ -340,14 +388,22 @@ fn chunk_from_nbt_with_items_impl(
             if block_entity_id.is_some_and(|id| is_chest_storage_block_entity_id(id))
                 && let Some(items) = items
             {
-                chunk.chests.insert(
-                    BlockPos {
-                        x: bx,
-                        y: by,
-                        z: bz,
-                    },
-                    decode_chest(cmp, items)?,
-                );
+                let pos = BlockPos {
+                    x: bx,
+                    y: by,
+                    z: bz,
+                };
+                let mut chest = decode_chest(cmp, items)?;
+                if chunk
+                    .get_block(bx.rem_euclid(16) as u8, by, bz.rem_euclid(16) as u8)
+                    .is_some_and(|id| super::copper_chest_nbt::is_copper(registry, id))
+                {
+                    super::copper_chest_nbt::materialize(&mut chest, items, chest_loot)?;
+                    let mut bytes = Vec::new();
+                    mc_nbt::write_network(&mut bytes, be)?;
+                    chunk.block_entities.insert(pos, bytes);
+                }
+                chunk.chests.insert(pos, chest);
                 continue;
             }
             if block_entity_id.is_some_and(|id| is_hopper_block_entity_id(id))
@@ -362,6 +418,23 @@ fn chunk_from_nbt_with_items_impl(
                     decode_hopper(cmp, items)?,
                 );
                 continue;
+            }
+            if block_entity_id.is_some_and(|id| id == "minecraft:brewing_stand")
+                && let Some(items) = items
+            {
+                chunk.brewing_stands.insert(
+                    BlockPos {
+                        x: bx,
+                        y: by,
+                        z: bz,
+                    },
+                    decode_brewing_stand(cmp, items)?,
+                );
+                continue;
+            }
+            if let Some(items) = items {
+                mc_data::storage_blocks::validate(cmp, items)
+                    .map_err(ChunkNbtError::InvalidStorageBlockEntity)?;
             }
 
             // Round-trip the entry verbatim by re-encoding it through
@@ -381,10 +454,10 @@ fn chunk_from_nbt_with_items_impl(
     }
 
     if let Some(block_ticks) = get_optional_list(root, "block_ticks")? {
-        chunk.load_scheduled_block_ticks(decode_scheduled_block_ticks(block_ticks, 0)?);
+        chunk.load_scheduled_block_ticks(decode_scheduled_block_ticks(block_ticks, current_tick)?);
     }
     if let Some(fluid_ticks) = get_optional_list(root, "fluid_ticks")? {
-        chunk.load_scheduled_fluid_ticks(decode_scheduled_fluid_ticks(fluid_ticks, 0)?);
+        chunk.load_scheduled_fluid_ticks(decode_scheduled_fluid_ticks(fluid_ticks, current_tick)?);
     }
 
     // M5.c.2: capture every other root-level field verbatim so a
@@ -475,6 +548,39 @@ const MODELLED_ROOT_KEYS: &[&str] = &[
     "fluid_ticks",
 ];
 
+struct DecodedScheduledTick {
+    pos: BlockPos,
+    id: Identifier,
+    trigger_tick: u64,
+    priority: i32,
+    sequence: u64,
+}
+
+fn decode_scheduled_tick_entry(
+    tag: &Tag,
+    list_name: &str,
+    current_tick: u64,
+    sequence: u64,
+) -> Result<DecodedScheduledTick, ChunkNbtError> {
+    let tick = expect_compound(tag, list_name)?;
+    let name = get_string(tick, "i")?;
+    let id = Identifier::parse(name.clone())
+        .map_err(|_| ChunkNbtError::InvalidIdentifier(name.clone()))?;
+    let delay = get_int(tick, "t")?;
+    Ok(DecodedScheduledTick {
+        pos: BlockPos {
+            x: get_int(tick, "x")?,
+            y: get_int(tick, "y")?,
+            z: get_int(tick, "z")?,
+        },
+        id,
+        // Vanilla may persist overdue work as a negative relative delay.
+        trigger_tick: current_tick.saturating_add_signed(i64::from(delay)),
+        priority: get_int(tick, "p")?,
+        sequence,
+    })
+}
+
 fn decode_scheduled_block_ticks(
     list: &ListTag,
     current_tick: u64,
@@ -483,24 +589,14 @@ fn decode_scheduled_block_ticks(
         .iter()
         .enumerate()
         .map(|(sequence, tag)| {
-            let tick = expect_compound(tag, "block_ticks[]")?;
-            let block_name = get_string(tick, "i")?;
-            let block = Identifier::parse(block_name.clone())
-                .map_err(|_| ChunkNbtError::InvalidIdentifier(block_name.clone()))?;
-            let delay = get_int(tick, "t")?;
-            if delay < 0 {
-                return Err(ChunkNbtError::NegativeTickDelay(delay));
-            }
+            let tick =
+                decode_scheduled_tick_entry(tag, "block_ticks[]", current_tick, sequence as u64)?;
             Ok(ScheduledBlockTick::from_storage(
-                BlockPos {
-                    x: get_int(tick, "x")?,
-                    y: get_int(tick, "y")?,
-                    z: get_int(tick, "z")?,
-                },
-                block,
-                current_tick + delay as u64,
-                get_int(tick, "p")?,
-                sequence as u64,
+                tick.pos,
+                tick.id,
+                tick.trigger_tick,
+                tick.priority,
+                tick.sequence,
             ))
         })
         .collect()
@@ -514,30 +610,20 @@ fn decode_scheduled_fluid_ticks(
         .iter()
         .enumerate()
         .map(|(sequence, tag)| {
-            let tick = expect_compound(tag, "fluid_ticks[]")?;
-            let fluid_name = get_string(tick, "i")?;
-            let fluid = Identifier::parse(fluid_name.clone())
-                .map_err(|_| ChunkNbtError::InvalidIdentifier(fluid_name.clone()))?;
-            let delay = get_int(tick, "t")?;
-            if delay < 0 {
-                return Err(ChunkNbtError::NegativeTickDelay(delay));
-            }
+            let tick =
+                decode_scheduled_tick_entry(tag, "fluid_ticks[]", current_tick, sequence as u64)?;
             Ok(ScheduledFluidTick::from_storage(
-                BlockPos {
-                    x: get_int(tick, "x")?,
-                    y: get_int(tick, "y")?,
-                    z: get_int(tick, "z")?,
-                },
-                fluid,
-                current_tick + delay as u64,
-                get_int(tick, "p")?,
-                sequence as u64,
+                tick.pos,
+                tick.id,
+                tick.trigger_tick,
+                tick.priority,
+                tick.sequence,
             ))
         })
         .collect()
 }
 
-fn decode_block_section(
+pub(crate) fn decode_block_section(
     nbt: &[(String, Tag)],
     registry: &BlockRegistry,
     air: BlockStateId,
@@ -551,7 +637,7 @@ fn decode_block_section(
             let name_str: String = get_string(entry, "Name")?.clone();
             let name = Identifier::parse(name_str.clone())
                 .map_err(|_| ChunkNbtError::InvalidIdentifier(name_str.clone()))?;
-            let props = if let Some(props_cmp) = get_optional_compound(entry, "Properties")? {
+            let mut props = if let Some(props_cmp) = get_optional_compound(entry, "Properties")? {
                 props_cmp
                     .iter()
                     .map(|(k, v)| match v {
@@ -566,6 +652,19 @@ fn decode_block_section(
             } else {
                 Vec::new()
             };
+            // Vanilla NbtUtils.readBlockState begins with defaultBlockState and
+            // applies supplied properties. Older palettes can omit properties
+            // introduced later (for example skulls' powered=false).
+            if let Some(default) = registry
+                .block(&name)
+                .and_then(|block| registry.by_id(block.default))
+            {
+                for (key, value) in &default.properties {
+                    if !props.iter().any(|(supplied, _)| supplied == key) {
+                        props.push((key.clone(), value.clone()));
+                    }
+                }
+            }
             registry
                 .by_name_and_props(&name, &props)
                 .ok_or(ChunkNbtError::UnknownBlockState {
@@ -713,6 +812,27 @@ pub fn chunk_to_nbt_with_items_at_tick(
     items: Option<&ItemRegistry>,
     current_tick: u64,
 ) -> Result<Tag, ChunkNbtError> {
+    chunk_to_nbt_parts(chunk, registry, items, current_tick, true)
+}
+
+/// Native side state omits procedural blocks and Anvil-relative ticks; the native
+/// codec owns lossless absolute tick deadlines and sequence identities.
+pub(crate) fn chunk_metadata_to_nbt_with_items_at_tick(
+    chunk: &Chunk,
+    registry: &BlockRegistry,
+    items: Option<&ItemRegistry>,
+    current_tick: u64,
+) -> Result<Tag, ChunkNbtError> {
+    chunk_to_nbt_parts(chunk, registry, items, current_tick, false)
+}
+
+fn chunk_to_nbt_parts(
+    chunk: &Chunk,
+    registry: &BlockRegistry,
+    items: Option<&ItemRegistry>,
+    current_tick: u64,
+    include_blocks: bool,
+) -> Result<Tag, ChunkNbtError> {
     let extra = |key: &str| {
         chunk
             .extras
@@ -753,11 +873,11 @@ pub fn chunk_to_nbt_with_items_at_tick(
         let section_y = min_section_y + i as i32;
         let y = i8::try_from(section_y)
             .map_err(|_| ChunkNbtError::SectionYOutOfByteRange(section_y))?;
-        let mut s_cmp = vec![
-            ("Y".into(), Tag::Byte(y)),
-            ("block_states".into(), encode_block_section(sec, registry)?),
-            ("biomes".into(), encode_biome_section(&chunk.biomes[i])),
-        ];
+        let mut s_cmp = vec![("Y".into(), Tag::Byte(y))];
+        if include_blocks {
+            s_cmp.push(("block_states".into(), encode_block_section(sec, registry)?));
+        }
+        s_cmp.push(("biomes".into(), encode_biome_section(&chunk.biomes[i])));
         if let Some(tag) = encode_light_layer(&chunk.section_lights[i].block) {
             s_cmp.push(("BlockLight".into(), tag));
         }
@@ -765,6 +885,26 @@ pub fn chunk_to_nbt_with_items_at_tick(
             s_cmp.push(("SkyLight".into(), tag));
         }
         sections.push(Tag::Compound(s_cmp));
+    }
+    for (boundary, light) in chunk.boundary_section_lights.iter().enumerate() {
+        if light.block.is_none() && light.sky.is_none() {
+            continue;
+        }
+        let section_y = if boundary == 0 {
+            min_section_y - 1
+        } else {
+            min_section_y + chunk.sections.len() as i32
+        };
+        let y = i8::try_from(section_y)
+            .map_err(|_| ChunkNbtError::SectionYOutOfByteRange(section_y))?;
+        let mut fields = vec![("Y".into(), Tag::Byte(y))];
+        if let Some(tag) = encode_light_layer(&light.block) {
+            fields.push(("BlockLight".into(), tag));
+        }
+        if let Some(tag) = encode_light_layer(&light.sky) {
+            fields.push(("SkyLight".into(), tag));
+        }
+        sections.push(Tag::Compound(fields));
     }
     root.push((
         "sections".into(),
@@ -793,6 +933,7 @@ pub fn chunk_to_nbt_with_items_at_tick(
             !chunk.furnaces.contains_key(pos)
                 && !chunk.chests.contains_key(pos)
                 && !chunk.hoppers.contains_key(pos)
+                && !chunk.brewing_stands.contains_key(pos)
         })
         .collect();
     be_entries.sort_by_key(|(pos, _)| (pos.x, pos.y, pos.z));
@@ -815,17 +956,26 @@ pub fn chunk_to_nbt_with_items_at_tick(
         let mut chests: Vec<(&BlockPos, &ChestBlockEntity)> = chunk.chests.iter().collect();
         chests.sort_by_key(|(pos, _)| (pos.x, pos.y, pos.z));
         for (pos, chest) in chests {
-            be_list.push(encode_chest(
+            let mut encoded = encode_chest(
                 pos,
                 chest,
                 items,
                 chest_storage_block_entity_id_for_block(chunk, registry, *pos),
-            )?);
+            )?;
+            if let Some(native) = chunk.block_entities.get(pos) {
+                super::copper_chest_nbt::merge_metadata(&mut encoded, native)?;
+            }
+            be_list.push(encoded);
         }
         let mut hoppers: Vec<(&BlockPos, &HopperBlockEntity)> = chunk.hoppers.iter().collect();
         hoppers.sort_by_key(|(pos, _)| (pos.x, pos.y, pos.z));
         for (pos, hopper) in hoppers {
             be_list.push(encode_hopper(pos, hopper, items)?);
+        }
+        let mut stands: Vec<_> = chunk.brewing_stands.iter().collect();
+        stands.sort_by_key(|(pos, _)| (pos.x, pos.y, pos.z));
+        for (pos, stand) in stands {
+            be_list.push(encode_brewing_stand(pos, stand, items)?);
         }
     }
     root.push((
@@ -840,14 +990,16 @@ pub fn chunk_to_nbt_with_items_at_tick(
         }),
     ));
 
-    root.push((
-        "block_ticks".into(),
-        encode_scheduled_block_ticks(&chunk.scheduled_block_ticks, current_tick)?,
-    ));
-    root.push((
-        "fluid_ticks".into(),
-        encode_scheduled_fluid_ticks(&chunk.scheduled_fluid_ticks, current_tick)?,
-    ));
+    if include_blocks {
+        root.push((
+            "block_ticks".into(),
+            encode_scheduled_block_ticks(&chunk.scheduled_block_ticks, current_tick)?,
+        ));
+        root.push((
+            "fluid_ticks".into(),
+            encode_scheduled_fluid_ticks(&chunk.scheduled_fluid_ticks, current_tick)?,
+        ));
+    }
 
     // M5.c.2: re-emit every root-level field decode kept in
     // `extras` (PostProcessing,
@@ -871,22 +1023,24 @@ fn encode_light_layer(layer: &Option<crate::chunk::LightSection>) -> Option<Tag>
         .map(|layer| Tag::ByteArray(layer.bytes().map(|byte| byte as i8).collect()))
 }
 
+fn anvil_tick_delay(deadline: u64, current_tick: u64) -> Result<i32, ChunkNbtError> {
+    // Wider arithmetic preserves the sign across the entire native u64 clock range.
+    let delay = i128::from(deadline) - i128::from(current_tick);
+    i32::try_from(delay).map_err(|_| ChunkNbtError::TickDelayOutOfRange(delay))
+}
 fn encode_scheduled_block_ticks(
     ticks: &[ScheduledBlockTick],
     current_tick: u64,
 ) -> Result<Tag, ChunkNbtError> {
     let mut elements = Vec::with_capacity(ticks.len());
     for tick in ticks {
-        let delay = tick.trigger_tick.saturating_sub(current_tick);
-        if delay > i32::MAX as u64 {
-            return Err(ChunkNbtError::TickDelayOutOfRange(delay));
-        }
+        let delay = anvil_tick_delay(tick.trigger_tick, current_tick)?;
         elements.push(Tag::Compound(vec![
             ("i".into(), Tag::String(tick.block.as_str().to_string())),
             ("x".into(), Tag::Int(tick.pos.x)),
             ("y".into(), Tag::Int(tick.pos.y)),
             ("z".into(), Tag::Int(tick.pos.z)),
-            ("t".into(), Tag::Int(delay as i32)),
+            ("t".into(), Tag::Int(delay)),
             ("p".into(), Tag::Int(tick.priority)),
         ]));
     }
@@ -906,16 +1060,13 @@ fn encode_scheduled_fluid_ticks(
 ) -> Result<Tag, ChunkNbtError> {
     let mut elements = Vec::with_capacity(ticks.len());
     for tick in ticks {
-        let delay = tick.trigger_tick.saturating_sub(current_tick);
-        if delay > i32::MAX as u64 {
-            return Err(ChunkNbtError::TickDelayOutOfRange(delay));
-        }
+        let delay = anvil_tick_delay(tick.trigger_tick, current_tick)?;
         elements.push(Tag::Compound(vec![
             ("i".into(), Tag::String(tick.fluid.as_str().to_string())),
             ("x".into(), Tag::Int(tick.pos.x)),
             ("y".into(), Tag::Int(tick.pos.y)),
             ("z".into(), Tag::Int(tick.pos.z)),
-            ("t".into(), Tag::Int(delay as i32)),
+            ("t".into(), Tag::Int(delay)),
             ("p".into(), Tag::Int(tick.priority)),
         ]));
     }
@@ -929,7 +1080,7 @@ fn encode_scheduled_fluid_ticks(
     }))
 }
 
-fn encode_block_section(
+pub(crate) fn encode_block_section(
     section: &ChunkSection,
     registry: &BlockRegistry,
 ) -> Result<Tag, ChunkNbtError> {
@@ -970,7 +1121,7 @@ fn encode_block_section(
     Ok(Tag::Compound(out))
 }
 
-fn block_state_to_palette_entry(
+pub(crate) fn block_state_to_palette_entry(
     id: BlockStateId,
     registry: &BlockRegistry,
 ) -> Result<Tag, ChunkNbtError> {
@@ -1033,22 +1184,92 @@ fn encode_biome_section(section: &BiomeSection) -> Tag {
     Tag::Compound(out)
 }
 
+fn decode_brewing_stand(
+    cmp: &[(String, Tag)],
+    items: &ItemRegistry,
+) -> Result<BrewingStandBlockEntity, ChunkNbtError> {
+    let mut stand = BrewingStandBlockEntity {
+        brew_time: get_optional_short(cmp, "BrewTime")?
+            .unwrap_or(0)
+            .clamp(0, 400),
+        fuel: cmp
+            .iter()
+            .find(|(key, _)| key == "Fuel")
+            .map(|(_, tag)| match tag {
+                Tag::Byte(value) => Ok(i16::from(*value).clamp(0, 20)),
+                other => Err(ChunkNbtError::WrongType {
+                    field: "Fuel",
+                    expected: "Byte",
+                    got: other.type_id(),
+                }),
+            })
+            .transpose()?
+            .unwrap_or(0),
+        ..Default::default()
+    };
+    if let Some(list) = get_optional_list(cmp, "Items")? {
+        for tag in &list.elements {
+            let item = expect_compound(tag, "Items[]")?;
+            let slot = get_container_slot(item)?;
+            if (0..=4).contains(&slot) {
+                stand.slots[slot as usize] = decode_container_stack(item, items)?;
+            }
+        }
+    }
+    if stand.brew_time > 0 && !stand.slots[3].is_empty() {
+        stand.ingredient = Some(stand.slots[3].item_id);
+    }
+    Ok(stand)
+}
+
+fn encode_brewing_stand(
+    pos: &BlockPos,
+    stand: &BrewingStandBlockEntity,
+    items: &ItemRegistry,
+) -> Result<Tag, ChunkNbtError> {
+    let mut item_tags = Vec::new();
+    for (slot, stack) in stand.slots.iter().enumerate() {
+        if !stack.is_empty() {
+            item_tags.push(encode_container_stack(slot, stack, items)?);
+        }
+    }
+    Ok(Tag::Compound(vec![
+        ("id".into(), Tag::String("minecraft:brewing_stand".into())),
+        ("x".into(), Tag::Int(pos.x)),
+        ("y".into(), Tag::Int(pos.y)),
+        ("z".into(), Tag::Int(pos.z)),
+        ("BrewTime".into(), Tag::Short(stand.brew_time)),
+        ("Fuel".into(), Tag::Byte(stand.fuel as i8)),
+        (
+            "Items".into(),
+            Tag::List(ListTag {
+                element_type: if item_tags.is_empty() {
+                    tag_type::END
+                } else {
+                    tag_type::COMPOUND
+                },
+                elements: item_tags,
+            }),
+        ),
+    ]))
+}
+
 fn decode_furnace(
     cmp: &[(String, Tag)],
     items: &ItemRegistry,
 ) -> Result<FurnaceBlockEntity, ChunkNbtError> {
     let mut furnace = FurnaceBlockEntity {
-        burn_remaining: get_optional_short(cmp, "lit_time_remaining")?.unwrap_or(0),
-        burn_total: get_optional_short(cmp, "lit_total_time")?.unwrap_or(1600),
-        cook_progress: get_optional_short(cmp, "cooking_time_spent")?.unwrap_or(0),
-        cook_total: get_optional_short(cmp, "cooking_total_time")?.unwrap_or(200),
+        burn_remaining: get_optional_furnace_timer(cmp, "lit_time_remaining")?.unwrap_or(0),
+        burn_total: get_optional_furnace_timer(cmp, "lit_total_time")?.unwrap_or(1600),
+        cook_progress: get_optional_furnace_timer(cmp, "cooking_time_spent")?.unwrap_or(0),
+        cook_total: get_optional_furnace_timer(cmp, "cooking_total_time")?.unwrap_or(200),
         ..FurnaceBlockEntity::default()
     };
 
     if let Some(list) = get_optional_list(cmp, "Items")? {
         for tag in &list.elements {
             let item = expect_compound(tag, "Items[]")?;
-            let slot = get_int(item, "Slot")?;
+            let slot = get_container_slot(item)?;
             if !(0..=2).contains(&slot) {
                 continue;
             }
@@ -1080,11 +1301,32 @@ fn decode_chest(
     cmp: &[(String, Tag)],
     items: &ItemRegistry,
 ) -> Result<ChestBlockEntity, ChunkNbtError> {
-    let mut chest = ChestBlockEntity::default();
+    let mut chest = ChestBlockEntity {
+        loot_table: get_optional_string(cmp, "LootTable")?
+            .map(|name| {
+                Identifier::parse(name)
+                    .map_err(|_| ChunkNbtError::InvalidIdentifier(name.to_owned()))
+            })
+            .transpose()?,
+        ..Default::default()
+    };
+    if let Some((_, seed)) = cmp.iter().find(|(name, _)| name == "LootTableSeed") {
+        let Tag::Long(seed) = seed else {
+            return Err(ChunkNbtError::WrongType {
+                field: "LootTableSeed",
+                expected: "Long",
+                got: seed.type_id(),
+            });
+        };
+        chest.loot_seed = *seed;
+    }
+    if chest.loot_table.is_some() {
+        return Ok(chest);
+    }
     if let Some(list) = get_optional_list(cmp, "Items")? {
         for tag in &list.elements {
             let item = expect_compound(tag, "Items[]")?;
-            let slot = get_int(item, "Slot")?;
+            let slot = get_container_slot(item)?;
             if !(0..=26).contains(&slot) {
                 continue;
             }
@@ -1105,7 +1347,7 @@ fn decode_hopper(
     if let Some(list) = get_optional_list(cmp, "Items")? {
         for tag in &list.elements {
             let item = expect_compound(tag, "Items[]")?;
-            let slot = get_int(item, "Slot")?;
+            let slot = get_container_slot(item)?;
             if !(0..=4).contains(&slot) {
                 continue;
             }
@@ -1184,17 +1426,19 @@ fn furnace_block_entity_id_for_block(
 ) -> &'static str {
     let local_x = pos.x.rem_euclid(SECTION_DIM as i32) as u8;
     let local_z = pos.z.rem_euclid(SECTION_DIM as i32) as u8;
-    let Some(state_id) = chunk.get_block(local_x, pos.y, local_z) else {
-        return "minecraft:furnace";
-    };
-    let Some(state) = registry.by_id(state_id) else {
-        return "minecraft:furnace";
-    };
-    match state.block.id.as_str() {
-        "minecraft:smoker" => "minecraft:smoker",
-        "minecraft:blast_furnace" => "minecraft:blast_furnace",
-        _ => "minecraft:furnace",
-    }
+    use mc_data::block_entity_kinds::BlockEntityKind;
+    chunk
+        .get_block(local_x, pos.y, local_z)
+        .and_then(|state_id| registry.by_id(state_id))
+        .and_then(|state| BlockEntityKind::for_block(state.block.id.path()))
+        .filter(|kind| {
+            matches!(
+                kind,
+                BlockEntityKind::Furnace | BlockEntityKind::Smoker | BlockEntityKind::BlastFurnace
+            )
+        })
+        .unwrap_or(BlockEntityKind::Furnace)
+        .vanilla_id()
 }
 
 fn encode_chest(
@@ -1209,6 +1453,13 @@ fn encode_chest(
         ("y".into(), Tag::Int(pos.y)),
         ("z".into(), Tag::Int(pos.z)),
     ];
+    if let Some(table) = &chest.loot_table {
+        compound.push(("LootTable".into(), Tag::String(table.to_string())));
+        if chest.loot_seed != 0 {
+            compound.push(("LootTableSeed".into(), Tag::Long(chest.loot_seed)));
+        }
+        return Ok(Tag::Compound(compound));
+    }
 
     let mut item_tags = Vec::new();
     for (slot, stack) in chest.slots.iter().enumerate() {
@@ -1232,7 +1483,10 @@ fn encode_chest(
 }
 
 fn is_chest_storage_block_entity_id(id: &str) -> bool {
-    matches!(id, "minecraft:chest" | "minecraft:barrel")
+    matches!(
+        id,
+        "minecraft:chest" | "minecraft:trapped_chest" | "minecraft:barrel"
+    )
 }
 
 fn encode_hopper(
@@ -1280,78 +1534,28 @@ fn decode_container_stack(
     item: &[(String, Tag)],
     items: &ItemRegistry,
 ) -> Result<FurnaceSlot, ChunkNbtError> {
-    let item_name = get_string(item, "id")?;
-    let parsed = Identifier::parse(item_name.clone())
-        .map_err(|_| ChunkNbtError::InvalidIdentifier(item_name.clone()))?;
-    let item_id = items
-        .id_of(&parsed)
-        .ok_or_else(|| ChunkNbtError::UnknownItem(item_name.clone()))?;
-    let components = get_optional_compound(item, "components")?;
-    let damage = components
-        .map(|components| get_optional_int(components, DAMAGE_COMPONENT))
-        .transpose()?
-        .flatten();
-    let mut enchantments = Vec::new();
-    if let Some(components) = components
-        && let Some(values) = get_optional_compound(components, ENCHANTMENTS_COMPONENT)?
-    {
-        enchantments.reserve(values.len());
-        for (id, level) in values {
-            let Tag::Int(level) = level else {
-                return Err(ChunkNbtError::InvalidEnchantment(id.clone()));
-            };
-            let parsed = Identifier::parse(id.clone())
-                .map_err(|_| ChunkNbtError::InvalidEnchantment(id.clone()))?;
-            if !(1..=255).contains(level)
-                || mc_data::required_registry_entry_id("enchantment", &parsed).is_none()
-            {
-                return Err(ChunkNbtError::InvalidEnchantment(id.clone()));
+    // Canonical item codec; mapped onto the chunk's slot shape.
+    let stack = mc_data::item_nbt::stack_from_fields(items, item)
+        .map_err(|err| match err {
+            mc_data::item_nbt::ItemNbtError::InvalidId(id) => ChunkNbtError::InvalidIdentifier(id),
+            mc_data::item_nbt::ItemNbtError::UnknownItem(id) => ChunkNbtError::UnknownItem(id),
+            mc_data::item_nbt::ItemNbtError::InvalidEnchantment(id) => {
+                ChunkNbtError::InvalidEnchantment(id)
             }
-            enchantments.push(mc_data::ItemEnchantment {
-                id: parsed,
-                level: *level,
-            });
-        }
-        enchantments.sort_unstable_by(|left, right| left.id.cmp(&right.id));
-    }
-    let custom_name = components
-        .map(|components| get_optional_compound(components, CUSTOM_NAME_COMPONENT))
-        .transpose()?
-        .flatten()
-        .filter(|component| component.len() == 1)
-        .map(|component| get_optional_string(component, "text"))
-        .transpose()?
-        .flatten()
-        .map(str::to_owned);
-    let item_model = components
-        .map(|components| get_optional_string(components, ITEM_MODEL_COMPONENT))
-        .transpose()?
-        .flatten()
-        .map(|name| {
-            Identifier::parse(name.to_owned())
-                .map(std::sync::Arc::new)
-                .map_err(|_| ChunkNbtError::InvalidIdentifier(name.to_owned()))
-        })
-        .transpose()?;
+            mc_data::item_nbt::ItemNbtError::InvalidComponent(reason) => {
+                ChunkNbtError::InvalidIdentifier(reason)
+            }
+        })?
+        .ok_or_else(|| ChunkNbtError::InvalidIdentifier("container stack without id".to_owned()))?;
     Ok(FurnaceSlot {
-        count: get_int(item, "count")?,
-        item_id,
-        damage,
-        enchantments,
-        custom_name,
-        item_model,
-        stew_effects: components
-            .and_then(|fields| {
-                fields
-                    .iter()
-                    .find(|(name, _)| name == mc_data::item_stack::STEW_EFFECTS_COMPONENT)
-            })
-            .map(|(_, tag)| {
-                mc_data::item_stack::decode_stew_effects(tag)
-                    .map_err(|reason| ChunkNbtError::InvalidIdentifier(reason.into()))
-            })
-            .transpose()?
-            .unwrap_or_default(),
+        count: stack.count,
+        item_id: stack.item_id,
+        damage: stack.damage,
+        enchantments: stack.enchantments,
+        custom_name: stack.custom_name.map(|name| name.into_string()),
+        item_model: stack.item_model,
+        stew_effects: stack.stew_effects,
+        components: stack.components,
     })
 }
 
@@ -1360,56 +1564,33 @@ fn encode_container_stack(
     stack: &FurnaceSlot,
     items: &ItemRegistry,
 ) -> Result<Tag, ChunkNbtError> {
-    let name = items
-        .name_of(stack.item_id)
-        .ok_or_else(|| ChunkNbtError::UnknownItem(stack.item_id.to_string()))?;
-    let mut fields = vec![
-        ("Slot".into(), Tag::Int(slot as i32)),
-        ("id".into(), Tag::String(name.as_str().to_string())),
-        ("count".into(), Tag::Int(stack.count)),
-    ];
-    let mut components = Vec::new();
-    if !stack.stew_effects.is_empty() {
-        components.push((
-            mc_data::item_stack::STEW_EFFECTS_COMPONENT.into(),
-            mc_data::item_stack::encode_stew_effects(&stack.stew_effects),
-        ));
-    }
-    if let Some(damage) = stack.damage {
-        components.push((DAMAGE_COMPONENT.into(), Tag::Int(damage)));
-    }
-    if !stack.enchantments.is_empty() {
-        components.push((
-            ENCHANTMENTS_COMPONENT.into(),
-            Tag::Compound(
-                stack
-                    .enchantments
-                    .iter()
-                    .map(|enchantment| {
-                        (
-                            enchantment.id.as_str().to_string(),
-                            Tag::Int(enchantment.level),
-                        )
-                    })
-                    .collect(),
-            ),
-        ));
-    }
-    if let Some(name) = &stack.custom_name {
-        components.push((
-            CUSTOM_NAME_COMPONENT.into(),
-            Tag::Compound(vec![("text".into(), Tag::String(name.clone()))]),
-        ));
-    }
-    if let Some(model) = &stack.item_model {
-        components.push((
-            ITEM_MODEL_COMPONENT.into(),
-            Tag::String(model.as_str().to_owned()),
-        ));
-    }
-    if !components.is_empty() {
-        fields.push(("components".into(), Tag::Compound(components)));
-    }
+    // Canonical item codec via the shared item shape.
+    let shared = mc_data::ItemStack {
+        count: stack.count,
+        item_id: stack.item_id,
+        damage: stack.damage,
+        enchantments: stack.enchantments.clone(),
+        custom_name: stack
+            .custom_name
+            .as_deref()
+            .map(str::to_owned)
+            .map(String::into_boxed_str),
+        item_model: stack.item_model.clone(),
+        stew_effects: stack.stew_effects.clone(),
+        components: stack.components.clone(),
+    };
+    let mut fields =
+        mc_data::item_nbt::stack_to_fields(items, &shared).map_err(|err| match err {
+            mc_data::item_nbt::ItemNbtError::InvalidId(id) => ChunkNbtError::InvalidIdentifier(id),
+            mc_data::item_nbt::ItemNbtError::UnknownItem(id) => ChunkNbtError::UnknownItem(id),
+            mc_data::item_nbt::ItemNbtError::InvalidEnchantment(id) => {
+                ChunkNbtError::InvalidEnchantment(id)
+            }
+            mc_data::item_nbt::ItemNbtError::InvalidComponent(reason) => {
+                ChunkNbtError::InvalidIdentifier(reason)
+            }
+        })?;
+    fields.insert(0, ("Slot".into(), Tag::Int(slot as i32)));
     Ok(Tag::Compound(fields))
 }
 
@@ -1420,16 +1601,19 @@ fn chest_storage_block_entity_id_for_block(
 ) -> &'static str {
     let local_x = pos.x.rem_euclid(SECTION_DIM as i32) as u8;
     let local_z = pos.z.rem_euclid(SECTION_DIM as i32) as u8;
-    let Some(state_id) = chunk.get_block(local_x, pos.y, local_z) else {
-        return "minecraft:chest";
-    };
-    let Some(state) = registry.by_id(state_id) else {
-        return "minecraft:chest";
-    };
-    match state.block.id.as_str() {
-        "minecraft:barrel" => "minecraft:barrel",
-        _ => "minecraft:chest",
-    }
+    use mc_data::block_entity_kinds::BlockEntityKind;
+    chunk
+        .get_block(local_x, pos.y, local_z)
+        .and_then(|state_id| registry.by_id(state_id))
+        .and_then(|state| BlockEntityKind::for_block(state.block.id.path()))
+        .filter(|kind| {
+            matches!(
+                kind,
+                BlockEntityKind::Chest | BlockEntityKind::TrappedChest | BlockEntityKind::Barrel
+            )
+        })
+        .unwrap_or(BlockEntityKind::Chest)
+        .vanilla_id()
 }
 
 // ---------------------------------------------------------------------
@@ -1462,6 +1646,20 @@ fn get_field<'a>(cmp: &'a [(String, Tag)], name: &'static str) -> Result<&'a Tag
         .ok_or(ChunkNbtError::MissingField(name))
 }
 
+/// Vanilla inventories use a byte slot; Solaris chunk encoding uses an int.
+/// Accept both locally to inventory slots, not general NBT integers.
+fn get_container_slot(cmp: &[(String, Tag)]) -> Result<i32, ChunkNbtError> {
+    match get_field(cmp, "Slot")? {
+        Tag::Byte(value) => Ok(i32::from(*value)),
+        Tag::Int(value) => Ok(*value),
+        other => Err(ChunkNbtError::WrongType {
+            field: "Slot",
+            expected: "Byte or Int",
+            got: other.type_id(),
+        }),
+    }
+}
+
 fn get_int(cmp: &[(String, Tag)], name: &'static str) -> Result<i32, ChunkNbtError> {
     match get_field(cmp, name)? {
         Tag::Int(v) => Ok(*v),
@@ -1490,15 +1688,56 @@ fn get_optional_int(
     }
 }
 
-fn get_byte(cmp: &[(String, Tag)], name: &'static str) -> Result<i8, ChunkNbtError> {
-    match get_field(cmp, name)? {
-        Tag::Byte(v) => Ok(*v),
+// DFU leaves missing yPos absent, rewrites an existing value to byte, and mixes
+// byte/int section Y. The current writer emits int yPos and byte section Y.
+fn get_section_y(cmp: &[(String, Tag)], name: &'static str) -> Result<i32, ChunkNbtError> {
+    get_optional_section_y(cmp, name)?.ok_or(ChunkNbtError::MissingField(name))
+}
+
+fn get_optional_section_y(
+    cmp: &[(String, Tag)],
+    name: &'static str,
+) -> Result<Option<i32>, ChunkNbtError> {
+    let Some(tag) = cmp.iter().find(|(key, _)| key == name).map(|(_, tag)| tag) else {
+        return Ok(None);
+    };
+    match tag {
+        Tag::Byte(value) => Ok(Some(i32::from(*value))),
+        Tag::Int(value) => Ok(Some(*value)),
         other => Err(ChunkNbtError::WrongType {
             field: name,
-            expected: "Byte",
+            expected: "Byte or Int",
             got: other.type_id(),
         }),
     }
+}
+
+// Furnace timers in imported worlds may use any integral NBT width. Vanilla
+// 26.1.2 still saves shorts (AbstractFurnaceBlockEntity.saveAdditional), so keep
+// the persisted/internal i16 boundary and reject narrowing overflow.
+fn get_optional_furnace_timer(
+    cmp: &[(String, Tag)],
+    name: &'static str,
+) -> Result<Option<i16>, ChunkNbtError> {
+    let Some((_, tag)) = cmp.iter().find(|(key, _)| key == name) else {
+        return Ok(None);
+    };
+    let value = match tag {
+        Tag::Byte(value) => i64::from(*value),
+        Tag::Short(value) => i64::from(*value),
+        Tag::Int(value) => i64::from(*value),
+        Tag::Long(value) => *value,
+        other => {
+            return Err(ChunkNbtError::WrongType {
+                field: name,
+                expected: "Byte, Short, Int or Long",
+                got: other.type_id(),
+            });
+        }
+    };
+    i16::try_from(value)
+        .map(Some)
+        .map_err(|_| ChunkNbtError::NumericOutOfRange { field: name, value })
 }
 
 fn get_optional_short(
@@ -1541,20 +1780,6 @@ fn get_list<'a>(
         other => Err(ChunkNbtError::WrongType {
             field: name,
             expected: "List",
-            got: other.type_id(),
-        }),
-    }
-}
-
-fn get_compound<'a>(
-    cmp: &'a [(String, Tag)],
-    name: &'static str,
-) -> Result<&'a [(String, Tag)], ChunkNbtError> {
-    match get_field(cmp, name)? {
-        Tag::Compound(e) => Ok(e),
-        other => Err(ChunkNbtError::WrongType {
-            field: name,
-            expected: "Compound",
             got: other.type_id(),
         }),
     }
@@ -1646,1395 +1871,9 @@ fn leak_field_name(s: &str) -> &'static str {
 mod palette_tests;
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::anvil::region;
-    use crate::chunk::{MAX_Y, MIN_SECTION_Y, MIN_Y};
-    use std::collections::HashSet;
-    use std::path::{Path, PathBuf};
-
-    fn workspace_path(rel: &str) -> PathBuf {
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .and_then(Path::parent)
-            .unwrap()
-            .join(rel)
-    }
-
-    fn top_non_air_y(chunk: &Chunk, x: u8, z: u8, air: BlockStateId) -> Option<i32> {
-        (MIN_Y..MAX_Y)
-            .rev()
-            .find(|&y| chunk.get_block(x, y, z) != Some(air))
-    }
-
-    fn extra<'a>(chunk: &'a Chunk, key: &str) -> Option<&'a Tag> {
-        chunk
-            .extras
-            .iter()
-            .find(|(name, _)| name == key)
-            .map(|(_, value)| value)
-    }
-
-    fn non_metadata_extras(chunk: &Chunk) -> Vec<&(String, Tag)> {
-        chunk
-            .extras
-            .iter()
-            .filter(|(name, _)| !VANILLA_METADATA_KEYS.contains(&name.as_str()))
-            .collect()
-    }
-
-    fn assert_normalized_metadata(original: &Chunk, decoded: &Chunk) {
-        let expected_data_version = match extra(original, "DataVersion") {
-            Some(Tag::Int(value)) => *value,
-            _ => TARGET_DATA_VERSION,
-        };
-        let expected_last_update = match extra(original, "LastUpdate") {
-            Some(Tag::Long(value)) => *value,
-            _ => 0,
-        };
-        let expected_inhabited_time = match extra(original, "InhabitedTime") {
-            Some(Tag::Long(value)) => *value,
-            _ => 0,
-        };
-        assert_eq!(
-            extra(decoded, "DataVersion"),
-            Some(&Tag::Int(expected_data_version))
-        );
-        assert_eq!(
-            extra(decoded, "LastUpdate"),
-            Some(&Tag::Long(expected_last_update))
-        );
-        assert_eq!(
-            extra(decoded, "InhabitedTime"),
-            Some(&Tag::Long(expected_inhabited_time))
-        );
-    }
-
-    #[test]
-    fn furnace_family_block_entity_ids_follow_block_state() {
-        fn block_report(id: u32, name: &str) -> mc_data::blocks::BlockReport {
-            mc_data::blocks::BlockReport {
-                id: Identifier::parse(name).unwrap(),
-                properties: std::collections::BTreeMap::new(),
-                states: vec![mc_data::blocks::BlockStateReport {
-                    id,
-                    default: true,
-                    properties: std::collections::BTreeMap::new(),
-                }],
-            }
-        }
-
-        let registry = BlockRegistry::from_report(&[
-            block_report(0, "minecraft:air"),
-            block_report(1, "minecraft:furnace"),
-            block_report(2, "minecraft:smoker"),
-            block_report(3, "minecraft:blast_furnace"),
-        ])
-        .unwrap();
-        let items = mc_data::items::ItemRegistry::from_report(&[]);
-        let biome = Identifier::parse("minecraft:plains").unwrap();
-        let mut chunk = Chunk::empty(ChunkPos { x: 0, z: 0 }, BlockStateId(0), biome);
-        let entries = [
-            (
-                BlockPos { x: 1, y: 64, z: 1 },
-                BlockStateId(1),
-                "minecraft:furnace",
-            ),
-            (
-                BlockPos { x: 2, y: 64, z: 1 },
-                BlockStateId(2),
-                "minecraft:smoker",
-            ),
-            (
-                BlockPos { x: 3, y: 64, z: 1 },
-                BlockStateId(3),
-                "minecraft:blast_furnace",
-            ),
-        ];
-        for &(pos, state, _) in &entries {
-            chunk
-                .set_block(pos.x as u8, pos.y, pos.z as u8, state)
-                .unwrap();
-            let mut furnace = FurnaceBlockEntity::default();
-            furnace
-                .recipes_used
-                .insert("minecraft:test_smelting".to_string(), 3);
-            chunk.furnaces.insert(pos, furnace);
-        }
-
-        let root = chunk_to_nbt_with_items(&chunk, &registry, Some(&items)).unwrap();
-        let Tag::Compound(root_cmp) = &root else {
-            panic!("chunk root must be a compound");
-        };
-        let Tag::List(block_entities) = root_cmp
-            .iter()
-            .find(|(key, _)| key == "block_entities")
-            .map(|(_, tag)| tag)
-            .expect("block_entities list")
-        else {
-            panic!("block_entities must be a list");
-        };
-        let ids: Vec<&str> = block_entities
-            .elements
-            .iter()
-            .map(|tag| {
-                let Tag::Compound(cmp) = tag else {
-                    panic!("block entity must be a compound");
-                };
-                get_string(cmp, "id").unwrap().as_str()
-            })
-            .collect();
-        assert_eq!(
-            ids,
-            entries.iter().map(|(_, _, id)| *id).collect::<Vec<&str>>()
-        );
-
-        let decoded = chunk_from_nbt_with_items(&root, &registry, Some(&items)).unwrap();
-        for &(pos, _, _) in &entries {
-            assert_eq!(
-                decoded.furnaces[&pos]
-                    .recipes_used
-                    .get("minecraft:test_smelting"),
-                Some(&3)
-            );
-        }
-    }
-
-    #[test]
-    fn barrel_block_entity_id_follows_block_state() {
-        fn block_report(id: u32, name: &str) -> mc_data::blocks::BlockReport {
-            mc_data::blocks::BlockReport {
-                id: Identifier::parse(name).unwrap(),
-                properties: std::collections::BTreeMap::new(),
-                states: vec![mc_data::blocks::BlockStateReport {
-                    id,
-                    default: true,
-                    properties: std::collections::BTreeMap::new(),
-                }],
-            }
-        }
-
-        let registry = BlockRegistry::from_report(&[
-            block_report(0, "minecraft:air"),
-            block_report(1, "minecraft:chest"),
-            block_report(2, "minecraft:barrel"),
-        ])
-        .unwrap();
-        let items = mc_data::items::ItemRegistry::from_report(&[]);
-        let biome = Identifier::parse("minecraft:plains").unwrap();
-        let mut chunk = Chunk::empty(ChunkPos { x: 0, z: 0 }, BlockStateId(0), biome);
-        let entries = [
-            (
-                BlockPos { x: 1, y: 64, z: 1 },
-                BlockStateId(1),
-                "minecraft:chest",
-            ),
-            (
-                BlockPos { x: 2, y: 64, z: 1 },
-                BlockStateId(2),
-                "minecraft:barrel",
-            ),
-        ];
-        for &(pos, state, _) in &entries {
-            chunk
-                .set_block(pos.x as u8, pos.y, pos.z as u8, state)
-                .unwrap();
-            chunk.chests.insert(pos, ChestBlockEntity::default());
-        }
-
-        let root = chunk_to_nbt_with_items(&chunk, &registry, Some(&items)).unwrap();
-        let Tag::Compound(root_cmp) = &root else {
-            panic!("chunk root must be a compound");
-        };
-        let Tag::List(block_entities) = root_cmp
-            .iter()
-            .find(|(key, _)| key == "block_entities")
-            .map(|(_, tag)| tag)
-            .expect("block_entities list")
-        else {
-            panic!("block_entities must be a list");
-        };
-        let ids: Vec<&str> = block_entities
-            .elements
-            .iter()
-            .map(|tag| {
-                let Tag::Compound(cmp) = tag else {
-                    panic!("block entity must be a compound");
-                };
-                get_string(cmp, "id").unwrap().as_str()
-            })
-            .collect();
-        assert_eq!(
-            ids,
-            entries.iter().map(|(_, _, id)| *id).collect::<Vec<&str>>()
-        );
-
-        let decoded = chunk_from_nbt_with_items(&root, &registry, Some(&items)).unwrap();
-        for &(pos, _, _) in &entries {
-            assert!(decoded.chests.contains_key(&pos));
-        }
-    }
-
-    #[test]
-    fn hopper_block_entity_items_round_trip_through_anvil() {
-        fn block_report(id: u32, name: &str) -> mc_data::blocks::BlockReport {
-            mc_data::blocks::BlockReport {
-                id: Identifier::parse(name).unwrap(),
-                properties: std::collections::BTreeMap::new(),
-                states: vec![mc_data::blocks::BlockStateReport {
-                    id,
-                    default: true,
-                    properties: std::collections::BTreeMap::new(),
-                }],
-            }
-        }
-
-        let registry = BlockRegistry::from_report(&[
-            block_report(0, "minecraft:air"),
-            block_report(1, "minecraft:hopper"),
-        ])
-        .unwrap();
-        let items = mc_data::items::ItemRegistry::from_report(&[
-            mc_data::items::ItemReport {
-                id: Identifier::parse("minecraft:cobblestone").unwrap(),
-                protocol_id: 10,
-            },
-            mc_data::items::ItemReport {
-                id: Identifier::parse("minecraft:apple").unwrap(),
-                protocol_id: 11,
-            },
-        ]);
-        let biome = Identifier::parse("minecraft:plains").unwrap();
-        let mut chunk = Chunk::empty(ChunkPos { x: 0, z: 0 }, BlockStateId(0), biome);
-        let pos = BlockPos { x: 4, y: 64, z: 5 };
-        chunk.set_block(4, 64, 5, BlockStateId(1)).unwrap();
-        let mut hopper = HopperBlockEntity {
-            transfer_cooldown: 5,
-            ..Default::default()
-        };
-        hopper.slots[0] = FurnaceSlot {
-            count: 64,
-            item_id: 10,
-            damage: Some(7),
-            enchantments: vec![mc_data::ItemEnchantment {
-                id: Identifier::parse("minecraft:efficiency").unwrap(),
-                level: 1,
-            }],
-            custom_name: None,
-            item_model: None,
-            stew_effects: Vec::new(),
-        };
-        hopper.slots[4] = FurnaceSlot {
-            count: 3,
-            item_id: 11,
-            damage: None,
-            enchantments: Vec::new(),
-            custom_name: None,
-            item_model: None,
-            stew_effects: Vec::new(),
-        };
-        chunk.hoppers.insert(pos, hopper.clone());
-
-        let root = chunk_to_nbt_with_items(&chunk, &registry, Some(&items)).unwrap();
-        let Tag::Compound(root_cmp) = &root else {
-            panic!("chunk root must be a compound");
-        };
-        let Tag::List(block_entities) = root_cmp
-            .iter()
-            .find(|(key, _)| key == "block_entities")
-            .map(|(_, tag)| tag)
-            .expect("block_entities list")
-        else {
-            panic!("block_entities must be a list");
-        };
-        assert_eq!(block_entities.elements.len(), 1);
-        let Tag::Compound(cmp) = &block_entities.elements[0] else {
-            panic!("hopper block entity must be a compound");
-        };
-        assert_eq!(get_string(cmp, "id").unwrap(), "minecraft:hopper");
-        assert_eq!(get_int(cmp, "TransferCooldown").unwrap(), 5);
-
-        let decoded = chunk_from_nbt_with_items(&root, &registry, Some(&items)).unwrap();
-        assert_eq!(decoded.hoppers.get(&pos), Some(&hopper));
-    }
-
-    /// The big M2 acceptance test: load every chunk in the real
-    /// .mca, decode it, re-encode it, decode again, and verify the
-    /// modelled state is bit-identical between the two decoded
-    /// chunks. The local oracle and sidecar make this an opt-in gate.
-    #[test]
-    #[ignore = "requires local .analysis/test-world and 26.1.2 blocks report"]
-    fn round_trip_real_vanilla_chunks() {
-        let region_path = workspace_path(".analysis/test-world/region/r.0.0.mca");
-        let blocks_path = workspace_path("data/vanilla/reports/blocks.json");
-        assert!(
-            region_path.is_file() && blocks_path.is_file(),
-            "need both {} and {}",
-            region_path.display(),
-            blocks_path.display()
-        );
-        let report = mc_data::blocks::load_blocks_report(&blocks_path).unwrap();
-        let registry = BlockRegistry::from_report(&report).unwrap();
-        let payloads = region::read_region(&region_path).unwrap();
-
-        let mut probed = 0usize;
-        for payload in &payloads {
-            let mut cur = Cursor::new(&payload.uncompressed_nbt[..]);
-            let (_, root) = mc_nbt::read_named(&mut cur).unwrap();
-            let chunk1 = chunk_from_nbt(&root, &registry).expect("decode #1");
-
-            let root2 = chunk_to_nbt(&chunk1, &registry).expect("encode");
-            let mut buf2 = Vec::new();
-            mc_nbt::write_named(&mut buf2, "", &root2).unwrap();
-            let mut cur2 = Cursor::new(&buf2[..]);
-            let (_, root3) = mc_nbt::read_named(&mut cur2).unwrap();
-            let chunk2 = chunk_from_nbt(&root3, &registry).expect("decode #2");
-
-            assert_eq!(chunk1.pos, chunk2.pos, "ChunkPos");
-            assert_eq!(chunk1.status, chunk2.status, "Status");
-
-            for y in MIN_Y..MAX_Y {
-                for z in 0..16u8 {
-                    for x in 0..16u8 {
-                        assert_eq!(
-                            chunk1.get_block(x, y, z),
-                            chunk2.get_block(x, y, z),
-                            "block at ({x},{y},{z}) in chunk {:?}",
-                            chunk1.pos
-                        );
-                    }
-                }
-            }
-
-            for (i, (b1, b2)) in chunk1.biomes.iter().zip(&chunk2.biomes).enumerate() {
-                for y in 0..4u8 {
-                    for z in 0..4u8 {
-                        for x in 0..4u8 {
-                            assert_eq!(
-                                b1.get(x, y, z),
-                                b2.get(x, y, z),
-                                "biome at ({x},{y},{z}) in section {i} of {:?}",
-                                chunk1.pos
-                            );
-                        }
-                    }
-                }
-            }
-
-            let hm1: HashSet<&String> = chunk1.heightmaps.keys().collect();
-            let hm2: HashSet<&String> = chunk2.heightmaps.keys().collect();
-            assert_eq!(hm1, hm2, "Heightmaps key set");
-            for (name, h1) in &chunk1.heightmaps {
-                let h2 = chunk2.heightmaps.get(name).unwrap();
-                assert_eq!(
-                    h1.to_long_array(),
-                    h2.to_long_array(),
-                    "heightmap {name} in {:?}",
-                    chunk1.pos,
-                );
-            }
-
-            assert_eq!(
-                chunk1.block_entities, chunk2.block_entities,
-                "block entities in {:?}",
-                chunk1.pos
-            );
-            assert_eq!(
-                chunk1.scheduled_block_ticks(),
-                chunk2.scheduled_block_ticks(),
-                "scheduled block ticks in {:?}",
-                chunk1.pos
-            );
-            assert_eq!(
-                chunk1.scheduled_fluid_ticks(),
-                chunk2.scheduled_fluid_ticks(),
-                "scheduled fluid ticks in {:?}",
-                chunk1.pos
-            );
-
-            // Unknown extras stay byte-stable; vanilla's mandatory metadata is
-            // normalized when absent from older Solaris chunks.
-            assert_eq!(
-                non_metadata_extras(&chunk1),
-                non_metadata_extras(&chunk2),
-                "extras count in {:?}",
-                chunk1.pos,
-            );
-            assert_normalized_metadata(&chunk1, &chunk2);
-
-            probed += 1;
-        }
-        assert!(probed > 0, "test region must have at least one chunk");
-        eprintln!("round-tripped {probed} chunks");
-    }
-
-    #[test]
-    #[ignore = "requires vanilla-generated .analysis/test-world root extras"]
-    fn real_test_world_carries_dropped_root_fields_in_extras() {
-        let region_path = workspace_path(".analysis/test-world/region/r.0.0.mca");
-        let blocks_path = workspace_path("data/vanilla/reports/blocks.json");
-        assert!(
-            region_path.is_file() && blocks_path.is_file(),
-            "need both {} and {}",
-            region_path.display(),
-            blocks_path.display()
-        );
-        let report = mc_data::blocks::load_blocks_report(&blocks_path).unwrap();
-        let registry = BlockRegistry::from_report(&report).unwrap();
-        let payloads = region::read_region(&region_path).unwrap();
-
-        let mut chunks_with_extras = 0usize;
-        let mut seen_keys: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
-        for payload in &payloads {
-            let mut cur = Cursor::new(&payload.uncompressed_nbt[..]);
-            let (_, root) = mc_nbt::read_named(&mut cur).unwrap();
-            let chunk = chunk_from_nbt(&root, &registry).unwrap();
-            let vanilla_extras = chunk
-                .extras
-                .iter()
-                .filter(|(key, _)| key != "SolarisJournalLsn")
-                .collect::<Vec<_>>();
-            if !vanilla_extras.is_empty() {
-                chunks_with_extras += 1;
-                for (k, _) in vanilla_extras {
-                    seen_keys.insert(k.clone());
-                }
-            }
-        }
-
-        // Vanilla-generated oracle chunks have at least DataVersion +
-        // InhabitedTime + LastUpdate.
-        assert!(
-            chunks_with_extras > 0,
-            "vanilla oracle world carries no unmodelled root fields"
-        );
-        for required in &["DataVersion", "InhabitedTime", "LastUpdate"] {
-            assert!(
-                seen_keys.contains(*required),
-                "extras key set should contain {required}; got {:?}",
-                seen_keys,
-            );
-        }
-    }
-
-    /// M6.a: a chunk is decoded from the real test world, one block is
-    /// mutated via `set_block_and_update`, then `chunk_to_payload` +
-    /// `write_region` + `read_region` round-trips it back through a
-    /// fresh `.mca` file. The mutated cell must read back as the new
-    /// state, every other modelled field plus `extras` must survive.
-    #[test]
-    #[ignore = "requires local .analysis/test-world and 26.1.2 blocks report"]
-    fn round_trip_modified_chunk_through_disk() {
-        let region_path = workspace_path(".analysis/test-world/region/r.0.0.mca");
-        let blocks_path = workspace_path("data/vanilla/reports/blocks.json");
-        assert!(
-            region_path.is_file() && blocks_path.is_file(),
-            "need both {} and {}",
-            region_path.display(),
-            blocks_path.display()
-        );
-        let report = mc_data::blocks::load_blocks_report(&blocks_path).unwrap();
-        let registry = BlockRegistry::from_report(&report).unwrap();
-        let payloads = region::read_region(&region_path).unwrap();
-
-        let original_payload = payloads
-            .iter()
-            .find(|p| p.local_x == 0 && p.local_z == 0)
-            .expect("test world has chunk (0,0)");
-        let mut cur = Cursor::new(&original_payload.uncompressed_nbt[..]);
-        let (_, root) = mc_nbt::read_named(&mut cur).unwrap();
-        let mut chunk = chunk_from_nbt(&root, &registry).unwrap();
-
-        // Mutation: top block under spawn → a different solid state.
-        let air = registry
-            .block(&Identifier::parse("minecraft:air").unwrap())
-            .map(|b| b.default)
-            .unwrap();
-        let stone = registry
-            .block(&Identifier::parse("minecraft:stone").unwrap())
-            .map(|b| b.default)
-            .unwrap();
-        let dirt = registry
-            .block(&Identifier::parse("minecraft:dirt").unwrap())
-            .map(|b| b.default)
-            .unwrap();
-        let edit_y = top_non_air_y(&chunk, 0, 0, air).expect("origin column has terrain");
-        let current = chunk.get_block(0, edit_y, 0).expect("edit cell present");
-        let new_state = if current == stone { dirt } else { stone };
-        let prev = chunk
-            .set_block_and_update(0, edit_y, 0, new_state, air, false)
-            .expect("y in range");
-        assert_ne!(
-            prev, new_state,
-            "test world cell was already the replacement state — pick another"
-        );
-        assert!(chunk.dirty, "set_block_and_update marks chunk dirty");
-
-        // Encode, write a fresh single-chunk region, read it back.
-        let payload = chunk_to_payload(&chunk, &registry, 1_700_000_000).unwrap();
-        let tmp = tempfile::NamedTempFile::new().unwrap();
-        region::write_region(tmp.path(), &[payload]).unwrap();
-        let reread = region::read_region(tmp.path()).unwrap();
-        let reread_payload = reread
-            .iter()
-            .find(|p| p.local_x == 0 && p.local_z == 0)
-            .expect("written chunk must read back");
-        let mut cur2 = Cursor::new(&reread_payload.uncompressed_nbt[..]);
-        let (_, root2) = mc_nbt::read_named(&mut cur2).unwrap();
-        let chunk2 = chunk_from_nbt(&root2, &registry).unwrap();
-
-        // Mutation survived.
-        assert_eq!(chunk2.get_block(0, edit_y, 0), Some(new_state));
-        // Same chunk position.
-        assert_eq!(chunk2.pos, chunk.pos);
-        // Heightmap is whatever set_block_and_update produced.
-        let hms_before: std::collections::BTreeSet<&String> = chunk.heightmaps.keys().collect();
-        let hms_after: std::collections::BTreeSet<&String> = chunk2.heightmaps.keys().collect();
-        assert_eq!(hms_before, hms_after, "heightmap key set must survive");
-        assert_eq!(non_metadata_extras(&chunk), non_metadata_extras(&chunk2));
-        assert_normalized_metadata(&chunk, &chunk2);
-        // Timestamp survived through the write/read pair.
-        assert_eq!(reread_payload.timestamp, 1_700_000_000);
-    }
-
-    fn nibble_pattern() -> Vec<i8> {
-        // Distinct values per byte so we can pin the byte order.
-        // Cast through u8 so the literal 0..=255 wraps cleanly into
-        // i8's -128..=127 range.
-        (0..LIGHT_LAYER_BYTES)
-            .map(|i| (i & 0xFF) as u8 as i8)
-            .collect()
-    }
-
-    fn build_section_with_light(
-        y: i8,
-        block_light: Option<Vec<i8>>,
-        sky_light: Option<Vec<i8>>,
-    ) -> Tag {
-        let mut s: Vec<(String, Tag)> = vec![
-            ("Y".into(), Tag::Byte(y)),
-            (
-                "block_states".into(),
-                Tag::Compound(vec![(
-                    "palette".into(),
-                    Tag::List(ListTag {
-                        element_type: tag_type::COMPOUND,
-                        elements: vec![Tag::Compound(vec![(
-                            "Name".into(),
-                            Tag::String("minecraft:air".into()),
-                        )])],
-                    }),
-                )]),
-            ),
-            (
-                "biomes".into(),
-                Tag::Compound(vec![(
-                    "palette".into(),
-                    Tag::List(ListTag {
-                        element_type: tag_type::STRING,
-                        elements: vec![Tag::String("minecraft:plains".into())],
-                    }),
-                )]),
-            ),
-        ];
-        if let Some(bl) = block_light {
-            s.push(("BlockLight".into(), Tag::ByteArray(bl)));
-        }
-        if let Some(sl) = sky_light {
-            s.push(("SkyLight".into(), Tag::ByteArray(sl)));
-        }
-        Tag::Compound(s)
-    }
-
-    fn build_chunk_root_with_geometry(
-        y_pos: i32,
-        section_count: usize,
-        section_overrides: Vec<Tag>,
-    ) -> Tag {
-        let mut sections = (0..section_count)
-            .map(|index| {
-                build_section_with_light(i8::try_from(y_pos + index as i32).unwrap(), None, None)
-            })
-            .collect::<Vec<_>>();
-        for section in section_overrides {
-            let compound = expect_compound(&section, "section override").unwrap();
-            let section_y = get_byte(compound, "Y").unwrap() as i32;
-            let index = usize::try_from(section_y - y_pos).unwrap();
-            sections[index] = section;
-        }
-        Tag::Compound(vec![
-            ("xPos".into(), Tag::Int(0)),
-            ("zPos".into(), Tag::Int(0)),
-            ("yPos".into(), Tag::Int(y_pos)),
-            ("Status".into(), Tag::String("minecraft:full".into())),
-            (
-                "sections".into(),
-                Tag::List(ListTag {
-                    element_type: tag_type::COMPOUND,
-                    elements: sections,
-                }),
-            ),
-        ])
-    }
-
-    fn build_chunk_root_with_sections(section_overrides: Vec<Tag>) -> Tag {
-        build_chunk_root_with_geometry(
-            MIN_SECTION_Y,
-            (MAX_Y - MIN_Y) as usize / SECTION_DIM,
-            section_overrides,
-        )
-    }
-
-    fn tiny_registry() -> BlockRegistry {
-        // Two blocks suffice for the M4.a tests: air and stone, each
-        // with a single default state. Built inline so the test
-        // doesn't depend on the full vanilla report being on disk.
-        use std::collections::BTreeMap;
-        let report = vec![
-            mc_data::blocks::BlockReport {
-                id: Identifier::parse("minecraft:air").unwrap(),
-                properties: BTreeMap::new(),
-                states: vec![mc_data::blocks::BlockStateReport {
-                    id: 0,
-                    default: true,
-                    properties: BTreeMap::new(),
-                }],
-            },
-            mc_data::blocks::BlockReport {
-                id: Identifier::parse("minecraft:stone").unwrap(),
-                properties: BTreeMap::new(),
-                states: vec![mc_data::blocks::BlockStateReport {
-                    id: 1,
-                    default: true,
-                    properties: BTreeMap::new(),
-                }],
-            },
-        ];
-        BlockRegistry::from_report(&report).unwrap()
-    }
-
-    #[test]
-    fn strict_position_decode_rejects_same_and_cross_region_mismatch() {
-        let registry = tiny_registry();
-        for (expected, actual) in [
-            (ChunkPos { x: 0, z: 0 }, ChunkPos { x: 1, z: 0 }),
-            (ChunkPos { x: 31, z: -1 }, ChunkPos { x: 32, z: -1 }),
-        ] {
-            let mut root = build_chunk_root_with_sections(Vec::new());
-            let Tag::Compound(entries) = &mut root else {
-                unreachable!("chunk root fixture is a compound");
-            };
-            for (name, value) in entries {
-                match name.as_str() {
-                    "xPos" => *value = Tag::Int(actual.x),
-                    "zPos" => *value = Tag::Int(actual.z),
-                    _ => {}
-                }
-            }
-
-            assert!(matches!(
-                chunk_from_nbt_with_items_at_position(&root, expected, &registry, None),
-                Err(ChunkNbtError::PositionMismatch {
-                    expected_x,
-                    expected_z,
-                    actual_x,
-                    actual_z,
-                }) if expected_x == expected.x
-                    && expected_z == expected.z
-                    && actual_x == actual.x
-                    && actual_z == actual.z
-            ));
-        }
-    }
-
-    #[test]
-    fn strict_payload_decode_requires_exact_nbt_consumption() {
-        let registry = tiny_registry();
-        let expected = ChunkPos { x: -4, z: 7 };
-        let chunk = Chunk::empty(
-            expected,
-            BlockStateId(0),
-            Identifier::parse("minecraft:plains").unwrap(),
-        );
-        let payload = chunk_to_payload(&chunk, &registry, 0).unwrap();
-
-        let decoded = chunk_from_payload_with_items_at_position(
-            &payload.uncompressed_nbt,
-            expected,
-            &registry,
-            None,
-        )
-        .unwrap();
-        assert_eq!(decoded.pos, expected);
-
-        let mut trailing = payload.uncompressed_nbt;
-        trailing.push(0x7F);
-        assert!(matches!(
-            chunk_from_payload_with_items_at_position(&trailing, expected, &registry, None),
-            Err(ChunkNbtError::TrailingNbtBytes { trailing: 1 })
-        ));
-    }
-
-    #[test]
-    fn strict_payload_serializer_rejects_a_foreign_expected_key() {
-        let registry = tiny_registry();
-        let chunk = Chunk::empty(
-            ChunkPos { x: 9, z: 10 },
-            BlockStateId(0),
-            Identifier::parse("minecraft:plains").unwrap(),
-        );
-
-        assert!(matches!(
-            chunk_to_payload_with_items_at_tick_for_position(
-                &chunk,
-                ChunkPos { x: 8, z: 10 },
-                &registry,
-                None,
-                0,
-                0,
-            ),
-            Err(ChunkNbtError::PositionMismatch {
-                expected_x: 8,
-                expected_z: 10,
-                actual_x: 9,
-                actual_z: 10,
-            })
-        ));
-    }
-
-    #[test]
-    fn offline_position_repair_canonicalizes_required_coordinate_fields() {
-        let registry = tiny_registry();
-        let expected = ChunkPos { x: 17, z: -33 };
-        let mut root = build_chunk_root_with_sections(Vec::new());
-        let Tag::Compound(entries) = &mut root else {
-            unreachable!("chunk root fixture is a compound");
-        };
-        entries.retain(|(name, _)| name != "zPos");
-        let x = entries
-            .iter_mut()
-            .find(|(name, _)| name == "xPos")
-            .expect("fixture xPos");
-        x.1 = Tag::String("wrong type".into());
-        entries.push(("xPos".into(), Tag::Int(999)));
-
-        assert!(repair_chunk_nbt_position(&mut root, expected).unwrap());
-        assert!(!repair_chunk_nbt_position(&mut root, expected).unwrap());
-        let Tag::Compound(entries) = &root else {
-            unreachable!("repaired root remains a compound");
-        };
-        assert_eq!(entries.iter().filter(|(name, _)| name == "xPos").count(), 1);
-        assert_eq!(entries.iter().filter(|(name, _)| name == "zPos").count(), 1);
-        let decoded =
-            chunk_from_nbt_with_items_at_position(&root, expected, &registry, None).unwrap();
-        assert_eq!(decoded.pos, expected);
-    }
-
-    #[test]
-    fn encode_unknown_block_state_returns_error_without_panicking() {
-        let registry = tiny_registry();
-        let chunk = Chunk::empty(
-            ChunkPos { x: 0, z: 0 },
-            BlockStateId(7),
-            Identifier::parse("minecraft:plains").unwrap(),
-        );
-
-        let encoded = std::panic::catch_unwind(|| chunk_to_nbt(&chunk, &registry));
-        let error = encoded
-            .expect("unknown block state encoding must not panic")
-            .expect_err("unknown block state encoding must fail");
-
-        assert!(matches!(error, ChunkNbtError::UnknownBlockStateId(7)));
-    }
-
-    fn scheduled_tick_tag(id: &str, x: i32, y: i32, z: i32, delay: i32, priority: i32) -> Tag {
-        Tag::Compound(vec![
-            ("i".into(), Tag::String(id.into())),
-            ("x".into(), Tag::Int(x)),
-            ("y".into(), Tag::Int(y)),
-            ("z".into(), Tag::Int(z)),
-            ("t".into(), Tag::Int(delay)),
-            ("p".into(), Tag::Int(priority)),
-        ])
-    }
-
-    fn add_root_field(root: &mut Tag, key: &str, value: Tag) {
-        let Tag::Compound(entries) = root else {
-            panic!("test root must be compound");
-        };
-        entries.push((key.into(), value));
-    }
-
-    fn root_fields(root: &Tag) -> &[(String, Tag)] {
-        match root {
-            Tag::Compound(entries) => entries,
-            other => panic!("expected root compound, got {other:?}"),
-        }
-    }
-
-    fn root_field<'a>(root: &'a Tag, name: &str) -> Option<&'a Tag> {
-        root_fields(root)
-            .iter()
-            .find(|(key, _)| key == name)
-            .map(|(_, value)| value)
-    }
-
-    #[test]
-    fn fresh_chunk_disk_payload_has_current_vanilla_metadata() {
-        let registry = tiny_registry();
-        let mut chunk = Chunk::empty(
-            ChunkPos { x: 3, z: -2 },
-            BlockStateId(0),
-            Identifier::parse("minecraft:plains").unwrap(),
-        );
-        chunk.extras.push(("InhabitedTime".into(), Tag::Long(77)));
-
-        let payload =
-            chunk_to_payload_with_items_at_tick(&chunk, &registry, None, 1_700_000_000, 123)
-                .expect("fresh chunk serializes");
-        let file = tempfile::NamedTempFile::new().unwrap();
-        region::write_region(file.path(), &[payload]).unwrap();
-        let payload = region::read_region(file.path()).unwrap().remove(0);
-        let mut cursor = Cursor::new(payload.uncompressed_nbt);
-        let (_, root) = mc_nbt::read_named(&mut cursor).unwrap();
-
-        assert_eq!(
-            root_field(&root, "DataVersion"),
-            Some(&Tag::Int(TARGET_DATA_VERSION))
-        );
-        assert_eq!(root_field(&root, "LastUpdate"), Some(&Tag::Long(123)));
-        assert_eq!(root_field(&root, "InhabitedTime"), Some(&Tag::Long(77)));
-        for key in VANILLA_METADATA_KEYS {
-            assert_eq!(
-                root_fields(&root)
-                    .iter()
-                    .filter(|(name, _)| name == key)
-                    .count(),
-                1,
-                "{key} must be emitted exactly once"
-            );
-        }
-
-        let decoded = chunk_from_nbt(&root, &registry).unwrap();
-        assert_eq!(
-            decoded
-                .extras
-                .iter()
-                .find(|(name, _)| name == "InhabitedTime")
-                .map(|(_, value)| value),
-            Some(&Tag::Long(77))
-        );
-    }
-
-    fn scheduled_tick_list(elements: Vec<Tag>) -> Tag {
-        Tag::List(ListTag {
-            element_type: if elements.is_empty() {
-                tag_type::END
-            } else {
-                tag_type::COMPOUND
-            },
-            elements,
-        })
-    }
-
-    #[test]
-    fn round_trips_non_overworld_geometry_from_y_pos_and_sections() {
-        let root = build_chunk_root_with_geometry(0, 16, Vec::new());
-
-        let registry = tiny_registry();
-        let chunk = chunk_from_nbt(&root, &registry).expect("decode custom geometry");
-        assert_eq!(chunk.geometry().min_y(), 0);
-        assert_eq!(chunk.geometry().max_y(), 256);
-
-        let encoded = chunk_to_nbt(&chunk, &registry).expect("encode custom geometry");
-        let encoded_root = expect_compound(&encoded, "root").unwrap();
-        assert_eq!(get_int(encoded_root, "yPos").unwrap(), 0);
-
-        let decoded = chunk_from_nbt(&encoded, &registry).expect("decode round-trip");
-        assert_eq!(decoded.geometry(), chunk.geometry());
-    }
-
-    #[test]
-    fn rejects_geometry_when_sections_do_not_define_a_height() {
-        let root = build_chunk_root_with_geometry(0, 0, Vec::new());
-
-        assert!(matches!(
-            chunk_from_nbt(&root, &tiny_registry()),
-            Err(ChunkNbtError::InvalidChunkGeometry {
-                y_pos: 0,
-                section_count: 0
-            })
-        ));
-    }
-
-    #[test]
-    fn rejects_duplicate_section_y_in_inferred_geometry() {
-        let mut root = build_chunk_root_with_geometry(0, 16, Vec::new());
-        let Tag::Compound(fields) = &mut root else {
-            unreachable!();
-        };
-        let Tag::List(sections) = &mut fields
-            .iter_mut()
-            .find(|(name, _)| name == "sections")
-            .expect("synthetic chunk has sections")
-            .1
-        else {
-            unreachable!();
-        };
-        let Tag::Compound(last_section) = sections.elements.last_mut().unwrap() else {
-            unreachable!();
-        };
-        let y = last_section
-            .iter_mut()
-            .find(|(name, _)| name == "Y")
-            .expect("synthetic section has Y");
-        y.1 = Tag::Byte(14);
-
-        assert!(matches!(
-            chunk_from_nbt(&root, &tiny_registry()),
-            Err(ChunkNbtError::InvalidSectionShape(14))
-        ));
-    }
-
-    #[test]
-    fn decodes_scheduled_block_ticks_from_block_ticks() {
-        let mut root = build_chunk_root_with_sections(Vec::new());
-        add_root_field(
-            &mut root,
-            "block_ticks",
-            scheduled_tick_list(vec![
-                scheduled_tick_tag("minecraft:stone", 2, 64, 2, 5, 0),
-                scheduled_tick_tag("minecraft:air", 1, 64, 1, 5, 0),
-                scheduled_tick_tag("minecraft:stone", 3, 64, 3, 1, 1),
-            ]),
-        );
-
-        let mut chunk = chunk_from_nbt(&root, &tiny_registry()).expect("decode");
-        let ticks = chunk.scheduled_block_ticks();
-        assert_eq!(ticks.len(), 3);
-        assert_eq!(ticks[0].trigger_tick, 1);
-        assert_eq!(ticks[0].priority, 1);
-        assert_eq!(ticks[0].block.as_str(), "minecraft:stone");
-
-        let due = chunk.drain_due_block_ticks(5, usize::MAX);
-        assert_eq!(
-            due.iter().map(|tick| tick.pos.x).collect::<Vec<_>>(),
-            vec![3, 2, 1]
-        );
-    }
-
-    #[test]
-    fn decodes_scheduled_fluid_ticks_from_fluid_ticks() {
-        let mut root = build_chunk_root_with_sections(Vec::new());
-        add_root_field(
-            &mut root,
-            "fluid_ticks",
-            scheduled_tick_list(vec![
-                scheduled_tick_tag("minecraft:water", 2, 64, 2, 5, 0),
-                scheduled_tick_tag("minecraft:lava", 1, 64, 1, 5, 0),
-                scheduled_tick_tag("minecraft:water", 3, 64, 3, 1, 1),
-            ]),
-        );
-
-        let mut chunk = chunk_from_nbt(&root, &tiny_registry()).expect("decode");
-        let ticks = chunk.scheduled_fluid_ticks();
-        assert_eq!(ticks.len(), 3);
-        assert_eq!(ticks[0].trigger_tick, 1);
-        assert_eq!(ticks[0].priority, 1);
-        assert_eq!(ticks[0].fluid.as_str(), "minecraft:water");
-
-        let due = chunk.drain_due_fluid_ticks(5, usize::MAX);
-        assert_eq!(
-            due.iter().map(|tick| tick.pos.x).collect::<Vec<_>>(),
-            vec![3, 2, 1]
-        );
-    }
-
-    #[test]
-    fn block_and_fluid_ticks_are_modelled_not_extras() {
-        let mut root = build_chunk_root_with_sections(Vec::new());
-        add_root_field(
-            &mut root,
-            "block_ticks",
-            scheduled_tick_list(vec![scheduled_tick_tag("minecraft:stone", 1, 64, 1, 2, 0)]),
-        );
-        add_root_field(
-            &mut root,
-            "fluid_ticks",
-            scheduled_tick_list(vec![scheduled_tick_tag("minecraft:water", 1, 64, 1, 2, 0)]),
-        );
-
-        let chunk = chunk_from_nbt(&root, &tiny_registry()).expect("decode");
-
-        assert_eq!(chunk.scheduled_block_ticks().len(), 1);
-        assert_eq!(chunk.scheduled_fluid_ticks().len(), 1);
-        assert!(!chunk.extras.iter().any(|(key, _)| key == "block_ticks"));
-        assert!(!chunk.extras.iter().any(|(key, _)| key == "fluid_ticks"));
-    }
-
-    #[test]
-    fn encodes_scheduled_block_ticks_without_duplicate_root_key() {
-        let registry = tiny_registry();
-        let mut chunk = Chunk::empty(
-            ChunkPos { x: 0, z: 0 },
-            BlockStateId(0),
-            Identifier::parse("minecraft:plains").unwrap(),
-        );
-        assert!(chunk.schedule_block_tick(ScheduledBlockTick::new(
-            BlockPos { x: 1, y: 64, z: 1 },
-            Identifier::parse("minecraft:stone").unwrap(),
-            7,
-            -1,
-        )));
-        chunk.extras.push((
-            "block_ticks".into(),
-            scheduled_tick_list(vec![scheduled_tick_tag("minecraft:air", 2, 64, 2, 1, 0)]),
-        ));
-
-        let root = chunk_to_nbt(&chunk, &registry).expect("encode");
-        let block_tick_fields: Vec<&Tag> = root_fields(&root)
-            .iter()
-            .filter_map(|(key, value)| (key == "block_ticks").then_some(value))
-            .collect();
-
-        assert_eq!(block_tick_fields.len(), 1);
-        let Tag::List(list) = block_tick_fields[0] else {
-            panic!("block_ticks must encode as list");
-        };
-        assert_eq!(list.element_type, tag_type::COMPOUND);
-        assert_eq!(list.elements.len(), 1);
-    }
-
-    #[test]
-    fn encodes_scheduled_fluid_ticks_without_duplicate_root_key() {
-        let registry = tiny_registry();
-        let mut chunk = Chunk::empty(
-            ChunkPos { x: 0, z: 0 },
-            BlockStateId(0),
-            Identifier::parse("minecraft:plains").unwrap(),
-        );
-        assert!(chunk.schedule_fluid_tick(ScheduledFluidTick::new(
-            BlockPos { x: 1, y: 64, z: 1 },
-            Identifier::parse("minecraft:water").unwrap(),
-            7,
-            -1,
-        )));
-        chunk.extras.push((
-            "fluid_ticks".into(),
-            scheduled_tick_list(vec![scheduled_tick_tag("minecraft:lava", 2, 64, 2, 1, 0)]),
-        ));
-
-        let root = chunk_to_nbt(&chunk, &registry).expect("encode");
-        let fluid_tick_fields: Vec<&Tag> = root_fields(&root)
-            .iter()
-            .filter_map(|(key, value)| (key == "fluid_ticks").then_some(value))
-            .collect();
-
-        assert_eq!(fluid_tick_fields.len(), 1);
-        let Tag::List(list) = fluid_tick_fields[0] else {
-            panic!("fluid_ticks must encode as list");
-        };
-        assert_eq!(list.element_type, tag_type::COMPOUND);
-        assert_eq!(list.elements.len(), 1);
-    }
-
-    #[test]
-    fn scheduled_ticks_round_trip_through_disk() {
-        let registry = tiny_registry();
-        let mut chunk = Chunk::empty(
-            ChunkPos { x: 0, z: 0 },
-            BlockStateId(0),
-            Identifier::parse("minecraft:plains").unwrap(),
-        );
-        assert!(chunk.schedule_block_tick(ScheduledBlockTick::new(
-            BlockPos { x: 1, y: 64, z: 1 },
-            Identifier::parse("minecraft:stone").unwrap(),
-            12,
-            0,
-        )));
-        assert!(chunk.schedule_fluid_tick(ScheduledFluidTick::new(
-            BlockPos { x: 2, y: 64, z: 2 },
-            Identifier::parse("minecraft:water").unwrap(),
-            8,
-            -1,
-        )));
-
-        let payload = chunk_to_payload(&chunk, &registry, 1_700_000_001).unwrap();
-        let tmp = tempfile::NamedTempFile::new().unwrap();
-        region::write_region(tmp.path(), &[payload]).unwrap();
-        let reread = region::read_region(tmp.path()).unwrap();
-        let mut cur = Cursor::new(&reread[0].uncompressed_nbt[..]);
-        let (_, root) = mc_nbt::read_named(&mut cur).unwrap();
-        let decoded = chunk_from_nbt(&root, &registry).unwrap();
-
-        assert_eq!(decoded.scheduled_block_ticks().len(), 1);
-        assert_eq!(decoded.scheduled_block_ticks()[0].trigger_tick, 12);
-        assert_eq!(decoded.scheduled_block_ticks()[0].priority, 0);
-        assert_eq!(decoded.scheduled_fluid_ticks().len(), 1);
-        assert_eq!(decoded.scheduled_fluid_ticks()[0].trigger_tick, 8);
-        assert_eq!(decoded.scheduled_fluid_ticks()[0].priority, -1);
-        assert!(!decoded.extras.iter().any(|(key, _)| key == "fluid_ticks"));
-    }
-
-    #[test]
-    fn rejects_negative_scheduled_block_tick_delay() {
-        let mut root = build_chunk_root_with_sections(Vec::new());
-        add_root_field(
-            &mut root,
-            "block_ticks",
-            scheduled_tick_list(vec![scheduled_tick_tag("minecraft:stone", 1, 64, 1, -1, 0)]),
-        );
-
-        match chunk_from_nbt(&root, &tiny_registry()) {
-            Err(ChunkNbtError::NegativeTickDelay(-1)) => {}
-            other => panic!("expected NegativeTickDelay, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn rejects_negative_scheduled_fluid_tick_delay() {
-        let mut root = build_chunk_root_with_sections(Vec::new());
-        add_root_field(
-            &mut root,
-            "fluid_ticks",
-            scheduled_tick_list(vec![scheduled_tick_tag("minecraft:water", 1, 64, 1, -1, 0)]),
-        );
-
-        match chunk_from_nbt(&root, &tiny_registry()) {
-            Err(ChunkNbtError::NegativeTickDelay(-1)) => {}
-            other => panic!("expected NegativeTickDelay, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn decodes_per_section_light_arrays_when_present() {
-        let pattern = nibble_pattern();
-        let root = build_chunk_root_with_sections(vec![
-            build_section_with_light(-4, Some(pattern.clone()), Some(pattern.clone())),
-            build_section_with_light(0, None, Some(pattern.clone())),
-        ]);
-        let chunk = chunk_from_nbt(&root, &tiny_registry()).expect("decode");
-
-        let expected: Vec<u8> = pattern.iter().map(|&b| b as u8).collect();
-
-        // Section Y=-4 → idx 0: both layers present.
-        assert_eq!(
-            chunk.section_lights[0]
-                .block
-                .as_ref()
-                .map(|layer| layer.to_vec()),
-            Some(expected.clone())
-        );
-        assert_eq!(
-            chunk.section_lights[0]
-                .sky
-                .as_ref()
-                .map(|layer| layer.to_vec()),
-            Some(expected.clone())
-        );
-
-        // Section Y=0 → idx 4: only sky present.
-        assert_eq!(chunk.section_lights[4].block, None);
-        assert_eq!(
-            chunk.section_lights[4]
-                .sky
-                .as_ref()
-                .map(|layer| layer.to_vec()),
-            Some(expected.clone())
-        );
-
-        // Untouched sections keep the default (no light).
-        assert_eq!(chunk.section_lights[1], SectionLight::default());
-        assert_eq!(chunk.section_lights[23], SectionLight::default());
-
-        // Layer is exactly LIGHT_LAYER_BYTES bytes; sanity-check the
-        // i8 → u8 reinterpretation didn't shift anything.
-        let sky = chunk.section_lights[0].sky.as_ref().unwrap();
-        assert_eq!(sky.byte(0x00), 0x00);
-        assert_eq!(sky.byte(0x7F), 0x7F);
-        assert_eq!(sky.byte(0x80), 0x80);
-        assert_eq!(sky.byte(0xFF), 0xFF);
-    }
-
-    #[test]
-    fn encodes_per_section_light_arrays_when_present() {
-        let registry = tiny_registry();
-        let pattern = nibble_pattern();
-        let expected: Vec<u8> = pattern.iter().map(|&byte| byte as u8).collect();
-        let mut chunk = Chunk::empty(
-            ChunkPos { x: 0, z: 0 },
-            BlockStateId(0),
-            Identifier::parse("minecraft:plains").unwrap(),
-        );
-        chunk.section_lights[0].block = Some(crate::chunk::LightSection::from_bytes(
-            expected.clone().try_into().unwrap(),
-        ));
-        chunk.section_lights[0].sky = Some(crate::chunk::LightSection::from_bytes(
-            expected.clone().try_into().unwrap(),
-        ));
-        chunk.section_lights[4].sky = Some(crate::chunk::LightSection::from_bytes(
-            expected.clone().try_into().unwrap(),
-        ));
-
-        let root = chunk_to_nbt(&chunk, &registry).expect("encode");
-        let sections = get_optional_list(expect_compound(&root, "root").unwrap(), "sections")
-            .unwrap()
-            .unwrap();
-
-        let first = expect_compound(&sections.elements[0], "sections[0]").unwrap();
-        assert_eq!(
-            first
-                .iter()
-                .find(|(key, _)| key == "BlockLight")
-                .map(|(_, tag)| tag),
-            Some(&Tag::ByteArray(pattern.clone()))
-        );
-        assert_eq!(
-            first
-                .iter()
-                .find(|(key, _)| key == "SkyLight")
-                .map(|(_, tag)| tag),
-            Some(&Tag::ByteArray(pattern.clone()))
-        );
-        let second = expect_compound(&sections.elements[1], "sections[1]").unwrap();
-        assert!(
-            second
-                .iter()
-                .all(|(key, _)| key != "BlockLight" && key != "SkyLight")
-        );
-        let y_zero = expect_compound(&sections.elements[4], "sections[4]").unwrap();
-        assert!(y_zero.iter().all(|(key, _)| key != "BlockLight"));
-        assert_eq!(
-            y_zero
-                .iter()
-                .find(|(key, _)| key == "SkyLight")
-                .map(|(_, tag)| tag),
-            Some(&Tag::ByteArray(pattern))
-        );
-
-        let decoded = chunk_from_nbt(&root, &registry).expect("decode encoded light");
-        assert_eq!(
-            decoded.section_lights[0]
-                .block
-                .as_ref()
-                .map(|layer| layer.to_vec()),
-            Some(expected.clone())
-        );
-        assert_eq!(
-            decoded.section_lights[0]
-                .sky
-                .as_ref()
-                .map(|layer| layer.to_vec()),
-            Some(expected.clone())
-        );
-        assert_eq!(decoded.section_lights[4].block, None);
-        assert_eq!(
-            decoded.section_lights[4]
-                .sky
-                .as_ref()
-                .map(|layer| layer.to_vec()),
-            Some(expected.clone())
-        );
-    }
-
-    #[test]
-    fn rejects_wrong_length_light_array() {
-        let truncated: Vec<i8> = vec![0; LIGHT_LAYER_BYTES - 1];
-        let root = build_chunk_root_with_sections(vec![build_section_with_light(
-            0,
-            Some(truncated),
-            None,
-        )]);
-        match chunk_from_nbt(&root, &tiny_registry()) {
-            Err(ChunkNbtError::LightLengthMismatch {
-                field,
-                expected,
-                got,
-            }) => {
-                assert_eq!(field, "BlockLight");
-                assert_eq!(expected, LIGHT_LAYER_BYTES);
-                assert_eq!(got, LIGHT_LAYER_BYTES - 1);
-            }
-            other => panic!("expected LightLengthMismatch, got {:?}", other),
-        }
-    }
-
-    #[test]
-    fn rejects_wrong_type_light_field() {
-        let root = build_chunk_root_with_sections(vec![Tag::Compound(vec![
-            ("Y".into(), Tag::Byte(0)),
-            (
-                "block_states".into(),
-                Tag::Compound(vec![(
-                    "palette".into(),
-                    Tag::List(ListTag {
-                        element_type: tag_type::COMPOUND,
-                        elements: vec![Tag::Compound(vec![(
-                            "Name".into(),
-                            Tag::String("minecraft:air".into()),
-                        )])],
-                    }),
-                )]),
-            ),
-            (
-                "biomes".into(),
-                Tag::Compound(vec![(
-                    "palette".into(),
-                    Tag::List(ListTag {
-                        element_type: tag_type::STRING,
-                        elements: vec![Tag::String("minecraft:plains".into())],
-                    }),
-                )]),
-            ),
-            ("SkyLight".into(), Tag::Int(0)),
-        ])]);
-        match chunk_from_nbt(&root, &tiny_registry()) {
-            Err(ChunkNbtError::WrongType { field, .. }) => assert_eq!(field, "SkyLight"),
-            other => panic!("expected WrongType for SkyLight, got {:?}", other),
-        }
-    }
-
-    #[test]
-    #[ignore = "requires vanilla-generated .analysis/test-world baked skylight"]
-    fn real_test_world_carries_some_baked_skylight() {
-        let region_path = workspace_path(".analysis/test-world/region/r.0.0.mca");
-        let blocks_path = workspace_path("data/vanilla/reports/blocks.json");
-        assert!(
-            region_path.is_file() && blocks_path.is_file(),
-            "need both {} and {}",
-            region_path.display(),
-            blocks_path.display()
-        );
-        let report = mc_data::blocks::load_blocks_report(&blocks_path).unwrap();
-        let registry = BlockRegistry::from_report(&report).unwrap();
-        let payloads = region::read_region(&region_path).unwrap();
-
-        let mut chunks_with_sky = 0usize;
-        let mut sections_with_sky = 0usize;
-        for payload in &payloads {
-            let mut cur = Cursor::new(&payload.uncompressed_nbt[..]);
-            let (_, root) = mc_nbt::read_named(&mut cur).unwrap();
-            let chunk = chunk_from_nbt(&root, &registry).expect("decode");
-
-            let chunk_has_sky = chunk.section_lights.iter().any(|sl| sl.sky.is_some());
-            if chunk_has_sky {
-                chunks_with_sky += 1;
-            }
-            for sl in &chunk.section_lights {
-                if sl.sky.is_some() {
-                    sections_with_sky += 1;
-                }
-            }
-        }
-
-        // Vanilla-generated oracle chunks carry baked SkyLight.
-        assert!(
-            chunks_with_sky > 0,
-            "vanilla oracle world carries no baked SkyLight"
-        );
-        assert!(
-            sections_with_sky >= 1,
-            "expected ≥1 section with baked SkyLight, got {sections_with_sky}",
-        );
-    }
-}
+#[path = "chunk_nbt_tests.rs"]
+mod tests;
+
+#[cfg(test)]
+#[path = "stations_tests.rs"]
+mod stations_tests;

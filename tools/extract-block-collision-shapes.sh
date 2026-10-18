@@ -1,18 +1,27 @@
 #!/usr/bin/env bash
-# Extract state-specific collision boxes for every block state from the bundled
-# vanilla 26.1.2 server. The generated table is embedded in mc-data.
+# Extract state-specific collision boxes (or normalized outline boxes with
+# --outline) from vanilla 26.1.2. Both tables use the same embedded mc-data format.
 
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 CHECK=0
-if [[ "${1:-}" == "--check" ]]; then
-  CHECK=1
+OUTLINE=0
+EXTRACTOR_ARGS=()
+while [[ "${1:-}" == --* ]]; do
+  case "$1" in
+    --check) CHECK=1 ;;
+    --outline) OUTLINE=1; EXTRACTOR_ARGS=(--outline) ;;
+    *) echo "error: unknown option $1" >&2; exit 2 ;;
+  esac
   shift
-fi
+done
 
 BUNDLE_JAR="${1:-$REPO_ROOT/.analysis/server.jar}"
 OUT_BIN="$REPO_ROOT/crates/mc-data/data/block_collision_shapes_26_1_2.bin"
+if [[ "$OUTLINE" -eq 1 ]]; then
+  OUT_BIN="$REPO_ROOT/crates/mc-data/data/block_outline_shapes_26_1_2.bin"
+fi
 JAVA="${JAVA:-$REPO_ROOT/.analysis/java/current/bin/java}"
 if [[ ! -x "$JAVA" ]]; then
   JAVA="$(command -v java || true)"
@@ -45,7 +54,7 @@ mkdir -p "$TMP/classes"
   "$REPO_ROOT/tools/extract-block-collision-shapes/CollisionShapeExtractor.java"
 
 GENERATED="$TMP/block_collision_shapes_26_1_2.bin"
-"$JAVA" -cp "$TMP/classes:$CP" CollisionShapeExtractor "$GENERATED"
+"$JAVA" -cp "$TMP/classes:$CP" CollisionShapeExtractor "${EXTRACTOR_ARGS[@]}" "$GENERATED"
 
 if [[ "$CHECK" -eq 1 ]]; then
   if ! cmp -s "$GENERATED" "$OUT_BIN"; then

@@ -10,8 +10,8 @@ join -> move -> gather -> craft -> build -> fight/farm -> save/rejoin
 
 Common gameplay, multiplayer authority and ordinary save integrity take priority
 over uncommon parity edges. The current owner request and source cursor live
-only in [MEMORY.md](../MEMORY.md); the replacement design is
-[ARCHITECTURE.md](../ARCHITECTURE.md). This file owns the playable acceptance
+only in [MEMORY.md](../MEMORY.md); the current native model is
+[ARCHITECTURE.md](../ARCHITECTURE.md) and ADR 0013/0014. This file owns playable
 scenario, not a second implementation queue or chronological work log.
 
 ## Gate
@@ -32,6 +32,10 @@ client and server evidence, and unresolved failures. A passing scoped scenario
 is not full vanilla parity, a performance result or release readiness.
 
 ## Current evidence boundary
+
+ADR 0014 Phase 5 retires the v1 server. The older smoke/load/failure identities
+below retain their recorded era; none automatically becomes current native
+acceptance, a new failure count or a fresh pass after the cutover.
 
 - Prior graphical smoke: `.analysis/real-client-runs/20260905T022740Z-real-client-playable-loop-4rRzBN`.
   It predates the new core rewrite and is not a fresh acceptance run.

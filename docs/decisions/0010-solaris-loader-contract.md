@@ -3,7 +3,7 @@
 **Date:** 2026-07-23
 **Status:** Accepted, staged implementation
 **Current wire contract:** Loader wire **3** with artifact index schema **2**
-(`crates/mc-net/src/loader.rs`). The server plugin frontend is the Wasmtime
+(`crates/mc-loader/src/lib.rs`). The server plugin frontend is the Wasmtime
 component contract `solaris:plugin@0.7.0`; the Luau 0.6.0 frontend is retired
 (see the historical note below). Neither runs guest code on the client.
 

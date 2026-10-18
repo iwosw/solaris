@@ -27,7 +27,7 @@ use std::num::NonZeroUsize;
 use mc_plugin_host::bindings::solaris::plugin::client_presentation::{
     ClientCommand, CloseClientView, GrantLoaderBlockItem, OpenClientView, PlayClientSound,
     PresentClientView, StopClientSound, ViewAction, ViewField, ViewFieldValue, ViewFormation,
-    ViewMarker, ViewModel, ViewResourceEntry, ViewRow, ViewTab,
+    ViewMarker, ViewMarkerPosition, ViewModel, ViewResourceEntry, ViewRow, ViewTab,
 };
 use mc_plugin_host::bindings::solaris::plugin::commands::{Command, MessageTarget, SendMessage};
 use mc_plugin_host::bindings::solaris::plugin::types::Position;
@@ -122,6 +122,7 @@ fn showcase_model() -> ViewModel {
             action_id: Some("ruby-live:confirm".to_owned()),
             formation: Some(ViewFormation::Wedge),
             radius: Some(16.0),
+            position: None,
         }],
         reason: Some("choose where".to_owned()),
     }
@@ -166,6 +167,7 @@ fn showcase_dto() -> ScriptClientViewModel {
                 Some("ruby-live:confirm".to_owned()),
                 Some(ScriptClientViewFormation::Wedge),
                 Some(16.0),
+                None,
             )
             .expect("a bounded marker"),
         ],
@@ -467,6 +469,7 @@ fn models_with_a_value_at_every_site(text: &str) -> Vec<(&'static str, ViewModel
                     action_id: Some("act".to_owned()),
                     formation: None,
                     radius: None,
+                    position: None,
                 }],
                 ..page()
             },
@@ -610,6 +613,7 @@ fn a_model_past_a_native_bound_is_refused_and_the_whole_batch_falls_with_it() {
                 action_id: None,
                 formation: None,
                 radius: None,
+                position: None,
             }],
             ..empty_page()
         }))),
@@ -617,5 +621,59 @@ fn a_model_past_a_native_bound_is_refused_and_the_whole_batch_falls_with_it() {
             field: "view marker action"
         }),
         "the refusal names the field the plugin got wrong, and nothing is clamped"
+    );
+}
+
+#[test]
+fn marker_geometry_refuses_bad_coordinates_and_counts_dimension_text() {
+    let positioned = |dimension: &str, x: f64, y: f64, z: f64| {
+        open_view(ViewModel {
+            markers: vec![ViewMarker {
+                marker_id: "anchor".to_owned(),
+                selection_token: None,
+                action_id: None,
+                formation: None,
+                radius: None,
+                position: Some(ViewMarkerPosition {
+                    dimension: dimension.to_owned(),
+                    x,
+                    y,
+                    z,
+                }),
+            }],
+            ..empty_page()
+        })
+    };
+    convert(stage(positioned(
+        "minecraft:overworld",
+        -30_000_000.0,
+        20_000_000.0,
+        30_000_000.0,
+    )))
+    .expect("valid world-boundary display geometry");
+    for (x, y, z) in [
+        (30_000_001.0, 0.0, 0.0),
+        (0.0, 20_000_001.0, 0.0),
+        (0.0, 0.0, f64::NAN),
+    ] {
+        assert!(matches!(
+            convert(stage(positioned("minecraft:overworld", x, y, z))),
+            Err(AdapterError::InvalidCommand { .. }),
+        ));
+    }
+    assert!(matches!(
+        convert(stage(positioned("not a dimension", 0.0, 0.0, 0.0))),
+        Err(AdapterError::InvalidCommand { .. }),
+    ));
+    let mut batch = CommandBatch::new();
+    assert_eq!(
+        batch.push(
+            positioned("minecraft:overworld", 0.0, 0.0, 0.0),
+            &PluginLimits {
+                text_bytes: 18,
+                ..PluginLimits::default()
+            }
+        ),
+        Err(StagingError::TextTooLong),
     );
 }

@@ -186,8 +186,8 @@ def _read_descriptor(
 def start(
     ctx: ProfileContext,
     binary: Path,
-    server_addr: str,
-    username: str,
+    server_addr: str | None,
+    username: str | None,
     timeout: float,
     *,
     display: str | None = None,
@@ -214,7 +214,7 @@ def start(
     try:
         if timeout <= 0:
             raise ValueError("native client startup timeout must be positive")
-        if not runtime.USERNAME_RE.fullmatch(username):
+        if username is not None and not runtime.USERNAME_RE.fullmatch(username):
             raise ValueError("native client username must contain 1-16 ASCII letters, digits or underscores")
         root = _client_root()
         evidence["root"] = str(root)
@@ -261,12 +261,17 @@ def start(
                 "log": str(log_path),
             }
         )
+        # Title-mode launch (server_addr/username both None): omit --server /
+        # --username so the client starts on the Title screen with prefill.
+        # Mixed (one set, one None) is a caller bug — fail loudly.
+        if (server_addr is None) != (username is None):
+            raise ValueError("title-mode launch requires both server_addr and username unset")
         argv = [
             str(binary),
             "play",
             "--profile", "offline-test",
-            "--server", server_addr,
-            "--username", username,
+            *([] if server_addr is None else ["--server", server_addr]),
+            *([] if username is None else ["--username", username]),
             "--automation",
             "--mcp-http", "127.0.0.1:0",
             "--windowed" if ctx.windowed else "--headless",

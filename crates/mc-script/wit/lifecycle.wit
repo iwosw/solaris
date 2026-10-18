@@ -78,6 +78,8 @@ interface lifecycle {
         equippable-slot: option<string>,
         /// An optional one-input shapeless recipe (vanilla or owned item id).
         crafting-ingredient: option<string>,
+        /// Strict immutable PhysicalItemProfile JSON, admitted with this identity.
+        physical-profile: option<string>,
     }
 
     /// The normalized startup contribution. Only the categories the package sets
@@ -92,6 +94,8 @@ interface lifecycle {
         /// At most 16 identities owned by this plugin. The host checks that
         /// their matching Loader bundle declared `register_items` before use.
         items: option<list<item-definition>>,
+        /// Immutable native WorkRecipe JSON, bounded and validated at startup.
+        work-recipes: option<list<string>>,
     }
 
     /// Values the host fixes for the instance, independent of the package.

@@ -303,9 +303,11 @@ def cmd_run(argv: list[str]) -> int:
     parser.add_argument("--platform", default=None)
     parser.add_argument("--client", choices=("java", "native"), default="java")
     parser.add_argument("--plugins-dir", type=Path, default=None,
-                        help="existing candidate plugin directory for native gameplay profiles")
+                        help="existing candidate plugin directory for native gameplay, Java P5 towns or v2 Loader")
     parser.add_argument("--windowed", action="store_true",
                         help="native graphical validation under owned Xvfb, with GPU capture")
+    parser.add_argument("--server-bin", type=Path, default=None,
+                        help="immutable solaris-v2 executable (loader-live only)")
     if scenario_error is None:
         args, extra = parser.parse_known_args(argv)
         profile = args.profile
@@ -325,6 +327,8 @@ def cmd_run(argv: list[str]) -> int:
         else:
             extra = list(scenario.selector)
     spec = catalog.PROFILES.get(profile)
+    if scenario_error is None and args.server_bin is not None and profile != "loader-live":
+        scenario_error = "--server-bin is only supported by loader-live"
     started_at = _utc_now()
     start_epoch = time.time()
     named_scenario: dict[str, Any] | None = None
@@ -426,13 +430,17 @@ def cmd_run(argv: list[str]) -> int:
         client=client,
         plugins_dir=args.plugins_dir,
         windowed=args.windowed,
+        server_bin=args.server_bin,
     )
     try:
-        if ctx.plugins_dir is not None and client != "native":
-            raise ValueError("--plugins-dir requires --client native")
+        if ctx.server_bin is not None and profile != "loader-live":
+            raise ValueError("--server-bin is supported only by loader-live")
+        if (ctx.plugins_dir is not None and client != "native"
+                and ctx.scenario_id != "java-v2-p5-towns" and profile != "loader-live"):
+            raise ValueError("--plugins-dir requires native gameplay, java-v2-p5-towns or loader-live")
         if ctx.windowed and client != "native":
             raise ValueError("--windowed requires --client native")
-        if client == "native" and profile not in {"survival", "inventory", "entities", "core-client", "native-lifecycle", "logical-native", "native-scale"}:
+        if client == "native" and profile not in {"survival", "inventory", "entities", "core-client", "native-lifecycle", "logical-native", "native-scale", "title-connect"}:
             raise RuntimeError(
                 f"profile {profile!r} is not enabled for native; "
                 "supported shared Python minecraft_* profiles: survival, inventory, entities, core-client subset, native-lifecycle, logical-native, native-scale. "
@@ -474,14 +482,13 @@ CPU_QUOTA_ENV = "SOLARIS_HARNESS_CPU_QUOTA"
 MEMORY_HIGH_ENV = "SOLARIS_HARNESS_MEMORY_HIGH"
 MEMORY_MAX_ENV = "SOLARIS_HARNESS_MEMORY_MAX"
 MEMORY_SWAP_ENV = "SOLARIS_HARNESS_MEMORY_SWAP_MAX"
-"""What one harness run may use, as systemd cgroup properties. A workspace test
-run starts about a dozen test binaries at once, each with its own in-process
-server and component host; unbounded, that evicts the desktop into swap and the run
-stalls on page-in instead of on CPU, so every ``run``/``client`` invocation is
-placed in one bounded scope first. Every knob takes a systemd value or ``off``:
+"""What one harness run may use, as systemd cgroup properties. Concurrent libtest
+cases can each own a server and component host; unbounded, those allocations
+evict the desktop into swap. Every ``run``/``client`` invocation is placed in
+one bounded scope first. Each knob takes a systemd value or ``off``:
 ``SOLARIS_HARNESS_CPU_QUOTA`` (default: every physical core),
-``SOLARIS_HARNESS_MEMORY_HIGH`` (default ``3G``), ``SOLARIS_HARNESS_MEMORY_MAX``
-(default ``4G``),
+``SOLARIS_HARNESS_MEMORY_HIGH`` (default ``off``), ``SOLARIS_HARNESS_MEMORY_MAX``
+(default ``12G`` for ``test``/``correctness``, ``4G`` for other profiles/clients),
 ``SOLARIS_HARNESS_MEMORY_SWAP_MAX`` (default ``1G``).
 
 The cap has to leave the session room, not just bound the run: ``systemd-oomd``
@@ -494,10 +501,13 @@ from the two kills and the measurement of the successful runs. Throttling is
 switched off (``MemoryHigh=off``): ``MemoryHigh`` makes the kernel reclaim
 *inside* the scope, and that reclaim is itself the pressure signal oomd acts on,
 so a throttled scope is what feeds the kill rather than what avoids it.
-``MemoryMax`` stays at ``4G``, three times the 1.13 GiB a full ``test`` phase was
-measured to peak at, so it is a hard wall rather than a working limit. And
-``_exec_in_scope`` refuses to start while the machine has less free memory than
-the run is allowed to take."""
+The current four-thread ``host_bounds`` tests use about 4.85 GiB of anonymous
+memory, and full workspace runs reach the 8 GiB cap with swap pressure. Full
+``test``/``correctness`` runs therefore use ``12G``; focused coding-agent runs
+remain at ``8G``, and other direct profiles/clients retain ``4G``.
+``_exec_in_scope`` refuses admission unless the machine has enough free memory
+for the selected cap plus the session reserve.
+"""
 
 
 def _physical_cores() -> int:
@@ -532,6 +542,7 @@ def _default_cpu_quota() -> str:
 
 DEFAULT_MEMORY_HIGH = "off"
 DEFAULT_MEMORY_MAX = "4G"
+DEFAULT_TEST_MEMORY_MAX = "12G"
 DEFAULT_MEMORY_SWAP_MAX = "1G"
 _OFF = {"", "off", "none", "0", "max"}
 
@@ -578,7 +589,7 @@ def _limit(value: str, env: str) -> str | None:
 
 
 
-def _scope_command(quota: str) -> list[str] | None:
+def _scope_command(quota: str, memory_max: str) -> list[str] | None:
     """The command that re-runs this harness inside one bounded scope."""
     if shutil.which("systemd-run") is None:
         return None
@@ -591,12 +602,12 @@ def _scope_command(quota: str) -> list[str] | None:
     if probe.stdout.strip() not in {"running", "degraded"}:
         return None
     properties = ["-p", f"CPUQuota={quota}", "-p", "CPUWeight=50"]
-    for env, default, name in (
-        (MEMORY_HIGH_ENV, DEFAULT_MEMORY_HIGH, "MemoryHigh"),
-        (MEMORY_MAX_ENV, DEFAULT_MEMORY_MAX, "MemoryMax"),
-        (MEMORY_SWAP_ENV, DEFAULT_MEMORY_SWAP_MAX, "MemorySwapMax"),
+    for env, raw_value, name in (
+        (MEMORY_HIGH_ENV, os.environ.get(MEMORY_HIGH_ENV, DEFAULT_MEMORY_HIGH), "MemoryHigh"),
+        (MEMORY_MAX_ENV, memory_max, "MemoryMax"),
+        (MEMORY_SWAP_ENV, os.environ.get(MEMORY_SWAP_ENV, DEFAULT_MEMORY_SWAP_MAX), "MemorySwapMax"),
     ):
-        value = _limit(os.environ.get(env, default), env)
+        value = _limit(raw_value, env)
         if value is not None:
             properties += ["-p", f"{name}={value}"]
     return [
@@ -613,7 +624,7 @@ def _scope_command(quota: str) -> list[str] | None:
     ]
 
 
-def _exec_in_scope() -> int | None:
+def _exec_in_scope(profile: str | None) -> int | None:
     """Run this invocation in one bounded scope, at most once.
 
     Every cargo, test, server and client process the run starts inherits the
@@ -626,7 +637,8 @@ def _exec_in_scope() -> int | None:
     quota = os.environ.get(CPU_QUOTA_ENV, _default_cpu_quota()).strip()
     if quota.lower() in _OFF:
         return None
-    memory_max = os.environ.get(MEMORY_MAX_ENV, DEFAULT_MEMORY_MAX)
+    default_memory = DEFAULT_TEST_MEMORY_MAX if profile in {"test", "correctness"} else DEFAULT_MEMORY_MAX
+    memory_max = os.environ.get(MEMORY_MAX_ENV, default_memory)
     # A run that cannot fit in the machine's free memory is not bounded by its
     # own cap: the kernel reclaims the rest of the session instead, and
     # `systemd-oomd` then kills whichever unit in the user slice is largest. That
@@ -643,7 +655,7 @@ def _exec_in_scope() -> int | None:
             file=sys.stderr,
         )
         return 1
-    command = _scope_command(quota)
+    command = _scope_command(quota, memory_max)
     if command is None:
         print(
             "[harness] warning: no user systemd scope; running without bounds",
@@ -674,7 +686,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "explain":
         return cmd_explain(args.rest)
     if args.command in {"run", "client"}:
-        scoped = _exec_in_scope()
+        scoped = _exec_in_scope(args.rest[0] if args.command == "run" and args.rest else None)
         if scoped is not None:
             return scoped
     if args.command == "run":

@@ -1,19 +1,26 @@
 interface domain-operations {
-    use settlements.{settlement-operation};
-    use residents.{resident-operation, resident-order-operation};
+    use settlements.{query-settlement, settlement-operation};
+    use world-structures.{world-structure-operation};
+    use npcs.{npc-operation, npc-order-operation};
     use inventories.{inventory-operation};
+    use npc-routes.{npc-route-operation};
+    use types.{plugin-storage-version-guard};
 
     /// Existing native operation families; ownership and validation stay in the kernel.
     variant domain-operation {
-        settlement(settlement-operation),
-        resident(resident-operation),
-        resident-order(resident-order-operation),
+        world-structure(world-structure-operation),
+        npc(npc-operation),
+        npc-order(npc-order-operation),
+        npc-route(npc-route-operation),
         inventory(inventory-operation),
+        query-settlement(query-settlement),
+        settlement-action(settlement-operation),
     }
 
     /// Request correlation is separate from the durable id inside mutation records.
     record operation-request {
         request: string,
         operation: domain-operation,
+        expected-plugin-storage-versions: list<plugin-storage-version-guard>,
     }
 }

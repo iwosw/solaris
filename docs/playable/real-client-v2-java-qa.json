@@ -1,0 +1,574 @@
+{
+  "schema_version": 1,
+  "pack_id": "core-v2-java-wave-qa",
+  "quality_label": "bounded-real-client-smoke",
+  "minecraft_version": "26.1.2",
+  "server_command": "python3 -m tools.harness run playable --client java --server-variant v2",
+  "client_requirement": "A vanilla 26.1.2 real client must connect to playable.toml through the repo-native Gradle runClient adapter; protocol harnesses do not satisfy this gate, and prepared artifacts are not passing evidence.",
+  "forbidden_client_evidence": [
+    "wire-probe",
+    "mc_vanilla::wire_client::Client",
+    "protocol-only bot",
+    "debug commands",
+    "headless mock client"
+  ],
+  "scenarios": [
+    {
+      "id": "playable-21-earned-tool-zombie-combat",
+      "status": "manual-pending",
+      "bounded_time_minutes": 24,
+      "screenshots_required": true,
+      "no_debug_commands": true,
+      "steps": [
+        "Connect a real vanilla client to playable.toml through the playable runner.",
+        "Run the no-debug natural wood -> crafting table -> wooden pickaxe path.",
+        "Wait for natural night without commands, scan loaded hostile entities for a naturally spawned zombie, and approach it through normal movement.",
+        "Select the earned wooden pickaxe, attack the zombie until it dies, collect the visible rotten flesh drop, and capture a screenshot."
+      ],
+      "expected_observations": [
+        "The client-agent scenario uses no debug give, summon, teleport, time, damage, or chat-command setup.",
+        "The real client reaches night through normal world time and finds a naturally loaded zombie.",
+        "The real client kills the zombie using the earned wooden pickaxe and restores at least one rotten flesh item through visible item-entity pickup."
+      ]
+    },
+    {
+      "id": "playable-22-stone-sword-zombie-combat",
+      "status": "manual-pending",
+      "bounded_time_minutes": 24,
+      "screenshots_required": true,
+      "no_debug_commands": true,
+      "steps": [
+        "Connect a real vanilla client to playable.toml through the playable runner.",
+        "Run the no-debug natural wood -> crafting table -> wooden pickaxe path.",
+        "Mine two natural stone blocks with the earned wooden pickaxe, reopen the earned crafting table, and craft a stone sword from earned cobblestone and sticks.",
+        "Wait for natural night without commands, scan loaded hostile entities for a naturally spawned zombie, and approach it through normal movement.",
+        "Select the earned stone sword, attack the zombie until it dies, collect the visible rotten flesh drop, and capture a screenshot."
+      ],
+      "expected_observations": [
+        "The client-agent scenario uses no debug give, summon, teleport, time, damage, or chat-command setup.",
+        "The real client crafts minecraft:stone_sword from earned cobblestone and sticks using embedded recipe display id 26.",
+        "The real client kills a naturally loaded zombie using the earned stone sword and restores at least one rotten flesh item through visible item-entity pickup."
+      ]
+    },
+    {
+      "id": "playable-25-iron-sword-save-restart",
+      "status": "manual-pending",
+      "bounded_time_minutes": 30,
+      "screenshots_required": true,
+      "no_debug_commands": true,
+      "steps": [
+        "Connect a real vanilla client to playable.toml through the playable runner.",
+        "Run the no-debug natural wood -> crafting table -> wooden pickaxe -> stone pickaxe -> furnace path.",
+        "Mine and smelt two natural iron ore drops into two earned iron ingots, craft sticks from earned planks when needed, and craft an earned iron sword.",
+        "Stop Solaris with the runner-managed graceful restart path, restart the same world, reconnect the same real client, and capture screenshots for both phases.",
+        "Verify the crafted table marker persists and the earned iron sword remains in the player inventory after restart."
+      ],
+      "expected_observations": [
+        "The client-agent scenario uses no debug give, summon, teleport, time, damage, or chat-command setup.",
+        "The before phase records iron sword recipe evidence and a runner-managed restart marker.",
+        "The after phase observes the persisted crafting table marker and at least one minecraft:iron_sword in inventory."
+      ]
+    },
+    {
+      "id": "playable-26-earned-shield-zombie-block",
+      "status": "manual-pending",
+      "bounded_time_minutes": 30,
+      "screenshots_required": true,
+      "no_debug_commands": true,
+      "steps": [
+        "Connect a real vanilla client to playable.toml through the playable runner.",
+        "Run the no-debug natural wood -> crafting table -> wooden pickaxe -> stone pickaxe -> furnace path.",
+        "Mine and smelt one natural iron ore drop into one earned iron ingot, keep earned planks, and reopen the earned crafting table.",
+        "Craft a shield from earned planks and the earned iron ingot using embedded recipe display id 58.",
+        "Wait for natural night without commands, scan loaded hostile entities for a naturally spawned zombie, select the earned shield, hold use while facing the zombie until a shield-damage packet proves that an attack was blocked, and capture a screenshot."
+      ],
+      "expected_observations": [
+        "The client-agent scenario uses no debug give, summon, teleport, time, damage, or chat-command setup.",
+        "The real client crafts minecraft:shield from six earned planks and one earned minecraft:iron_ingot using embedded recipe display id 58.",
+        "The real client requires an actual server-sent shield block event with unchanged player health; elapsed time or absence of an attack cannot satisfy the scenario. Shield wear is recorded, not required for a sub-three-damage vanilla block."
+      ]
+    },
+    {
+      "id": "playable-28-earned-iron-chestplate-zombie-mitigation",
+      "status": "manual-pending",
+      "bounded_time_minutes": 32,
+      "screenshots_required": true,
+      "no_debug_commands": true,
+      "steps": [
+        "Connect a real vanilla client to playable.toml through the playable runner.",
+        "Run the no-debug natural wood -> crafting table -> wooden pickaxe -> stone pickaxe -> furnace path.",
+        "Collect extra natural logs for earned plank fuel, then mine and smelt eight natural iron ore drops into eight earned iron ingots.",
+        "Craft and quick-equip the earned iron chestplate through the normal inventory path.",
+        "Wait for natural night without commands, scan loaded hostile entities for a naturally spawned zombie, approach it through normal movement, wait for a natural melee hit, and capture a screenshot."
+      ],
+      "expected_observations": [
+        "The client-agent scenario uses no debug give, summon, teleport, time, damage, or chat-command setup.",
+        "The real client observes the earned iron chestplate in the chest armor slot before hostile contact.",
+        "A naturally loaded zombie hit reduces player health by no more than the iron-chestplate mitigation threshold, proving armor affects survival damage instead of only rendering as equipped."
+      ]
+    },
+    {
+      "id": "playable-29-iron-chestplate-save-restart-mitigation",
+      "status": "manual-pending",
+      "bounded_time_minutes": 40,
+      "screenshots_required": true,
+      "no_debug_commands": true,
+      "steps": [
+        "Connect a real vanilla client to playable.toml through the playable runner.",
+        "Run the no-debug natural wood -> crafting table -> wooden pickaxe -> stone pickaxe -> furnace path.",
+        "Mine and smelt eight natural iron ore drops into eight earned iron ingots, craft and quick-equip an earned iron chestplate, then write the crafted table restart marker.",
+        "Stop Solaris with the runner-managed graceful restart path, restart the same world, reconnect the same real client, and capture screenshots for both phases.",
+        "Verify the crafted table marker persists, verify the earned iron chestplate remains in the chest armor slot, wait for natural night, and measure a natural zombie melee hit after restart."
+      ],
+      "expected_observations": [
+        "The client-agent scenario uses no debug give, summon, teleport, time, damage, or chat-command setup.",
+        "The before phase records iron chestplate equip evidence and a runner-managed restart marker.",
+        "The after phase observes the persisted crafting table marker, the persisted chest armor slot, and a post-restart zombie hit below the iron-chestplate mitigation threshold."
+      ]
+    },
+    {
+      "id": "playable-ui-commands",
+      "status": "manual-pending",
+      "bounded_time_minutes": 3,
+      "screenshots_required": true,
+      "no_debug_commands": false,
+      "steps": [
+        "Connect the vanilla graphical client as an operator; inspect its received Brigadier command roots.",
+        "Open chat with /gam and press Tab; capture suggestions and the completed /gamemode input.",
+        "Run /gamemode creative and /give @s minecraft:diamond 3; observe native game mode and inventory.",
+        "Return to survival and self-deop; require the refreshed command tree to hide gamemode.",
+        "Send gamemode and give as a non-op; capture the vanilla refusal message and unchanged mode/inventory."
+      ],
+      "expected_observations": [
+        "The client's command tree is non-empty and its native chat completion offers gamemode.",
+        "Creative mode and exactly three diamonds are observed in received client state.",
+        "Non-op commands produce Unknown or incomplete command without applying their effects.",
+        "Each assertion has a named screenshot; setup uses vanilla operator commands, never debug commands."
+      ]
+    },
+    {
+      "id": "playable-ui-teams-scoreboard",
+      "status": "manual-pending",
+      "bounded_time_minutes": 3,
+      "screenshots_required": true,
+      "no_debug_commands": false,
+      "steps": [
+        "Run /scoreboard objectives add k dummy and /scoreboard objectives setdisplay sidebar k.",
+        "Run /scoreboard players set @s k 5.",
+        "Run /team add red, /team modify red color red and /team join red @s.",
+        "Capture a screenshot after each command converges in the client's received scoreboard."
+      ],
+      "expected_observations": [
+        "Native client Scoreboard contains objective k, sidebar selects k and self score is five.",
+        "Native client PlayerTeam red is red and contains the local player.",
+        "Sidebar is visible in screenshots; assertions inspect vanilla state, not command success strings."
+      ]
+    },
+    {
+      "id": "playable-ui-effects",
+      "status": "manual-pending",
+      "bounded_time_minutes": 3,
+      "screenshots_required": true,
+      "no_debug_commands": false,
+      "steps": [
+        "Use vanilla /give to provide one golden apple and consume it with the client's native use action.",
+        "Open inventory and capture active absorption/regeneration effect state.",
+        "Give and drink milk; capture the empty active effect collection.",
+        "Run /effect give @s speed 30 1 and capture active Speed II plus movement_speed attribute."
+      ],
+      "expected_observations": [
+        "Native golden-apple consumption debits exactly one item in a fresh authoritative inventory packet and produces active absorption.",
+        "Milk debits exactly one item in a fresh authoritative inventory packet and clears active effects.",
+        "The client's movement_speed attribute is baseline times 1.4 with Speed II.",
+        "Screenshots show the inventory effect UI for each stage."
+      ]
+    },
+    {
+      "id": "playable-ui-enchant-anvil-grindstone",
+      "status": "manual-pending",
+      "bounded_time_minutes": 5,
+      "screenshots_required": true,
+      "no_debug_commands": false,
+      "steps": [
+        "Use vanilla operator commands to prepare a loaded stone pad, fifteen bookshelves, tool, lapis and forty XP levels; place each station via native item use.",
+        "Open the enchanting table and insert the diamond pickaxe and three lapis using native container transfers.",
+        "Observe all three positive costs/enchantment clues/levels in EnchantmentMenu; select the first offer and observe enchantments and XP debit.",
+        "Natively place the anvil three blocks to the side, outside the bookshelf ring; enter UI Smoke Pick in its name field and take the server-confirmed renamed enchanted result.",
+        "Natively place the grindstone three blocks to the opposite side, outside the bookshelf ring; observe an unenchanted result, take it and require newly visible positive-value vanilla ExperienceOrb entities.",
+        "Capture each placed station, menu, offer/result and final received inventory state."
+      ],
+      "expected_observations": [
+        "All three native station screens open from placed world blocks.",
+        "Three real enchanting offers appear, and the taken pickaxe has received enchantments.",
+        "Anvil rename is confirmed by a changed received container state id, then persists in inventory.",
+        "Grindstone removes enchantments, preserves the rename and spawns visible XP orb entities.",
+        "Operator setup is explicitly not evidence of natural material/XP acquisition."
+      ]
+    },
+    {
+      "id": "playable-ui-adversarial",
+      "status": "manual-pending",
+      "bounded_time_minutes": 3,
+      "screenshots_required": true,
+      "no_debug_commands": false,
+      "steps": [
+        "Run one bounded adjacent-behavior pass in a fresh graphical client.",
+        "Reject a zero-count diamond give without inventory credit and retain feedback.",
+        "Add duplicate objective k without replacing/duplicating the native objective.",
+        "Join, leave and remove team red; observe membership and team removal.",
+        "Apply stronger then weaker speed; require no stacked multiplier, then drink milk and observe baseline restoration.",
+        "Capture screenshots for each assertion and retain severity-ranked findings in the QA report."
+      ],
+      "expected_observations": [
+        "Invalid give does not credit inventory; duplicate scoreboard add preserves the original objective.",
+        "Team leave/removal clears the corresponding native client state.",
+        "Weaker speed does not overwrite the stronger active effect or stack its attribute modifier.",
+        "Milk's exact one-item debit requires a fresh authoritative inventory packet; it clears hidden/active effects and restores movement_speed exactly to baseline."
+      ]
+    },
+    {
+      "id": "playable-w1-villager-trade",
+      "status": "manual-pending",
+      "bounded_time_minutes": 5,
+      "screenshots_required": true,
+      "no_debug_commands": false,
+      "steps": [
+        "In an isolated fresh operator-enabled v2 world, use a villager spawn egg and place a workstation natively.",
+        "Wait for the received villager profession, then set and require received night so vanilla restock cannot reset offer uses; open MerchantScreen and inspect MerchantOffers.",
+        "Supply the required trade materials, execute exactly one native result take, close and reopen the same merchant."
+      ],
+      "expected_observations": [
+        "Client profession and MerchantOffers are received; no profession or trade outcome is injected.",
+        "Exact input debit and output credit occur once, and remaining uses decrease by one after reopening.",
+        "Every assertion captures a named vanilla-client screenshot; operator materials are not natural-acquisition evidence."
+      ]
+    },
+    {
+      "id": "playable-w1-redstone",
+      "status": "manual-pending",
+      "bounded_time_minutes": 5,
+      "screenshots_required": true,
+      "no_debug_commands": false,
+      "steps": [
+        "Prepare unpowered isolated circuits; natively activate lever, button and hopper input transfer.",
+        "Observe lever-wire-repeater-lamp propagation and button-driven piston extension then retraction.",
+        "Observe an exact hopper-chain chest transfer and the comparator reading the chest."
+      ],
+      "expected_observations": [
+        "Received wire/repeater/lamp and piston states follow native activations.",
+        "Source and intermediate inventories empty, destination counts remain exact with no duplicate credit.",
+        "Comparator output reflects received chest contents; screenshots accompany each step."
+      ]
+    },
+    {
+      "id": "playable-w1-brewing",
+      "status": "manual-pending",
+      "bounded_time_minutes": 3,
+      "screenshots_required": true,
+      "no_debug_commands": false,
+      "steps": [
+        "Native-fill a supplied empty glass bottle at a declared water source; place/open a stand and insert that water potion plus supplied nether wart and blaze powder.",
+        "Observe received fuel/progress and wait for brewing completion.",
+        "Take the awkward potion using the native container transfer."
+      ],
+      "expected_observations": [
+        "Water potion becomes an awkward potion in received PotionContents, not merely an unchanged potion item id.",
+        "Ingredient/fuel consumption and exactly one taken result converge in the vanilla inventory.",
+        "Screenshots capture placement, active brewing, completed result and result take."
+      ]
+    },
+    {
+      "id": "playable-w1-ranged",
+      "status": "manual-pending",
+      "bounded_time_minutes": 6,
+      "screenshots_required": true,
+      "no_debug_commands": false,
+      "steps": [
+        "Use operator-provided equipment to shoot a mob natively with a bow and collect an arrow.",
+        "Load and fire a crossbow, throw a loyalty trident and await its return.",
+        "Throw an ender pearl and observe the resulting player teleport."
+      ],
+      "expected_observations": [
+        "The client's mob health decreases after the bow impact and arrow pickup credits exactly once.",
+        "Crossbow charged-projectile component changes and projectile entity appears; thrown trident returns exactly once.",
+        "Pearl debit and received player displacement are observed; screenshots accompany each step."
+      ]
+    },
+    {
+      "id": "playable-w1-fishing",
+      "status": "manual-pending",
+      "bounded_time_minutes": 5,
+      "screenshots_required": true,
+      "no_debug_commands": false,
+      "steps": [
+        "Cast an operator-provided fishing rod natively into a prepared valid water fixture.",
+        "Wait within a bounded fishing timeout for received FishingHook bite state.",
+        "Reel natively and observe received inventory loot."
+      ],
+      "expected_observations": [
+        "A client fishing hook is observed, then its bite state, then removal after reel.",
+        "Exactly one fishing loot credit is observed without operator-generated bite or loot.",
+        "Screenshots capture cast, bite and collected item."
+      ]
+    },
+    {
+      "id": "playable-w1-tnt-fire-light",
+      "status": "manual-pending",
+      "bounded_time_minutes": 5,
+      "screenshots_required": true,
+      "no_debug_commands": false,
+      "steps": [
+        "Capture baseline client block light, place a torch natively and observe nearby light increase.",
+        "Ignite prepared TNT with native flint-and-steel use; observe priming and explosion removal.",
+        "Ignite a flammable fixture natively, observe spread to a previously unlit location, then extinguish."
+      ],
+      "expected_observations": [
+        "Received BLOCK light rises, not just sky light or torch block presence.",
+        "PrimedTnt appears and previously received solid fixture blocks are removed by explosion.",
+        "Received fire spreads and disappears after extinguishing; each stage has a screenshot."
+      ]
+    },
+    {
+      "id": "playable-w1-stations",
+      "status": "manual-pending",
+      "bounded_time_minutes": 5,
+      "screenshots_required": true,
+      "no_debug_commands": false,
+      "steps": [
+        "Place/open stonecutter, smithing table and loom through native block use.",
+        "Execute one stonecutter recipe, netherite smithing upgrade and loom banner pattern with supplied materials.",
+        "Insert a guaranteed-compostable item natively and observe composter level increment."
+      ],
+      "expected_observations": [
+        "Each received recipe result has exact input consumption and one output credit.",
+        "Smithing output is the upgraded item and loom output has the received banner-pattern component.",
+        "Composter LEVEL increments; screenshots accompany station opening, recipes and outputs."
+      ]
+    },
+    {
+      "id": "playable-w2-animals",
+      "status": "manual-pending",
+      "bounded_time_minutes": 5,
+      "screenshots_required": true,
+      "no_debug_commands": false,
+      "steps": [
+        "Native bones tame wolf; BLUE dye changes the default-RED collar, then sit/stand; lead, saddle, mount/dismount pig."
+      ],
+      "expected_observations": [
+        "Received tame, collar, sitting, leash and passengers; bone/dye/lead/saddle debits require fresh authoritative inventory packets. No steer/horse parity claim."
+      ]
+    },
+    {
+      "id": "playable-w2-vehicles",
+      "status": "manual-pending",
+      "bounded_time_minutes": 5,
+      "screenshots_required": true,
+      "no_debug_commands": false,
+      "steps": [
+        "Mount/dismount minecart and boat; native boat forward input."
+      ],
+      "expected_observations": [
+        "Received passenger links and cleared links; a fresh server-relative teleport pose proves boat movement reached server custody, not only local prediction. No powered-rail parity claim."
+      ]
+    },
+    {
+      "id": "playable-w2-special-mobs",
+      "status": "manual-pending",
+      "bounded_time_minutes": 5,
+      "screenshots_required": true,
+      "no_debug_commands": false,
+      "steps": [
+        "Live blaze fires; summon declared no-AI pillager, witch, breeze, shulker and ghast."
+      ],
+      "expected_observations": [
+        "Received small_fireball from live blaze and exact tracked species; remaining species AI is a gap."
+      ]
+    },
+    {
+      "id": "playable-w2-nether-portal",
+      "status": "manual-pending",
+      "bounded_time_minutes": 5,
+      "screenshots_required": true,
+      "no_debug_commands": false,
+      "steps": [
+        "Ignite obsidian frame natively and enter via declared teleport."
+      ],
+      "expected_observations": [
+        "Received portal, one durability debit and Nether dimension transition; reverse travel is not covered."
+      ]
+    },
+    {
+      "id": "playable-w2-end-dragon-respawn",
+      "status": "manual-pending",
+      "bounded_time_minutes": 5,
+      "screenshots_required": true,
+      "no_debug_commands": false,
+      "steps": [
+        "Contact declared End portal; teleport/load central chunk, declare one-chunk supported arena and require received floor; observe dragon; set End spawn, die and respawn."
+      ],
+      "expected_observations": [
+        "Received End, central supported arena, dragon and alive End respawn coordinates; no eye activation or dragon kill claim."
+      ]
+    },
+    {
+      "id": "playable-w3-crafter",
+      "status": "manual-pending",
+      "bounded_time_minutes": 5,
+      "screenshots_required": true,
+      "no_debug_commands": false,
+      "steps": [
+        "Native crafter toggle, reopen, input one log and command a redstone pulse."
+      ],
+      "expected_observations": [
+        "Reopened disabled slot, one four-plank ejection, input slot empty."
+      ]
+    },
+    {
+      "id": "playable-w3-shelf",
+      "status": "manual-pending",
+      "bounded_time_minutes": 5,
+      "screenshots_required": true,
+      "no_debug_commands": false,
+      "steps": [
+        "Native diamond deposit/withdraw from oak shelf."
+      ],
+      "expected_observations": [
+        "Received shelf BE custody and exact inventory debit/credit; forty-tick no duplicate fence."
+      ]
+    },
+    {
+      "id": "playable-w3-copper-storage",
+      "status": "manual-pending",
+      "bounded_time_minutes": 5,
+      "screenshots_required": true,
+      "no_debug_commands": false,
+      "steps": [
+        "Deposit and reopen copper chest; withdraw; summon copper golem."
+      ],
+      "expected_observations": [
+        "Exact three-diamond conservation and received copper golem; sorting AI is a gap."
+      ]
+    },
+    {
+      "id": "playable-w3-trial-vault",
+      "status": "manual-pending",
+      "bounded_time_minutes": 5,
+      "screenshots_required": true,
+      "no_debug_commands": false,
+      "steps": [
+        "Approach declared trial spawner and vault; use key, then repeat after reward."
+      ],
+      "expected_observations": [
+        "Spawner registration state, vault unlocking with one key debit, repeat no debit."
+      ]
+    },
+    {
+      "id": "playable-w3-bees-hive",
+      "status": "manual-pending",
+      "bounded_time_minutes": 5,
+      "screenshots_required": true,
+      "no_debug_commands": false,
+      "steps": [
+        "Harvest full smoked hive natively; live bee pollinates declared flower and enters hive; native hive destruction releases it."
+      ],
+      "expected_observations": [
+        "One honey bottle, hive honey=0, nectar metadata, bee removal and same UUID reappearing once after native break; natural timed exit remains a gap."
+      ]
+    },
+    {
+      "id": "playable-w3-allay-jukebox",
+      "status": "manual-pending",
+      "bounded_time_minutes": 5,
+      "screenshots_required": true,
+      "no_debug_commands": false,
+      "steps": [
+        "Native allay held diamond/return; native disc insertion/ejection."
+      ],
+      "expected_observations": [
+        "Exact held-stack conservation, received jukebox record and dance transitions; fetch and duplication gaps."
+      ]
+    },
+    {
+      "id": "playable-w3-golden-dandelion",
+      "status": "manual-pending",
+      "bounded_time_minutes": 5,
+      "screenshots_required": true,
+      "no_debug_commands": false,
+      "steps": [
+        "Native baby-pig flower toggle, rejected cooldown use, later unlock."
+      ],
+      "expected_observations": [
+        "Received lock bit and exact two successful one-flower debits; cooldown refuses mutation."
+      ]
+    },
+    {
+      "id": "playable-w3-mace",
+      "status": "manual-pending",
+      "bounded_time_minutes": 5,
+      "screenshots_required": true,
+      "no_debug_commands": false,
+      "steps": [
+        "Charge native mace, fall >2.5 blocks and attack fixture golem."
+      ],
+      "expected_observations": [
+        "Received damage greater than the critical-only ceiling nine and player survives landing; enchantments are gaps."
+      ]
+    },
+    {
+      "id": "playable-w3-conduit-dolphin",
+      "status": "manual-pending",
+      "bounded_time_minutes": 5,
+      "screenshots_required": true,
+      "no_debug_commands": false,
+      "steps": [
+        "Build 42-cell water frame; swim near dolphin; remove conduit."
+      ],
+      "expected_observations": [
+        "Native Conduit Power, Dolphin Grace and later conduit effect expiry; attack-target parity gap."
+      ]
+    },
+    {
+      "id": "playable-w3-sculk-warden",
+      "status": "manual-pending",
+      "bounded_time_minutes": 5,
+      "screenshots_required": true,
+      "no_debug_commands": false,
+      "steps": [
+        "Native lever vibration, shrieker contact, declared warden summon."
+      ],
+      "expected_observations": [
+        "Received sensor active/inactive, shrieking, warden and Darkness; natural warden emergence gap."
+      ]
+    },
+    {
+      "id": "playable-w3-raid-hero",
+      "status": "manual-pending",
+      "bounded_time_minutes": 5,
+      "screenshots_required": true,
+      "no_debug_commands": false,
+      "steps": [
+        "Occupied bed/bell/villager fixture with declared resistance-five observer/villager protection and Bad Omen; observe three easy waves, script clears."
+      ],
+      "expected_observations": [
+        "Native Raid Omen conversion and Hero after victory; scripted clear is not earned combat."
+      ]
+    },
+    {
+      "id": "playable-w3-component-custody",
+      "status": "manual-pending",
+      "bounded_time_minutes": 6,
+      "screenshots_required": true,
+      "no_debug_commands": false,
+      "steps": [
+        "Declared flower/live bee/full hive and supplied silk axe; native survival mining and pickup.",
+        "Native diamond deposit into shulker, mine filled box and pick up.",
+        "Native cursor pickup/deposit/withdraw/return through chest and rejected nested-shulker deposit."
+      ],
+      "expected_observations": [
+        "Received silk hive retains one bee and honey level five; received filled shulker retains exactly three diamonds.",
+        "Every accepted/refused click requires a fresh raw received authoritative menu image with exact affected slots and carried cursor components, plus client convergence.",
+        "Fresh reopened menu and stable custody fence exclude duplicated hive/box/loose diamonds. No changed-slot or carried hash-proof reconciliation assertion."
+      ]
+    }
+  ]
+}

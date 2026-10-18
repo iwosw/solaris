@@ -29,7 +29,7 @@ than 25, use a local Java 25 runtime explicitly, for example
 Solaris comparison server, from a second shell:
 
 ```sh
-RUST_LOG=info cargo run --bin mc-server -- --config example.toml
+RUST_LOG=info cargo run -p mc-edge --bin solaris-v2 -- --config example.toml
 ```
 
 Use offline mode and the same deterministic scenario setup on both servers. Do not

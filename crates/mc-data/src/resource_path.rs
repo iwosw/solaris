@@ -332,7 +332,7 @@ mod tests {
 
         let error = validate_opened_resource(
             opened_outside,
-            candidate.clone(),
+            candidate,
             std::fs::canonicalize(root.path()).unwrap(),
         )
         .expect_err("opened file identity must match the post-open target");

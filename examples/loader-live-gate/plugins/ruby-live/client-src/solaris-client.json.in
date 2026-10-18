@@ -2,7 +2,6 @@
   "schema": 2,
   "screens": [{
     "id": "ruby-live:showcase",
-    "kind": "settlement",
     "title": "Ruby Loader Fixture",
     "item_id": "ruby-live:ruby",
     "block_id": "ruby-live:ruby_block",
@@ -22,7 +21,7 @@
     }]
   }, {
     "id": "ruby-live:hud",
-    "kind": "hud",
+    "overlay": true,
     "title": "Ruby HUD",
     "widgets": [{
       "type": "paged_table",
@@ -34,7 +33,7 @@
     }]
   }, {
     "id": "ruby-live:input",
-    "kind": "hud",
+    "overlay": true,
     "title": "Ruby input",
     "widgets": [],
     "input_bindings": [{

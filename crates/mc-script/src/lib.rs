@@ -34,10 +34,10 @@ pub use client_view::{
     MAX_CLIENT_VIEW_ROWS, MAX_CLIENT_VIEW_SELECTION_TTL_TICKS, MAX_CLIENT_VIEW_TABS,
     MAX_CLIENT_VIEW_TEXT_BYTES, MAX_CLIENT_VIEW_TITLE_BYTES, ScriptClientSelectionBegin,
     ScriptClientSelectionConstraints, ScriptClientViewAction, ScriptClientViewField,
-    ScriptClientViewFieldValue, ScriptClientViewFormation, ScriptClientViewMarker,
-    ScriptClientViewModel, ScriptClientViewOpen, ScriptClientViewPresent,
-    ScriptClientViewRequestKind, ScriptClientViewResourceEntry, ScriptClientViewRow,
-    ScriptClientViewScreenKind, ScriptClientViewTab,
+    ScriptClientViewFieldValue, ScriptClientViewFormation, ScriptClientViewKey,
+    ScriptClientViewMarker, ScriptClientViewMarkerPosition, ScriptClientViewModel,
+    ScriptClientViewOpen, ScriptClientViewPresent, ScriptClientViewResourceEntry,
+    ScriptClientViewRow, ScriptClientViewTab,
 };
 use command_admission::HostAdmissionLedger;
 
@@ -52,77 +52,107 @@ pub use commit_events::{
 
 mod inventory_operations;
 pub use inventory_operations::{
-    MAX_INVENTORY_RESOURCE_TYPES, MAX_INVENTORY_WORK_PORTIONS, MAX_OWNED_INVENTORY_ITEM_BUDGET,
-    MAX_OWNED_INVENTORY_SLOTS, MAX_OWNED_INVENTORY_TRANSFERS, MAX_RESIDENT_CARRY_SLOTS,
-    MAX_RESIDENT_EQUIPMENT_SLOTS, MAX_WAREHOUSE_HANDLE_BYTES, ScriptInventoryEnchantment,
-    ScriptInventoryEndpoint, ScriptInventoryExpectedRevision, ScriptInventoryFence,
-    ScriptInventoryItem, ScriptInventoryMaterial, ScriptInventoryReservationQuantity,
+    MAX_INVENTORY_RESOURCE_TYPES, MAX_INVENTORY_WORK_PORTIONS, MAX_NPC_CARRY_SLOTS,
+    MAX_NPC_EQUIPMENT_SLOTS, MAX_OWNED_INVENTORY_ITEM_BUDGET, MAX_OWNED_INVENTORY_SLOTS,
+    MAX_OWNED_INVENTORY_TRANSFERS, ScriptInventoryEnchantment, ScriptInventoryEndpoint,
+    ScriptInventoryExpectedRevision, ScriptInventoryFence, ScriptInventoryItem,
+    ScriptInventoryMaterial, ScriptInventoryPlacementSlot, ScriptInventoryReservationQuantity,
     ScriptInventoryReservationSnapshot, ScriptInventoryResourcePlan, ScriptInventorySlot,
-    ScriptInventoryWorkPortion, ScriptOwnedInventoryOperation, ScriptOwnedInventoryResult,
-    ScriptOwnedInventorySnapshot, ScriptOwnedItemTransfer,
+    ScriptInventoryStewEffect, ScriptInventoryWorkPortion, ScriptOwnedInventoryOperation,
+    ScriptOwnedInventoryResult, ScriptOwnedInventorySnapshot, ScriptOwnedItemTransfer,
 };
 
 mod operations;
 pub use operations::{
     MAX_STORAGE_SCAN_PAGE, ScriptOperation, ScriptOperationFailure, ScriptOperationOutcome,
-    ScriptOperationPayload, ScriptOperationRequest, ScriptOperationState, ScriptStorageChange,
-    ScriptStorageEntry,
+    ScriptOperationPayload, ScriptOperationRequest, ScriptOperationState,
+    ScriptPluginStorageVersionGuard, ScriptStorageChange, ScriptStorageEntry,
+    validate_plugin_storage_version_guards,
 };
 
-mod resident_operations;
-pub use resident_operations::{
-    MAX_RESIDENT_CARRIED_ITEMS, MAX_RESIDENT_CLAIM_DISTANCE, MAX_RESIDENT_ENTITY_UUID_BYTES,
-    MAX_RESIDENT_GENERATION_ID_BYTES, MAX_RESIDENT_HANDLE_BYTES, MAX_RESIDENT_LIVE_PER_PLUGIN,
-    MAX_RESIDENT_PAGE, MAX_RESIDENT_POI_HANDLE_BYTES, MAX_RESIDENT_QUERY_HANDLES,
-    MAX_RESIDENT_RECORDS_PER_PLUGIN, MAX_RESIDENT_SPAWN_TOKEN_BYTES, ScriptResidentItemSummary,
-    ScriptResidentKind, ScriptResidentLifecycle, ScriptResidentLoadedState,
-    ScriptResidentOperation, ScriptResidentPois, ScriptResidentProfile, ScriptResidentResult,
-    ScriptResidentSnapshot, resident_entity_uuid, resident_generation_id,
-    resident_generation_id_for_poi, resident_handle_for_entity, resident_handle_for_generation,
-    resident_spawn_site_token, validate_entity_uuid, validate_generation_id,
-    validate_resident_handle, validate_resident_poi, validate_spawn_site_token,
-};
-
-mod resident_order_operations;
-pub use resident_order_operations::{
-    MAX_COMBAT_EVENTS, MAX_ENGAGEMENT_RADIUS, MAX_FORMATION_SPACING, MAX_ORDER_AFFILIATIONS,
-    MAX_ORDER_TARGETS, MAX_ORDER_WAYPOINTS, MAX_RECIPE_ID_BYTES, MAX_RESIDENT_ORDER_HANDLES,
-    MAX_RESIDENT_SQUAD_MEMBERS, MAX_SCRIPT_BLOCK_COORDINATE, MAX_TARGET_REF_BYTES,
-    MAX_WORK_AREA_AXIS, MAX_WORK_UNITS, MIN_ENGAGEMENT_RADIUS, MIN_FORMATION_SPACING,
-    MIN_ORDER_WAYPOINTS, ScriptBlockPosition, ScriptCombatEvent, ScriptDemobilizeResult,
-    ScriptDemobilizeState, ScriptEngagementPolicy, ScriptFormation, ScriptFormationKind,
-    ScriptHostileCategory, ScriptItemChange, ScriptOrderMemberOutcome, ScriptOrderMemberState,
-    ScriptOrderTarget, ScriptOrderTargetRef, ScriptResidentOrder, ScriptResidentOrderOperation,
-    ScriptResidentOrderResult, ScriptResidentWorkOrder, ScriptWorkArea, ScriptWorkAssignment,
-    ScriptWorkPauseReason, ScriptWorkState, validate_recipe, validate_work_area_axis,
-    validate_work_units,
-};
+mod native_birth_operations;
+pub use native_birth_operations::{ScriptNativeBirthObservation, ScriptNativeBirthOrigin};
 
 mod settlement_operations;
 pub use settlement_operations::{
-    MAX_BLUEPRINT_FOOTPRINT_AXIS, MAX_BLUEPRINT_ID_BYTES, MAX_SETTLEMENT_PLACEMENTS,
-    MAX_SETTLEMENT_POIS, MAX_SETTLEMENT_RESIDENTS, MAX_SETTLEMENT_SITE_AXIS,
-    MAX_SETTLEMENT_SITE_PAGE, MAX_SITE_ID_BYTES, MAX_STRUCTURE_ACTIVE_PER_PLUGIN,
+    MAX_HOUSEHOLD_ID_BYTES, MAX_HOUSEHOLD_POLICY_BYTES, MAX_SETTLEMENT_DISTRICT_BUILDINGS,
+    MAX_SETTLEMENT_DISTRICT_REASON_BYTES, MAX_SETTLEMENT_NAME_BYTES, MAX_SETTLEMENT_PAGE,
+    MAX_SETTLEMENT_QUERY_NAMES, ScriptSettlementBuildingRef, ScriptSettlementDistrictSnapshot,
+    ScriptSettlementHouseholdSnapshot, ScriptSettlementOperation, ScriptSettlementPage,
+    ScriptSettlementQuery, ScriptSettlementResult, ScriptSettlementSnapshot,
+};
+
+mod settlement_economy;
+pub use settlement_economy::{
+    MAX_SETTLEMENT_CARAVAN_QUANTITY, MAX_SETTLEMENT_CARAVAN_REASON_BYTES,
+    MAX_SETTLEMENT_CARAVAN_TICKS, MAX_SETTLEMENT_CARAVAN_WAYPOINTS, ScriptSettlementEconomyAction,
+    ScriptSettlementEconomySnapshot, ScriptSettlementEmploymentSnapshot,
+    ScriptSettlementInventoryEndpoint, ScriptSettlementMandateSnapshot,
+    ScriptSettlementProductionSnapshot, ScriptSettlementQuoteSnapshot,
+    ScriptSettlementShipmentSnapshot,
+};
+
+mod npc_operations;
+pub use npc_operations::{
+    MAX_NPC_CARRIED_ITEMS, MAX_NPC_CLAIM_DISTANCE, MAX_NPC_ENTITY_UUID_BYTES,
+    MAX_NPC_GENERATION_ID_BYTES, MAX_NPC_HANDLE_BYTES, MAX_NPC_PAGE, MAX_NPC_QUERY_HANDLES,
+    ScriptNpcItemSummary, ScriptNpcLifecycle, ScriptNpcLoadedState, ScriptNpcOperation,
+    ScriptNpcResult, ScriptNpcSnapshot, npc_entity_uuid, npc_handle_for_entity,
+    npc_handle_for_generation, validate_entity_uuid, validate_generation_id, validate_npc_handle,
+};
+
+mod npc_order_operations;
+pub use npc_order_operations::{
+    MAX_COMBAT_EVENTS, MAX_ENGAGEMENT_RADIUS, MAX_FORMATION_SPACING, MAX_NPC_ORDER_HANDLES,
+    MAX_ORDER_AFFILIATIONS, MAX_ORDER_TARGETS, MAX_ORDER_WAYPOINTS, MAX_RECIPE_ID_BYTES,
+    MAX_SCRIPT_BLOCK_COORDINATE, MAX_TARGET_REF_BYTES, MAX_WORK_AREA_AXIS, MAX_WORK_RECEIPTS,
+    MAX_WORK_UNITS, MIN_ENGAGEMENT_RADIUS, MIN_FORMATION_SPACING, MIN_ORDER_WAYPOINTS,
+    ScriptBlockPosition, ScriptCombatEvent, ScriptCraftReceipt, ScriptCraftStack,
+    ScriptCraftToolWear, ScriptEngagementPolicy, ScriptFormation, ScriptFormationKind,
+    ScriptHostileCategory, ScriptItemChange, ScriptNpcCombatControl, ScriptNpcControlSnapshot,
+    ScriptNpcItemUseControl, ScriptNpcOrder, ScriptNpcOrderOperation, ScriptNpcOrderResult,
+    ScriptNpcPendingWork, ScriptNpcTargetObservation, ScriptNpcWorkOrder, ScriptOrderMemberOutcome,
+    ScriptOrderMemberState, ScriptOrderTarget, ScriptOrderTargetRef, ScriptWorkArea,
+    ScriptWorkAssignment, ScriptWorkPauseReason, ScriptWorkState, validate_recipe,
+    validate_work_area_axis, validate_work_units,
+};
+
+mod npc_route_operations;
+pub use npc_route_operations::{
+    MAX_NPC_ROUTE_REF_BYTES, MAX_NPC_ROUTE_RESERVATIONS, MAX_NPC_ROUTE_SEGMENT_CELLS,
+    MAX_NPC_ROUTE_TICKS, MAX_NPC_ROUTE_WAYPOINTS, ScriptNpcExecutionPermit, ScriptNpcExecutorMode,
+    ScriptNpcRouteAdmission, ScriptNpcRouteArrival, ScriptNpcRouteBlockReason,
+    ScriptNpcRouteHandoff, ScriptNpcRouteOperation, ScriptNpcRouteResult, ScriptNpcRouteState,
+    ScriptNpcRouteStatus, validate_route_ref,
+};
+
+mod npc_death_receipts;
+pub use npc_death_receipts::{
+    MAX_NPC_DEATH_LOOT, ScriptNpcDeathCargoReceipt, ScriptNpcDeathInventory, ScriptNpcDeathLoot,
+};
+
+mod world_structure_operations;
+pub use world_structure_operations::{
+    MAX_BLUEPRINT_FOOTPRINT_AXIS, MAX_BLUEPRINT_ID_BYTES, MAX_STRUCTURE_ACTIVE_PER_PLUGIN,
     MAX_STRUCTURE_ID_BYTES, MAX_STRUCTURE_RESOURCE_TYPES, MAX_STRUCTURE_STAGES,
-    MAX_SURVEY_BOUNDS_AXIS, MAX_SURVEY_TAGS, MAX_SURVEY_TOKEN_BYTES, MAX_VANILLA_VILLAGE_BUILDINGS,
-    MAX_WORLD_COMMIT_PORTION, ScriptBuildingCertificate, ScriptBuildingCertificateRequest,
-    ScriptBuildingInteractionPoint, ScriptChunkAvailability, ScriptResidentSiteReservation,
-    ScriptSettlementBuilding, ScriptSettlementOperation, ScriptSettlementPoi,
-    ScriptSettlementResult, ScriptSettlementSite, ScriptSettlementSitePage, ScriptSitePoiKind,
-    ScriptSitePoiState, ScriptSiteProvenance, ScriptSiteVariant, ScriptStructureMaterial,
+    MAX_SURVEY_BOUNDS_AXIS, MAX_SURVEY_TAGS, MAX_SURVEY_TOKEN_BYTES, MAX_WORKSITE_POINTS,
+    MAX_WORLD_BLOCK_PROPERTIES, MAX_WORLD_BLOCK_PROPERTY_BYTES, MAX_WORLD_BLOCK_QUERY_POSITIONS,
+    MAX_WORLD_BOUNDS_AXIS, MAX_WORLD_COMMIT_PORTION, MAX_WORLD_FEATURE_AXIS,
+    MAX_WORLD_FEATURE_BLOCKS, MAX_WORLD_FEATURE_ENTITIES, MAX_WORLD_FEATURE_ID_BYTES,
+    MAX_WORLD_FEATURE_PAGE, ScriptChunkAvailability, ScriptStructureCheck, ScriptStructureMaterial,
     ScriptStructureReceipt, ScriptStructureSnapshot, ScriptStructureStagePlan,
-    ScriptStructureState, ScriptSurveyBounds, ScriptSurveyPurpose, ScriptSurveySnapshot,
-    ScriptWarehouseBinding, ScriptWarehouseSource, warehouse_handle,
+    ScriptStructureState, ScriptSurveySnapshot, ScriptWorksiteCheck, ScriptWorksiteFailure,
+    ScriptWorksiteInteractionPoint, ScriptWorksitePointFailure, ScriptWorksiteRequest,
+    ScriptWorksiteSnapshot, ScriptWorldBlockFacts, ScriptWorldBlockProperty, ScriptWorldBlockQuery,
+    ScriptWorldBounds, ScriptWorldFeature, ScriptWorldFeatureBlock, ScriptWorldFeaturePage,
+    ScriptWorldStructureOperation, ScriptWorldStructureResult,
 };
 
 mod plugin_metadata;
 mod route_authority;
 pub use plugin_metadata::{
     ClientBundle, ClientBundleDiscovery, ClientContentKind, ClientLoader, ClientPermission,
-    PluginDeployment, PluginDiscovery, PluginSettlementBuilding, PluginSettlementBuildingRole,
-    PluginSettlementBuildingTemplate, PluginSettlementExtension, PluginSettlementInhabitant,
-    PluginSettlementInhabitantKind, PluginSettlementJob, PluginSettlementPlan,
-    PluginWorldgenOreProfile, PluginWorldgenSettlementProfile, default_plains_village_buildings,
+    PluginDeployment, PluginDiscovery, PluginWorldgenOreProfile,
 };
 
 pub mod precommit;
@@ -156,6 +186,10 @@ mod inventory_operations_tests;
 #[cfg(test)]
 mod item_pickup_tests;
 #[cfg(test)]
+mod npc_operations_tests;
+#[cfg(test)]
+mod npc_order_operations_tests;
+#[cfg(test)]
 mod player_death_tests;
 #[cfg(test)]
 mod player_inventory_tests;
@@ -166,13 +200,9 @@ mod player_teleport_tests;
 #[cfg(test)]
 mod precommit_tests;
 #[cfg(test)]
-mod resident_operations_tests;
-#[cfg(test)]
-mod resident_order_operations_tests;
-#[cfg(test)]
-mod settlement_operations_tests;
-#[cfg(test)]
 mod tick_delivery_tests;
+#[cfg(test)]
+mod world_structure_operations_tests;
 
 /// Crate version, exposed so other crates and the binary can report it.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -260,6 +290,7 @@ pub const BUILT_IN_PLAYER_COMMAND_ROOTS: &[&str] = &[
     "give",
     "kill",
     "save-all",
+    "settlement",
     "status",
     "stop",
     "summon",
@@ -287,6 +318,17 @@ pub enum PlayerCommandAdmission {
     Dropped,
     PermissionDenied,
     OwnedRejected { error: ScriptDtoError },
+}
+
+/// An authenticated command event prepared for the native owner's commit FIFO.
+/// Preparation does not publish an event or claim queue admission.
+#[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
+pub enum PreparedPlayerCommand {
+    NotOwned,
+    PermissionDenied,
+    OwnedRejected { error: ScriptDtoError },
+    Event(ScriptEvent),
 }
 
 /// Version requested by a script runtime or supported by the server host.
@@ -346,12 +388,42 @@ impl ScriptPlayerId {
 }
 
 /// Validated immutable position carried by script commands.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[non_exhaustive]
+#[serde(
+    try_from = "ScriptPositionCoordinates",
+    into = "ScriptPositionCoordinates"
+)]
 pub struct ScriptPosition {
     x_bits: u64,
     y_bits: u64,
     z_bits: u64,
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ScriptPositionCoordinates {
+    x: f64,
+    y: f64,
+    z: f64,
+}
+
+impl TryFrom<ScriptPositionCoordinates> for ScriptPosition {
+    type Error = ScriptDtoError;
+
+    fn try_from(value: ScriptPositionCoordinates) -> Result<Self, Self::Error> {
+        Self::try_new(value.x, value.y, value.z).ok_or(ScriptDtoError::InvalidBounds)
+    }
+}
+
+impl From<ScriptPosition> for ScriptPositionCoordinates {
+    fn from(value: ScriptPosition) -> Self {
+        Self {
+            x: value.x(),
+            y: value.y(),
+            z: value.z(),
+        }
+    }
 }
 
 impl ScriptPosition {
@@ -425,7 +497,6 @@ impl ScriptPlayerTeleportRequest {
 #[non_exhaustive]
 pub enum ScriptPlayerTeleportFailure {
     PlayerUnavailable,
-    TeleportPending,
     RuntimeUnavailable,
 }
 
@@ -433,7 +504,6 @@ impl ScriptPlayerTeleportFailure {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::PlayerUnavailable => "player_unavailable",
-            Self::TeleportPending => "teleport_pending",
             Self::RuntimeUnavailable => "runtime_unavailable",
         }
     }
@@ -2198,7 +2268,7 @@ impl ScriptEvent {
         Ok(Self {
             target_plugin_id: Some(validate_target_plugin_id(target_plugin_id.as_ref())?),
             kind: ScriptEventKind::ZoneCommandResult {
-                zone_id: validate_script_id(zone_id.as_ref())?.to_owned(),
+                zone_id: validate_script_id(zone_id.as_ref())?,
                 accepted,
             },
             origin_generation: None,
@@ -2371,7 +2441,7 @@ impl ScriptEvent {
     pub fn loader_view_request(
         target_plugin_id: impl AsRef<str>,
         player_id: ScriptPlayerId,
-        request_kind: ScriptClientViewRequestKind,
+        request_kind: ScriptClientViewKey,
     ) -> Result<Self, ScriptDtoError> {
         Ok(Self {
             target_plugin_id: Some(validate_target_plugin_id(target_plugin_id.as_ref())?),
@@ -3213,7 +3283,7 @@ pub enum ScriptEventKind {
     /// One explicit key-driven view request admitted for the owning plugin.
     LoaderViewRequest {
         player_id: ScriptPlayerId,
-        request_kind: ScriptClientViewRequestKind,
+        request_kind: ScriptClientViewKey,
     },
     /// One admitted client view action after the server re-read the instance.
     LoaderViewAction {

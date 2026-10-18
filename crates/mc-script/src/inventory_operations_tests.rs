@@ -33,6 +33,7 @@ fn transfer(counts: &[u32]) -> Result<ScriptOperationRequest, ScriptDtoError> {
             operation: ScriptOwnedInventoryOperation::Transfer {
                 operation_id: "transfer-operation".to_owned(),
                 actor_id: 7,
+                execution_permit: None,
                 transfers,
                 expected_revisions: vec![crate::ScriptInventoryExpectedRevision::new(
                     endpoint,

@@ -180,7 +180,16 @@ fn p08_real_region_cache_purge_regenerates_base_and_retains_offline_edit_read_on
     let base = ready.materialize_chunk().unwrap();
     let base_bytes = bytes(&base, &blocks);
     assert_eq!(world.store().record_counts().unwrap(), Default::default());
-    let mut effective = world.store().compose(0, &base, &blocks, &items).unwrap();
+    let mut effective = world
+        .store()
+        .compose(
+            0,
+            &base,
+            &blocks,
+            &items,
+            &mc_data::loot::chest_26_1_2::ChestLootCatalog::new(),
+        )
+        .unwrap();
     let air = state(&blocks, "minecraft:air");
     effective.set_block(3, MIN_Y + 4, 5, air).unwrap();
     let first_lsn = world
@@ -220,12 +229,25 @@ fn p08_real_region_cache_purge_regenerates_base_and_retains_offline_edit_read_on
     assert_eq!(bytes(&regenerated, &blocks), base_bytes);
     let resolved = read_only
         .store()
-        .resolve_base(0, position, &blocks, &items, || Ok(Some(regenerated)))
+        .resolve_base(
+            0,
+            position,
+            &blocks,
+            &items,
+            &mc_data::loot::chest_26_1_2::ChestLootCatalog::new(),
+            || Ok(Some(regenerated)),
+        )
         .unwrap()
         .unwrap();
     let composed = read_only
         .store()
-        .compose(0, &resolved, &blocks, &items)
+        .compose(
+            0,
+            &resolved,
+            &blocks,
+            &items,
+            &mc_data::loot::chest_26_1_2::ChestLootCatalog::new(),
+        )
         .unwrap();
     assert_eq!(composed.get_block(3, MIN_Y + 4, 5), Some(changed));
     assert_eq!(composed.world_journal_lsn(), second_lsn);
@@ -352,7 +374,16 @@ fn reviewer_p2_partial_physical_boundary_chunks_keep_valid_cells_and_deny_paddin
             .store()
             .apply_offline_snapshot(0, &base, &mut effective, &blocks, &items)
             .unwrap();
-        let actual = world.store().compose(0, &base, &blocks, &items).unwrap();
+        let actual = world
+            .store()
+            .compose(
+                0,
+                &base,
+                &blocks,
+                &items,
+                &mc_data::loot::chest_26_1_2::ChestLootCatalog::new(),
+            )
+            .unwrap();
         assert_eq!(
             actual.get_block(valid_x, -60, 0),
             Some(state(&blocks, "minecraft:air"))

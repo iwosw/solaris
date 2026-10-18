@@ -17,10 +17,10 @@
 //! - `foreign` reads the actor's own fence and submits a transfer whose player
 //!   endpoint is another runtime player id: the owner must refuse `forbidden`,
 //!   because a transfer may only name the actor's own inventory.
-//! - `absent-resident` and `absent-carry` query a handle the resident owner does
-//!   not hold and must receive `not-found`. `absent-warehouse` runs without an
-//!   authored settlement profile and must receive `runtime-unavailable`. Neither
-//!   missing authority may be represented as an empty inventory.
+//! - `absent-npc`, `absent-carry` and `absent-container` query a handle the npc
+//!   owner does not hold, or a position that holds no container, and must
+//!   receive `not-found`. A missing owner entry may never be represented as an
+//!   empty inventory.
 //! - `reserve` reads the player inventory's fence and reserves one emerald
 //!   against it, then reports the whole reservation state the owner answered.
 //! - `replay` submits the last committed transfer's record again, byte for byte,
@@ -87,10 +87,8 @@ const EMERALD_RESERVATION: u64 = 1;
 /// How much work one resource portion of that reservation declares.
 const RESERVATION_WORK_UNITS: u64 = 1;
 
-/// Opaque absent handles. The resident ledger exists in this fixture; the
-/// settlement runtime does not, so the warehouse query has no available owner.
-const ABSENT_RESIDENT: &str = "resident-absent";
-const ABSENT_WAREHOUSE: &str = "warehouse-absent";
+/// Opaque absent npc handle; containers use actual block coordinates.
+const ABSENT_NPC: &str = "npc-absent";
 
 /// The request ids and durable operation ids of the actions. They are the
 /// fixture's own, so a test reads back which operation this guest decided to send
@@ -129,12 +127,12 @@ enum Action {
     Stale,
     /// Submit a transfer naming another runtime player id.
     Foreign,
-    /// Read the resident equipment endpoint of a handle no owner holds.
-    AbsentResident,
-    /// Read the resident carry endpoint of a handle no owner holds.
+    /// Read the npc equipment endpoint of a handle no owner holds.
+    AbsentNpc,
+    /// Read the npc carry endpoint of a handle no owner holds.
     AbsentCarry,
-    /// Read the warehouse endpoint of a handle no owner holds.
-    AbsentWarehouse,
+    /// Read a physical container position that holds no container.
+    AbsentContainer,
     /// Reserve one emerald against the player inventory.
     Reserve,
     /// Submit the last committed transfer's record again.
@@ -156,9 +154,9 @@ impl Action {
             "restore" => Self::Restore,
             "stale" => Self::Stale,
             "foreign" => Self::Foreign,
-            "absent-resident" => Self::AbsentResident,
+            "absent-npc" => Self::AbsentNpc,
             "absent-carry" => Self::AbsentCarry,
-            "absent-warehouse" => Self::AbsentWarehouse,
+            "absent-container" => Self::AbsentContainer,
             "reserve" => Self::Reserve,
             "expired" => Self::Expired,
             "status" => Self::Status,
@@ -176,9 +174,9 @@ impl Action {
             Self::Restore => "restore",
             Self::Stale => "stale",
             Self::Foreign => "foreign",
-            Self::AbsentResident => "absent-resident",
+            Self::AbsentNpc => "absent-npc",
             Self::AbsentCarry => "absent-carry",
-            Self::AbsentWarehouse => "absent-warehouse",
+            Self::AbsentContainer => "absent-container",
             Self::Reserve => "reserve",
             Self::Replay => "replay",
             Self::Expired => "expired",
@@ -202,7 +200,7 @@ impl Action {
 
     fn answer_request(self) -> &'static str {
         match self {
-            Self::Query | Self::AbsentResident | Self::AbsentCarry | Self::AbsentWarehouse => {
+            Self::Query | Self::AbsentNpc | Self::AbsentCarry | Self::AbsentContainer => {
                 QUERY_REQUEST
             }
             Self::Expired => EXPIRED_REQUEST,
@@ -365,19 +363,22 @@ impl Fixture {
         let endpoint = player_endpoint(self.session);
         Ok(match action {
             Action::Query => query_owned_inventory(QUERY_REQUEST, endpoint, None),
-            Action::AbsentResident => query_owned_inventory(
+            Action::AbsentNpc => query_owned_inventory(
                 QUERY_REQUEST,
-                InventoryEndpoint::ResidentEquipment(ABSENT_RESIDENT.to_owned()),
+                InventoryEndpoint::NpcEquipment(ABSENT_NPC.to_owned()),
                 None,
             ),
             Action::AbsentCarry => query_owned_inventory(
                 QUERY_REQUEST,
-                InventoryEndpoint::ResidentCarry(ABSENT_RESIDENT.to_owned()),
+                InventoryEndpoint::NpcCarry(ABSENT_NPC.to_owned()),
                 None,
             ),
-            Action::AbsentWarehouse => query_owned_inventory(
+            Action::AbsentContainer => query_owned_inventory(
                 QUERY_REQUEST,
-                InventoryEndpoint::Warehouse(ABSENT_WAREHOUSE.to_owned()),
+                InventoryEndpoint::Container(solaris_plugin_sdk::inventories::ContainerEndpoint {
+                    dimension: "minecraft:overworld".to_owned(),
+                    position: solaris_plugin_sdk::types::BlockPosition { x: 0, y: 64, z: 0 },
+                }),
                 None,
             ),
             Action::Expired => {
@@ -428,6 +429,7 @@ impl Fixture {
                     STALE_REQUEST,
                     STALE_OPERATION,
                     self.session,
+                    None,
                     vec![tool_transfer(endpoint.clone(), TOOL_SLOT, STOW_SLOT)],
                     vec![InventoryExpectedRevision {
                         endpoint,
@@ -446,6 +448,7 @@ impl Fixture {
                     FOREIGN_REQUEST,
                     FOREIGN_OPERATION,
                     self.session,
+                    None,
                     vec![tool_transfer(foreign.clone(), TOOL_SLOT, STOW_SLOT)],
                     vec![InventoryExpectedRevision {
                         endpoint: foreign,
@@ -477,6 +480,7 @@ impl Fixture {
                     REPLAY_REQUEST,
                     &record.operation_id,
                     record.actor_id,
+                    None,
                     record.transfers.clone(),
                     record.expected_revisions.clone(),
                 )
@@ -504,6 +508,7 @@ impl Fixture {
                     CONFLICT_REQUEST,
                     &record.operation_id,
                     record.actor_id,
+                    None,
                     transfers,
                     record.expected_revisions.clone(),
                 )
@@ -585,11 +590,8 @@ impl Fixture {
                     "query committed slots={slots} revision={revision}"
                 ))])
             }
-            Action::AbsentResident | Action::AbsentCarry => {
+            Action::AbsentNpc | Action::AbsentCarry | Action::AbsentContainer => {
                 self.expect_refusal(action, answered, OperationFailure::NotFound)
-            }
-            Action::AbsentWarehouse => {
-                self.expect_refusal(action, answered, OperationFailure::RuntimeUnavailable)
             }
             Action::Move | Action::Restore => {
                 let revision = self.expect_transfer(action, answered)?;
@@ -845,6 +847,7 @@ impl TransferRecord {
             &self.request,
             &self.operation_id,
             self.actor_id,
+            None,
             self.transfers.clone(),
             self.expected_revisions.clone(),
         )
@@ -902,14 +905,14 @@ fn same_endpoint(left: &InventoryEndpoint, right: &InventoryEndpoint) -> bool {
         (InventoryEndpoint::PlayerInventory(left), InventoryEndpoint::PlayerInventory(right)) => {
             left == right
         }
-        (InventoryEndpoint::Warehouse(left), InventoryEndpoint::Warehouse(right))
-        | (
-            InventoryEndpoint::ResidentEquipment(left),
-            InventoryEndpoint::ResidentEquipment(right),
-        )
-        | (InventoryEndpoint::ResidentCarry(left), InventoryEndpoint::ResidentCarry(right)) => {
-            left == right
+        (InventoryEndpoint::Container(left), InventoryEndpoint::Container(right)) => {
+            left.dimension == right.dimension
+                && left.position.x == right.position.x
+                && left.position.y == right.position.y
+                && left.position.z == right.position.z
         }
+        (InventoryEndpoint::NpcEquipment(left), InventoryEndpoint::NpcEquipment(right))
+        | (InventoryEndpoint::NpcCarry(left), InventoryEndpoint::NpcCarry(right)) => left == right,
         _ => false,
     }
 }

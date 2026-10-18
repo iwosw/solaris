@@ -81,7 +81,7 @@ macro_rules! export_plugin {
             impl __precommit::Guest for SolarisPlugin {
                 fn before_build(
                     context: $crate::BuildContext,
-                ) -> Result<$crate::BuildDecision, $crate::PluginError> {
+                ) -> Result<$crate::BuildResult, $crate::PluginError> {
                     with_plugin(|plugin| {
                         <$plugin as $crate::Plugin>::before_build(plugin, &context)
                             .map_err(Into::into)
@@ -90,7 +90,7 @@ macro_rules! export_plugin {
 
                 fn before_damage(
                     context: $crate::DamageContext,
-                ) -> Result<$crate::DamageDecision, $crate::PluginError> {
+                ) -> Result<$crate::DamageResult, $crate::PluginError> {
                     with_plugin(|plugin| {
                         <$plugin as $crate::Plugin>::before_damage(plugin, &context)
                             .map_err(Into::into)

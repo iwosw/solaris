@@ -27,6 +27,14 @@ pub fn repo_root() -> PathBuf {
         .to_path_buf()
 }
 
+/// The guest build output directory, including the caller's shared build target.
+#[must_use]
+pub fn target_directory(workspace: &Path) -> PathBuf {
+    std::env::var_os("CARGO_TARGET_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| workspace.join("target"))
+}
+
 /// The fixture plugin's component bytes.
 ///
 /// The guest build runs once per test process: every test in a binary needs the
@@ -55,6 +63,10 @@ pub fn component_bytes_from_workspace(
     module_name: &str,
 ) -> Vec<u8> {
     let manifest = workspace.join("Cargo.toml");
+    let target = target_directory(workspace);
+    // Wasmtime compilation, not the warm Cargo build, dominates these tests:
+    // size optimization + LTO reduces the real guest's code before Cranelift
+    // allocates registers for it. Keep every SDK/WIT path and test mode intact.
     let status = ProcessCommand::new(env!("CARGO"))
         .args([
             "build",
@@ -63,14 +75,22 @@ pub fn component_bytes_from_workspace(
             "--target",
             "wasm32-unknown-unknown",
             "--release",
+            "--config",
+            "profile.release.opt-level=\"z\"",
+            "--config",
+            "profile.release.lto=true",
+            "--config",
+            "profile.release.codegen-units=1",
             "-p",
             package,
         ])
+        .arg("--target-dir")
+        .arg(&target)
         .status()
         .expect("guest build starts");
     assert!(status.success(), "{package} guest build succeeds");
-    let module = workspace
-        .join("target/wasm32-unknown-unknown/release")
+    let module = target
+        .join("wasm32-unknown-unknown/release")
         .join(module_name);
     let bytes = std::fs::read(module).expect("guest module exists");
     wit_component::ComponentEncoder::default()

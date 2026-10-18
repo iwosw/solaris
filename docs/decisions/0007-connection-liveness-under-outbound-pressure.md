@@ -1,7 +1,10 @@
 # ADR 0007 - Connection liveness under outbound pressure
 
 **Date:** 2026-07-22
-**Status:** Accepted
+**Status:** Liveness rationale retained; exact v1 timeout/tracking implementation
+and receipts below are historical after ADR 0014 Phase 5. Current edge fanout,
+credit and connection behavior are governed by ADR 0013, not the old 512-entity
+shard or central-session implementation.
 
 ## Problem
 
@@ -39,6 +42,17 @@ orbs bypass the shard so combat and pickup feedback stays responsive.
 Movement wire plans are built outside the global session-registry lock. A
 tracker-state compare-and-commit fence and a visibility recheck discard stale
 plans. Unchanged entities skip recipient reverse-index work entirely.
+
+Movement, player input, and sprint/shift commands share one pending pose commit.
+The connection continues draining outbound traffic while the simulation owner
+answers; input state is projected only after commit. Later movement and input
+samples retain the newest position, rotation, flags, and input independently.
+A validated client tick-end packet is a no-op, not an additional owner barrier:
+the newest sample across client ticks remains intact. The first ordered gameplay
+frame waits behind that sample before it executes. A rejected position preserves
+merged input at the old pose; a newer teleport supersedes the entire old sample.
+This keeps a writable socket from being mistaken for a slow reader while owner
+work is pending; reliable queue bounds and terminal overflow policy are unchanged.
 
 ## Consequences
 

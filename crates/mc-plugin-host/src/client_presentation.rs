@@ -28,14 +28,14 @@
 //!   no owner said.
 
 use mc_script::{
-    ScriptClientViewFailure, ScriptClientViewFieldValue, ScriptClientViewRequestKind,
-    ScriptEventKind, ScriptLoaderItemGrantFailure, ScriptPlayerId,
+    ScriptClientViewFailure, ScriptClientViewFieldValue, ScriptEventKind,
+    ScriptLoaderItemGrantFailure, ScriptPlayerId,
 };
 
 use crate::bindings::exports::solaris::plugin::events::{
     ClientSelectionOutcome, ClientSelectionStarted, ClientViewOpened, ClientViewOutcome, Event,
     LoaderItemGrantFailure, LoaderItemGrantOutcome, LoaderItemGrantResult, LoaderViewAction,
-    LoaderViewRequest, SelectionContext, ViewFailure, ViewOpened, ViewRequestKind,
+    LoaderViewRequest, SelectionContext, ViewFailure, ViewOpened,
 };
 use crate::bindings::solaris::plugin::client_presentation::{ViewField, ViewFieldValue};
 
@@ -54,7 +54,7 @@ pub(crate) fn map_event(kind: &ScriptEventKind) -> Option<Event> {
             request_kind,
         } => Some(Event::LoaderViewRequest(LoaderViewRequest {
             session: session_of(*player_id),
-            request_kind: view_request_kind(*request_kind)?,
+            request_kind: request_kind.as_str().to_owned(),
         })),
         // One action the owner admitted: the instance, revision, action,
         // sequence, fields and selection token are all the owner's own validated
@@ -149,18 +149,6 @@ pub(crate) fn map_event(kind: &ScriptEventKind) -> Option<Event> {
 /// report onto a connection that never asked.
 fn session_of(player_id: ScriptPlayerId) -> u64 {
     player_id.value()
-}
-
-/// The client's key-driven view kind, in the contract's own vocabulary.
-fn view_request_kind(kind: ScriptClientViewRequestKind) -> Option<ViewRequestKind> {
-    match kind {
-        ScriptClientViewRequestKind::Settlement => Some(ViewRequestKind::Settlement),
-        ScriptClientViewRequestKind::Army => Some(ViewRequestKind::Army),
-        // The server's enum is `non_exhaustive`: a kind this contract does not
-        // name yet has no member here, and the event is dropped rather than
-        // reported as one of the two it does.
-        _ => None,
-    }
 }
 
 /// The owner's own reason a view lifecycle request was refused.

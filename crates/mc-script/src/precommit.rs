@@ -5,9 +5,10 @@
 //! owner builds one [`HookContext`] out of the raw request it is about to apply,
 //! hands it to [`ScriptBoundary::begin_precommit`], and receives a
 //! [`PendingDecision`] it resolves to one [`Approval`]. The approval is the one
-//! authority the owner commits against: it is single-use, it expires with the
-//! deadline the request was queued under, and it stops being valid the moment the
-//! registration roster changes. A guest never sees a ticket, and a decision the
+//! authority the owner commits against: it is single-use and stops being valid
+//! the moment the registration roster changes. The host must answer within the
+//! request deadline, but later native scheduling cannot expire a timely answer.
+//! A guest never sees a ticket, and a decision the
 //! owner does not consume is not a decision the owner applied.
 //!
 //! The bound the whole feature runs under is one absolute deadline, created when
@@ -15,7 +16,7 @@
 //! chain. The value is a conservative watchdog of the host work the chain may
 //! spend, not a latency promise: it exists so an owner waiting on a plugin can
 //! never wait forever, and the host re-arms each guest only inside what is left
-//! of it.
+//! of it. That admission budget ends at host answer receipt, not native consume.
 //!
 //! Raw, not reduced. [`DamageContext::amount`] is the amount the native owner is
 //! about to apply *before* armor, shields, resistance or any other reduction, and
@@ -26,8 +27,9 @@
 //!
 //! Fail closed, and only where it is safe to fail. A decision the owner asked for
 //! is committed only through [`Approval::consume`], which refuses everything that
-//! is not a decision the owner may apply: a passed deadline, a roster that changed,
-//! a withdrawn source registration, a second consumer, and a cancellation. The
+//! is not a decision the owner may apply: a roster that changed, a withdrawn source
+//! registration, a second consumer, and a cancellation. Late host answers are
+//! refused before an approval is issued. The
 //! failures the *boundary* found always refuse, whatever an operator's
 //! [`HookFailurePolicy`] says - the policy is what a handler's own failure means,
 //! not a licence to commit an effect nobody decided. And a package that is
@@ -35,6 +37,7 @@
 //! fails, its registration's policy decides, and the chain never silently proceeds
 //! as though the package were not asked.
 
+use arc_swap::ArcSwap;
 use std::collections::BTreeSet;
 use std::fmt;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -384,6 +387,22 @@ pub trait SourceRegistration: fmt::Debug + Send + Sync {
     fn is_live(&self) -> bool;
 }
 
+/// The authoritative plugin-storage versions an approval's guards were bound to.
+///
+/// A `before-build` handler may return storage-version guards in its own
+/// namespace. The build owner cannot read plugin storage itself, so the storage
+/// owner binds those guards to its shared version counters before the owner's
+/// commit turn, and the owner asks this fence - synchronously, with no I/O -
+/// immediately before it applies the build. `false` means a guarded key's
+/// version moved after the guards were bound, so the build must be refused.
+///
+/// This is a read, not a lock: it does not hold the counters across the owner's
+/// apply, so it is not atomic with it. See the plugin pre-commit hook ADR.
+pub trait StorageVersionFence: fmt::Debug + Send + Sync {
+    /// Whether every guarded key still carries exactly its expected version.
+    fn is_current(&self) -> bool;
+}
+
 /// Why a hook context was refused before a plugin ever saw it.
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[non_exhaustive]
@@ -470,6 +489,43 @@ impl HookDecision {
             (Self::Replace(amount), HookKind::Damage)
                 if amount.is_finite() && amount >= 0.0
         )
+    }
+}
+
+/// One handler's native verdict and guards in its own authenticated namespace.
+#[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
+pub struct HookHandlerResult {
+    pub decision: HookDecision,
+    pub expected_plugin_storage_versions: Vec<crate::ScriptPluginStorageVersionGuard>,
+}
+
+impl HookHandlerResult {
+    #[must_use]
+    pub fn new(
+        decision: HookDecision,
+        expected_plugin_storage_versions: Vec<crate::ScriptPluginStorageVersionGuard>,
+    ) -> Self {
+        Self {
+            decision,
+            expected_plugin_storage_versions,
+        }
+    }
+}
+
+/// The host binds each handler's guard list to the admitted registration.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+#[non_exhaustive]
+pub struct HookStorageVersionGuards {
+    pub plugin_id: String,
+    pub guards: Vec<crate::ScriptPluginStorageVersionGuard>,
+}
+
+impl HookStorageVersionGuards {
+    #[must_use]
+    pub fn new(plugin_id: String, guards: Vec<crate::ScriptPluginStorageVersionGuard>) -> Self {
+        Self { plugin_id, guards }
     }
 }
 
@@ -680,7 +736,7 @@ pub struct Request {
     /// The authoritative roster snapshot this request was admitted under.
     hooks: Arc<[HookRegistration]>,
     /// Shared across approval copies so terminal consumption releases this slot.
-    permit: Arc<StdMutex<Option<OutstandingPermit>>>,
+    permit: Arc<OutstandingPermit>,
 }
 
 impl Request {
@@ -727,26 +783,55 @@ impl Request {
     /// or an amount that is not finite and at least zero - is answered as
     /// [`HookFailure::Invalid`] instead: a chain that produced one has answered
     /// nothing the owner may commit.
-    pub fn answer(self, decision: HookDecision) -> Result<(), HookAnswerError> {
-        if !decision.is_valid_for(self.kind) {
-            return self.fail(HookFailure::Invalid);
+    pub fn answer(
+        self,
+        decision: HookDecision,
+        storage_versions: Vec<HookStorageVersionGuards>,
+    ) -> Result<(), HookAnswerError> {
+        self.answer_at(decision, storage_versions, Instant::now())
+    }
+
+    /// Internal clock injection keeps admission regressions independent of waits.
+    pub(crate) fn answer_at(
+        self,
+        decision: HookDecision,
+        storage_versions: Vec<HookStorageVersionGuards>,
+        answered_at: Instant,
+    ) -> Result<(), HookAnswerError> {
+        if !decision.is_valid_for(self.kind)
+            || storage_versions.iter().any(|scoped| {
+                !self
+                    .hooks
+                    .iter()
+                    .any(|hook| hook.plugin_id() == scoped.plugin_id)
+                    || crate::validate_plugin_storage_version_guards(&scoped.guards).is_err()
+            })
+        {
+            return self.deliver(Err(HookFailure::Invalid), answered_at);
         }
-        self.deliver(Ok(decision))
+        self.deliver(Ok((decision, storage_versions)), answered_at)
     }
 
     /// Answer the owner with a failure.
     ///
-    /// A late answer is still delivered: the deadline is the owner's, and refusing
-    /// the answer at [`Approval::consume`] keeps the one authority that decides
-    /// whether the effect may be committed.
+    /// Answers received at or after the request deadline fail with
+    /// [`HookFailure::Expired`], even if the owner has not polled yet.
     pub fn fail(self, failure: HookFailure) -> Result<(), HookAnswerError> {
-        self.deliver(Err(failure))
+        self.deliver(Err(failure), Instant::now())
     }
 
-    fn deliver(self, answer: Result<HookDecision, HookFailure>) -> Result<(), HookAnswerError> {
+    fn deliver(
+        self,
+        answer: Result<(HookDecision, Vec<HookStorageVersionGuards>), HookFailure>,
+        answered_at: Instant,
+    ) -> Result<(), HookAnswerError> {
         self.reply
             .send(Answered {
-                answer,
+                answer: if answered_at >= self.deadline {
+                    Err(HookFailure::Expired)
+                } else {
+                    answer
+                },
                 permit: self.permit,
             })
             .map_err(|_| HookAnswerError::Abandoned)
@@ -756,8 +841,8 @@ impl Request {
 /// The host's terminal answer, carrying the request's admission slot to the
 /// approval that decides whether native code spends it.
 struct Answered {
-    answer: Result<HookDecision, HookFailure>,
-    permit: Arc<StdMutex<Option<OutstandingPermit>>>,
+    answer: Result<(HookDecision, Vec<HookStorageVersionGuards>), HookFailure>,
+    permit: Arc<OutstandingPermit>,
 }
 
 /// The owner's side of one queued question.
@@ -775,34 +860,45 @@ pub struct PendingDecision {
 enum Pending {
     /// The boundary answered before anything was queued: no hook of this kind is
     /// registered, so the effect takes the direct native path it always took.
-    Direct(HookDecision),
+    Direct(Result<HookDecision, HookFailure>),
     Queued(oneshot::Receiver<Answered>),
+    Resolved,
 }
+
+type ResolvedAnswer = (
+    HookDecision,
+    Vec<HookStorageVersionGuards>,
+    Option<Arc<OutstandingPermit>>,
+);
 
 impl PendingDecision {
     /// The decision a boundary with no registered hook of this kind answers with.
     ///
-    /// It carries the caller's own deadline like a queued request does: the direct
-    /// path has nothing to wait for, but the owner's commit window is still the
-    /// bound it asked under, so an approval is never unbounded.
+    /// There is no host work to wait for. Check the admission deadline now, not
+    /// when the native owner later polls or consumes the direct decision.
     fn direct(
         authority: &Arc<PrecommitAuthority>,
         kind: HookKind,
         generation: u64,
         deadline: Instant,
+        source: Option<Arc<dyn SourceRegistration>>,
     ) -> Self {
         Self {
-            state: Pending::Direct(HookDecision::Keep),
+            state: Pending::Direct(if Instant::now() >= deadline {
+                Err(HookFailure::Expired)
+            } else {
+                Ok(HookDecision::Keep)
+            }),
             authority: Arc::clone(authority),
             generation,
             kind,
             deadline,
-            source: None,
+            source,
             ticket: Arc::new(AtomicBool::new(true)),
         }
     }
 
-    /// The absolute instant this decision has to be committed by.
+    /// The absolute instant the host has to answer by.
     #[must_use]
     pub const fn deadline(&self) -> Instant {
         self.deadline
@@ -810,73 +906,119 @@ impl PendingDecision {
 
     /// Wait for the chain's answer.
     ///
-    /// This answers an [`Approval`] as soon as the host has decided, and it ends
-    /// the wait by itself at the deadline: an owner can never wait longer than the
-    /// bound its request was admitted under, whatever the host is doing. A
-    /// decision that arrived past the deadline is handed on - the approval is what
-    /// refuses it, and it does so for the commit rather than for the wait.
-    pub async fn resolve(self) -> Result<Approval, HookFailure> {
-        let Self {
-            state,
-            authority,
-            generation,
-            kind,
-            deadline,
-            source,
-            ticket,
-        } = self;
-        let (decision, permit) = match state {
-            Pending::Direct(decision) => (decision, None),
+    /// The queue wait and host work share the original absolute deadline.
+    /// A timely answer remains valid if the owner resumes after that deadline;
+    /// native scheduling does not spend the host's admission budget.
+    pub async fn resolve(mut self) -> Result<Approval, HookFailure> {
+        if let Some(answered) = self.try_resolve() {
+            return answered;
+        }
+        let answered = match &mut self.state {
+            Pending::Direct(_) => unreachable!("direct answer handled above"),
             Pending::Queued(reply) => {
-                match tokio::time::timeout_at(tokio::time::Instant::from_std(deadline), reply).await
+                match tokio::time::timeout_at(tokio::time::Instant::from_std(self.deadline), reply)
+                    .await
                 {
                     Err(_elapsed) => return Err(HookFailure::Expired),
                     Ok(Err(_dropped)) => return Err(HookFailure::Unavailable),
-                    Ok(Ok(Answered {
-                        answer: Err(failure),
-                        ..
-                    })) => return Err(failure),
-                    Ok(Ok(Answered {
-                        answer: Ok(decision),
-                        permit,
-                    })) => (decision, Some(permit)),
+                    Ok(Ok(Answered { answer, permit })) => {
+                        let (decision, storage_versions) = answer?;
+                        (decision, storage_versions, Some(permit))
+                    }
                 }
             }
+            Pending::Resolved => return Err(HookFailure::Stale),
         };
-        Ok(Approval {
-            authority,
-            generation,
-            kind,
-            deadline,
-            source,
-            ticket,
+        Ok(self.approval(answered))
+    }
+
+    /// Take an already delivered answer without waiting or requiring a Tokio
+    /// runtime. `None` means the host has not answered yet. A terminal answer
+    /// retires this pending decision; later polls return [`HookFailure::Stale`].
+    /// Only an unanswered request expires here; a delivered answer was already
+    /// checked against the original host deadline at receipt.
+    pub fn try_resolve(&mut self) -> Option<Result<Approval, HookFailure>> {
+        if matches!(self.state, Pending::Resolved) {
+            return Some(Err(HookFailure::Stale));
+        }
+        let answered = match &mut self.state {
+            Pending::Direct(decision) => decision.map(|decision| (decision, Vec::new(), None)),
+            Pending::Queued(reply) => match reply.try_recv() {
+                Err(oneshot::error::TryRecvError::Empty) => {
+                    if Instant::now() < self.deadline {
+                        return None;
+                    }
+                    self.state = Pending::Resolved;
+                    self.ticket.store(false, Ordering::Release);
+                    return Some(Err(HookFailure::Expired));
+                }
+                Err(oneshot::error::TryRecvError::Closed) => Err(HookFailure::Unavailable),
+                Ok(Answered { answer, permit }) => answer
+                    .map(|(decision, storage_versions)| (decision, storage_versions, Some(permit))),
+            },
+            Pending::Resolved => unreachable!("terminal state handled above"),
+        };
+        self.state = Pending::Resolved;
+        Some(answered.map(|answered| self.approval(answered)))
+    }
+
+    fn approval(&self, (decision, storage_versions, permit): ResolvedAnswer) -> Approval {
+        Approval {
+            authority: Arc::clone(&self.authority),
+            generation: self.generation,
+            kind: self.kind,
+            source: self.source.clone(),
+            ticket: Arc::clone(&self.ticket),
             decision,
+            storage_versions,
+            storage_fence: None,
             _permit: permit,
-        })
+        }
     }
 }
 
 /// One native decision the owner may commit against, exactly once.
 ///
-/// The approval is the ticket: it stops being usable when its deadline passes,
-/// when the registration roster it was created under changes, and when the
-/// authority the question came from is gone. It can be consumed once however many
-/// copies of it exist. Consuming it is the commit point; reading it is not, which
-/// is what lets an owner check its own fences first.
+/// The approval is the ticket: it stops being usable when the registration roster
+/// it was created under changes or the authority the question came from is gone.
+/// Its host answer has already met the admission deadline. It can be consumed
+/// once however many copies of it exist. Consuming it is the commit point;
+/// reading it is not, which lets an owner check its own fences first.
 #[derive(Debug, Clone)]
 pub struct Approval {
     authority: Arc<PrecommitAuthority>,
     generation: u64,
     kind: HookKind,
-    deadline: Instant,
     source: Option<Arc<dyn SourceRegistration>>,
     ticket: Arc<AtomicBool>,
     decision: HookDecision,
+    storage_versions: Vec<HookStorageVersionGuards>,
+    /// The storage owner's binding of `storage_versions`, set only for a build.
+    storage_fence: Option<Arc<dyn StorageVersionFence>>,
     /// Shared across approval copies; any terminal consume releases capacity.
-    _permit: Option<Arc<StdMutex<Option<OutstandingPermit>>>>,
+    _permit: Option<Arc<OutstandingPermit>>,
 }
 
 impl Approval {
+    #[must_use]
+    pub fn expected_plugin_storage_versions(&self) -> &[HookStorageVersionGuards] {
+        &self.storage_versions
+    }
+
+    /// Bind this approval's storage-version guards to the storage owner's
+    /// authoritative counters so the build owner can check them at its commit.
+    #[must_use]
+    pub fn with_storage_fence(mut self, fence: Arc<dyn StorageVersionFence>) -> Self {
+        self.storage_fence = Some(fence);
+        self
+    }
+
+    /// The binding set by [`Self::with_storage_fence`], if any.
+    #[must_use]
+    pub fn storage_fence(&self) -> Option<&dyn StorageVersionFence> {
+        self.storage_fence.as_deref()
+    }
+
     /// The decision the chain reached, readable without consuming the approval.
     ///
     /// A cancellation is visible here so an owner can refuse an effect before it
@@ -899,12 +1041,6 @@ impl Approval {
         self.kind
     }
 
-    /// The instant this approval stops being usable.
-    #[must_use]
-    pub const fn deadline(&self) -> Instant {
-        self.deadline
-    }
-
     /// The registration generation this approval was created under.
     #[must_use]
     pub const fn generation(&self) -> u64 {
@@ -913,24 +1049,18 @@ impl Approval {
 
     /// Consume the one live ticket and answer the decision it carries.
     ///
-    /// This is the atomic commit point. It refuses, in this order, an approval
-    /// whose deadline has passed with [`HookFailure::Expired`]; one whose
-    /// registration roster is no longer the roster it was admitted under, one
-    /// whose captured source authority is no longer live, and any second consumer
-    /// - the same approval used twice or another copy of it - with
-    ///   [`HookFailure::Stale`]; and a cancelled decision with
-    ///   [`HookFailure::Cancelled`]. Everything that succeeds therefore carries a
-    ///   decision the owner may apply: the only members left are [`HookDecision::Keep`]
-    ///   and a damage [`HookDecision::Replace`], so `?` on this call is already the
-    ///   deny path and an owner cannot commit a cancellation by accident.
+    /// This is the atomic commit point. It refuses an approval whose registration
+    /// roster is no longer the roster it was admitted under, whose captured source
+    /// authority is no longer live, or any second consumer (including a copy) with
+    /// [`HookFailure::Stale`]; and a cancelled decision with
+    /// [`HookFailure::Cancelled`]. The host deadline was checked at answer receipt,
+    /// so a later native tick-boundary wait cannot expire a timely answer.
+    /// Everything that succeeds carries [`HookDecision::Keep`] or a damage
+    /// [`HookDecision::Replace`], so `?` on this call is already the deny path.
     ///
     /// The owner still checks its own captured revisions, session and permissions
     /// before it applies anything; this is only the plugin-side half of the commit.
     pub fn consume(&mut self) -> Result<HookDecision, HookFailure> {
-        if Instant::now() >= self.deadline {
-            self.release_permit();
-            return Err(HookFailure::Expired);
-        }
         if self.authority.generation() != self.generation {
             self.release_permit();
             return Err(HookFailure::Stale);
@@ -958,14 +1088,7 @@ impl Approval {
         let Some(permit) = &self._permit else {
             return;
         };
-        match permit.lock() {
-            Ok(mut permit) => {
-                permit.take();
-            }
-            Err(poisoned) => {
-                poisoned.into_inner().take();
-            }
-        }
+        permit.release();
     }
 }
 
@@ -976,14 +1099,15 @@ impl Approval {
 /// under is the same one an approval checks before it commits.
 #[derive(Debug)]
 pub(crate) struct PrecommitAuthority {
-    roster: StdMutex<HookRoster>,
+    roster: ArcSwap<HookRoster>,
+    writer: StdMutex<()>,
     outstanding: Arc<AtomicUsize>,
 }
 
 #[derive(Debug, Default)]
 struct HookRoster {
     generation: u64,
-    hooks: Vec<HookRegistration>,
+    hooks: Arc<[HookRegistration]>,
 }
 
 impl HookRoster {
@@ -995,25 +1119,19 @@ impl HookRoster {
 impl PrecommitAuthority {
     pub(crate) fn new() -> Self {
         Self {
-            roster: StdMutex::new(HookRoster::default()),
+            roster: ArcSwap::from_pointee(HookRoster::default()),
+            writer: StdMutex::new(()),
             outstanding: Arc::new(AtomicUsize::new(0)),
-        }
-    }
-
-    fn lock(&self) -> std::sync::MutexGuard<'_, HookRoster> {
-        match self.roster.lock() {
-            Ok(roster) => roster,
-            Err(poisoned) => poisoned.into_inner(),
         }
     }
 
     /// The roster's current generation, whether or not it still holds this hook.
     pub(crate) fn generation(&self) -> u64 {
-        self.lock().generation
+        self.roster.load().generation
     }
 
     pub(crate) fn has(&self, kind: HookKind) -> bool {
-        self.lock().has(kind)
+        self.roster.load().has(kind)
     }
 
     /// Publish the operator's registrations, in the chain's own order.
@@ -1037,11 +1155,12 @@ impl PrecommitAuthority {
                 });
             }
         }
-        let mut roster = self.lock();
-        roster.hooks = hooks;
-        // A write is a generation, whatever it holds: an owner's approval is
-        // admitted under one roster, and any later roster is not that one.
-        roster.generation += 1;
+        let hooks = Arc::from(hooks);
+        let _writer = self.writer.lock().unwrap_or_else(|e| e.into_inner());
+        let generation = self.roster.load().generation + 1;
+        // One publication is one generation, including an empty roster.
+        self.roster
+            .store(Arc::new(HookRoster { generation, hooks }));
         Ok(())
     }
 
@@ -1061,6 +1180,7 @@ impl PrecommitAuthority {
                 Ok(_) => {
                     return Ok(OutstandingPermit {
                         outstanding: Arc::clone(&self.outstanding),
+                        live: AtomicBool::new(true),
                     });
                 }
                 Err(observed) => current = observed,
@@ -1073,11 +1193,20 @@ impl PrecommitAuthority {
 #[derive(Debug)]
 struct OutstandingPermit {
     outstanding: Arc<AtomicUsize>,
+    live: AtomicBool,
+}
+
+impl OutstandingPermit {
+    fn release(&self) {
+        if self.live.swap(false, Ordering::AcqRel) {
+            self.outstanding.fetch_sub(1, Ordering::AcqRel);
+        }
+    }
 }
 
 impl Drop for OutstandingPermit {
     fn drop(&mut self) {
-        self.outstanding.fetch_sub(1, Ordering::AcqRel);
+        self.release();
     }
 }
 
@@ -1103,7 +1232,7 @@ pub(crate) fn begin(
 ) -> Result<PendingDecision, HookFailure> {
     let kind = context.kind();
     let (generation, hooks) = {
-        let roster = authority.lock();
+        let roster = authority.roster.load();
         (
             roster.generation,
             roster
@@ -1116,10 +1245,10 @@ pub(crate) fn begin(
     };
     if hooks.is_empty() {
         return Ok(PendingDecision::direct(
-            authority, kind, generation, deadline,
+            authority, kind, generation, deadline, source,
         ));
     }
-    let permit = Arc::new(StdMutex::new(Some(authority.reserve()?)));
+    let permit = Arc::new(authority.reserve()?);
     let (reply, queued) = oneshot::channel();
     let pending = PendingDecision {
         state: Pending::Queued(queued),
@@ -1149,3 +1278,7 @@ pub(crate) fn begin(
 pub(crate) fn deadline_from_now() -> Instant {
     Instant::now() + PRECOMMIT_DEADLINE
 }
+
+#[cfg(test)]
+#[path = "precommit_lock_tests.rs"]
+mod lock_tests;

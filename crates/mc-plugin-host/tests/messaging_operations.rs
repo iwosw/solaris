@@ -57,6 +57,7 @@ fn start(reason_bytes: usize, commands: usize) -> (tempfile::TempDir, PluginHost
         HostQueues {
             events: 8,
             commands,
+            ..HostQueues::default()
         },
         Arc::new(ReconnectedPlayer),
     )

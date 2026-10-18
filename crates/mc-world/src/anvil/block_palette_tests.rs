@@ -71,3 +71,57 @@ fn compact_block_palettes_round_trip_through_vanilla_anvil_words() {
         assert_eq!(encode_block_section(&decoded, &registry).unwrap(), encoded);
     }
 }
+
+#[test]
+fn anvil_palette_missing_properties_inherit_block_defaults() {
+    let registry = BlockRegistry::from_report(&[BlockReport {
+        id: Identifier::parse("minecraft:wither_skeleton_wall_skull").unwrap(),
+        properties: BTreeMap::from([
+            ("facing".into(), vec!["north".into(), "west".into()]),
+            ("powered".into(), vec!["true".into(), "false".into()]),
+        ]),
+        states: (0..4)
+            .map(|id| BlockStateReport {
+                id,
+                default: id == 1,
+                properties: BTreeMap::from([
+                    (
+                        "facing".into(),
+                        if id < 2 { "north" } else { "west" }.into(),
+                    ),
+                    (
+                        "powered".into(),
+                        if id % 2 == 0 { "true" } else { "false" }.into(),
+                    ),
+                ]),
+            })
+            .collect(),
+    }])
+    .unwrap();
+    let decode = |properties| {
+        decode_block_section(
+            &[(
+                "palette".into(),
+                Tag::List(ListTag {
+                    element_type: tag_type::COMPOUND,
+                    elements: vec![Tag::Compound(vec![
+                        (
+                            "Name".into(),
+                            Tag::String("minecraft:wither_skeleton_wall_skull".into()),
+                        ),
+                        ("Properties".into(), Tag::Compound(properties)),
+                    ])],
+                }),
+            )],
+            &registry,
+            BlockStateId(0),
+        )
+    };
+    let section = decode(vec![("facing".into(), Tag::String("west".into()))]).unwrap();
+    assert_eq!(section.get(0, 0, 0), BlockStateId(3));
+    assert_eq!(decode(Vec::new()).unwrap().get(0, 0, 0), BlockStateId(1));
+    assert!(matches!(
+        decode(vec![("facing".into(), Tag::String("invalid".into()))]),
+        Err(ChunkNbtError::UnknownBlockState { .. })
+    ));
+}

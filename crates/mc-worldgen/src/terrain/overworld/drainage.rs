@@ -50,13 +50,11 @@ pub(super) fn sample(
     block_z: i32,
     scale: f64,
     minimum_bank_width: f64,
-    taper_headwaters: bool,
 ) -> DrainageSample {
     let cell_blocks = cell_blocks(scale);
     let geometry = ChannelGeometry {
         cell_blocks,
         minimum_bank_width,
-        taper_headwaters,
     };
     let point_x = f64::from(block_x);
     let point_z = f64::from(block_z);
@@ -98,7 +96,6 @@ pub(super) fn sample(
 pub(super) struct ChannelGeometry {
     pub(super) cell_blocks: f64,
     pub(super) minimum_bank_width: f64,
-    pub(super) taper_headwaters: bool,
 }
 
 fn evaluate_segment(
@@ -112,7 +109,6 @@ fn evaluate_segment(
     let ChannelGeometry {
         cell_blocks,
         minimum_bank_width,
-        taper_headwaters,
     } = geometry;
     // Shared cell anchors and the directed reach determine the whole curve,
     // independently of generation order and chunk borders.
@@ -161,16 +157,8 @@ fn evaluate_segment(
     if strength <= 0.0 {
         return;
     }
-    // Keep the seeded base width, widening taller banks rather than cutting
-    // cliffs. Tellus also shrinks the base width with the reach strength, so a
-    // headwater tapers into a narrow creek instead of starting at full width
-    // out of nowhere; VanillaLike keeps the flat minimum for byte-identical
-    // terrain.
-    let minimum_width = if taper_headwaters {
-        MIN_CHANNEL_WIDTH_BLOCKS * strength
-    } else {
-        MIN_CHANNEL_WIDTH_BLOCKS
-    };
+    // Preserve standalone vanilla-like seeded channel widths.
+    let minimum_width = MIN_CHANNEL_WIDTH_BLOCKS;
     let width = ((minimum_width + accumulation * 1.05).min(MAX_CHANNEL_WIDTH_BLOCKS)
         * (0.80 + unit(cell_hash(seed, from.x, from.z, 0x5749_4454_4848)) * 0.45)
         * width_scale)
@@ -328,12 +316,6 @@ fn accumulation_strength(accumulation: f64) -> f64 {
     ))
 }
 
-#[cfg(test)]
-pub(super) fn active_cell(seed: i64, cell: DrainageCell) -> bool {
-    let accumulation = accumulation(seed, cell, ACCUMULATION_DEPTH);
-    accumulation_strength(accumulation) * basin_weight(seed, cell) >= 0.10
-}
-
 fn local_runoff(seed: i64, cell: DrainageCell) -> f64 {
     // Keep runoff slowly varying so channel depth does not jump at cell joins.
     0.88 + basin_weight(seed, cell) * 0.20
@@ -428,7 +410,7 @@ mod tests {
                 .step_by(31)
                 .flat_map(|z| {
                     (-1_024..=1_024).step_by(29).map(move |x| {
-                        let value = sample(seed, x, z, 1.0, 0.0, false);
+                        let value = sample(seed, x, z, 1.0, 0.0);
                         (
                             value.channel_weight.to_bits(),
                             value.river_distance.to_bits(),
@@ -490,12 +472,10 @@ mod tests {
         let mut maximum_step = 0.0_f64;
         for z in (-1_024..=1_024).step_by(17) {
             for x in (-1_024..=1_024).step_by(17) {
-                let current = sample(seed, x, z, scale, 0.0, false).channel_weight;
+                let current = sample(seed, x, z, scale, 0.0).channel_weight;
                 maximum_step = maximum_step
-                    .max((current - sample(seed, x + 1, z, scale, 0.0, false).channel_weight).abs())
-                    .max(
-                        (current - sample(seed, x, z + 1, scale, 0.0, false).channel_weight).abs(),
-                    );
+                    .max((current - sample(seed, x + 1, z, scale, 0.0).channel_weight).abs())
+                    .max((current - sample(seed, x, z + 1, scale, 0.0).channel_weight).abs());
             }
         }
         assert!(cell_blocks >= MIN_CELL_BLOCKS);
@@ -521,7 +501,7 @@ mod tests {
             coordinates
                 .iter()
                 .map(|&(x, z)| {
-                    let value = sample(712_816, x, z, 1.0, 0.0, false);
+                    let value = sample(712_816, x, z, 1.0, 0.0);
                     (
                         (x, z),
                         (

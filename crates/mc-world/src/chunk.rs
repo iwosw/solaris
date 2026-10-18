@@ -12,9 +12,8 @@
 //! codec to populate (`heightmaps`, `biomes`, `block_entities`,
 //! `status`).
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
 
 use mc_data::Identifier;
 use mc_data::block_light::BlockLightTable;
@@ -23,9 +22,6 @@ use mc_nbt::Tag;
 use crate::block::BlockStateId;
 use crate::light::ChunkLight;
 use crate::section::{ChunkSection, PackedBitArray, SECTION_DIM};
-
-mod memory_profile;
-pub use memory_profile::ChunkMemoryProfile;
 
 #[cfg(test)]
 mod light_compact_tests;
@@ -50,7 +46,6 @@ pub const BIOME_DIM: usize = 4;
 pub const BIOME_VOLUME: usize = BIOME_DIM * BIOME_DIM * BIOME_DIM;
 /// Bytes per per-section light layer: `16³` cells × 4 bits per cell.
 pub const LIGHT_LAYER_BYTES: usize = SECTION_DIM * SECTION_DIM * SECTION_DIM / 2;
-static NEXT_CHUNK_RUNTIME_INSTANCE_ID: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ChunkGeometry {
@@ -94,7 +89,7 @@ impl ChunkGeometry {
         (self.height() / SECTION_DIM as i32) as usize
     }
 
-    fn world_y_to_section(self, y: i32) -> Option<(usize, u8)> {
+    pub fn world_y_to_section(self, y: i32) -> Option<(usize, u8)> {
         if !(self.min_y..self.max_y).contains(&y) {
             return None;
         }
@@ -171,53 +166,22 @@ pub struct BlockPos {
     pub z: i32,
 }
 
-const SETTLEMENT_INHABITANTS_KEY: &str = "SolarisSettlementInhabitants";
-const SETTLEMENT_VACANT_HOMES_KEY: &str = "SolarisSettlementVacantHomes";
+const GENERATED_ENTITIES_KEY: &str = "SolarisGeneratedEntities";
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct SettlementInhabitantMarker {
+pub struct GeneratedEntityMarker {
     pub claim: String,
     pub entity_type: String,
     pub position: [f64; 3],
     pub villager_kind: String,
     pub profession: String,
     pub level: u8,
-    pub home: Option<[f64; 3]>,
-    pub job_site: Option<[f64; 3]>,
-    pub meeting_point: Option<[f64; 3]>,
-    /// The entity's `Age`: negative for a baby, `0` for an adult. A marker
-    /// written before this field existed reads as an adult.
+    /// The entity's native `Age`: negative for a baby, `0` for an adult.
     pub age: i32,
     /// The yaw the entity is placed with. Absent reads as `0.0`.
     pub yaw: f32,
     /// The pitch the entity's template authored. Absent reads as `0.0`.
     pub pitch: f32,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct SettlementVacantHomeMarker {
-    pub claim: String,
-    pub position: [f64; 3],
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct BlockMutationToken {
-    pub chunk_instance_id: u64,
-    pub version: u64,
-    /// Revision of the most recent replacement by a different block type.
-    pub last_replacement_version: u64,
-}
-
-#[derive(Debug, Clone, Copy, Default)]
-struct BlockMutationVersion {
-    version: u64,
-    last_replacement: u64,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct ChunkLightSourceToken {
-    chunk_instance_id: u64,
-    generation: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -239,6 +203,17 @@ pub struct ScheduledFluidTick {
 }
 
 impl ScheduledFluidTick {
+    /// Supported scheduled-fluid identities, without rewriting the source identifier.
+    #[must_use]
+    pub fn fluid_kind(name: &Identifier) -> Option<mc_data::block_facts::FluidKind> {
+        use mc_data::block_facts::FluidKind;
+        match name.as_str() {
+            "minecraft:water" | "minecraft:flowing_water" => Some(FluidKind::Water),
+            "minecraft:lava" | "minecraft:flowing_lava" => Some(FluidKind::Lava),
+            _ => None,
+        }
+    }
+
     #[must_use]
     pub fn new(pos: BlockPos, fluid: Identifier, trigger_tick: u64, priority: i32) -> Self {
         Self {
@@ -255,7 +230,7 @@ impl ScheduledFluidTick {
         self.sequence
     }
 
-    pub(crate) fn from_storage(
+    pub fn from_storage(
         pos: BlockPos,
         fluid: Identifier,
         trigger_tick: u64,
@@ -300,7 +275,8 @@ impl ScheduledBlockTick {
         self.sequence
     }
 
-    pub(crate) fn from_storage(
+    /// Restore an authoritative scheduler identity without assigning a new sequence.
+    pub fn from_storage(
         pos: BlockPos,
         block: Identifier,
         trigger_tick: u64,
@@ -328,7 +304,7 @@ impl ScheduledBlockTick {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Eq, Default)]
 pub struct FurnaceSlot {
     pub count: i32,
     pub item_id: u32,
@@ -337,6 +313,20 @@ pub struct FurnaceSlot {
     pub custom_name: Option<String>,
     pub item_model: Option<Arc<Identifier>>,
     pub stew_effects: Vec<mc_data::item_stack::StewEffect>,
+    pub components: Option<Box<mc_data::item_stack::ExtendedItemComponents>>,
+}
+
+impl PartialEq for FurnaceSlot {
+    fn eq(&self, other: &Self) -> bool {
+        self.count == other.count
+            && self.item_id == other.item_id
+            && self.damage == other.damage
+            && self.enchantments == other.enchantments
+            && self.custom_name == other.custom_name
+            && self.item_model == other.item_model
+            && self.stew_effects == other.stew_effects
+            && self.extended() == other.extended()
+    }
 }
 
 impl FurnaceSlot {
@@ -348,7 +338,19 @@ impl FurnaceSlot {
         custom_name: None,
         item_model: None,
         stew_effects: Vec::new(),
+        components: None,
     };
+
+    #[must_use]
+    pub fn extended(&self) -> &mc_data::item_stack::ExtendedItemComponents {
+        self.components
+            .as_deref()
+            .unwrap_or(mc_data::item_stack::ExtendedItemComponents::empty())
+    }
+
+    pub fn extended_mut(&mut self) -> &mut mc_data::item_stack::ExtendedItemComponents {
+        self.components.get_or_insert_with(Default::default)
+    }
 
     #[must_use]
     pub fn is_empty(&self) -> bool {
@@ -367,8 +369,31 @@ pub struct FurnaceBlockEntity {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BrewingStandBlockEntity {
+    pub slots: [FurnaceSlot; 5],
+    pub brew_time: i16,
+    pub fuel: i16,
+    /// Ingredient identity at the start of the current batch.
+    pub ingredient: Option<u32>,
+}
+
+impl Default for BrewingStandBlockEntity {
+    fn default() -> Self {
+        Self {
+            slots: std::array::from_fn(|_| FurnaceSlot::EMPTY),
+            brew_time: 0,
+            fuel: 0,
+            ingredient: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ChestBlockEntity {
     pub slots: [FurnaceSlot; 27],
+    /// Unopened vanilla container loot; cleared atomically when its contents are populated.
+    pub loot_table: Option<Identifier>,
+    pub loot_seed: i64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -381,6 +406,8 @@ impl Default for ChestBlockEntity {
     fn default() -> Self {
         Self {
             slots: std::array::from_fn(|_| FurnaceSlot::EMPTY),
+            loot_table: None,
+            loot_seed: 0,
         }
     }
 }
@@ -457,23 +484,6 @@ impl BiomeSection {
             BiomeSection::Indirect { palette, .. } => palette,
         }
     }
-
-    #[must_use]
-    fn estimated_heap_bytes(&self) -> usize {
-        match self {
-            BiomeSection::Single(id) => id.as_str().len(),
-            BiomeSection::Indirect { palette, indices } => palette
-                .capacity()
-                .saturating_mul(std::mem::size_of::<Identifier>())
-                .saturating_add(
-                    palette
-                        .iter()
-                        .map(|identifier| identifier.as_str().len())
-                        .sum::<usize>(),
-                )
-                .saturating_add(indices.estimated_heap_bytes()),
-        }
-    }
 }
 
 /// One named heightmap (e.g. `MOTION_BLOCKING`, `WORLD_SURFACE`).
@@ -528,11 +538,6 @@ impl Heightmap {
     #[must_use]
     pub fn words(&self) -> &[u64] {
         self.data.words()
-    }
-
-    #[must_use]
-    fn estimated_heap_bytes(&self) -> usize {
-        self.data.estimated_heap_bytes()
     }
 }
 
@@ -659,10 +664,9 @@ impl LightSection {
     pub fn shared_allocation(&self) -> Option<(*const u8, usize)> {
         match &self.storage {
             LightSectionStorage::Uniform(_) => None,
-            LightSectionStorage::Shared(bytes) => Some((
-                bytes.as_ptr(),
-                LIGHT_LAYER_BYTES + 2 * std::mem::size_of::<usize>(),
-            )),
+            LightSectionStorage::Shared(bytes) => {
+                Some((bytes.as_ptr(), LIGHT_LAYER_BYTES + 2 * size_of::<usize>()))
+            }
         }
     }
 }
@@ -692,13 +696,6 @@ pub struct SectionLight {
     pub sky: Option<LightSection>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum BlockLightMutation {
-    Invalidate,
-    PreserveInert,
-    RetainForRelight,
-}
-
 /// A 16×height×16 column.
 #[derive(Debug, Clone)]
 pub struct Chunk {
@@ -716,9 +713,8 @@ pub struct Chunk {
     /// serialized as an Anvil heightmap; it is maintained from the
     /// light table for spawn picking and sky-relight shortcuts.
     pub highest_opaque: Heightmap,
-    /// Block-entity NBT, keyed by absolute world position. Stored
-    /// opaque (raw Java-standard NBT bytes) until M3 needs typed
-    /// access.
+    /// Opaque Java-standard block-entity NBT, keyed by absolute world position.
+    /// Supported runtime block entities are also represented in the typed maps below.
     pub block_entities: HashMap<BlockPos, Vec<u8>>,
     /// Runtime-typed furnace state keyed by absolute world position.
     pub furnaces: HashMap<BlockPos, FurnaceBlockEntity>,
@@ -726,9 +722,9 @@ pub struct Chunk {
     pub chests: HashMap<BlockPos, ChestBlockEntity>,
     /// Runtime-typed hopper state keyed by absolute world position.
     pub hoppers: HashMap<BlockPos, HopperBlockEntity>,
-    /// Chunk-owned scheduled block ticks. Runtime code orders by
-    /// trigger tick, priority, and insertion sequence; Anvil persistence
-    /// is wired in separately once the local 26.1.2 shape is verified.
+    pub brewing_stands: HashMap<BlockPos, BrewingStandBlockEntity>,
+    /// Chunk-owned scheduled block ticks, ordered by trigger tick, priority,
+    /// and insertion sequence and persisted under Anvil's `block_ticks`.
     pub scheduled_block_ticks: Vec<ScheduledBlockTick>,
     next_scheduled_block_tick_sequence: u64,
     /// Chunk-owned scheduled fluid ticks. Mirrors block tick ordering but is
@@ -744,72 +740,20 @@ pub struct Chunk {
     /// source of truth or fall back to recomputed light — see
     /// `mc_world::light`.
     pub section_lights: Vec<SectionLight>,
-    /// Root-level NBT fields M5.c keeps for byte-stable round-trip
-    /// through the Anvil codec without modelling them yet. Covers
-    /// what M2 dropped on decode: structures, `PostProcessing`, `InhabitedTime`,
-    /// `LastUpdate`, `DataVersion`, plus any future field whose key
-    /// isn't in our modelled set. Order preserved from the original
+    /// Vanilla light-only sections immediately below/above the block geometry.
+    pub boundary_section_lights: [SectionLight; 2],
+    /// Unmodelled root-level NBT fields retained for stable Anvil round-trips,
+    /// including structures, `PostProcessing`, `InhabitedTime`, `LastUpdate`,
+    /// `DataVersion`, and future fields outside the modelled set.
+    /// Order is preserved from the original
     /// compound so a load-then-save produces a stable byte stream
     /// (modulo NBT compound ordering being unspecified — vanilla
     /// reads it back identically either way).
     pub extras: Vec<(String, Tag)>,
-    /// M6.b: set when an edit changes a stored block-state id; cleared
-    /// after the chunk is flushed back to its `.mca`. Decoders default
-    /// this to `false` so loading a fresh region from disk does not
-    /// re-trigger a write.
+    /// Set when chunk state changes. Decoders default this to `false`.
     pub dirty: bool,
-    /// Monotonic token bumped when runtime-owned state marks this chunk dirty.
-    /// Dirty flush commit can compare this token instead of re-encoding under
-    /// the world lock when no post-plan mutation happened.
-    pub dirty_generation: u64,
-    runtime_instance_id: u64,
-    light_source_generation: u64,
-    block_mutation_versions: HashMap<u32, BlockMutationVersion>,
 }
 
-fn furnace_slot_heap_bytes(slot: &FurnaceSlot) -> usize {
-    slot.enchantments
-        .capacity()
-        .saturating_mul(std::mem::size_of::<mc_data::ItemEnchantment>())
-}
-
-fn tag_heap_bytes(tag: &Tag) -> usize {
-    match tag {
-        Tag::Byte(_)
-        | Tag::Short(_)
-        | Tag::Int(_)
-        | Tag::Long(_)
-        | Tag::Float(_)
-        | Tag::Double(_) => 0,
-        Tag::ByteArray(values) => values.capacity().saturating_mul(std::mem::size_of::<i8>()),
-        Tag::String(value) => value.capacity(),
-        Tag::List(list) => list
-            .elements
-            .capacity()
-            .saturating_mul(std::mem::size_of::<Tag>())
-            .saturating_add(list.elements.iter().map(tag_heap_bytes).sum::<usize>()),
-        Tag::Compound(entries) => entries
-            .capacity()
-            .saturating_mul(std::mem::size_of::<(String, Tag)>())
-            .saturating_add(
-                entries
-                    .iter()
-                    .map(|(name, value)| name.capacity().saturating_add(tag_heap_bytes(value)))
-                    .sum::<usize>(),
-            ),
-        Tag::IntArray(values) => values.capacity().saturating_mul(std::mem::size_of::<i32>()),
-        Tag::LongArray(values) => values.capacity().saturating_mul(std::mem::size_of::<i64>()),
-    }
-}
-
-/// M7: production interface every chunk generator implements. Lives
-/// in `mc-world` rather than `mc-worldgen` so `WorldStorage` can hold
-/// an `Arc<dyn ChunkGenerator>` without taking a dep cycle. The
-/// concrete implementation (`mc_worldgen::TerrainGenerator`) is
-/// supplied by the binary at startup.
-///
-/// `Send + Sync` because the world is shared across the network
-/// listener's connection tasks via `Arc<Mutex<WorldStorage>>`.
 /// One generated vanilla village, as the generator that places it describes it.
 ///
 /// Plain data: the generator's own answer about a bounded chunk region, with no
@@ -838,11 +782,9 @@ pub struct GeneratedVillagePiece {
 }
 
 pub trait ChunkGenerator: Send + Sync {
-    /// Build a brand-new `Chunk` for the given position. Generated
-    /// chunks must come back with `dirty = true` so the M6 flush
-    /// pipeline persists them before the cache evicts them — re-
-    /// running the generator on every miss would be a perf
-    /// regression on a world the player has already touched.
+    /// Build a brand-new `Chunk` for the given position.
+    /// Complete light arrays, when supplied, must describe the final blocks.
+    /// Omit light layers after changing a prelit template; loaders prepare them.
     fn generate(&self, pos: ChunkPos) -> Chunk;
 
     /// Topmost solid terrain row at an absolute column, before any edit.
@@ -874,166 +816,6 @@ pub trait ChunkGenerator: Send + Sync {
 }
 
 impl Chunk {
-    /// Conservative heap-accounting estimate used for resident-cache admission.
-    /// It counts owned allocation capacities and nested payloads, not allocator
-    /// metadata, so callers should retain headroom rather than treating it as RSS.
-    #[must_use]
-    pub fn estimated_heap_bytes(&self) -> usize {
-        let mut bytes = std::mem::size_of::<Self>();
-        bytes = bytes
-            .saturating_add(
-                self.sections
-                    .capacity()
-                    .saturating_mul(std::mem::size_of::<ChunkSection>()),
-            )
-            .saturating_add(
-                self.sections
-                    .iter()
-                    .map(ChunkSection::estimated_heap_bytes)
-                    .sum::<usize>(),
-            )
-            .saturating_add(
-                self.biomes
-                    .capacity()
-                    .saturating_mul(std::mem::size_of::<BiomeSection>()),
-            )
-            .saturating_add(
-                self.biomes
-                    .iter()
-                    .map(BiomeSection::estimated_heap_bytes)
-                    .sum::<usize>(),
-            )
-            .saturating_add(self.highest_opaque.estimated_heap_bytes())
-            .saturating_add(self.status.capacity())
-            .saturating_add(
-                self.block_mutation_versions
-                    .capacity()
-                    .saturating_mul(std::mem::size_of::<(u32, BlockMutationVersion)>()),
-            );
-        bytes = bytes.saturating_add(
-            self.heightmaps
-                .capacity()
-                .saturating_mul(std::mem::size_of::<(String, Heightmap)>())
-                .saturating_add(
-                    self.heightmaps
-                        .iter()
-                        .map(|(name, map)| {
-                            name.capacity().saturating_add(map.estimated_heap_bytes())
-                        })
-                        .sum::<usize>(),
-                ),
-        );
-        bytes = bytes.saturating_add(
-            self.block_entities
-                .capacity()
-                .saturating_mul(std::mem::size_of::<(BlockPos, Vec<u8>)>())
-                .saturating_add(
-                    self.block_entities
-                        .values()
-                        .map(Vec::capacity)
-                        .sum::<usize>(),
-                ),
-        );
-        bytes = bytes.saturating_add(
-            self.furnaces
-                .capacity()
-                .saturating_mul(std::mem::size_of::<(BlockPos, FurnaceBlockEntity)>())
-                .saturating_add(
-                    self.furnaces
-                        .values()
-                        .map(|furnace| {
-                            furnace
-                                .slots
-                                .iter()
-                                .map(furnace_slot_heap_bytes)
-                                .sum::<usize>()
-                                .saturating_add(
-                                    furnace
-                                        .recipes_used
-                                        .keys()
-                                        .map(|name| name.capacity())
-                                        .sum::<usize>(),
-                                )
-                        })
-                        .sum::<usize>(),
-                ),
-        );
-        bytes = bytes.saturating_add(
-            self.chests
-                .capacity()
-                .saturating_mul(std::mem::size_of::<(BlockPos, ChestBlockEntity)>())
-                .saturating_add(
-                    self.chests
-                        .values()
-                        .flat_map(|chest| chest.slots.iter())
-                        .map(furnace_slot_heap_bytes)
-                        .sum::<usize>(),
-                ),
-        );
-        bytes = bytes.saturating_add(
-            self.hoppers
-                .capacity()
-                .saturating_mul(std::mem::size_of::<(BlockPos, HopperBlockEntity)>())
-                .saturating_add(
-                    self.hoppers
-                        .values()
-                        .flat_map(|hopper| hopper.slots.iter())
-                        .map(furnace_slot_heap_bytes)
-                        .sum::<usize>(),
-                ),
-        );
-        bytes = bytes.saturating_add(
-            self.scheduled_block_ticks
-                .capacity()
-                .saturating_mul(std::mem::size_of::<ScheduledBlockTick>())
-                .saturating_add(
-                    self.scheduled_block_ticks
-                        .iter()
-                        .map(|tick| tick.block.as_str().len())
-                        .sum::<usize>(),
-                ),
-        );
-        bytes = bytes.saturating_add(
-            self.scheduled_fluid_ticks
-                .capacity()
-                .saturating_mul(std::mem::size_of::<ScheduledFluidTick>())
-                .saturating_add(
-                    self.scheduled_fluid_ticks
-                        .iter()
-                        .map(|tick| tick.fluid.as_str().len())
-                        .sum::<usize>(),
-                ),
-        );
-        bytes = bytes.saturating_add(
-            self.section_lights
-                .capacity()
-                .saturating_mul(std::mem::size_of::<SectionLight>())
-                .saturating_add(
-                    self.section_lights
-                        .iter()
-                        .map(|light| {
-                            light
-                                .block
-                                .as_ref()
-                                .map_or(0, LightSection::allocated_bytes)
-                                + light.sky.as_ref().map_or(0, LightSection::allocated_bytes)
-                        })
-                        .sum::<usize>(),
-                ),
-        );
-        bytes.saturating_add(
-            self.extras
-                .capacity()
-                .saturating_mul(std::mem::size_of::<(String, Tag)>())
-                .saturating_add(
-                    self.extras
-                        .iter()
-                        .map(|(name, value)| name.capacity().saturating_add(tag_heap_bytes(value)))
-                        .sum::<usize>(),
-                ),
-        )
-    }
-
     /// A column filled with `air` blocks and `biome` everywhere, no
     /// block entities, no heightmaps, status `"full"`.
     #[must_use]
@@ -1064,31 +846,28 @@ impl Chunk {
             furnaces: HashMap::new(),
             chests: HashMap::new(),
             hoppers: HashMap::new(),
+            brewing_stands: HashMap::new(),
             scheduled_block_ticks: Vec::new(),
             next_scheduled_block_tick_sequence: 0,
             scheduled_fluid_ticks: Vec::new(),
             next_scheduled_fluid_tick_sequence: 0,
             status: "full".to_string(),
             section_lights: vec![SectionLight::default(); section_count],
+            boundary_section_lights: [SectionLight::default(), SectionLight::default()],
             extras: Vec::new(),
             dirty: false,
-            dirty_generation: 0,
-            runtime_instance_id: next_chunk_runtime_instance_id(),
-            light_source_generation: 0,
-            block_mutation_versions: HashMap::new(),
         }
     }
 
-    pub fn set_settlement_inhabitants(&mut self, inhabitants: &[SettlementInhabitantMarker]) {
-        self.extras
-            .retain(|(key, _)| key != SETTLEMENT_INHABITANTS_KEY);
+    pub fn set_generated_entities(&mut self, inhabitants: &[GeneratedEntityMarker]) {
+        self.extras.retain(|(key, _)| key != GENERATED_ENTITIES_KEY);
         if inhabitants.is_empty() {
             return;
         }
         let elements = inhabitants
             .iter()
             .map(|inhabitant| {
-                let mut fields = vec![
+                Tag::Compound(vec![
                     ("Claim".into(), Tag::String(inhabitant.claim.clone())),
                     ("Entity".into(), Tag::String(inhabitant.entity_type.clone())),
                     ("X".into(), Tag::Double(inhabitant.position[0])),
@@ -1120,24 +899,11 @@ impl Chunk {
                             0.0
                         }),
                     ),
-                ];
-                let mut push_position = |prefix: &str, position: Option<[f64; 3]>| {
-                    if let Some([x, y, z]) = position
-                        .filter(|position| position.iter().all(|component| component.is_finite()))
-                    {
-                        fields.push((format!("{prefix}X"), Tag::Double(x)));
-                        fields.push((format!("{prefix}Y"), Tag::Double(y)));
-                        fields.push((format!("{prefix}Z"), Tag::Double(z)));
-                    }
-                };
-                push_position("Home", inhabitant.home);
-                push_position("Job", inhabitant.job_site);
-                push_position("Meeting", inhabitant.meeting_point);
-                Tag::Compound(fields)
+                ])
             })
             .collect();
         self.extras.push((
-            SETTLEMENT_INHABITANTS_KEY.into(),
+            GENERATED_ENTITIES_KEY.into(),
             Tag::List(mc_nbt::ListTag {
                 element_type: mc_nbt::tag_type::COMPOUND,
                 elements,
@@ -1146,11 +912,11 @@ impl Chunk {
     }
 
     #[must_use]
-    pub fn settlement_inhabitants(&self) -> Vec<SettlementInhabitantMarker> {
+    pub fn generated_entities(&self) -> Vec<GeneratedEntityMarker> {
         let Some(Tag::List(list)) = self
             .extras
             .iter()
-            .find(|(key, _)| key == SETTLEMENT_INHABITANTS_KEY)
+            .find(|(key, _)| key == GENERATED_ENTITIES_KEY)
             .map(|(_, value)| value)
         else {
             return Vec::new();
@@ -1210,100 +976,16 @@ impl Chunk {
                             })
                     })
                 };
-                let position = |prefix: &str| {
-                    Some([
-                        double(&format!("{prefix}X"))?,
-                        double(&format!("{prefix}Y"))?,
-                        double(&format!("{prefix}Z"))?,
-                    ])
-                };
-                Some(SettlementInhabitantMarker {
+                Some(GeneratedEntityMarker {
                     claim: string("Claim")?,
                     entity_type: string("Entity")?,
                     position: [double("X")?, double("Y")?, double("Z")?],
                     villager_kind: string("VillagerKind")?,
                     profession: string("Profession")?,
                     level: level?,
-                    home: position("Home"),
-                    job_site: position("Job"),
-                    meeting_point: position("Meeting"),
                     age: integer("Age").unwrap_or(0),
                     yaw: float("Yaw").unwrap_or(0.0),
                     pitch: float("Pitch").unwrap_or(0.0),
-                })
-            })
-            .collect()
-    }
-
-    pub fn set_settlement_vacant_homes(&mut self, homes: &[SettlementVacantHomeMarker]) {
-        self.extras
-            .retain(|(key, _)| key != SETTLEMENT_VACANT_HOMES_KEY);
-        let elements = homes
-            .iter()
-            .filter(|home| {
-                !home.claim.is_empty()
-                    && home.position.iter().all(|component| component.is_finite())
-            })
-            .map(|home| {
-                Tag::Compound(vec![
-                    ("Claim".into(), Tag::String(home.claim.clone())),
-                    ("X".into(), Tag::Double(home.position[0])),
-                    ("Y".into(), Tag::Double(home.position[1])),
-                    ("Z".into(), Tag::Double(home.position[2])),
-                ])
-            })
-            .collect::<Vec<_>>();
-        if elements.is_empty() {
-            return;
-        }
-        self.extras.push((
-            SETTLEMENT_VACANT_HOMES_KEY.into(),
-            Tag::List(mc_nbt::ListTag {
-                element_type: mc_nbt::tag_type::COMPOUND,
-                elements,
-            }),
-        ));
-    }
-
-    #[must_use]
-    pub fn settlement_vacant_homes(&self) -> Vec<SettlementVacantHomeMarker> {
-        let Some(Tag::List(list)) = self
-            .extras
-            .iter()
-            .find(|(key, _)| key == SETTLEMENT_VACANT_HOMES_KEY)
-            .map(|(_, value)| value)
-        else {
-            return Vec::new();
-        };
-        list.elements
-            .iter()
-            .filter_map(|entry| {
-                let Tag::Compound(fields) = entry else {
-                    return None;
-                };
-                let string = |name: &str| {
-                    fields.iter().find_map(|(key, value)| {
-                        (key == name)
-                            .then_some(value)
-                            .and_then(|value| match value {
-                                Tag::String(value) if !value.is_empty() => Some(value.clone()),
-                                _ => None,
-                            })
-                    })
-                };
-                let double = |name: &str| {
-                    fields.iter().find_map(|(key, value)| {
-                        (key == name)
-                            .then_some(value)
-                            .and_then(|value| match value {
-                                Tag::Double(value) if value.is_finite() => Some(*value),
-                                _ => None,
-                            })
-                    })
-                };
-                Some(SettlementVacantHomeMarker {
-                    claim: string("Claim")?,
-                    position: [double("X")?, double("Y")?, double("Z")?],
                 })
             })
             .collect()
@@ -1314,32 +996,8 @@ impl Chunk {
         self.geometry
     }
 
-    #[must_use]
-    pub fn block_mutation_token(&self, x: u8, y: i32, z: u8) -> Option<BlockMutationToken> {
-        let key = block_mutation_key(self.geometry, x, y, z)?;
-        let revision = self
-            .block_mutation_versions
-            .get(&key)
-            .copied()
-            .unwrap_or_default();
-        Some(BlockMutationToken {
-            chunk_instance_id: self.runtime_instance_id,
-            version: revision.version,
-            last_replacement_version: revision.last_replacement,
-        })
-    }
-
-    #[must_use]
-    pub fn light_source_token(&self) -> ChunkLightSourceToken {
-        ChunkLightSourceToken {
-            chunk_instance_id: self.runtime_instance_id,
-            generation: self.light_source_generation,
-        }
-    }
-
     pub fn mark_dirty(&mut self) {
         self.dirty = true;
-        self.dirty_generation = self.dirty_generation.wrapping_add(1).max(1);
     }
 
     /// Number of game ticks players have kept this chunk active.
@@ -1358,7 +1016,7 @@ impl Chunk {
             .unwrap_or(0)
     }
 
-    /// Add active game ticks to the vanilla `InhabitedTime` field.
+    /// Add active game ticks without dirtying the chunk, like vanilla ChunkAccess.
     pub fn increment_inhabited_time(&mut self, elapsed_ticks: u64) {
         if elapsed_ticks == 0 {
             return;
@@ -1368,7 +1026,6 @@ impl Chunk {
         self.extras.retain(|(key, _)| key != "InhabitedTime");
         self.extras
             .push(("InhabitedTime".to_string(), Tag::Long(next)));
-        self.mark_dirty();
     }
 
     #[must_use]
@@ -1399,8 +1056,9 @@ impl Chunk {
     }
 
     pub fn set_baked_light(&mut self, light: &ChunkLight) {
-        light.write_section_lights(&mut self.section_lights);
-        self.mark_dirty();
+        if light.write_section_lights(&mut self.section_lights) {
+            self.mark_dirty();
+        }
     }
 
     fn clear_baked_light(&mut self) {
@@ -1412,6 +1070,7 @@ impl Chunk {
     /// Look up a block by chunk-local (x, z) and absolute world y.
     /// `None` when `y` is outside this chunk's geometry.
     #[must_use]
+    #[inline]
     pub fn get_block(&self, x: u8, y: i32, z: u8) -> Option<BlockStateId> {
         let (idx, sy) = self.geometry.world_y_to_section(y)?;
         Some(self.sections[idx].get(x, sy, z))
@@ -1420,33 +1079,8 @@ impl Chunk {
     /// Set a block; returns the previous state, or `None` if `y` is
     /// outside the chunk.
     pub fn set_block(&mut self, x: u8, y: i32, z: u8, state: BlockStateId) -> Option<BlockStateId> {
-        self.set_block_inner(x, y, z, state, true)
-    }
-
-    fn set_block_preserving_light_source(
-        &mut self,
-        x: u8,
-        y: i32,
-        z: u8,
-        state: BlockStateId,
-    ) -> Option<BlockStateId> {
-        self.set_block_inner(x, y, z, state, false)
-    }
-
-    fn set_block_inner(
-        &mut self,
-        x: u8,
-        y: i32,
-        z: u8,
-        state: BlockStateId,
-        changes_light_source: bool,
-    ) -> Option<BlockStateId> {
         let (idx, sy) = self.geometry.world_y_to_section(y)?;
-        let previous = self.sections[idx].set(x, sy, z, state);
-        if previous != state && changes_light_source {
-            self.light_source_generation = self.light_source_generation.wrapping_add(1).max(1);
-        }
-        Some(previous)
+        Some(self.sections[idx].set(x, sy, z, state))
     }
 
     /// Set a block *and* refresh every heightmap currently attached
@@ -1469,95 +1103,13 @@ impl Chunk {
         z: u8,
         state: BlockStateId,
         air: BlockStateId,
-        same_block_type: bool,
     ) -> Option<BlockStateId> {
-        self.set_block_and_update_inner(
-            x,
-            y,
-            z,
-            state,
-            air,
-            BlockLightMutation::Invalidate,
-            same_block_type,
-        )
-    }
-
-    /// Mutate a block without discarding baked light. The caller must prove
-    /// that old and new states have identical light behavior.
-    pub fn set_block_and_update_preserving_light(
-        &mut self,
-        x: u8,
-        y: i32,
-        z: u8,
-        state: BlockStateId,
-        air: BlockStateId,
-        same_block_type: bool,
-    ) -> Option<BlockStateId> {
-        self.set_block_and_update_inner(
-            x,
-            y,
-            z,
-            state,
-            air,
-            BlockLightMutation::PreserveInert,
-            same_block_type,
-        )
-    }
-
-    /// Retain the old baked light as input for an immediate incremental relight.
-    /// Unlike a light-inert update, this still advances the light-source token.
-    pub fn set_block_and_update_retaining_baked_light(
-        &mut self,
-        x: u8,
-        y: i32,
-        z: u8,
-        state: BlockStateId,
-        air: BlockStateId,
-        same_block_type: bool,
-    ) -> Option<BlockStateId> {
-        self.set_block_and_update_inner(
-            x,
-            y,
-            z,
-            state,
-            air,
-            BlockLightMutation::RetainForRelight,
-            same_block_type,
-        )
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn set_block_and_update_inner(
-        &mut self,
-        x: u8,
-        y: i32,
-        z: u8,
-        state: BlockStateId,
-        air: BlockStateId,
-        light_mutation: BlockLightMutation,
-        same_block_type: bool,
-    ) -> Option<BlockStateId> {
-        let prev = if light_mutation != BlockLightMutation::PreserveInert {
-            self.set_block(x, y, z, state)?
-        } else {
-            self.set_block_preserving_light_source(x, y, z, state)?
-        };
+        let prev = self.set_block(x, y, z, state)?;
         if prev == state {
             return Some(prev);
         }
-        let key = block_mutation_key(self.geometry, x, y, z).expect("validated block coordinates");
-        let version = self.block_mutation_versions.entry(key).or_default();
-        version.version = version
-            .version
-            .checked_add(1)
-            .expect("block mutation version exhausted");
-        if !same_block_type {
-            version.last_replacement = version.version;
-        }
         self.mark_dirty();
-        if light_mutation == BlockLightMutation::Invalidate {
-            self.clear_baked_light();
-        }
+        self.clear_baked_light();
         // Heightmap entries store `height + 1`-style values (the Y of
         // the first air cell above the column), matching vanilla's
         // on-disk packing. Recompute the column for every present
@@ -1614,7 +1166,9 @@ impl Chunk {
         true
     }
 
-    pub(crate) fn load_scheduled_block_ticks(&mut self, mut ticks: Vec<ScheduledBlockTick>) {
+    /// Replace the queue from an authoritative scheduler or decoded storage.
+    /// Callers performing a live mutation must also mark the chunk dirty.
+    pub fn load_scheduled_block_ticks(&mut self, mut ticks: Vec<ScheduledBlockTick>) {
         ticks.sort_by_key(ScheduledBlockTick::sort_key);
         self.next_scheduled_block_tick_sequence = ticks
             .iter()
@@ -1660,18 +1214,6 @@ impl Chunk {
         self.scheduled_block_ticks.drain(0..due_count).collect()
     }
 
-    pub(crate) fn drain_scheduled_block_tick_prefix(
-        &mut self,
-        expected: &[ScheduledBlockTick],
-    ) -> bool {
-        if expected.is_empty() || !self.scheduled_block_ticks.starts_with(expected) {
-            return false;
-        }
-        self.scheduled_block_ticks.drain(0..expected.len());
-        self.mark_dirty();
-        true
-    }
-
     #[must_use]
     pub fn scheduled_fluid_ticks(&self) -> &[ScheduledFluidTick] {
         &self.scheduled_fluid_ticks
@@ -1696,48 +1238,7 @@ impl Chunk {
         true
     }
 
-    pub(crate) fn schedule_fluid_tick_batch(
-        &mut self,
-        ticks: impl IntoIterator<Item = ScheduledFluidTick>,
-    ) -> usize {
-        let mut requests = self
-            .scheduled_fluid_ticks
-            .iter()
-            .map(|tick| {
-                (
-                    tick.pos,
-                    tick.fluid.clone(),
-                    tick.trigger_tick,
-                    tick.priority,
-                )
-            })
-            .collect::<HashSet<_>>();
-        let mut added = 0;
-        for mut tick in ticks {
-            let request = (
-                tick.pos,
-                tick.fluid.clone(),
-                tick.trigger_tick,
-                tick.priority,
-            );
-            if !self.contains_block_pos(tick.pos) || !requests.insert(request) {
-                continue;
-            }
-            tick.sequence = self.next_scheduled_fluid_tick_sequence;
-            self.next_scheduled_fluid_tick_sequence =
-                self.next_scheduled_fluid_tick_sequence.wrapping_add(1);
-            self.scheduled_fluid_ticks.push(tick);
-            added += 1;
-        }
-        if added != 0 {
-            self.scheduled_fluid_ticks
-                .sort_by_key(ScheduledFluidTick::sort_key);
-            self.mark_dirty();
-        }
-        added
-    }
-
-    pub(crate) fn load_scheduled_fluid_ticks(&mut self, mut ticks: Vec<ScheduledFluidTick>) {
+    pub fn load_scheduled_fluid_ticks(&mut self, mut ticks: Vec<ScheduledFluidTick>) {
         ticks.sort_by_key(ScheduledFluidTick::sort_key);
         self.next_scheduled_fluid_tick_sequence = ticks
             .iter()
@@ -1783,18 +1284,6 @@ impl Chunk {
         self.scheduled_fluid_ticks.drain(0..due_count).collect()
     }
 
-    pub(crate) fn drain_scheduled_fluid_tick_prefix(
-        &mut self,
-        expected: &[ScheduledFluidTick],
-    ) -> bool {
-        if expected.is_empty() || !self.scheduled_fluid_ticks.starts_with(expected) {
-            return false;
-        }
-        self.scheduled_fluid_ticks.drain(0..expected.len());
-        self.mark_dirty();
-        true
-    }
-
     #[must_use]
     pub fn contains_block_pos(&self, pos: BlockPos) -> bool {
         pos.y >= self.geometry.min_y()
@@ -1802,25 +1291,6 @@ impl Chunk {
             && pos.x.div_euclid(SECTION_DIM as i32) == self.pos.x
             && pos.z.div_euclid(SECTION_DIM as i32) == self.pos.z
     }
-}
-
-fn next_chunk_runtime_instance_id() -> u64 {
-    NEXT_CHUNK_RUNTIME_INSTANCE_ID
-        .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
-            current.checked_add(1)
-        })
-        .expect("chunk runtime instance id exhausted")
-}
-
-fn block_mutation_key(geometry: ChunkGeometry, x: u8, y: i32, z: u8) -> Option<u32> {
-    if usize::from(x) >= SECTION_DIM
-        || usize::from(z) >= SECTION_DIM
-        || !(geometry.min_y()..geometry.max_y()).contains(&y)
-    {
-        return None;
-    }
-    let y = u32::try_from(y - geometry.min_y()).ok()?;
-    Some((y * SECTION_DIM as u32 + u32::from(z)) * SECTION_DIM as u32 + u32::from(x))
 }
 
 /// Walk column `(x, z)` from `MAX_Y - 1` down to `MIN_Y` and return
@@ -1871,632 +1341,5 @@ fn heightmap_value_to_world_y_at(min_y: i32, value: u32) -> Option<i32> {
 }
 
 #[cfg(test)]
-fn world_y_to_section(y: i32) -> Option<(usize, u8)> {
-    OVERWORLD_GEOMETRY.world_y_to_section(y)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn chunk_rectangle_for_world_bounds_handles_edges_negatives_and_caps() {
-        assert_eq!(
-            chunk_rectangle_for_world_bounds(0.0, 15.999, 0.0, 15.999, 4),
-            Some(vec![ChunkPos { x: 0, z: 0 }])
-        );
-        assert_eq!(
-            chunk_rectangle_for_world_bounds(-0.001, 16.0, -16.0, 0.0, 9),
-            Some(vec![
-                ChunkPos { x: -1, z: -1 },
-                ChunkPos { x: -1, z: 0 },
-                ChunkPos { x: 0, z: -1 },
-                ChunkPos { x: 0, z: 0 },
-                ChunkPos { x: 1, z: -1 },
-                ChunkPos { x: 1, z: 0 },
-            ])
-        );
-        assert_eq!(
-            chunk_rectangle_for_world_bounds(-0.001, 16.0, -16.0, 0.0, 5),
-            None
-        );
-        assert_eq!(
-            chunk_rectangle_for_world_bounds(f64::NAN, 0.0, 0.0, 0.0, 1),
-            None
-        );
-        assert_eq!(
-            chunk_rectangle_for_world_bounds(1.0, 0.0, 0.0, 0.0, 1),
-            None
-        );
-    }
-
-    fn air() -> BlockStateId {
-        BlockStateId(0)
-    }
-    fn stone() -> BlockStateId {
-        BlockStateId(1)
-    }
-    fn plains() -> Identifier {
-        Identifier::parse("minecraft:plains").unwrap()
-    }
-    fn wheat() -> Identifier {
-        Identifier::parse("minecraft:wheat").unwrap()
-    }
-    fn water() -> Identifier {
-        Identifier::parse("minecraft:water").unwrap()
-    }
-
-    #[test]
-    fn y_mapping_covers_full_range() {
-        assert_eq!(world_y_to_section(MIN_Y), Some((0, 0)));
-        assert_eq!(world_y_to_section(MAX_Y - 1), Some((SECTION_COUNT - 1, 15)));
-        assert_eq!(world_y_to_section(0), Some((4, 0)));
-        assert_eq!(world_y_to_section(MIN_Y - 1), None);
-        assert_eq!(world_y_to_section(MAX_Y), None);
-    }
-
-    #[test]
-    fn empty_chunk_is_all_air() {
-        let c = Chunk::empty(ChunkPos { x: 0, z: 0 }, air(), plains());
-        assert_eq!(c.sections.len(), SECTION_COUNT);
-        assert_eq!(c.biomes.len(), SECTION_COUNT);
-        assert_eq!(c.get_block(0, MIN_Y, 0), Some(air()));
-        assert_eq!(c.get_block(15, MAX_Y - 1, 15), Some(air()));
-        assert_eq!(c.get_block(0, MIN_Y - 1, 0), None);
-        assert_eq!(c.get_block(0, MAX_Y, 0), None);
-    }
-
-    #[test]
-    fn settlement_inhabitant_markers_round_trip_through_chunk_extras() {
-        let mut chunk = Chunk::empty(ChunkPos { x: 4, z: 0 }, air(), plains());
-        let marker = SettlementInhabitantMarker {
-            claim: "settlement-prototype:smith@72,8".to_owned(),
-            entity_type: "minecraft:villager".to_owned(),
-            position: [72.5, 66.0, 8.5],
-            villager_kind: "plains".to_owned(),
-            profession: "toolsmith".to_owned(),
-            level: 1,
-            home: Some([72.5, 66.0, 8.5]),
-            job_site: Some([73.5, 66.0, 8.5]),
-            meeting_point: Some([72.5, 65.0, 8.5]),
-            age: -21_359,
-            yaw: 0.0,
-            pitch: -25.827_711,
-        };
-
-        chunk.set_settlement_inhabitants(std::slice::from_ref(&marker));
-
-        assert_eq!(chunk.settlement_inhabitants(), vec![marker]);
-    }
-
-    #[test]
-    fn settlement_vacant_home_markers_round_trip_and_filter_invalid_entries() {
-        let mut chunk = Chunk::empty(ChunkPos { x: 4, z: 0 }, air(), plains());
-        let valid = SettlementVacantHomeMarker {
-            claim: "settlement-prototype:vacant-home-0@72,8".to_owned(),
-            position: [74.5, 66.0, 8.5],
-        };
-        let empty_claim = SettlementVacantHomeMarker {
-            claim: String::new(),
-            position: [75.5, 66.0, 8.5],
-        };
-        let nonfinite = SettlementVacantHomeMarker {
-            claim: "settlement-prototype:invalid@72,8".to_owned(),
-            position: [f64::NAN, 66.0, 8.5],
-        };
-
-        chunk.set_settlement_vacant_homes(&[valid.clone(), empty_claim, nonfinite]);
-
-        assert_eq!(chunk.settlement_vacant_homes(), vec![valid]);
-        chunk.set_settlement_vacant_homes(&[]);
-        assert!(chunk.settlement_vacant_homes().is_empty());
-    }
-
-    #[test]
-    fn legacy_settlement_marker_without_pois_loads_with_empty_optional_positions() {
-        let mut chunk = Chunk::empty(ChunkPos { x: 4, z: 0 }, air(), plains());
-        chunk.extras.push((
-            SETTLEMENT_INHABITANTS_KEY.into(),
-            Tag::List(mc_nbt::ListTag {
-                element_type: mc_nbt::tag_type::COMPOUND,
-                elements: vec![Tag::Compound(vec![
-                    (
-                        "Claim".into(),
-                        Tag::String("settlement-prototype:resident@72,8".to_owned()),
-                    ),
-                    (
-                        "Entity".into(),
-                        Tag::String("minecraft:villager".to_owned()),
-                    ),
-                    ("X".into(), Tag::Double(72.5)),
-                    ("Y".into(), Tag::Double(66.0)),
-                    ("Z".into(), Tag::Double(8.5)),
-                    ("VillagerKind".into(), Tag::String("plains".to_owned())),
-                    ("Profession".into(), Tag::String("none".to_owned())),
-                    ("Level".into(), Tag::Int(1)),
-                ])],
-            }),
-        ));
-
-        assert_eq!(
-            chunk.settlement_inhabitants(),
-            vec![SettlementInhabitantMarker {
-                claim: "settlement-prototype:resident@72,8".to_owned(),
-                entity_type: "minecraft:villager".to_owned(),
-                position: [72.5, 66.0, 8.5],
-                villager_kind: "plains".to_owned(),
-                profession: "none".to_owned(),
-                level: 1,
-                home: None,
-                job_site: None,
-                meeting_point: None,
-                age: 0,
-                yaw: 0.0,
-                pitch: 0.0,
-            }]
-        );
-    }
-
-    #[test]
-    fn custom_geometry_controls_chunk_sections_and_block_bounds() {
-        assert!(ChunkGeometry::new(0, 512).is_none());
-        let geometry = ChunkGeometry::new(0, 256).unwrap();
-        let mut chunk =
-            Chunk::empty_with_geometry(ChunkPos { x: 2, z: -3 }, air(), plains(), geometry);
-
-        assert_eq!(chunk.geometry(), geometry);
-        assert_eq!(chunk.sections.len(), 16);
-        assert_eq!(chunk.biomes.len(), 16);
-        assert_eq!(chunk.get_block(0, 0, 0), Some(air()));
-        assert_eq!(chunk.set_block(15, 255, 15, stone()), Some(air()));
-        assert_eq!(chunk.get_block(15, 255, 15), Some(stone()));
-        assert_eq!(chunk.get_block(0, -1, 0), None);
-        assert_eq!(chunk.get_block(0, 256, 0), None);
-
-        chunk
-            .heightmaps
-            .insert("WORLD_SURFACE".into(), Heightmap::zeroed());
-        assert_eq!(
-            chunk.set_block_and_update(3, 200, 7, stone(), air(), false),
-            Some(air())
-        );
-        assert_eq!(chunk.heightmaps["WORLD_SURFACE"].get(3, 7), 201);
-        chunk.highest_opaque.set(3, 7, 201);
-        assert_eq!(chunk.highest_opaque_y(3, 7), Some(200));
-
-        assert!(chunk.contains_block_pos(BlockPos {
-            x: 32,
-            y: 0,
-            z: -48,
-        }));
-        assert!(!chunk.contains_block_pos(BlockPos {
-            x: 32,
-            y: -1,
-            z: -48,
-        }));
-        assert!(chunk.block_mutation_token(15, 255, 15).is_some());
-        assert!(chunk.block_mutation_token(15, 256, 15).is_none());
-    }
-
-    #[test]
-    fn set_block_round_trips_across_sections() {
-        let mut c = Chunk::empty(ChunkPos { x: 0, z: 0 }, air(), plains());
-        // Set at the bottom, the build-height boundary, and the top.
-        let probes = [MIN_Y, -1, 0, 63, 319];
-        for &y in &probes {
-            assert_eq!(c.set_block(3, y, 7, stone()), Some(air()));
-            assert_eq!(c.get_block(3, y, 7), Some(stone()));
-            assert_eq!(c.get_block(2, y, 7), Some(air()));
-        }
-        // Non-probed columns still air.
-        assert_eq!(c.get_block(0, 0, 0), Some(air()));
-    }
-
-    #[test]
-    fn light_source_token_tracks_blocks_but_not_baked_light() {
-        let mut chunk = Chunk::empty(ChunkPos { x: 0, z: 0 }, air(), plains());
-        let initial = chunk.light_source_token();
-
-        chunk.set_baked_light(&crate::light::ChunkLight::filled(15, 0));
-        assert_eq!(chunk.light_source_token(), initial);
-        assert_eq!(chunk.set_block(3, 64, 7, air()), Some(air()));
-        assert_eq!(chunk.light_source_token(), initial);
-
-        assert_eq!(chunk.set_block(3, 64, 7, stone()), Some(air()));
-        let edited = chunk.light_source_token();
-        assert_ne!(edited, initial);
-        assert_eq!(chunk.clone().light_source_token(), edited);
-        assert_ne!(
-            Chunk::empty(ChunkPos { x: 0, z: 0 }, air(), plains()).light_source_token(),
-            edited
-        );
-    }
-
-    #[test]
-    fn runtime_block_mutation_tokens_are_sparse_clone_stable_and_chunk_scoped() {
-        let mut chunk = Chunk::empty(ChunkPos { x: 0, z: 0 }, air(), plains());
-        let initial = chunk.block_mutation_token(3, 64, 7).expect("initial token");
-        assert_eq!(initial.version, 0);
-
-        chunk
-            .set_block(3, 64, 7, stone())
-            .expect("worldgen-style set");
-        assert_eq!(
-            chunk.block_mutation_token(3, 64, 7),
-            Some(initial),
-            "raw construction writes must not populate runtime mutation history"
-        );
-        chunk
-            .set_block_and_update(3, 64, 7, air(), air(), false)
-            .expect("runtime edit");
-        let edited = chunk.block_mutation_token(3, 64, 7).expect("edited token");
-        assert_eq!(edited.version, 1);
-        assert_eq!(chunk.clone().block_mutation_token(3, 64, 7), Some(edited));
-
-        let reloaded = Chunk::empty(ChunkPos { x: 0, z: 0 }, air(), plains())
-            .block_mutation_token(3, 64, 7)
-            .expect("reloaded token");
-        assert_ne!(reloaded.chunk_instance_id, edited.chunk_instance_id);
-        assert_eq!(reloaded.version, 0);
-    }
-
-    #[test]
-    fn biome_section_default_is_single() {
-        let b = BiomeSection::filled(plains());
-        for y in 0..4 {
-            for z in 0..4 {
-                for x in 0..4 {
-                    assert_eq!(b.get(x, y, z).as_str(), "minecraft:plains");
-                }
-            }
-        }
-    }
-
-    #[test]
-    fn heightmap_round_trip() {
-        let mut h = Heightmap::zeroed();
-        h.set(0, 0, 64);
-        h.set(15, 15, 320);
-        h.set(7, 3, 0);
-        assert_eq!(h.get(0, 0), 64);
-        assert_eq!(h.get(15, 15), 320);
-        assert_eq!(h.get(7, 3), 0);
-        assert_eq!(h.get(1, 1), 0);
-    }
-
-    #[test]
-    fn min_section_y_constant_is_correct() {
-        assert_eq!(MIN_SECTION_Y, -4);
-        assert_eq!(MIN_SECTION_Y + SECTION_COUNT as i32, 20);
-    }
-
-    #[test]
-    fn set_block_and_update_recomputes_present_heightmaps() {
-        let mut c = Chunk::empty(ChunkPos { x: 0, z: 0 }, air(), plains());
-        // Pre-existing heightmap (e.g. surface-Y from generation):
-        // empty column → value 0. Insert it explicitly so the helper
-        // has something to recompute.
-        c.heightmaps
-            .insert("MOTION_BLOCKING".into(), Heightmap::zeroed());
-        c.heightmaps
-            .insert("WORLD_SURFACE".into(), Heightmap::zeroed());
-
-        // Drop a stone at world Y=64. The heightmap value is
-        // (Y - MIN_Y + 1) = 64 - (-64) + 1 = 129.
-        let prev = c
-            .set_block_and_update(3, 64, 7, stone(), air(), false)
-            .unwrap();
-        assert_eq!(prev, air());
-        assert_eq!(c.heightmaps.get("MOTION_BLOCKING").unwrap().get(3, 7), 129);
-        assert_eq!(c.heightmaps.get("WORLD_SURFACE").unwrap().get(3, 7), 129);
-
-        // Other columns stay at 0.
-        assert_eq!(c.heightmaps.get("MOTION_BLOCKING").unwrap().get(0, 0), 0);
-
-        // Break it back to air — heightmap returns to 0.
-        c.set_block_and_update(3, 64, 7, air(), air(), false)
-            .unwrap();
-        assert_eq!(c.heightmaps.get("MOTION_BLOCKING").unwrap().get(3, 7), 0);
-    }
-
-    #[test]
-    fn set_block_and_update_picks_next_lower_top_after_break() {
-        let mut c = Chunk::empty(ChunkPos { x: 0, z: 0 }, air(), plains());
-        c.heightmaps
-            .insert("MOTION_BLOCKING".into(), Heightmap::zeroed());
-        // Stack two blocks at Y=63 and Y=64; heightmap should track
-        // the higher one and fall back to the lower on break.
-        c.set_block_and_update(3, 63, 7, stone(), air(), false)
-            .unwrap();
-        c.set_block_and_update(3, 64, 7, stone(), air(), false)
-            .unwrap();
-        assert_eq!(c.heightmaps.get("MOTION_BLOCKING").unwrap().get(3, 7), 129);
-
-        c.set_block_and_update(3, 64, 7, air(), air(), false)
-            .unwrap();
-        assert_eq!(c.heightmaps.get("MOTION_BLOCKING").unwrap().get(3, 7), 128);
-    }
-
-    #[test]
-    fn set_block_and_update_with_no_heightmaps_is_a_noop_for_them() {
-        // Some chunks (Status: empty / structure_starts in our test
-        // world) ship no heightmaps. The helper must not panic and
-        // must still mutate the underlying block.
-        let mut c = Chunk::empty(ChunkPos { x: 0, z: 0 }, air(), plains());
-        assert!(c.heightmaps.is_empty());
-        let prev = c
-            .set_block_and_update(0, 0, 0, stone(), air(), false)
-            .unwrap();
-        assert_eq!(prev, air());
-        assert_eq!(c.get_block(0, 0, 0), Some(stone()));
-        assert!(c.heightmaps.is_empty());
-    }
-
-    #[test]
-    fn set_block_and_update_clears_stale_baked_light_layers() {
-        let mut c = Chunk::empty(ChunkPos { x: 0, z: 0 }, air(), plains());
-        c.section_lights[0].sky = Some(crate::chunk::LightSection::uniform(0xFF));
-        c.section_lights[0].block = Some(crate::chunk::LightSection::uniform(0x11));
-        c.section_lights[3].sky = Some(crate::chunk::LightSection::uniform(0x22));
-
-        let prev = c
-            .set_block_and_update(0, 0, 0, stone(), air(), false)
-            .unwrap();
-
-        assert_eq!(prev, air());
-        assert!(
-            c.section_lights
-                .iter()
-                .all(|section| section.sky.is_none() && section.block.is_none()),
-            "block mutation must invalidate baked light arrays before they can be reused"
-        );
-    }
-
-    #[test]
-    fn proven_light_inert_block_update_preserves_baked_light_layers() {
-        let mut c = Chunk::empty(ChunkPos { x: 0, z: 0 }, air(), plains());
-        c.section_lights[0].sky = Some(crate::chunk::LightSection::uniform(0xFF));
-        c.section_lights[0].block = Some(crate::chunk::LightSection::uniform(0x11));
-        c.section_lights[3].sky = Some(crate::chunk::LightSection::uniform(0x22));
-        let expected = c.section_lights.clone();
-        let light_source = c.light_source_token();
-
-        let prev = c
-            .set_block_and_update_preserving_light(0, 0, 0, stone(), air(), false)
-            .unwrap();
-
-        assert_eq!(prev, air());
-        assert_eq!(c.section_lights, expected);
-        assert_eq!(c.light_source_token(), light_source);
-    }
-
-    #[test]
-    fn incremental_relight_update_retains_baked_light_and_changes_source_token() {
-        let mut c = Chunk::empty(ChunkPos { x: 0, z: 0 }, air(), plains());
-        c.section_lights[0].sky = Some(crate::chunk::LightSection::uniform(0xFF));
-        c.section_lights[0].block = Some(crate::chunk::LightSection::uniform(0x11));
-        let expected = c.section_lights.clone();
-        let light_source = c.light_source_token();
-
-        let prev = c
-            .set_block_and_update_retaining_baked_light(0, 0, 0, stone(), air(), false)
-            .unwrap();
-
-        assert_eq!(prev, air());
-        assert_eq!(c.section_lights, expected);
-        assert_ne!(c.light_source_token(), light_source);
-    }
-
-    #[test]
-    fn highest_opaque_uses_light_table_sky_predicate() {
-        let table = BlockLightTable::from_arrays(
-            "test",
-            vec![0, 0, 0],
-            vec![0, 15, 0],
-            vec![true, false, true],
-        );
-        let mut c = Chunk::empty(ChunkPos { x: 0, z: 0 }, air(), plains());
-        let glass = BlockStateId(2);
-
-        c.set_block(3, 80, 7, glass);
-        c.set_block(3, 64, 7, stone());
-        c.rebuild_highest_opaque(&table);
-        assert_eq!(c.highest_opaque_y(3, 7), Some(64));
-
-        c.set_block(3, 64, 7, air());
-        c.update_highest_opaque_column(3, 7, &table);
-        assert_eq!(c.highest_opaque_y(3, 7), None);
-    }
-
-    #[test]
-    fn scheduled_block_ticks_drain_in_deterministic_order() {
-        let mut c = Chunk::empty(ChunkPos { x: 0, z: 0 }, air(), plains());
-        let pos_a = BlockPos { x: 1, y: 64, z: 1 };
-        let pos_b = BlockPos { x: 2, y: 64, z: 1 };
-        let pos_c = BlockPos { x: 3, y: 64, z: 1 };
-
-        assert!(c.schedule_block_tick(ScheduledBlockTick::new(pos_a, wheat(), 10, 0)));
-        assert!(c.schedule_block_tick(ScheduledBlockTick::new(pos_b, wheat(), 5, 0)));
-        assert!(c.schedule_block_tick(ScheduledBlockTick::new(pos_c, wheat(), 10, -1)));
-
-        c.dirty = false;
-        let due = c.drain_due_block_ticks(10, usize::MAX);
-
-        assert_eq!(
-            due.iter().map(|tick| tick.pos).collect::<Vec<_>>(),
-            vec![pos_b, pos_c, pos_a]
-        );
-        assert!(c.scheduled_block_ticks().is_empty());
-        assert!(c.dirty);
-    }
-
-    #[test]
-    fn scheduled_block_ticks_skip_duplicates_and_mark_dirty_only_on_change() {
-        let mut c = Chunk::empty(ChunkPos { x: 0, z: 0 }, air(), plains());
-        let tick = ScheduledBlockTick::new(BlockPos { x: 1, y: 64, z: 1 }, wheat(), 10, 0);
-
-        assert!(c.schedule_block_tick(tick.clone()));
-        c.dirty = false;
-        assert!(!c.schedule_block_tick(tick));
-        assert_eq!(c.scheduled_block_ticks().len(), 1);
-        assert!(!c.dirty);
-
-        assert!(c.drain_due_block_ticks(9, usize::MAX).is_empty());
-        assert!(!c.dirty);
-        assert!(c.drain_due_block_ticks(10, 0).is_empty());
-        assert!(!c.dirty);
-    }
-
-    #[test]
-    fn scheduled_block_ticks_reject_positions_outside_chunk() {
-        let mut c = Chunk::empty(ChunkPos { x: 0, z: 0 }, air(), plains());
-
-        assert!(!c.schedule_block_tick(ScheduledBlockTick::new(
-            BlockPos { x: 16, y: 64, z: 1 },
-            wheat(),
-            10,
-            0,
-        )));
-        assert!(!c.schedule_block_tick(ScheduledBlockTick::new(
-            BlockPos {
-                x: 1,
-                y: MAX_Y,
-                z: 1
-            },
-            wheat(),
-            10,
-            0,
-        )));
-        assert!(c.scheduled_block_ticks().is_empty());
-        assert!(!c.dirty);
-    }
-
-    #[test]
-    fn scheduled_block_ticks_remove_by_position() {
-        let mut c = Chunk::empty(ChunkPos { x: 0, z: 0 }, air(), plains());
-        let pos = BlockPos { x: 1, y: 64, z: 1 };
-        let other = BlockPos { x: 2, y: 64, z: 1 };
-        assert!(c.schedule_block_tick(ScheduledBlockTick::new(pos, wheat(), 10, 0)));
-        assert!(c.schedule_block_tick(ScheduledBlockTick::new(other, wheat(), 10, 0)));
-
-        c.dirty = false;
-        let removed = c.remove_scheduled_block_ticks_at(pos);
-
-        assert_eq!(removed.len(), 1);
-        assert_eq!(removed[0].pos, pos);
-        assert_eq!(c.scheduled_block_ticks().len(), 1);
-        assert_eq!(c.scheduled_block_ticks()[0].pos, other);
-        assert!(c.dirty);
-
-        c.dirty = false;
-        assert!(c.remove_scheduled_block_ticks_at(pos).is_empty());
-        assert!(!c.dirty);
-    }
-
-    #[test]
-    fn scheduled_fluid_ticks_drain_in_deterministic_order() {
-        let mut c = Chunk::empty(ChunkPos { x: 0, z: 0 }, air(), plains());
-        let pos_a = BlockPos { x: 1, y: 64, z: 1 };
-        let pos_b = BlockPos { x: 2, y: 64, z: 1 };
-        let pos_c = BlockPos { x: 3, y: 64, z: 1 };
-
-        assert!(c.schedule_fluid_tick(ScheduledFluidTick::new(pos_a, water(), 10, 0)));
-        assert!(c.schedule_fluid_tick(ScheduledFluidTick::new(pos_b, water(), 5, 0)));
-        assert!(c.schedule_fluid_tick(ScheduledFluidTick::new(pos_c, water(), 10, -1)));
-
-        c.dirty = false;
-        let due = c.drain_due_fluid_ticks(10, usize::MAX);
-
-        assert_eq!(
-            due.iter().map(|tick| tick.pos).collect::<Vec<_>>(),
-            vec![pos_b, pos_c, pos_a]
-        );
-        assert!(c.scheduled_fluid_ticks().is_empty());
-        assert!(c.dirty);
-    }
-
-    #[test]
-    fn scheduled_fluid_ticks_skip_duplicates_and_mark_dirty_only_on_change() {
-        let mut c = Chunk::empty(ChunkPos { x: 0, z: 0 }, air(), plains());
-        let tick = ScheduledFluidTick::new(BlockPos { x: 1, y: 64, z: 1 }, water(), 10, 0);
-
-        assert!(c.schedule_fluid_tick(tick.clone()));
-        c.dirty = false;
-        assert!(!c.schedule_fluid_tick(tick));
-        assert_eq!(c.scheduled_fluid_ticks().len(), 1);
-        assert!(!c.dirty);
-
-        assert!(c.drain_due_fluid_ticks(9, usize::MAX).is_empty());
-        assert!(!c.dirty);
-        assert!(c.drain_due_fluid_ticks(10, 0).is_empty());
-        assert!(!c.dirty);
-    }
-
-    #[test]
-    fn scheduled_fluid_tick_batch_deduplicates_and_sorts_once() {
-        let mut c = Chunk::empty(ChunkPos { x: 0, z: 0 }, air(), plains());
-        let later = ScheduledFluidTick::new(BlockPos { x: 1, y: 64, z: 1 }, water(), 10, 0);
-        let earlier = ScheduledFluidTick::new(BlockPos { x: 2, y: 64, z: 1 }, water(), 5, 0);
-
-        assert_eq!(
-            c.schedule_fluid_tick_batch([later.clone(), earlier.clone(), later.clone(),]),
-            2
-        );
-        assert_eq!(
-            c.scheduled_fluid_ticks()
-                .iter()
-                .map(|tick| tick.pos)
-                .collect::<Vec<_>>(),
-            vec![earlier.pos, later.pos]
-        );
-        c.dirty = false;
-        assert_eq!(c.schedule_fluid_tick_batch([earlier, later]), 0);
-        assert!(!c.dirty);
-    }
-
-    #[test]
-    fn scheduled_fluid_ticks_reject_positions_outside_chunk() {
-        let mut c = Chunk::empty(ChunkPos { x: 0, z: 0 }, air(), plains());
-
-        assert!(!c.schedule_fluid_tick(ScheduledFluidTick::new(
-            BlockPos { x: 16, y: 64, z: 1 },
-            water(),
-            10,
-            0,
-        )));
-        assert!(!c.schedule_fluid_tick(ScheduledFluidTick::new(
-            BlockPos {
-                x: 1,
-                y: MAX_Y,
-                z: 1,
-            },
-            water(),
-            10,
-            0,
-        )));
-        assert!(c.scheduled_fluid_ticks().is_empty());
-        assert!(!c.dirty);
-    }
-
-    #[test]
-    fn scheduled_fluid_ticks_remove_by_position() {
-        let mut c = Chunk::empty(ChunkPos { x: 0, z: 0 }, air(), plains());
-        let pos = BlockPos { x: 1, y: 64, z: 1 };
-        let other = BlockPos { x: 2, y: 64, z: 1 };
-        assert!(c.schedule_fluid_tick(ScheduledFluidTick::new(pos, water(), 10, 0)));
-        assert!(c.schedule_fluid_tick(ScheduledFluidTick::new(other, water(), 10, 0)));
-
-        c.dirty = false;
-        let removed = c.remove_scheduled_fluid_ticks_at(pos);
-
-        assert_eq!(removed.len(), 1);
-        assert_eq!(removed[0].pos, pos);
-        assert_eq!(c.scheduled_fluid_ticks().len(), 1);
-        assert_eq!(c.scheduled_fluid_ticks()[0].pos, other);
-        assert!(c.dirty);
-
-        c.dirty = false;
-        assert!(c.remove_scheduled_fluid_ticks_at(pos).is_empty());
-        assert!(!c.dirty);
-    }
-}
+#[path = "chunk_tests.rs"]
+mod tests;

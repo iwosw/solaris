@@ -32,6 +32,116 @@ fn block_context<'a>(
 }
 
 #[test]
+fn vanilla_slab_conditional_count_preserves_single_and_double_drops() {
+    let loot = load_block_table(
+        "oak_slab",
+        &std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../data/vanilla/data/minecraft/loot_table/blocks/oak_slab.json"),
+        )
+        .unwrap(),
+    );
+    let block = id("minecraft:oak_slab");
+    let empty = LootContextItem::empty();
+    for (kind, wet, count) in [
+        ("bottom", "false", 1),
+        ("bottom", "true", 1),
+        ("top", "false", 1),
+        ("top", "true", 1),
+        ("double", "false", 2),
+    ] {
+        let properties = vec![
+            ("type".into(), kind.into()),
+            ("waterlogged".into(), wet.into()),
+        ];
+        let expected = vec![LootDrop::fixed(block.clone(), count)];
+        let context = block_context(
+            &block,
+            &properties,
+            &empty,
+            Some("minecraft:blocks/oak_slab"),
+            42,
+        );
+        assert_eq!(
+            loot.evaluate_block(&context).unwrap(),
+            Some(expected.clone())
+        );
+        assert_eq!(
+            loot.block_explosion_drops(&block, &properties, None, || {
+                panic!("no explosion radius must not consume decay RNG")
+            }),
+            Some(expected.clone())
+        );
+        assert_eq!(
+            loot.block_explosion_drops(&block, &properties, Some(1.0), || 0.5),
+            Some(expected)
+        );
+    }
+}
+
+#[test]
+fn conditional_count_functions_keep_assignment_order_and_pool_override() {
+    let raw = r#"{
+      "pools":[{
+        "entries":[{
+          "type":"minecraft:item",
+          "name":"minecraft:fragment",
+          "functions":[
+            {"function":"minecraft:set_count","count":3},
+            {
+              "function":"minecraft:set_count",
+              "conditions":[{
+                "condition":"minecraft:block_state_property",
+                "block":"minecraft:layered",
+                "properties":{"layers":"2"}
+              }],
+              "count":{"type":"minecraft:uniform","min":5,"max":7}
+            },
+            {"function":"minecraft:explosion_decay"}
+          ]
+        }]
+      }]
+    }"#;
+    let loot = load_block_table("layered", raw);
+    let block = id("minecraft:layered");
+    let empty = LootContextItem::empty();
+    let unmatched = vec![("layers".into(), "1".into())];
+    assert_eq!(
+        loot.evaluate_block(&block_context(&block, &unmatched, &empty, None, 42))
+            .unwrap(),
+        Some(vec![LootDrop::fixed(id("minecraft:fragment"), 3)])
+    );
+    let matched = vec![("layers".into(), "2".into())];
+    for seed in 0..16 {
+        let drops = loot
+            .evaluate_block(&block_context(&block, &matched, &empty, None, seed))
+            .unwrap()
+            .unwrap();
+        assert_eq!(drops.len(), 1);
+        assert!((5..=7).contains(&drops[0].count.try_sample(0).unwrap()));
+    }
+    let mut table: serde_json::Value = serde_json::from_str(raw).unwrap();
+    table["pools"][0]["functions"] = serde_json::json!([
+        {"function":"minecraft:set_count","count":9}
+    ]);
+    let overridden = load_block_table("layered", &table.to_string());
+    assert_eq!(
+        overridden
+            .evaluate_block(&block_context(&block, &matched, &empty, None, 42))
+            .unwrap(),
+        Some(vec![LootDrop::fixed(id("minecraft:fragment"), 9)])
+    );
+    // The simple explosion API refuses a matching random count provider
+    // before drawing explosion RNG.
+    assert!(
+        loot.block_explosion_drops(&block, &matched, Some(4.0), || {
+            panic!("unsupported count must fail before explosion RNG")
+        })
+        .is_none()
+    );
+}
+
+#[test]
 fn loot_enchantments_reject_invalid_levels_and_accept_vanilla_maximum() {
     for invalid in [0, u32::from(MAX_LOOT_ENCHANTMENT_LEVEL) + 1, u32::MAX] {
         let error = LootEnchantments::try_from_levels([(id("minecraft:fortune"), invalid)])
@@ -498,13 +608,10 @@ fn fortune_formulas_preserve_structural_draws_and_fail_closed_on_invalid_arithme
 fn block_context_reports_unknown_blocks_and_samples_simple_fallbacks() {
     let known = id("minecraft:known");
     let unknown = id("minecraft:unknown");
-    let loot = LootTables::from_drop_maps(
-        BTreeMap::new(),
-        BTreeMap::from([(
-            known.clone(),
-            LootDrop::uniform(id("minecraft:fragment"), u32::MAX, u32::MAX),
-        )]),
-    );
+    let loot = LootTables::from_drop_maps(BTreeMap::from([(
+        known.clone(),
+        LootDrop::uniform(id("minecraft:fragment"), u32::MAX, u32::MAX),
+    )]));
     let tool = LootContextItem::empty();
 
     assert_eq!(
@@ -522,10 +629,10 @@ fn block_context_reports_unknown_blocks_and_samples_simple_fallbacks() {
         }
     );
 
-    let fallback = LootTables::from_drop_maps(
-        BTreeMap::new(),
-        BTreeMap::from([(known.clone(), LootDrop::single(id("minecraft:fragment")))]),
-    );
+    let fallback = LootTables::from_drop_maps(BTreeMap::from([(
+        known.clone(),
+        LootDrop::single(id("minecraft:fragment")),
+    )]));
     let destructive = LootExplosion::try_new(f32::MAX).unwrap();
     assert_eq!(
         fallback

@@ -40,7 +40,7 @@ test -d data/vanilla/reports || test -d data/vanilla
 
 Also check, when relevant:
 
-- Port `25565` is free before starting `mc-server`.
+- Port `25565` is free before starting `solaris-v2`.
 - `.analysis/test-world` is present, or tests are expected to skip.
 - The current branch matches the milestone branch named in the plan.
 - Local-only files such as `.serena/`, `.analysis/`, `data/vanilla/`,

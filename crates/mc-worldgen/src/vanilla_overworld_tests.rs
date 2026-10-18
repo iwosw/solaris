@@ -131,7 +131,7 @@ fn vanilla_density_height_and_ocean_water_reach_generated_blocks() {
         .block(&Identifier::parse("minecraft:air").unwrap())
         .unwrap()
         .default;
-    let mut terrain = TerrainGenerator::new(81, blocks.clone());
+    let mut terrain = TerrainGenerator::new(81, blocks);
     terrain.load_vanilla_worldgen(&root).unwrap();
     let chunk = terrain.generate(ChunkPos { x: 0, z: 0 });
     let top = 49; // Native OCEAN_FLOOR_WG top at seed81 block(0,0).

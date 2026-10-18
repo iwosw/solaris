@@ -6,11 +6,11 @@ subagent output.
 
 | Route | Primary document | Code and evidence entrypoints |
 | --- | --- | --- |
-| `playable` | `docs/playable/ACTIVE.md` after `docs/playable/README.md` | `crates/mc-net/src/play/`, focused `mc-test-harness` path, then named real-client scenario |
-| `plugins` | `docs/PLUGINS.md` | `crates/mc-script/`, `crates/mc-net/src/script/`, focused session endpoint, `crates/mc-test-harness/tests/plugin_*.rs` |
+| `playable` | `docs/playable/ACTIVE.md` after `docs/playable/README.md` | `crates/mc-core/src/`, `crates/mc-edge/src/`, focused harness path and named real-client scenario |
+| `plugins` | `docs/PLUGINS.md` | `crates/mc-script/`, `crates/mc-plugin-host/`, native `mc-core` plugin modules and edge session endpoint |
 | `parity` | exact `docs/PROJECT_SPEC.md` or active milestone section | ADR 0002, local protocol dump/oracle, exact harness comparison |
-| `scaling` | exact active milestone and ADR 0004/0005 | measured benchmark/profile only; metric definitions in `docs/milestones/M52-operator-performance-notes.md` |
-| `architecture` | `docs/ARCHITECTURE.md` (target design), then `docs/architecture/runtime.md` for the actual runtime, then the ADR owning the touched runtime constraint | exact modules/callers; new target and current implementation must remain distinct. State/owner questions: `docs/architecture/state-ownership.md`; end-to-end routes: `docs/architecture/mutations.md`; warehouse pilot contract: `docs/architecture/pilot-warehouse-binding.md` |
+| `scaling` | ADR 0013 and exact current profile contract | `catalog-load` and measured native runtime receipts; old regional-owner benchmarks are history |
+| `architecture` | `docs/ARCHITECTURE.md`, ADR 0013/0014, `docs/architecture/runtime.md` | current native symbols/callers; state: `docs/architecture/state-ownership.md`; end-to-end routes: `docs/architecture/mutations.md`. CP-ARCH plan/audit describe the retired v1 program, not current paths. |
 
 Additional exact surfaces:
 
@@ -29,7 +29,7 @@ Additional exact surfaces:
 not M100 replacement readiness. Do not read or edit readiness ledgers unless the
 checkpoint explicitly requests readiness.
 
-- Server: `cargo run --bin mc-server -- --config playable.toml`.
+- Server: `cargo run -p mc-edge --bin solaris-v2 -- --config playable.toml`.
 - Use focused one-to-three-minute client probes while fixing one phase, then one
   complete 20-minute gate at checkpoint close.
 - Prefer deleting/de-scoping broken breadth over adding unrelated subsystems.

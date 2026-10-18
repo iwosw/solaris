@@ -54,12 +54,6 @@ impl Cache for Counting<'_> {
     fn node_y_free(&mut self, id: Id) -> bool {
         self.sampler.node_y_free(id)
     }
-    fn counters(&self) -> Option<&DensityCounters> {
-        self.sampler
-            .counter_snapshot()
-            .enabled
-            .then(|| self.sampler.counter_snapshot())
-    }
     fn counters_mut(&mut self) -> Option<&mut DensityCounters> {
         self.sampler.counters_mut()
     }
@@ -314,7 +308,7 @@ fn min_max_short_circuit_skips_proven_arm() {
         let Ok(field) = runtime.field(field) else {
             continue;
         };
-        let mut memo = std::collections::HashMap::new();
+        let mut memo = HashMap::new();
         let Some([lo, hi]) = bounds(&runtime, field, &mut memo, &mut Vec::new()) else {
             continue;
         };
@@ -366,14 +360,14 @@ fn min_max_short_circuit_skips_proven_arm() {
             nodes: vec![Node::Gradient(0, 0, 0.0, 0.0)],
             noises: vec![],
             blended: vec![],
-            fields: std::collections::HashMap::new(),
+            fields: HashMap::new(),
             min_y: 0,
             height: 1,
             sea_level: 0,
             cell_width: 4,
             cell_height: 8,
         };
-        let mut memo = std::collections::HashMap::new();
+        let mut memo = HashMap::new();
         assert!(
             bounds(&probe, 0, &mut memo, &mut Vec::new()).is_none(),
             "equal-height gradient must be unbounded (NaN)"

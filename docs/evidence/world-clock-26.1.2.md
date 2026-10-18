@@ -90,6 +90,17 @@ metadata round-trip, and save/rebind restoration. The real-client observations
 below remain the graphical proof for the default enabled policy; this
 checkpoint did not repeat that already-closed gate.
 
+## V2 clock delivery
+
+The edge caches each viewer's last sent simulation tick, day time, and rate.
+It compares new snapshots with that clock's interpolated time rather than
+treating normal tick advancement as a change. Time-command jumps, sleep skips,
+rate changes, and the first snapshot after respawn synchronize reliably before
+credit-gated chunk work, so world-queue debt cannot strand an authoritative
+clock change. Unchanged clocks retain the 20-tick heartbeat on that same
+reliable FIFO, preventing an older queued heartbeat from arriving after a
+new time command and rolling the client's clock backward.
+
 ## Graphical client gate
 
 Date: 2026-07-30

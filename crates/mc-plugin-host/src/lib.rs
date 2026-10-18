@@ -36,8 +36,10 @@ pub mod client_bundle;
 mod client_presentation;
 pub mod discovery;
 mod domain_inventories;
-mod domain_residents;
+mod domain_npc_routes;
+mod domain_npcs;
 mod domain_settlements;
+mod domain_world_structures;
 pub mod host;
 pub mod instance;
 pub mod limits;
@@ -53,6 +55,7 @@ pub use adapter::{AdapterError, NoSessions, PlayerSessions, to_script_batch};
 pub use check::{CheckError, CheckReport, CheckedPackage, check_deployment};
 pub use discovery::{
     DeploymentConfig, DiscoveredDeployment, DiscoveryError, DiscoveryMode, discover,
+    discover_directory,
 };
 pub use host::{
     CallbackLatencyPercentiles, HostQueues, HostStartError, InstanceDiagnostics, PluginHost,
@@ -65,8 +68,17 @@ pub use package::{LoadedPackage, PackageError, PackageManifest, load_package};
 pub use staging::{CommandBatch, StagingError};
 pub use startup::{
     ContributionOutcome, ContributionRefusal, DeploymentContribution, FieldOverflow,
-    PackageContribution, ValidatedStartupContribution, convert_startup_contribution,
+    PackageContribution, ValidatedStartupContribution, convert_native_work_recipes,
+    convert_startup_contribution,
 };
+
+static WASM_INVOCATIONS: AtomicU64 = AtomicU64::new(0);
+
+/// Actual guest export calls attempted by this process, including lifecycle hooks.
+#[must_use]
+pub fn wasm_invocations() -> u64 {
+    WASM_INVOCATIONS.load(Ordering::Relaxed)
+}
 
 /// Why a plugin could not be compiled, instantiated or called.
 ///
@@ -108,6 +120,7 @@ pub struct EpochTicker {
     running: Arc<AtomicBool>,
     ticks: Arc<AtomicU64>,
     handle: Option<std::thread::JoinHandle<()>>,
+    wake: Arc<(std::sync::Mutex<()>, std::sync::Condvar)>,
 }
 
 impl EpochTicker {
@@ -118,24 +131,34 @@ impl EpochTicker {
     pub fn start(engine: Engine, interval: Duration) -> std::io::Result<Self> {
         let running = Arc::new(AtomicBool::new(true));
         let ticks = Arc::new(AtomicU64::new(0));
+        let wake = Arc::new((std::sync::Mutex::new(()), std::sync::Condvar::new()));
+        let thread_wake = Arc::clone(&wake);
         let thread_running = Arc::clone(&running);
         let thread_ticks = Arc::clone(&ticks);
         let handle = std::thread::Builder::new()
             .name("mc-plugin-epoch".to_owned())
             .spawn(move || {
+                let (lock, changed) = &*thread_wake;
+                let mut guard = lock.lock().unwrap_or_else(|error| error.into_inner());
                 while thread_running.load(Ordering::Acquire) {
-                    std::thread::sleep(interval);
+                    let (next_guard, timeout) = changed
+                        .wait_timeout(guard, interval)
+                        .unwrap_or_else(|error| error.into_inner());
+                    guard = next_guard;
                     if !thread_running.load(Ordering::Acquire) {
                         return;
                     }
-                    thread_ticks.fetch_add(1, Ordering::Relaxed);
-                    engine.increment_epoch();
+                    if timeout.timed_out() {
+                        thread_ticks.fetch_add(1, Ordering::Relaxed);
+                        engine.increment_epoch();
+                    }
                 }
             })?;
         Ok(Self {
             running,
             ticks,
             handle: Some(handle),
+            wake,
         })
     }
 
@@ -148,7 +171,11 @@ impl EpochTicker {
 
 impl Drop for EpochTicker {
     fn drop(&mut self) {
+        let (lock, changed) = &*self.wake;
+        let guard = lock.lock().unwrap_or_else(|error| error.into_inner());
         self.running.store(false, Ordering::Release);
+        changed.notify_one();
+        drop(guard);
         if let Some(handle) = self.handle.take() {
             let _ = handle.join();
         }
@@ -228,6 +255,7 @@ impl<S: HostServices> InstanceState<S> {
 
     pub(crate) fn note_call(&mut self) {
         self.calls += 1;
+        WASM_INVOCATIONS.fetch_add(1, Ordering::Relaxed);
         self.log_lines = 0;
         self.log_lines_dropped = 0;
     }
@@ -359,14 +387,14 @@ pub fn store<S: HostServices>(
 /// The linker every instance of this contract is instantiated with.
 pub fn linker<T: HostServices + 'static>(
     engine: &Engine,
-) -> Result<Linker<crate::InstanceState<T>>, HostError> {
+) -> Result<Linker<InstanceState<T>>, HostError> {
     let mut linker = Linker::new(engine);
     // The store's data *is* the plugin state, so the accessor is the identity and
     // `HasSelf` names that shape for the generated binder.
     bindings::Plugin::add_to_linker::<
-        crate::InstanceState<T>,
-        wasmtime::component::HasSelf<crate::InstanceState<T>>,
-    >(&mut linker, |state: &mut crate::InstanceState<T>| state)
+        InstanceState<T>,
+        wasmtime::component::HasSelf<InstanceState<T>>,
+    >(&mut linker, |state: &mut InstanceState<T>| state)
     .map_err(|error| HostError::Engine(error.to_string()))?;
     Ok(linker)
 }

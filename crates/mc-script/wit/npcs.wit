@@ -1,0 +1,725 @@
+// Generic durable NPC identities, physical scheduled work and group controls.
+// The engine owns UUID bindings, pose, health, item slots and revision fences.
+// Independent generic-NPC consumers own their policy; native settlement residents
+// use the core settlement owner for admission, housing, population and occupations.
+interface npcs {
+    use inventories.{inventory-endpoint, inventory-material, inventory-item, inventory-expected-revision, npc-death-cargo-receipt};
+    use types.{position, block-position, npc-execution-permit};
+
+    /// Loaded state is observational; unload never changes the durable UUID.
+    enum npc-lifecycle {
+        alive-loaded,
+        alive-unloaded,
+        dead,
+        released,
+    }
+
+    /// One carried item summary of a loaded npc.
+    ///
+    /// At most `mc_script::MAX_NPC_CARRIED_ITEMS` (8) of these are reported
+    /// per snapshot, each naming a registered item resource and a count of at
+    /// least one.
+    record npc-item-summary {
+        item-id: string,
+        count: u32,
+    }
+
+    /// Exact parent native UUIDs and clocks from a successful vanilla birth.
+    record native-birth-origin {
+        parents: tuple<string, string>,
+        started-tick: u64,
+        birth-tick: u64,
+    }
+
+    /// Live state of a npc whose chunk is currently loaded.
+    ///
+    /// This is read from the server's own entity snapshot; a plugin only reads
+    /// it. Health is in health points, and the carried list is the bounded
+    /// summary above rather than the npc's whole inventory: reading a
+    /// npc's items is `query_owned_inventory` with the `npc_carry` or
+    /// `npc_equipment` endpoint.
+    record npc-loaded-state {
+        dimension: string,
+        x: f64,
+        y: f64,
+        z: f64,
+        health: f32,
+        max-health: f32,
+        yaw: f32,
+        carried: list<npc-item-summary>,
+        native-age-ticks: option<s32>,
+        birth-origin: option<native-birth-origin>,
+    }
+
+
+    /// One bounded server-owned snapshot of a durable npc handle.
+    ///
+    /// `loaded` is present exactly when the lifecycle is `alive-loaded`, because
+    /// only a loaded npc has live state; a dead or unloaded one keeps its
+    /// handle, its entity and its revision without a pose.
+    record npc-snapshot {
+        handle: string,
+        entity-uuid: string,
+        lifecycle: npc-lifecycle,
+        revision: u64,
+        generation-id: option<string>,
+        loaded: option<npc-loaded-state>,
+    }
+
+    /// Adopt a loaded living entity visible to the authenticated actor.
+    record npc-adopt {
+        /// The durable operation id, 1..64 bytes in the contract's script-id
+        /// alphabet, as `storage-batch-cas` documents it. A repeat with identical
+        /// content replays the recorded outcome; the same id with different
+        /// content is refused with `operation_conflict`.
+        operation-id: string,
+        /// The claiming actor: the runtime id of the session that must be near
+        /// the entity.
+        actor-id: u64,
+        /// The server's canonical entity UUID.
+        entity-uuid: string,
+        /// `0` for a first claim, otherwise the npc's current revision.
+        expected-entity-revision: u64,
+    }
+
+    /// Authenticated plugin adoption of an actual loaded, alive native child.
+    /// Both parent handles must remain owned by this plugin and resolve to the
+    /// child's exact native UUID provenance. Unloaded refuses unloaded; a dead
+    /// child never reappears. No player impersonation or entity spawn occurs.
+    record npc-adopt-native-child {
+        operation-id: string,
+        entity-uuid: string,
+        parent-handles: tuple<string, string>,
+        expected-entity-revision: u64,
+    }
+
+    /// Materialize a living registered entity at a loaded, standable coordinate.
+    /// The plugin supplies a stable generation key; repeats keep the same UUID.
+    record npc-spawn {
+        /// The durable operation id, as `npc-claim` documents it.
+        operation-id: string,
+        generation-id: string,
+        position: position,
+        entity-type: string,
+    }
+
+    /// Release only this plugin's ownership binding, fenced by its revision.
+    record npc-release {
+        operation-id: string,
+        handle: string,
+        expected-revision: u64,
+    }
+
+    /// Exact item cost and signed nonlethal native health effect.
+    /// Zero/no-op changes and lethal afterimages refuse without consumption.
+    record apply-health-delta {
+        operation-id: string,
+        handle: string,
+        expected-revision: u64,
+        source: inventory-endpoint,
+        material: inventory-material,
+        health-delta-milli: s32,
+    }
+
+    /// Read at most `mc_script::MAX_NPC_QUERY_HANDLES` owner-scoped handles.
+    /// An empty list reads a bounded page; an explicit handle must exist and
+    /// belong to this plugin. This read has no durable operation id and observes
+    /// death before returning the server's current lifecycle.
+    record npc-query {
+        handles: list<string>,
+        cursor: option<string>,
+    }
+
+    record npc-page {
+        npcs: list<npc-snapshot>,
+        cursor: option<string>,
+    }
+
+    /// Explicit nonempty owned parent handles, 1..64; limit 1..64.
+    /// Cursor is a native observation sequence, never an NPC handle or UUID.
+    /// A named cursor older than history-start refuses cursor_expired.
+    record native-birth-query {
+        parent-handles: list<string>,
+        cursor: option<u64>,
+        limit: u16,
+    }
+
+    /// Observation grants no child ownership. Unloaded/dead bodies have no pose.
+    record native-birth-observation {
+        entity-uuid: string,
+        origin: native-birth-origin,
+        lifecycle: npc-lifecycle,
+        dimension: string,
+        loaded: option<npc-loaded-state>,
+    }
+
+    record native-birth-page {
+        births: list<native-birth-observation>,
+        cursor: option<u64>,
+        /// Expired-through sequence. Zero means the native history is complete.
+        /// The newest 16,384 identities are retained; plugins preserve consumed facts.
+        history-start: u64,
+        /// Persist after consuming this page, even when cursor is none.
+        resume-cursor: u64,
+    }
+
+    /// One npc mutation or bounded read.
+    variant npc-operation {
+        adopt(npc-adopt),
+        adopt-native-child(npc-adopt-native-child),
+        spawn(npc-spawn),
+        query(npc-query),
+        query-births(native-birth-query),
+        release(npc-release),
+        apply-health-delta(apply-health-delta),
+    }
+
+    /// The server's one npc or an owner-scoped page of snapshots.
+    variant npc-result {
+        snapshot(npc-snapshot),
+        page(npc-page),
+        health-changed(string),
+        birth-page(native-birth-page),
+    }
+
+    /// One bounded axis-aligned work area the engine executes against.
+    ///
+    /// Each axis is at most `mc_script::MAX_WORK_AREA_AXIS` (16) blocks wide, so
+    /// one work order is a bounded amount of engine work rather than a region
+    /// scan, and `min` is never past `max` on any axis.
+    record work-area {
+        dimension: string,
+        min: block-position,
+        max: block-position,
+    }
+
+    /// Concrete bounded physical target and registered tool.
+    record area-tool-work {
+        area: work-area,
+        tool: string,
+    }
+
+    record replant-work {
+        area: work-area,
+        seed: string,
+        tool: string,
+    }
+
+    /// One tend-livestock order: the bounded pen and the feed it takes.
+    record tend-livestock-work {
+        area: work-area,
+        feed: string,
+    }
+
+    /// One haul: move items between two inventory endpoints.
+    ///
+    /// The endpoints are the same closed vocabulary a transfer uses, so a haul is
+    /// a real item move between real containers rather than a second kind of
+    /// inventory call. `item` names the exact item the move takes from the
+    /// source; absent means whatever the source holds first in slot order, which
+    /// is the shape a worker's own cargo deposit uses. A named item the source
+    /// does not hold pauses the assignment with `missing_input` instead of
+    /// moving something else.
+    record haul-work {
+        source: inventory-endpoint,
+        destination: inventory-endpoint,
+        item: option<string>,
+    }
+
+    /// One craft: consume the recipe's inputs and produce its output.
+    ///
+    /// `station` is one loaded stateless station cell whose capability matches
+    /// the recipe (crafting table, campfire, or stonecutter). Furnace-backed
+    /// recipes stay in the core furnace fuel/burn state machine. At most
+    /// `mc_script::MAX_WORK_UNITS` (4096) units are craftable in one order, and
+    /// the recipe must be one the server's own registry knows. The inputs,
+    /// output and applicable remainders commit exactly once; missing inputs or
+    /// recipient capacity leave them untouched.
+    record craft-work {
+        recipe: string,
+        count: u32,
+        station: work-area,
+    }
+
+    /// One construct: commit the next stage of a prepared structure.
+    ///
+    /// `structure-id` and `stage` are the server's own ids from the structure
+    /// snapshot the world-structure operations answered with, and
+    /// `expected-revision` is the structure revision the plugin read. A worker
+    /// building against a stale revision pauses instead of committing a stage
+    /// the plan no longer holds.
+    record construct-work {
+        structure-id: string,
+        stage: string,
+        expected-revision: u64,
+    }
+
+    /// The closed generic physical work-order union.
+    ///
+    /// Every member is a concrete bounded target: an area, a container pair, a
+    /// recipe or a structure stage. The engine decides what the worker can
+    /// actually do there and reports it in the assignment result.
+    variant work-order {
+        harvest(area-tool-work),
+        cut-tree(area-tool-work),
+        mine(area-tool-work),
+        replant(replant-work),
+        tend-livestock(tend-livestock-work),
+        haul(haul-work),
+        craft(craft-work),
+        construct(construct-work),
+    }
+
+    /// Closed formation vocabulary.
+    enum formation-kind {
+        line,
+        column,
+        wedge,
+        square,
+    }
+
+    /// The formation the engine renders for one squad order.
+    ///
+    /// Spacing is in half-blocks: `4` is two blocks between adjacent slots, and
+    /// the server admits `mc_script::MIN_FORMATION_SPACING` (1) through
+    /// `MAX_FORMATION_SPACING` (32).
+    record formation {
+        kind: formation-kind,
+        spacing: u8,
+    }
+
+    /// Closed hostile category one target reference may address.
+    enum hostile-category {
+        hostile,
+        player,
+        owned-npc,
+        neutral-animal,
+    }
+
+    /// The bounded ally and target policy supplied with an attack order.
+    ///
+    /// `allies` holds at most `mc_script::MAX_ORDER_AFFILIATIONS` (64) opaque
+    /// affiliations - owned npc handles and allied player uuids - and
+    /// `permitted` names the categories the members may engage. `revision` is the
+    /// policy revision the plugin is reasoning about.
+    record engagement-policy {
+        revision: u64,
+        allies: list<string>,
+        permitted: list<hostile-category>,
+    }
+
+    /// One opaque, server-issued target reference.
+    ///
+    /// A plugin does not name an entity: it sends back a reference the server
+    /// issued, with the policy revision it was issued under and the revision it
+    /// expires at. A reference the server no longer holds, or one whose policy
+    /// revision has moved, is refused rather than resolved to something else.
+    record order-target-ref {
+        target-ref: string,
+        policy-revision: u64,
+        expires-revision: u64,
+    }
+
+    /// One follow order: walk with the named player.
+    record follow-order {
+        target-player: u64,
+        formation: formation,
+    }
+
+    /// One move order: walk to an anchor and face a heading.
+    record move-order {
+        dimension: string,
+        anchor: block-position,
+        heading-degrees: u16,
+        formation: formation,
+    }
+
+    /// One hold order: stand at an anchor and engage inside a radius.
+    record hold-order {
+        anchor: block-position,
+        heading-degrees: u16,
+        formation: formation,
+        engagement-radius: u8,
+    }
+
+    /// One patrol order: walk a closed route of waypoints.
+    ///
+    /// Between `mc_script::MIN_ORDER_WAYPOINTS` (2) and `MAX_ORDER_WAYPOINTS`
+    /// (16) waypoints, with no two adjacent waypoints the same cell. Waypoint
+    /// order is the route and is never reordered by the server.
+    record patrol-order {
+        waypoints: list<block-position>,
+        formation: formation,
+        engagement-radius: u8,
+    }
+
+
+    /// One attack order: engage the named targets under this policy.
+    ///
+    /// Between one and `mc_script::MAX_ORDER_TARGETS` (64) target references,
+    /// sorted and unique by reference. Ammunition, line of sight and the ally
+    /// policy are decided by the engine per member and reported in the outcome.
+    record attack-order {
+        targets: list<order-target-ref>,
+        policy: engagement-policy,
+    }
+
+    /// One retreat order: fall back to an anchor in formation.
+    record retreat-order {
+        anchor: block-position,
+        formation: formation,
+    }
+
+    /// The generic group-control union.
+    variant order {
+        follow(follow-order),
+        move(move-order),
+        hold(hold-order),
+        patrol(patrol-order),
+        attack(attack-order),
+        retreat(retreat-order),
+    }
+
+    /// One work assignment: give the worker an order and a unit budget.
+    ///
+    /// `work-units` is how much of the order the engine may commit in this call,
+    /// between 1 and `mc_script::MAX_WORK_UNITS` (4096); it is the caller's own
+    /// bound, not a count of blocks the engine promises. `expected-revision` is
+    /// the npc revision the plugin read, so an assignment against a stale
+    /// npc is refused rather than stacked on a decision that moved.
+    record assign-work {
+        operation-id: string,
+        handle: string,
+        work: work-order,
+        work-units: u64,
+        expected-revision: u64,
+    }
+
+    /// Explicit reversible stop; the opaque owner reason is a bounded script id.
+    record suspend-work {
+        operation-id: string,
+        handle: string,
+        admitted-operation-id: string,
+        reason: string,
+        expected-revision: u64,
+    }
+
+    record resume-work {
+        operation-id: string,
+        handle: string,
+        admitted-operation-id: string,
+        expected-revision: u64,
+    }
+    record ack-work-receipts {
+        operation-id: string,
+        handle: string,
+        admitted-operation-id: string,
+        through-sequence: u64,
+        expected-revision: u64,
+    }
+
+    /// One work cancellation: stop what this npc was told to do.
+    record cancel-work {
+        operation-id: string,
+        handle: string,
+        expected-revision: u64,
+    }
+
+    /// Explicit native held-item input. Equipment slots are main 0 or off 1.
+    /// Does not replace movement, work, or attack orders. The live executor,
+    /// exact canonical stack and expected inventory revision fence activation.
+    record use-item {
+        operation-id: string,
+        handle: string,
+        equipment-slot: u8,
+        active: bool,
+        expected-revision: u64,
+        execution-permit: option<npc-execution-permit>,
+    }
+
+    /// Move one actual native item into world entity custody, never a copy.
+    /// The UUID identifies that world participant; support and pose are checked
+    /// against actual loaded collision geometry at the conditional owner turn.
+    record deploy-item {
+        operation-id: string,
+        handle: string,
+        equipment-slot: u8,
+        expected-revision: u64,
+        execution-permit: option<npc-execution-permit>,
+        entity-uuid: string,
+        support: block-position,
+        position: position,
+        heading-degrees: u16,
+    }
+
+    record retract-item {
+        operation-id: string,
+        handle: string,
+        expected-revision: u64,
+        execution-permit: option<npc-execution-permit>,
+        entity-uuid: string,
+        equipment-slot: u8,
+    }
+
+    record capture-item {
+        operation-id: string,
+        handle: string,
+        expected-revision: u64,
+        execution-permit: option<npc-execution-permit>,
+        entity-uuid: string,
+    }
+
+    /// One squad order: give every named member the same order.
+    ///
+    /// Members are the durable handles the plugin holds, each with the order
+    /// revision it expects, so one member whose revision moved is reported as
+    /// `stale-revision` in the outcome rather than stopping the others. At most
+    /// `mc_script::MAX_NPC_ORDER_HANDLES` (64) members, each named once.
+    record issue-order {
+        operation-id: string,
+        handles: list<string>,
+        expected-order-revisions: list<u64>,
+        order: order,
+    }
+
+    /// One squad order cancellation, against the same member list.
+    record cancel-order {
+        operation-id: string,
+        handles: list<string>,
+        expected-order-revisions: list<u64>,
+    }
+
+    record npc-control-query {
+        handles: list<string>,
+    }
+
+    record npc-pending-work {
+        work: work-order,
+        work-units: u64,
+    }
+
+    record npc-target-observation {
+        target-ref: string,
+        position: option<position>,
+        alive: option<bool>,
+    }
+
+    record npc-item-use-control {
+        equipment-slot: option<u8>,
+        started-tick: option<u64>,
+        disabled-until: u64,
+    }
+
+    record npc-control-snapshot {
+        handle: string,
+        revision: u64,
+        order-revision: u64,
+        order: option<order>,
+        work: option<work-assignment>,
+        pending-work: option<npc-pending-work>,
+        death-cargo: option<npc-death-cargo-receipt>,
+        item-use: option<npc-item-use-control>,
+        targets: list<npc-target-observation>,
+    }
+
+    record npc-control-page {
+        npcs: list<npc-control-snapshot>,
+    }
+
+    /// One durable npc work or squad call.
+    variant npc-order-operation {
+        query(npc-control-query),
+        use-item(use-item),
+        deploy-item(deploy-item),
+        retract-item(retract-item),
+        capture-item(capture-item),
+        assign-work(assign-work),
+        suspend-work(suspend-work),
+        resume-work(resume-work),
+        ack-work-receipts(ack-work-receipts),
+        cancel-work(cancel-work),
+        issue-order(issue-order),
+        cancel-order(cancel-order),
+    }
+
+    /// Closed physical work pause reason.
+    enum work-pause-reason {
+        unloaded,
+        no-workers,
+        missing-input,
+        missing-tool,
+        missing-station,
+        blocked-route,
+        interrupted,
+        protected,
+        unsupported,
+        no-storage,
+        receipt-backpressure,
+    }
+
+    /// Lifecycle state of one work assignment.
+    enum work-state {
+        accepted,
+        running,
+        paused,
+        suspended,
+        committed,
+        cancelled,
+    }
+
+    /// One committed inventory change.
+    ///
+    /// Only changes the engine actually committed are reported: a positive delta
+    /// produced items and a negative one consumed them. This is the receipt for
+    /// what the order did to the world's items, so a plugin reads its own
+    /// accounting from it instead of assuming an order succeeded.
+    record item-change {
+        item-id: string,
+        delta: s64,
+    }
+
+    record craft-stack {
+        endpoint: inventory-endpoint,
+        slot: u8,
+        item: inventory-item,
+    }
+    record craft-tool-wear {
+        before: craft-stack,
+        after: option<inventory-item>,
+        damage: u32,
+    }
+    record craft-receipt {
+        operation-id: string,
+        handle: string,
+        portion-id: string,
+        sequence: u64,
+        recipe: string,
+        recipe-revision: string,
+        seed: u64,
+        simulation-tick: u64,
+        duration-ticks: u64,
+        station: work-area,
+        inputs: list<craft-stack>,
+        outputs: list<craft-stack>,
+        wear: list<craft-tool-wear>,
+        before: list<inventory-expected-revision>,
+        after: list<inventory-expected-revision>,
+        revision: u64,
+    }
+
+    /// One work assignment result.
+    ///
+    /// `reason` is present exactly when the state is `paused`, and
+    /// `work-units-done` never exceeds `work-units-planned`.
+    record work-assignment {
+        handle: string,
+        operation-id: option<string>,
+        receipts: list<craft-receipt>,
+        acknowledged-sequence: u64,
+        due-tick: option<u64>,
+        state: work-state,
+        reason: option<work-pause-reason>,
+        suspension-reason: option<string>,
+        work-units-done: u64,
+        work-units-planned: u64,
+        changes: list<item-change>,
+        revision: u64,
+    }
+
+    /// One cancellation result: the npc and the revision it now holds.
+    record work-cancelled {
+        handle: string,
+        revision: u64,
+    }
+
+    /// Closed observable state of one squad member after an order.
+    ///
+    /// `applied` means the member is executing the order; every other member is
+    /// reported with the reason it is not, which is what makes a partial squad
+    /// order readable instead of silently partial.
+    enum order-member-state {
+        applied,
+        blocked-route,
+        unloaded,
+        dead,
+        migrating,
+        forbidden,
+        stale-revision,
+    }
+
+    /// One server-issued target reference surfaced to the plugin.
+    record order-target {
+        target-ref: string,
+        /// Fences issued with this reference; the caller returns both unchanged.
+        policy-revision: u64,
+        expires-revision: u64,
+        category: hostile-category,
+        position: block-position,
+    }
+
+    /// One member's observable outcome after a squad order.
+    ///
+    /// `formation-slot` is present exactly when the member was `applied`, and
+    /// `targets` holds the references that member may engage, bounded by
+    /// `mc_script::MAX_ORDER_TARGETS`.
+    record order-member-outcome {
+        handle: string,
+        state: order-member-state,
+        formation-slot: option<u16>,
+        targets: list<order-target>,
+    }
+
+    /// One committed combat outcome. Damage is in thousandths of a health point.
+    ///
+    /// The event id is the server's own, so a plugin awards experience exactly
+    /// once per event; `order-revision` ties the outcome to the order that caused
+    /// it, and `killed` says whether the victim died from it.
+    record combat-event {
+        event-id: u64,
+        revision: u64,
+        attacker-handle: string,
+        victim-target-ref: string,
+        order-revision: u64,
+        damage-milli: u32,
+        killed: bool,
+    }
+
+    /// One squad order result: the order revision, the members, and the combat
+    /// the order committed.
+    record order-result {
+        order-revision: u64,
+        members: list<order-member-outcome>,
+        combat: list<combat-event>,
+    }
+
+    /// One squad cancellation result, against the same member list.
+    record order-cancelled {
+        order-revision: u64,
+        members: list<order-member-outcome>,
+    }
+
+
+    record item-used {
+        handle: string,
+        revision: u64,
+    }
+
+    record item-custody-changed {
+        handle: string,
+        entity-uuid: string,
+        revision: u64,
+    }
+
+    /// The answer to one npc work or squad call.
+    variant npc-order-result {
+        item-used(item-used),
+        item-deployed(item-custody-changed),
+        item-retracted(item-custody-changed),
+        item-captured(item-custody-changed),
+        controls(npc-control-page),
+        work(work-assignment),
+        work-cancelled(work-cancelled),
+        order(order-result),
+        order-cancelled(order-cancelled),
+    }
+}

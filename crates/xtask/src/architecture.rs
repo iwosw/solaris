@@ -230,7 +230,7 @@ fn crate_graph_document(root: &Path) -> Result<String, String> {
         out.push_str(&format!("- {sibling}: external\n"));
     }
     out.push_str(
-        "\nGenerated artifacts never own semantics; see the owning manifests and ADR 0006.\n",
+        "\nGenerated artifacts never own semantics; see the owning manifests and ADRs 0013/0014.\n",
     );
     Ok(out)
 }

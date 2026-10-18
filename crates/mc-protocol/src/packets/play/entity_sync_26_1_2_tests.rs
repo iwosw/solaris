@@ -343,7 +343,7 @@ fn entity_data_rejects_reserved_indices_and_over_cap_collections() {
 
 #[test]
 fn entity_data_explicitly_rejects_unsupported_serializers() {
-    let unsupported = [5, 6, 16, 17, 21, 34, 39, 40, 41, 43];
+    let unsupported = [5, 21, 34, 39, 40, 41, 43];
     for serializer_id in unsupported {
         let mut encoded = vec![1, 0];
         encoded.write_varint(serializer_id);
@@ -704,6 +704,108 @@ fn update_and_remove_effect_packets_cover_flags_and_round_trip() {
         remove
     );
     assert_every_truncated_prefix_fails::<ClientboundRemoveEntityEffect>(&remove_bytes);
+}
+
+#[test]
+fn infinite_effect_uses_signed_varint_duration_and_varint_amplifier() {
+    let packet = ClientboundUpdateEntityEffect {
+        entity_id: 42,
+        effect_id: MobEffectId::new(39).unwrap(),
+        amplifier: 255,
+        duration_ticks: -1,
+        flags: EntityEffectFlags {
+            ambient: false,
+            visible: true,
+            show_icon: false,
+            blend: true,
+        },
+    };
+    let expected = [42, 39, 0xff, 1, 0xff, 0xff, 0xff, 0xff, 0x0f, 0x0a];
+    assert_eq!(encode(&packet), expected);
+    assert_eq!(
+        decode_exact::<ClientboundUpdateEntityEffect>(&expected),
+        packet
+    );
+    assert_every_truncated_prefix_fails::<ClientboundUpdateEntityEffect>(&expected);
+}
+
+#[test]
+fn effect_particle_list_and_player_absorption_match_vanilla_accessors() {
+    use super::super::{
+        EffectParticle, LIVING_ENTITY_DATA_EFFECT_AMBIENCE_INDEX,
+        LIVING_ENTITY_DATA_EFFECT_PARTICLES_INDEX, PLAYER_DATA_ABSORPTION_INDEX,
+    };
+    let packet = ClientboundSetEntityData {
+        entity_id: 42,
+        values: vec![
+            EntityDataValue::EffectParticles {
+                index: LIVING_ENTITY_DATA_EFFECT_PARTICLES_INDEX,
+                particles: vec![
+                    EffectParticle::EntityEffect { argb: 0x26123456 },
+                    EffectParticle::TrialOmen,
+                    EffectParticle::RaidOmen,
+                ],
+            },
+            EntityDataValue::Boolean {
+                index: LIVING_ENTITY_DATA_EFFECT_AMBIENCE_INDEX,
+                value: true,
+            },
+            EntityDataValue::Float {
+                index: PLAYER_DATA_ABSORPTION_INDEX,
+                value: 4.0,
+            },
+        ],
+    };
+    let expected = [
+        42, 10, 17, 3, 21, 0x26, 0x12, 0x34, 0x56, 114, 113, 11, 8, 1, 17, 3, 0x40, 0x80, 0, 0,
+        0xff,
+    ];
+    assert_eq!(encode(&packet), expected);
+    assert_eq!(decode_exact::<ClientboundSetEntityData>(&expected), packet);
+    assert_every_truncated_prefix_fails::<ClientboundSetEntityData>(&expected);
+    let cleared = ClientboundSetEntityData {
+        entity_id: 42,
+        values: vec![EntityDataValue::EffectParticles {
+            index: LIVING_ENTITY_DATA_EFFECT_PARTICLES_INDEX,
+            particles: Vec::new(),
+        }],
+    };
+    assert_eq!(encode(&cleared), [42, 10, 17, 0, 0xff]);
+    assert_eq!(
+        decode_exact::<ClientboundSetEntityData>(&encode(&cleared)),
+        cleared
+    );
+}
+
+#[test]
+fn effect_particle_lists_are_bounded_and_reject_unknown_particle_payloads() {
+    use super::super::{EffectParticle, MAX_ENTITY_EFFECT_PARTICLES};
+    let mut negative: &[u8] = &[1, 10, 17, 0xff, 0xff, 0xff, 0xff, 0x0f];
+    assert_eq!(
+        ClientboundSetEntityData::decode(&mut negative).unwrap_err(),
+        CodecError::NegativeLength(-1)
+    );
+    let mut unknown: &[u8] = &[1, 10, 17, 1, 0];
+    assert_eq!(
+        ClientboundSetEntityData::decode(&mut unknown).unwrap_err(),
+        CodecError::NotSupported("unsupported effect metadata particle")
+    );
+    let packet = ClientboundSetEntityData {
+        entity_id: 1,
+        values: vec![EntityDataValue::EffectParticles {
+            index: 10,
+            particles: vec![EffectParticle::TrialOmen; MAX_ENTITY_EFFECT_PARTICLES + 1],
+        }],
+    };
+    let mut output = vec![0xaa];
+    assert_eq!(
+        packet.encode(&mut output).unwrap_err(),
+        CodecError::StringTooLong {
+            len: MAX_ENTITY_EFFECT_PARTICLES + 1,
+            max: MAX_ENTITY_EFFECT_PARTICLES,
+        }
+    );
+    assert_eq!(output, [0xaa]);
 }
 
 #[test]

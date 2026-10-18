@@ -713,6 +713,7 @@ impl Probe {
         capture: &mut CaptureWriter,
     ) -> Result<()> {
         let tick_count = usize::try_from((duration.as_millis() / 50).max(1))?;
+        // Produce vanilla-client input at 20 Hz; this does not poll for readiness.
         let mut ticker = tokio::time::interval(Duration::from_millis(50));
         ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         ticker.tick().await;
@@ -1668,16 +1669,4 @@ async fn main() -> Result<()> {
     }
 
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::Cli;
-    use clap::CommandFactory;
-
-    #[test]
-    fn cli_exposes_event_driven_hold_open_mode() {
-        let help = Cli::command().render_long_help().to_string();
-        assert!(help.contains("--hold-open"));
-    }
 }

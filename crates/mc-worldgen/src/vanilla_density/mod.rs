@@ -146,6 +146,12 @@ impl SurfaceHeightSampler<'_> {
         }
         self.min_y - 1
     }
+
+    /// Terrain density at one block through the region's shared lattice
+    /// corners: the same value [`VanillaDensity::density`] computes.
+    pub(crate) fn density(&mut self, x: i32, y: i32, z: i32) -> f64 {
+        self.sampler.sample_terrain(self.field, x, y, z)
+    }
 }
 
 impl VanillaDensity {

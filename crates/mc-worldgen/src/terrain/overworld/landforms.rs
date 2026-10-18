@@ -35,10 +35,7 @@ const CLIMATE_LOCAL_WEIGHT: f64 = 0.06;
 const CLIMATE_DOMAIN_WEIGHT: f64 = 0.04;
 
 pub(super) fn sample(router: OverworldRouter, block_x: i32, block_z: i32) -> TerrainSample {
-    let settings = router.settings();
-    let scale = settings
-        .map(|value| (value.world_scale_meters_per_block / 30.0).clamp(0.25, 8.0))
-        .unwrap_or(1.0);
+    let scale = 1.0;
     let x = f64::from(block_x);
     let z = f64::from(block_z);
     let sea = f64::from(router.sea_level());
@@ -137,8 +134,8 @@ pub(super) fn sample(router: OverworldRouter, block_x: i32, block_z: i32) -> Ter
         fade(remap(continentalness, 0.10, 0.46)) * fade(remap(1.0 - erosion, 0.30, 0.78));
     let ridges = ridge_shape * mountain_domain;
 
-    let ocean_scale = settings.map_or(1.0, |value| value.oceanic_height_scale.max(0.0));
-    let land_scale = settings.map_or(1.0, |value| value.terrestrial_height_scale.max(0.0));
+    let ocean_scale = 1.0;
+    let land_scale = 1.0;
     let deep_ocean = fade(remap(-continentalness, 0.10, 0.62));
     let ocean_floor = sea - (10.0 + deep_ocean * 38.0) * ocean_scale + hills * 2.5 * ocean_scale;
     let rolling_land = sea
@@ -147,7 +144,7 @@ pub(super) fn sample(router: OverworldRouter, block_x: i32, block_z: i32) -> Ter
         + upland * (7.0 + (1.0 - erosion) * 12.0) * land_scale
         + hills * 8.0 * land_scale
         + detail * 1.8 * land_scale;
-    let mountain_height = settings.map_or(98.0, |_| 142.0) * land_scale;
+    let mountain_height = 98.0 * land_scale;
     let mountain_relief = ridges * (mountain_height + mountain_detail * 36.0 * land_scale);
     let mut height = lerp(ocean_floor, rolling_land + mountain_relief, land);
 
@@ -170,7 +167,6 @@ pub(super) fn sample(router: OverworldRouter, block_x: i32, block_z: i32) -> Ter
             block_z,
             scale,
             bank_relief * 15.0 / 16.0,
-            settings.is_some(),
         )
     } else {
         drainage::DrainageSample::default()
@@ -192,7 +188,7 @@ pub(super) fn sample(router: OverworldRouter, block_x: i32, block_z: i32) -> Ter
     // Wetlands occupy low river shoulders, not every humid lowland. Existing
     // drainage width, relief and climate vary the band; broad detail creates
     // shallow pockets and dry hummocks rather than a level shelf or pixel noise.
-    let wetland = if settings.is_none_or(|value| value.water_enabled) {
+    let wetland = {
         let shoulder = fade(remap(drainage.channel_weight, 0.12, 0.70))
             * (1.0 - fade(remap(drainage.channel_weight, 0.90, 1.0)));
         shoulder
@@ -203,12 +199,10 @@ pub(super) fn sample(router: OverworldRouter, block_x: i32, block_z: i32) -> Ter
             * fade(remap(moisture, 0.02, 0.30))
             * fade(remap(base_temperature, -0.25, -0.05))
             * (1.0 - fade(remap(height - sea, 1.0, 5.0)))
-    } else {
-        0.0
     };
     let wetland_floor = sea - 0.6 + detail * 1.8 + hills * 0.65;
     height = lerp(height, wetland_floor, wetland);
-    let temperature = temperature_with_influence(router, base_temperature, height, z);
+    let temperature = base_temperature;
 
     TerrainSample {
         surface_y: router.clamp_height(height),
@@ -235,16 +229,6 @@ pub(super) fn rolling_hills(router: OverworldRouter, x: f64, z: f64, scale: f64)
         3,
         0.5,
     )
-}
-
-#[cfg(test)]
-pub(super) fn temperature(router: OverworldRouter, x: f64, height: f64, z: f64) -> f64 {
-    let scale = router
-        .settings()
-        .map(|settings| (settings.world_scale_meters_per_block / 30.0).clamp(0.25, 8.0))
-        .unwrap_or(1.0);
-    let (base_temperature, _, _) = climate(router, x, z, scale);
-    temperature_with_influence(router, base_temperature, height, z)
 }
 
 fn climate(router: OverworldRouter, x: f64, z: f64, scale: f64) -> (f64, f64, f64) {
@@ -357,29 +341,6 @@ fn climate(router: OverworldRouter, x: f64, z: f64, scale: f64) -> (f64, f64, f6
             .clamp(-1.0, 1.0),
         climate_domain,
     )
-}
-
-fn temperature_with_influence(
-    router: OverworldRouter,
-    base_temperature: f64,
-    height: f64,
-    z: f64,
-) -> f64 {
-    let Some(settings) = router.settings() else {
-        return base_temperature;
-    };
-    let blocks_per_degree =
-        111_319.491_666_666_67 / settings.world_scale_meters_per_block.max(0.001);
-    let latitude = (-z / blocks_per_degree)
-        .to_radians()
-        .sinh()
-        .atan()
-        .to_degrees();
-    let latitude_cooling = (latitude.abs() / 85.051_128_78).clamp(0.0, 1.0);
-    let altitude_cooling =
-        ((height - f64::from(settings.sea_level)).max(0.0) / 128.0).min(1.0) * 0.85;
-    (base_temperature - latitude_cooling * settings.climate_strength.max(0.0) - altitude_cooling)
-        .clamp(-1.0, 1.0)
 }
 
 fn normalized(value: f64) -> f64 {

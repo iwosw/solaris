@@ -148,7 +148,7 @@ fn synthetic_source_with_pieces(
 }
 
 /// The same synthetic village over explicit template blocks.
-fn synthetic_source_with_template(
+pub(crate) fn synthetic_source_with_template(
     seed: i64,
     size: [i32; 3],
     placement: RandomSpreadPlacement,
@@ -279,7 +279,7 @@ fn plan_set(
     chunk: (i32, i32),
 ) -> Option<VillagePlanSet> {
     let free_height = |x: i32, z: i32| plain.surface_height(x, z).saturating_add(1);
-    let biome_at = |x: i32, z: i32| plain.base_biome(x, z);
+    let biome_at = |x: i32, _y: i32, z: i32| plain.base_biome(x, z);
     source.plans_for_chunk(chunk.0, chunk.1, &free_height, &biome_at)
 }
 
@@ -300,7 +300,7 @@ fn region_scan_reports_the_villages_the_chunk_lookup_finds() {
     let expected: Vec<_> = set.plans().iter().map(|plan| plan.site()).collect();
 
     let free_height = |x: i32, z: i32| plain.surface_height(x, z).saturating_add(1);
-    let biome_at = |x: i32, z: i32| plain.base_biome(x, z);
+    let biome_at = |x: i32, _y: i32, z: i32| plain.base_biome(x, z);
     let scanned = source.sites_in_region(
         (chunk_x - 3, chunk_z - 3),
         (chunk_x + 3, chunk_z + 3),
@@ -430,7 +430,7 @@ fn synthetic_plan_is_found_for_its_placement_chunk() {
     let (chunk_x, chunk_z) = placement_chunk(&source);
     let plain = synthetic_generator(seed, &blocks, None);
     let free_height = |x: i32, z: i32| plain.surface_height(x, z).saturating_add(1);
-    let biome_at = |x: i32, z: i32| plain.base_biome(x, z);
+    let biome_at = |x: i32, _y: i32, z: i32| plain.base_biome(x, z);
 
     let set = plan_set(&source, &plain, (chunk_x, chunk_z))
         .expect("the placement chunk starts the synthetic village");
@@ -567,7 +567,7 @@ fn every_plan_reaching_a_chunk_is_returned_and_placed() {
             .map(|plan| plan.start_chunk())
             .collect::<Vec<_>>(),
         {
-            let mut sorted = starts.clone();
+            let mut sorted = starts;
             sorted.sort_unstable();
             sorted
         },
@@ -673,7 +673,7 @@ fn planned_chunk_writes_plan_blocks_and_unplanned_chunk_is_byte_identical() {
     let (chunk_x, chunk_z) = placement_chunk(&source);
     let plain = synthetic_generator(seed, &blocks, None);
     let free_height = |x: i32, z: i32| plain.surface_height(x, z).saturating_add(1);
-    let biome_at = |x: i32, z: i32| plain.base_biome(x, z);
+    let biome_at = |x: i32, _y: i32, z: i32| plain.base_biome(x, z);
     let set = source
         .plans_for_chunk(chunk_x, chunk_z, &free_height, &biome_at)
         .expect("the placement chunk starts the synthetic village");
@@ -815,7 +815,7 @@ fn plan_lookup_is_deterministic_for_a_key() {
     let (chunk_x, chunk_z) = placement_chunk(&source);
     let plain = synthetic_generator(seed, &blocks, None);
     let free_height = |x: i32, z: i32| plain.surface_height(x, z).saturating_add(1);
-    let biome_at = |x: i32, z: i32| plain.base_biome(x, z);
+    let biome_at = |x: i32, _y: i32, z: i32| plain.base_biome(x, z);
 
     let first = source
         .plans_for_chunk(chunk_x, chunk_z, &free_height, &biome_at)
@@ -914,7 +914,7 @@ fn content_cache_selection_ignores_directories_without_a_cache() {
     // machine-wide cache path when both hold one.
     assert_eq!(
         content_cache_among([
-            std::path::PathBuf::from("/definitely/not/a/cache"),
+            PathBuf::from("/definitely/not/a/cache"),
             empty.path().to_path_buf(),
         ]),
         Some(empty.path().to_path_buf()),
@@ -1004,7 +1004,7 @@ fn village_pieces_place_their_villagers_as_chunk_inhabitants() {
         x: chunk.0,
         z: chunk.1,
     });
-    let markers = placed.settlement_inhabitants();
+    let markers = placed.generated_entities();
     assert_eq!(markers.len(), 1, "one villager is placed, one clipped away");
     let marker = &markers[0];
     assert_eq!(marker.entity_type, "minecraft:villager");
@@ -1040,13 +1040,6 @@ fn village_pieces_place_their_villagers_as_chunk_inhabitants() {
     };
     assert_eq!(marker.yaw, turns);
     assert_eq!(marker.pitch, -25.827_711);
-    // The templates author no POI, so the marker carries the core's answer for
-    // that case (`default_villager_pois`): the placement's own position is the
-    // home and the meeting point, and a working profession would get a job site
-    // there — this entity's is `nitwit`, which works nowhere.
-    assert_eq!(marker.home, Some(marker.position));
-    assert_eq!(marker.meeting_point, Some(marker.position));
-    assert_eq!(marker.job_site, None);
 
     // The clipped villager is not placed anywhere, and a chunk that holds none
     // of them carries no markers: skipping the block clip would put the
@@ -1057,7 +1050,7 @@ fn village_pieces_place_their_villagers_as_chunk_inhabitants() {
             z: chunk.1,
         });
         assert!(
-            neighbour.settlement_inhabitants().is_empty(),
+            neighbour.generated_entities().is_empty(),
             "chunk ({}, {}) holds no villager",
             chunk.0 + offset,
             chunk.1,
@@ -1132,7 +1125,7 @@ fn live_village_populates_its_pieces_villagers() {
                         x: chunk.0,
                         z: chunk.1,
                     })
-                    .settlement_inhabitants(),
+                    .generated_entities(),
             );
         }
     }
@@ -1190,14 +1183,6 @@ fn live_village_populates_its_pieces_villagers() {
             claims.insert(marker.claim.clone()),
             "two villagers share the claim {}",
             marker.claim,
-        );
-        // The POI answer for a template that authors none: the placement is the
-        // home and the meeting point, and `none`/`nitwit` work nowhere.
-        assert_eq!(marker.home, Some(marker.position));
-        assert_eq!(marker.meeting_point, Some(marker.position));
-        assert_eq!(
-            marker.job_site, None,
-            "the village templates author no working profession",
         );
     }
 
@@ -1450,7 +1435,7 @@ fn live_village_plan_lookup_agrees_for_chunk_and_column() {
     let (min, max) = set.affected_box();
     let (centre_x, centre_z) = ((min.x + max.x) / 2, (min.z + max.z) / 2);
     let free_height = |x: i32, z: i32| plain.surface_height(x, z).saturating_add(1);
-    let biome_at = |x: i32, z: i32| plain.base_biome(x, z);
+    let biome_at = |x: i32, _y: i32, z: i32| plain.base_biome(x, z);
 
     let from_column = source
         .plans_for_column(centre_x, centre_z, &free_height, &biome_at)
@@ -1637,4 +1622,80 @@ fn live_decor_seeding_matches_the_structure_registry_order() {
     assert_eq!(desert.next_long(), 9_222_894_648_221_271_537);
     assert_eq!(plains.next_long(), -5_071_117_971_071_978_252);
     assert_ne!(desert.next_long(), plains.next_long());
+}
+
+#[test]
+fn rejected_placement_candidates_are_memoized_without_non_candidate_eviction() {
+    struct PlainsOnly;
+    impl BiomeTagIndex for PlainsOnly {
+        fn biome_in_tag(&self, _: &Identifier, biome: &Identifier) -> bool {
+            biome.as_str() == "minecraft:plains"
+        }
+    }
+    let (fixture, blocks) = synthetic_source(7);
+    let source = VillagePlanSource::new(
+        Arc::new(fixture.closure().clone()),
+        Arc::new(VillageDecor::empty()),
+        7,
+        blocks,
+        Arc::new(NoTags),
+        Arc::new(PlainsOnly),
+    )
+    .expect("the synthetic closure is valid with a real biome gate");
+    let candidates = placement_chunks(&source, 10);
+    let rejected = candidates[0];
+    let projections = std::cell::Cell::new(0usize);
+    let free_height = |_: i32, _: i32| {
+        projections.set(projections.get() + 1);
+        72
+    };
+    let biome_at = |x: i32, _: i32, z: i32| {
+        if (x - rejected.0 * 16).abs() <= 32 && (z - rejected.1 * 16).abs() <= 32 {
+            identifier("minecraft:desert")
+        } else {
+            identifier("minecraft:plains")
+        }
+    };
+    assert!(
+        source
+            .plan_for_start_chunk(rejected.0, rejected.1, &free_height, &biome_at,)
+            .is_none()
+    );
+    assert_eq!(projections.get(), 1);
+    let placement = source.closure().placement;
+    for x in -200..=200 {
+        if !placement.is_placement_chunk(source.seed(), x, -100) {
+            assert!(
+                source
+                    .plan_for_start_chunk(x, -100, &free_height, &biome_at)
+                    .is_none()
+            );
+        }
+    }
+    assert!(
+        source
+            .plan_for_start_chunk(rejected.0, rejected.1, &free_height, &biome_at,)
+            .is_none()
+    );
+    assert_eq!(
+        projections.get(),
+        1,
+        "non-candidates must not evict expensive negative answers"
+    );
+    // Negative answers are keyed, not a blanket suppression of other starts.
+    for &candidate in &candidates[1..] {
+        let plan = source
+            .plan_for_start_chunk(candidate.0, candidate.1, &free_height, &biome_at)
+            .expect("another candidate's plains biome accepts the same structure");
+        assert_eq!(plan.start_chunk(), candidate);
+    }
+    // The bounded cache can evict the negative answer; the recomputed result
+    // must remain identical and pay exactly its one start projection again.
+    let before = projections.get();
+    assert!(
+        source
+            .plan_for_start_chunk(rejected.0, rejected.1, &free_height, &biome_at,)
+            .is_none()
+    );
+    assert_eq!(projections.get(), before + 1);
 }

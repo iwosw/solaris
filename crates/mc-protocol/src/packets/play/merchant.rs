@@ -32,6 +32,9 @@ impl MerchantItemCost {
         let item_id = buf.read_varint()?;
         let item_id = u32::try_from(item_id)
             .map_err(|_| CodecError::NotSupported("negative merchant item id"))?;
+        if copied_components::items().name_of(item_id).is_none() {
+            return Err(CodecError::NotSupported("unknown merchant item id"));
+        }
         let count = buf.read_varint()?;
         if count <= 0 {
             return Err(CodecError::NotSupported(

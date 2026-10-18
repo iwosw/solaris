@@ -1,9 +1,6 @@
 use mc_data::Identifier;
 
-use crate::{
-    BlockPos, BlockRegistry, BlockState, BlockStateId, WorldReadSnapshot, WorldReadView,
-    WorldStorage,
-};
+use crate::{BlockPos, BlockRegistry, BlockState, BlockStateId};
 
 /// Distance contributed by a neighbouring block when resolving leaf support.
 #[must_use]
@@ -39,6 +36,12 @@ pub fn leaf_distance_from_state(blocks: &BlockRegistry, state: BlockStateId) -> 
 
 pub trait PlantBlockRead {
     fn get_cached_block(&self, pos: BlockPos) -> Option<BlockStateId>;
+    /// Baked combined light (sky+block, 0..15) at `pos`, or `None` when the
+    /// chunk has no baked light. `None` reads as light (fail-open): tests and
+    /// unbaked planning worlds have no light layers.
+    fn combined_light_at(&self, _pos: BlockPos) -> Option<u8> {
+        None
+    }
 }
 
 /// Ground plants whose vanilla `BushBlock` survival requires soil below: they
@@ -108,24 +111,6 @@ pub fn is_ground_support_plant(path: &str) -> bool {
     )
 }
 
-impl PlantBlockRead for WorldStorage {
-    fn get_cached_block(&self, pos: BlockPos) -> Option<BlockStateId> {
-        WorldStorage::get_cached_block(self, pos)
-    }
-}
-
-impl PlantBlockRead for WorldReadSnapshot {
-    fn get_cached_block(&self, pos: BlockPos) -> Option<BlockStateId> {
-        WorldReadSnapshot::get_cached_block(self, pos)
-    }
-}
-
-impl PlantBlockRead for WorldReadView {
-    fn get_cached_block(&self, pos: BlockPos) -> Option<BlockStateId> {
-        WorldReadView::get_cached_block(self, pos)
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PlantBlockEdit {
     pub pos: BlockPos,
@@ -156,10 +141,10 @@ pub enum PlantHorizontalDirection {
 }
 
 pub fn vertical_plant_growth_edits(
-    blocks: &crate::BlockRegistry,
+    blocks: &BlockRegistry,
     world: &impl PlantBlockRead,
-    pos: crate::BlockPos,
-    state: crate::BlockStateId,
+    pos: BlockPos,
+    state: BlockStateId,
     random_seed: u64,
 ) -> Option<Vec<PlantBlockEdit>> {
     let current = blocks.by_id(state)?;
@@ -176,7 +161,7 @@ pub fn vertical_plant_growth_edits(
     }
     let plant_state = blocks.block(&current.block.id).map(|block| block.default)?;
     let air = named_block_default(blocks, "minecraft:air")?;
-    let above = crate::BlockPos {
+    let above = BlockPos {
         y: pos.y + 1,
         ..pos
     };
@@ -189,14 +174,14 @@ pub fn vertical_plant_growth_edits(
         blocks,
         world,
         plant_path,
-        crate::BlockPos {
+        BlockPos {
             y: bottom_y - 1,
             ..pos
         },
     )? {
         bottom_y -= 1;
     }
-    let support = crate::BlockPos {
+    let support = BlockPos {
         y: bottom_y - 1,
         ..pos
     };
@@ -219,9 +204,9 @@ pub fn vertical_plant_growth_edits(
 }
 
 pub fn bamboo_sapling_growth_edits(
-    blocks: &crate::BlockRegistry,
+    blocks: &BlockRegistry,
     world: &impl PlantBlockRead,
-    pos: crate::BlockPos,
+    pos: BlockPos,
     random_seed: u64,
 ) -> Option<Vec<PlantBlockEdit>> {
     if !random_seed.is_multiple_of(3) {
@@ -232,7 +217,7 @@ pub fn bamboo_sapling_growth_edits(
         return None;
     }
     let air = named_block_default(blocks, "minecraft:air")?;
-    let above = crate::BlockPos {
+    let above = BlockPos {
         y: pos.y + 1,
         ..pos
     };
@@ -255,10 +240,10 @@ pub fn bamboo_sapling_growth_edits(
 }
 
 fn bamboo_growth_edits(
-    blocks: &crate::BlockRegistry,
+    blocks: &BlockRegistry,
     world: &impl PlantBlockRead,
-    pos: crate::BlockPos,
-    state: crate::BlockStateId,
+    pos: BlockPos,
+    state: BlockStateId,
     random_seed: u64,
 ) -> Option<Vec<PlantBlockEdit>> {
     let current = blocks.by_id(state)?;
@@ -266,7 +251,7 @@ fn bamboo_growth_edits(
         return None;
     }
     let air = named_block_default(blocks, "minecraft:air")?;
-    let above = crate::BlockPos {
+    let above = BlockPos {
         y: pos.y + 1,
         ..pos
     };
@@ -280,7 +265,7 @@ fn bamboo_growth_edits(
             blocks,
             world,
             "bamboo",
-            crate::BlockPos {
+            BlockPos {
                 y: bottom_y - 1,
                 ..pos
             },
@@ -293,11 +278,11 @@ fn bamboo_growth_edits(
         return None;
     }
 
-    let b1_pos = crate::BlockPos {
+    let b1_pos = BlockPos {
         y: pos.y - 1,
         ..pos
     };
-    let b2_pos = crate::BlockPos {
+    let b2_pos = BlockPos {
         y: pos.y - 2,
         ..pos
     };
@@ -332,7 +317,7 @@ fn bamboo_growth_edits(
 
     let mut edits = Vec::new();
     for y in bottom_y..=pos.y {
-        let existing_pos = crate::BlockPos { y, ..pos };
+        let existing_pos = BlockPos { y, ..pos };
         let existing = world.get_cached_block(existing_pos)?;
         let existing_state = blocks.by_id(existing)?;
         let desired_age = if age == "1" {
@@ -370,12 +355,12 @@ fn bamboo_growth_edits(
 }
 
 fn bamboo_state_with_properties(
-    blocks: &crate::BlockRegistry,
-    state: crate::BlockStateId,
+    blocks: &BlockRegistry,
+    state: BlockStateId,
     age: &str,
     leaves: &str,
     stage: &str,
-) -> Option<crate::BlockStateId> {
+) -> Option<BlockStateId> {
     let current = blocks.by_id(state)?;
     let mut properties = current.properties.clone();
     for (name, value) in [("age", age), ("leaves", leaves), ("stage", stage)] {
@@ -384,114 +369,12 @@ fn bamboo_state_with_properties(
     blocks.by_name_and_props(&current.block.id, &properties)
 }
 
-pub fn vertical_plant_can_survive_at(
-    blocks: &crate::BlockRegistry,
-    snapshot: &crate::WorldReadSnapshot,
-    pos: crate::BlockPos,
-    state: crate::BlockStateId,
-) -> bool {
-    let Some(current) = blocks.by_id(state) else {
-        return false;
-    };
-    let path = current.block.id.path();
-    if !matches!(path, "sugar_cane" | "cactus" | "bamboo") {
-        return true;
-    }
-    let below = crate::BlockPos {
-        y: pos.y - 1,
-        ..pos
-    };
-    if same_block_at_snapshot(blocks, snapshot, path, below).unwrap_or(false) {
-        return true;
-    }
-    let Some(air) = named_block_default(blocks, "minecraft:air") else {
-        return false;
-    };
-    vertical_plant_supported_base_snapshot(blocks, snapshot, path, below, air)
-}
-
-fn vertical_plant_supported_base_snapshot(
-    blocks: &crate::BlockRegistry,
-    snapshot: &crate::WorldReadSnapshot,
-    path: &str,
-    support: crate::BlockPos,
-    air: crate::BlockStateId,
-) -> bool {
-    let Some(support_state) = snapshot.get_cached_block(support) else {
-        return false;
-    };
-    if support_state == air {
-        return false;
-    }
-    let Some(support_path) = blocks
-        .by_id(support_state)
-        .map(|state| state.block.id.path())
-    else {
-        return false;
-    };
-
-    match path {
-        "cactus" => matches!(support_path, "sand" | "red_sand" | "suspicious_sand"),
-        "sugar_cane" => {
-            supports_overworld_plant(support_path)
-                && has_adjacent_sugar_cane_support_snapshot(blocks, snapshot, support)
-        }
-        "bamboo" => {
-            supports_overworld_plant(support_path)
-                || matches!(
-                    support_path,
-                    "bamboo" | "bamboo_sapling" | "gravel" | "suspicious_gravel"
-                )
-        }
-        _ => false,
-    }
-}
-
-fn has_adjacent_sugar_cane_support_snapshot(
-    blocks: &crate::BlockRegistry,
-    snapshot: &crate::WorldReadSnapshot,
-    pos: crate::BlockPos,
-) -> bool {
-    [(1, 0), (-1, 0), (0, 1), (0, -1)]
-        .into_iter()
-        .any(|(dx, dz)| {
-            let side = crate::BlockPos {
-                x: pos.x + dx,
-                z: pos.z + dz,
-                ..pos
-            };
-            let Some(state) = snapshot.get_cached_block(side) else {
-                return false;
-            };
-            blocks.by_id(state).is_some_and(|state| {
-                matches!(
-                    state.block.id.path(),
-                    "water" | "flowing_water" | "frosted_ice"
-                )
-            })
-        })
-}
-
-fn same_block_at_snapshot(
-    blocks: &crate::BlockRegistry,
-    snapshot: &crate::WorldReadSnapshot,
-    path: &str,
-    pos: crate::BlockPos,
-) -> Option<bool> {
-    let state = snapshot.get_cached_block(pos)?;
-    Some(
-        blocks
-            .by_id(state)
-            .is_some_and(|found| found.block.id.path() == path),
-    )
-}
-
 fn vertical_plant_supported_base(
-    blocks: &crate::BlockRegistry,
+    blocks: &BlockRegistry,
     world: &impl PlantBlockRead,
     path: &str,
-    support: crate::BlockPos,
-    air: crate::BlockStateId,
+    support: BlockPos,
+    air: BlockStateId,
 ) -> bool {
     let Some(support_state) = world.get_cached_block(support) else {
         return false;
@@ -543,14 +426,14 @@ fn supports_overworld_plant(path: &str) -> bool {
 }
 
 fn has_adjacent_sugar_cane_support(
-    blocks: &crate::BlockRegistry,
+    blocks: &BlockRegistry,
     world: &impl PlantBlockRead,
-    pos: crate::BlockPos,
+    pos: BlockPos,
 ) -> bool {
     [(1, 0), (-1, 0), (0, 1), (0, -1)]
         .into_iter()
         .any(|(dx, dz)| {
-            let side = crate::BlockPos {
+            let side = BlockPos {
                 x: pos.x + dx,
                 z: pos.z + dz,
                 ..pos
@@ -569,13 +452,13 @@ fn has_adjacent_sugar_cane_support(
 
 fn cactus_growth_target_clear(
     world: &impl PlantBlockRead,
-    pos: crate::BlockPos,
-    air: crate::BlockStateId,
+    pos: BlockPos,
+    air: BlockStateId,
 ) -> bool {
     [(1, 0), (-1, 0), (0, 1), (0, -1)]
         .into_iter()
         .all(|(dx, dz)| {
-            let side = crate::BlockPos {
+            let side = BlockPos {
                 x: pos.x + dx,
                 z: pos.z + dz,
                 ..pos
@@ -585,10 +468,10 @@ fn cactus_growth_target_clear(
 }
 
 fn same_block_at(
-    blocks: &crate::BlockRegistry,
+    blocks: &BlockRegistry,
     world: &impl PlantBlockRead,
     path: &str,
-    pos: crate::BlockPos,
+    pos: BlockPos,
 ) -> Option<bool> {
     let state = world.get_cached_block(pos)?;
     Some(
@@ -598,16 +481,141 @@ fn same_block_at(
     )
 }
 
-pub fn next_crop_growth_state(
-    blocks: &crate::BlockRegistry,
-    state: crate::BlockStateId,
-) -> Option<crate::BlockStateId> {
+pub fn next_crop_growth_state(blocks: &BlockRegistry, state: BlockStateId) -> Option<BlockStateId> {
     let current = blocks.by_id(state)?;
     if !is_supported_age_crop(&current.block.id) {
         return None;
     }
     let age = block_state_property(current, "age")?.parse::<u8>().ok()?;
     sibling_state_with_property(blocks, current, "age", &age.checked_add(1)?.to_string())
+}
+
+/// Wiki growth gate for age crops (wheat/carrots/potatoes/beetroots/stems):
+/// light >= 9 at the plant block, then a `1/(floor(25/points)+1)` chance
+/// roll, where points = soil base (dry farmland 2 / hydrated 4) + the 8
+/// neighbours (dry +0.25 / hydrated +0.75 each), halved when crowded (same
+/// crop on a diagonal, or on both axes). Returns whether the random tick
+/// may advance the crop; `random_seed` is the tick's own roll seed.
+/// Nether wart ignores light/moisture (soul sand, no farmland) and always
+/// passes here; its vanilla per-tick chance is out of scope.
+pub fn crop_growth_gate_passes(
+    blocks: &BlockRegistry,
+    world: &impl PlantBlockRead,
+    pos: BlockPos,
+    state: BlockStateId,
+    random_seed: u64,
+) -> bool {
+    let current = match blocks.by_id(state) {
+        Some(current) => current,
+        None => return false,
+    };
+    if !is_supported_age_crop(&current.block.id) {
+        return false;
+    }
+    if current.block.id.as_str() == "minecraft:nether_wart" {
+        return true;
+    }
+    // Wiki: crops need light >= 9 at the plant block. Missing baked light
+    // (tests, unbaked planning) reads as light (fail-open).
+    if world.combined_light_at(pos).is_some_and(|light| light < 9) {
+        return false;
+    }
+    // Soil base: hydrated farmland (moisture > 0) scores 4, dry scores 2.
+    // Missing/non-farmland soil reads as dry (fail-open for reduced regs).
+    let below = BlockPos {
+        y: pos.y - 1,
+        ..pos
+    };
+    let hydrated = below_soil_hydrated(blocks, world, below);
+    let mut points = if hydrated { 4.0 } else { 2.0 };
+    // The 8 neighbours around the soil: dry +0.25, hydrated +0.75.
+    for dz in -1..=1 {
+        for dx in -1..=1 {
+            if dx == 0 && dz == 0 {
+                continue;
+            }
+            let neighbour = BlockPos {
+                x: below.x + dx,
+                y: below.y,
+                z: below.z + dz,
+            };
+            points += if below_soil_hydrated(blocks, world, neighbour) {
+                0.75
+            } else {
+                0.25
+            };
+        }
+    }
+    // Crowding halves the points: same crop on a diagonal, or on both axes
+    // (vanilla). Bounded: 8 soil reads above + 8 crop reads here.
+    if crop_crowded(blocks, world, &current.block.id, pos) {
+        points /= 2.0;
+    }
+    let divisor = (25.0_f64 / points).floor() as u64 + 1;
+    random_seed.is_multiple_of(divisor)
+}
+
+fn crop_crowded(
+    blocks: &BlockRegistry,
+    world: &impl PlantBlockRead,
+    crop: &Identifier,
+    pos: BlockPos,
+) -> bool {
+    let mut x_side = false;
+    let mut z_side = false;
+    for dz in -1..=1 {
+        for dx in -1..=1 {
+            if dx == 0 && dz == 0 {
+                continue;
+            }
+            let neighbour = BlockPos {
+                x: pos.x + dx,
+                y: pos.y,
+                z: pos.z + dz,
+            };
+            if !same_crop_at(blocks, world, crop, neighbour) {
+                continue;
+            }
+            if dx != 0 && dz != 0 {
+                return true;
+            } else if dx != 0 {
+                x_side = true;
+            } else {
+                z_side = true;
+            }
+        }
+    }
+    x_side && z_side
+}
+fn below_soil_hydrated(
+    blocks: &BlockRegistry,
+    world: &impl PlantBlockRead,
+    soil: BlockPos,
+) -> bool {
+    let Some(state) = world.get_cached_block(soil) else {
+        return false;
+    };
+    let Some(block) = blocks.by_id(state) else {
+        return false;
+    };
+    if block.block.id.as_str() != "minecraft:farmland" {
+        return false;
+    }
+    block_state_property(block, "moisture")
+        .and_then(|moisture| moisture.parse::<u8>().ok())
+        .is_some_and(|moisture| moisture > 0)
+}
+
+fn same_crop_at(
+    blocks: &BlockRegistry,
+    world: &impl PlantBlockRead,
+    crop: &Identifier,
+    pos: BlockPos,
+) -> bool {
+    world
+        .get_cached_block(pos)
+        .and_then(|state| blocks.by_id(state))
+        .is_some_and(|found| found.block.id == *crop)
 }
 
 fn is_supported_age_crop(block: &Identifier) -> bool {
@@ -625,44 +633,56 @@ fn is_supported_age_crop(block: &Identifier) -> bool {
     )
 }
 
-fn is_bonemeal_age_crop(block: &Identifier) -> bool {
-    matches!(
-        block.as_str(),
-        "minecraft:wheat"
-            | "minecraft:carrots"
-            | "minecraft:potatoes"
-            | "minecraft:beetroots"
-            | "minecraft:melon_stem"
-            | "minecraft:pumpkin_stem"
-            | "minecraft:sweet_berry_bush"
-            | "minecraft:cocoa"
-    )
+pub fn bonemeal_growth_edit(
+    blocks: &BlockRegistry,
+    pos: BlockPos,
+    state: BlockStateId,
+) -> Option<PlantBlockEdit> {
+    bonemeal_crop_growth_edit(blocks, pos, state, 0)
 }
 
-pub fn bonemeal_growth_edit(
-    blocks: &crate::BlockRegistry,
-    pos: crate::BlockPos,
-    state: crate::BlockStateId,
+fn bonemeal_crop_growth_edit(
+    blocks: &BlockRegistry,
+    pos: BlockPos,
+    state: BlockStateId,
+    seed: u64,
 ) -> Option<PlantBlockEdit> {
     let current = blocks.by_id(state)?;
-    if !is_bonemeal_age_crop(&current.block.id) {
+    let (maximum_age, growth) = match current.block.id.as_str() {
+        "minecraft:wheat"
+        | "minecraft:carrots"
+        | "minecraft:potatoes"
+        | "minecraft:melon_stem"
+        | "minecraft:pumpkin_stem" => (7, 2 + (splitmix64(seed ^ u64::from(state.0)) % 4) as u8),
+        "minecraft:beetroots" | "minecraft:sweet_berry_bush" => (3, 1),
+        "minecraft:cocoa" => (2, 1),
+        _ => return None,
+    };
+    let age = block_state_property(current, "age")?.parse::<u8>().ok()?;
+    if age >= maximum_age {
         return None;
     }
-    next_crop_growth_state(blocks, state).map(|new_state| PlantBlockEdit { pos, new_state })
+    let new_age = age.saturating_add(growth).min(maximum_age);
+    const AGES: [&str; 8] = ["0", "1", "2", "3", "4", "5", "6", "7"];
+    let new_state =
+        sibling_state_with_property(blocks, current, "age", AGES[usize::from(new_age)])?;
+    Some(PlantBlockEdit { pos, new_state })
 }
 
 pub fn bonemeal_growth_edits(
-    blocks: &crate::BlockRegistry,
+    blocks: &BlockRegistry,
     world: &impl PlantBlockRead,
-    pos: crate::BlockPos,
-    state: crate::BlockStateId,
+    pos: BlockPos,
+    state: BlockStateId,
     tree_seed: u64,
 ) -> Option<Vec<PlantBlockEdit>> {
-    if let Some(edit) = bonemeal_growth_edit(blocks, pos, state) {
+    if let Some(edit) = bonemeal_crop_growth_edit(blocks, pos, state, tree_seed) {
+        // A newly mature stem may bear fruit; an already mature stem is not
+        // a valid bone-meal target and must wait for a natural random tick.
+        if let Some(edits) = stem_fruit_edits(blocks, world, pos, edit.new_state) {
+            return Some(edits);
+        }
         return Some(vec![edit]);
-    }
-    if let Some(edits) = stem_fruit_edits(blocks, world, pos, state) {
-        return Some(edits);
     }
     if let Some(edits) = sapling_tree_edits(blocks, world, pos, state, tree_seed) {
         return Some(edits);
@@ -677,10 +697,10 @@ pub fn bonemeal_growth_edits(
 /// grass_block/dirt-family soil with an air plant cell, the clicked grass_block
 /// itself is never edited, and a failed attempt plans nothing.
 pub fn grass_block_bonemeal_edits(
-    blocks: &crate::BlockRegistry,
+    blocks: &BlockRegistry,
     world: &impl PlantBlockRead,
-    pos: crate::BlockPos,
-    state: crate::BlockStateId,
+    pos: BlockPos,
+    state: BlockStateId,
     tree_seed: u64,
 ) -> Option<Vec<PlantBlockEdit>> {
     let current = blocks.by_id(state)?;
@@ -688,7 +708,7 @@ pub fn grass_block_bonemeal_edits(
         return None;
     }
     let air = named_block_default(blocks, "minecraft:air")?;
-    let above = crate::BlockPos {
+    let above = BlockPos {
         y: pos.y.checked_add(1)?,
         ..pos
     };
@@ -723,7 +743,7 @@ pub fn grass_block_bonemeal_edits(
         ) else {
             continue;
         };
-        let support = crate::BlockPos {
+        let support = BlockPos {
             x: soil_x,
             y: soil_y,
             z: soil_z,
@@ -731,7 +751,7 @@ pub fn grass_block_bonemeal_edits(
         let Some(plant_y) = soil_y.checked_add(1) else {
             continue;
         };
-        let plant_cell = crate::BlockPos {
+        let plant_cell = BlockPos {
             x: soil_x,
             y: plant_y,
             z: soil_z,
@@ -751,7 +771,7 @@ pub fn grass_block_bonemeal_edits(
                 let Some(top_y) = plant_y.checked_add(1) else {
                     continue;
                 };
-                let top_cell = crate::BlockPos {
+                let top_cell = BlockPos {
                     x: soil_x,
                     y: top_y,
                     z: soil_z,
@@ -796,10 +816,10 @@ fn is_grass_scatter_support(path: &str) -> bool {
 }
 
 pub fn stem_fruit_edits(
-    blocks: &crate::BlockRegistry,
+    blocks: &BlockRegistry,
     world: &impl PlantBlockRead,
-    pos: crate::BlockPos,
-    state: crate::BlockStateId,
+    pos: BlockPos,
+    state: BlockStateId,
 ) -> Option<Vec<PlantBlockEdit>> {
     let current = blocks.by_id(state)?;
     let (fruit_name, attached_name) = stem_lifecycle_blocks(current.block.id.as_str())?;
@@ -823,7 +843,7 @@ pub fn stem_fruit_edits(
         ("west", -1, 0),
         ("east", 1, 0),
     ] {
-        let fruit_pos = crate::BlockPos {
+        let fruit_pos = BlockPos {
             x: pos.x + dx,
             z: pos.z + dz,
             ..pos
@@ -857,10 +877,10 @@ fn stem_lifecycle_blocks(stem: &str) -> Option<(&'static str, &'static str)> {
 }
 
 pub fn sapling_tree_edits(
-    blocks: &crate::BlockRegistry,
+    blocks: &BlockRegistry,
     world: &impl PlantBlockRead,
-    pos: crate::BlockPos,
-    state: crate::BlockStateId,
+    pos: BlockPos,
+    state: BlockStateId,
     tree_seed: u64,
 ) -> Option<Vec<PlantBlockEdit>> {
     let current = blocks.by_id(state)?;
@@ -921,7 +941,7 @@ pub fn sapling_tree_edits(
     let mut edits = Vec::new();
     for dy in 0..tree_height {
         edits.push(PlantBlockEdit {
-            pos: crate::BlockPos {
+            pos: BlockPos {
                 y: pos.y + dy,
                 ..pos
             },
@@ -949,7 +969,7 @@ pub fn sapling_tree_edits(
                     continue;
                 }
                 edits.push(PlantBlockEdit {
-                    pos: crate::BlockPos {
+                    pos: BlockPos {
                         x: pos.x + dx,
                         y: foliage_y,
                         z: pos.z + dz,
@@ -974,28 +994,28 @@ pub fn sapling_tree_edits(
 }
 
 fn find_two_by_two_saplings(
-    blocks: &crate::BlockRegistry,
+    blocks: &BlockRegistry,
     world: &impl PlantBlockRead,
-    clicked: crate::BlockPos,
+    clicked: BlockPos,
     sapling_name: &str,
-) -> Option<[crate::BlockPos; 4]> {
+) -> Option<[BlockPos; 4]> {
     for (dx, dz) in [(0, 0), (-1, 0), (0, -1), (-1, -1)] {
-        let northwest = crate::BlockPos {
+        let northwest = BlockPos {
             x: clicked.x.checked_add(dx)?,
             z: clicked.z.checked_add(dz)?,
             ..clicked
         };
         let square = [
             northwest,
-            crate::BlockPos {
+            BlockPos {
                 x: northwest.x.checked_add(1)?,
                 ..northwest
             },
-            crate::BlockPos {
+            BlockPos {
                 z: northwest.z.checked_add(1)?,
                 ..northwest
             },
-            crate::BlockPos {
+            BlockPos {
                 x: northwest.x.checked_add(1)?,
                 z: northwest.z.checked_add(1)?,
                 ..northwest
@@ -1014,9 +1034,9 @@ fn find_two_by_two_saplings(
 }
 
 fn dark_oak_two_by_two_edits(
-    blocks: &crate::BlockRegistry,
+    blocks: &BlockRegistry,
     world: &impl PlantBlockRead,
-    saplings: [crate::BlockPos; 4],
+    saplings: [BlockPos; 4],
     log_name: &str,
     leaves_name: &str,
     tree_height: i32,
@@ -1031,7 +1051,7 @@ fn dark_oak_two_by_two_edits(
     for dy in 0..tree_height {
         for trunk in saplings {
             edits.push(PlantBlockEdit {
-                pos: crate::BlockPos {
+                pos: BlockPos {
                     y: northwest.y.checked_add(dy)?,
                     ..trunk
                 },
@@ -1064,7 +1084,7 @@ fn dark_oak_two_by_two_edits(
                     continue;
                 }
                 edits.push(PlantBlockEdit {
-                    pos: crate::BlockPos {
+                    pos: BlockPos {
                         x: northwest.x.checked_add(dx)?,
                         y: foliage_y,
                         z: northwest.z.checked_add(dz)?,
@@ -1089,9 +1109,9 @@ fn dark_oak_two_by_two_edits(
 }
 
 fn spruce_or_jungle_two_by_two_edits(
-    blocks: &crate::BlockRegistry,
+    blocks: &BlockRegistry,
     world: &impl PlantBlockRead,
-    saplings: [crate::BlockPos; 4],
+    saplings: [BlockPos; 4],
     sapling_name: &str,
     log_name: &str,
     leaves_name: &str,
@@ -1119,7 +1139,7 @@ fn spruce_or_jungle_two_by_two_edits(
     for dy in 0..tree_height {
         for trunk in saplings {
             edits.push(PlantBlockEdit {
-                pos: crate::BlockPos {
+                pos: BlockPos {
                     y: northwest.y.checked_add(dy)?,
                     ..trunk
                 },
@@ -1171,10 +1191,10 @@ fn spruce_or_jungle_two_by_two_edits(
 
 fn push_two_by_two_leaf_layer(
     edits: &mut Vec<PlantBlockEdit>,
-    northwest: crate::BlockPos,
+    northwest: BlockPos,
     y: i32,
     radius: i32,
-    leaves: crate::BlockStateId,
+    leaves: BlockStateId,
     layer_seed: u64,
     trunk_top: i32,
 ) -> Option<()> {
@@ -1195,7 +1215,7 @@ fn push_two_by_two_leaf_layer(
                 continue;
             }
             edits.push(PlantBlockEdit {
-                pos: crate::BlockPos {
+                pos: BlockPos {
                     x: northwest.x.checked_add(dx)?,
                     y,
                     z: northwest.z.checked_add(dz)?,
@@ -1207,11 +1227,7 @@ fn push_two_by_two_leaf_layer(
     Some(())
 }
 
-fn tree_growth_can_replace(
-    blocks: &crate::BlockRegistry,
-    state: crate::BlockStateId,
-    air: crate::BlockStateId,
-) -> bool {
+fn tree_growth_can_replace(blocks: &BlockRegistry, state: BlockStateId, air: BlockStateId) -> bool {
     state == air
         || blocks
             .by_id(state)
@@ -1298,10 +1314,10 @@ fn sapling_tree_blocks(sapling: &str) -> Option<(&'static str, &'static str, i32
 }
 
 fn tree_state_with_props(
-    blocks: &crate::BlockRegistry,
+    blocks: &BlockRegistry,
     name: &str,
     props: &[(&str, &str)],
-) -> Option<crate::BlockStateId> {
+) -> Option<BlockStateId> {
     let id = Identifier::parse(name).expect("static identifier");
     let props = props
         .iter()
@@ -1312,7 +1328,7 @@ fn tree_state_with_props(
         .or_else(|| blocks.block(&id).map(|block| block.default))
 }
 
-fn tree_leaves_state(blocks: &crate::BlockRegistry, name: &str) -> Option<crate::BlockStateId> {
+fn tree_leaves_state(blocks: &BlockRegistry, name: &str) -> Option<BlockStateId> {
     tree_state_with_props(
         blocks,
         name,
@@ -1343,9 +1359,9 @@ fn tree_leaves_state(blocks: &crate::BlockRegistry, name: &str) -> Option<crate:
 }
 
 pub fn sweet_berry_harvest(
-    blocks: &crate::BlockRegistry,
-    pos: crate::BlockPos,
-    state: crate::BlockStateId,
+    blocks: &BlockRegistry,
+    pos: BlockPos,
+    state: BlockStateId,
 ) -> Option<(PlantBlockEdit, PlantItemDrop)> {
     let current = blocks.by_id(state)?;
     if current.block.id.as_str() != "minecraft:sweet_berry_bush" {
@@ -1366,7 +1382,7 @@ pub fn sweet_berry_harvest(
     ))
 }
 
-pub fn plant_drop_stacks(block: &crate::BlockState) -> Option<Vec<PlantItemDrop>> {
+pub fn plant_drop_stacks(block: &BlockState) -> Option<Vec<PlantItemDrop>> {
     const WHEAT_MATURE_DROPS: &[(&str, i32)] =
         &[("minecraft:wheat", 1), ("minecraft:wheat_seeds", 1)];
     const WHEAT_IMMATURE_DROPS: &[(&str, i32)] = &[("minecraft:wheat_seeds", 1)];
@@ -1411,10 +1427,10 @@ pub fn is_cocoa_beans_item(item: &Identifier) -> bool {
 }
 
 pub fn cocoa_state_for_use_on(
-    clicked_state: crate::BlockStateId,
+    clicked_state: BlockStateId,
     direction: PlantHorizontalDirection,
-    blocks: &crate::BlockRegistry,
-) -> Option<crate::BlockStateId> {
+    blocks: &BlockRegistry,
+) -> Option<BlockStateId> {
     let facing = cocoa_facing_for_direction(direction)?;
     let clicked = blocks.by_id(clicked_state)?;
     if !matches!(clicked.block.id.as_str(), "minecraft:jungle_log") {

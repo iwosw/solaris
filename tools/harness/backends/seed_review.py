@@ -11,6 +11,9 @@ import subprocess
 import time
 from pathlib import Path
 from typing import Any
+from types import SimpleNamespace
+
+from tools.harness.backends.gameplay import prepare_operator_fixture
 
 from tools.harness import runtime as helpers
 from tools.harness.mcp import McpClient
@@ -29,22 +32,17 @@ def sha256_file(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def write_config(run_dir: Path, server_port: int, seed: int, vanilla_village: bool) -> tuple[Path, Path]:
+def write_config(run_dir: Path, server_port: int, seed: int) -> tuple[Path, Path]:
     world_dir = run_dir / "world"
     source = (REPO_ROOT / "playable.toml").read_text()
     world_rel = world_dir.relative_to(REPO_ROOT).as_posix()
     replacements = [
         ("port = 25565", f"port = {server_port}"),
-        ('world_dir = ".analysis/test-world-v11"', f'world_dir = "{world_rel}"'),
+        ('world_dir = ".analysis/test-world-v12"', f'world_dir = "{world_rel}"'),
         ("seed = 0", f"seed = {seed}"),
+        ('directory = "plugins"', f'directory = "{run_dir / "plugins"}"'),
     ]
-    if vanilla_village:
-        replacements.extend([
-            ('worldgen_mode = "tellus_like"', 'worldgen_mode = "vanilla_like"'),
-            ("operators = []", 'operators = ["SeedOwnerReview"]'),
-            ('directory = "plugins"', f'directory = "{run_dir / "plugins"}"'),
-        ])
-        (run_dir / "plugins").mkdir()
+    (run_dir / "plugins").mkdir()
     for old, new in replacements:
         if source.count(old) != 1:
             raise RuntimeError(f"expected exactly one config token: {old}")
@@ -158,7 +156,8 @@ def move_ordinary(
     )
 
 
-def run(timeout_seconds: float, seed: int = SEED, village_view: list[float] | None = None) -> dict[str, Any]:
+def run(timeout_seconds: float, seed: int = SEED, village_view: list[float] | None = None,
+        *, check: bool = False) -> dict[str, Any]:
 
     run_id = time.strftime("%Y%m%dT%H%M%S")
     evidence_root = os.environ.get("SOLARIS_VALIDATION_RUN_DIR")
@@ -172,7 +171,9 @@ def run(timeout_seconds: float, seed: int = SEED, village_view: list[float] | No
     screenshots_dir.mkdir()
     server_port = helpers.reserve_port()
     mcp_port = helpers.reserve_port()
-    config, world_dir = write_config(run_dir, server_port, seed, village_view is not None)
+    config, world_dir = write_config(run_dir, server_port, seed)
+    prepare_operator_fixture(SimpleNamespace(artifact_dir=run_dir, client_evidence={}),
+                             ["SeedOwnerReview"] if village_view is not None else [])
     if world_dir.exists():
         raise RuntimeError(f"fresh-world path already exists before server start: {world_dir}")
     token = f"seed-owner-{seed}-{os.getpid()}-{time.time_ns()}"
@@ -191,17 +192,30 @@ def run(timeout_seconds: float, seed: int = SEED, village_view: list[float] | No
         "server_port": server_port,
         "mcp_port": mcp_port,
         "operators": ["SeedOwnerReview"] if village_view is not None else [],
-        "worldgen_mode": "vanilla_like" if village_view is not None else "tellus_like",
+        "storage": "native",
         "requested_village_view": village_view,
         "captures": [],
         "movements": [],
     }
     try:
-        subprocess.run(["nice", "-n", "19", "cargo", "build", "-j", "4", "-p", "mc-server"], cwd=REPO_ROOT, check=True)
+        binary_override = os.environ.get("SOLARIS_SERVER_BINARY")
+        if binary_override:
+            binary = Path(binary_override).expanduser().resolve()
+        else:
+            subprocess.run(["nice", "-n", "19", "cargo", "build", "-j", "4", "-p", "mc-edge", "--bin", "solaris-v2"], cwd=REPO_ROOT, check=True)
+            target = Path(os.environ.get("CARGO_TARGET_DIR", str(REPO_ROOT / "target")))
+            binary = (target if target.is_absolute() else REPO_ROOT / target) / "debug" / "solaris-v2"
+        if not binary.is_file() or not os.access(binary, os.X_OK):
+            raise RuntimeError(f"missing executable server binary: {binary}")
+        result["server_binary"] = str(binary)
+        result["server_binary_sha256"] = sha256_file(binary)
+        if check:
+            result["status"] = "prepared"
+            return result
         xvfb, display, xvfb_log = helpers.start_xvfb(run_dir)
         server_log = (run_dir / "server.log").open("wb")
         server = subprocess.Popen(
-            [str(REPO_ROOT / "target" / "debug" / "mc-server"), "--config", str(config)],
+            [str(binary), "--config", str(config)],
             cwd=REPO_ROOT,
             stdout=server_log,
             stderr=subprocess.STDOUT,
@@ -306,11 +320,12 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--timeout-seconds", type=float, default=120.0)
     parser.add_argument("--seed", type=int, default=SEED)
+    parser.add_argument("--check", action="store_true", help="Prepare config and binary without launching clients")
     parser.add_argument("--vanilla-village", type=float, nargs=3, metavar=("X", "Y", "Z"),
                         help="Inspect a measured vanilla village with an operator spectator camera")
     args = parser.parse_args()
     try:
-        result = run(args.timeout_seconds, args.seed, args.vanilla_village)
+        result = run(args.timeout_seconds, args.seed, args.vanilla_village, check=args.check)
     except Exception as error:
         print(f"seed owner review failed: {error}", file=os.sys.stderr)
         return 1

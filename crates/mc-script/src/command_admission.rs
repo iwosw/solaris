@@ -13,10 +13,9 @@ use crate::manifest::RequiredCommandCapability;
 use crate::manifest::ScriptCommandCapabilityKind;
 use crate::manifest::ValidatedScriptPluginManifest;
 use crate::manifest::validate_custom_payload_channel;
+use crate::npc_order_operations::ScriptNpcOrderOperation;
 use crate::operations::ScriptOperation;
 use crate::operations::ScriptOperationOutcome;
-use crate::resident_order_operations::ScriptResidentOrderOperation;
-use crate::settlement_operations::ScriptSettlementOperation;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::sync::Mutex as StdMutex;
@@ -78,21 +77,6 @@ impl ScriptCommandProvenance {
         }
     }
 
-    fn for_issued_host_plugin(
-        plugin_id: Arc<str>,
-        nonce: u64,
-        ledger: &Arc<HostAdmissionLedger>,
-    ) -> Self {
-        Self {
-            plugin_id,
-            nonce,
-            _cancellation: Some(Arc::new(HostAdmissionCancellation {
-                ledger: Arc::downgrade(ledger),
-                nonce,
-            })),
-        }
-    }
-
     pub fn plugin_id(&self) -> &str {
         &self.plugin_id
     }
@@ -132,16 +116,8 @@ impl HostAdmissionLedger {
         batch: CommandBatch,
         generation: Option<u64>,
     ) -> Result<Vec<ScriptCommand>, CommandBatch> {
-        let mut pending = match self.pending.lock() {
-            Ok(pending) => pending,
-            Err(mut poisoned) => {
-                poisoned.get_mut().clear();
-                return Err(batch);
-            }
-        };
-        if pending.len().saturating_add(batch.commands.len()) > MAX_SCRIPT_COMMAND_QUEUE_CAPACITY {
-            return Err(batch);
-        }
+        // Reserve identities and construct the batch before entering the ledger.
+        // Only publication and the authoritative capacity check need its lock.
         let count = match u64::try_from(batch.commands.len()) {
             Ok(count) => count,
             Err(_) => return Err(batch),
@@ -155,26 +131,66 @@ impl HostAdmissionLedger {
                 Ok(first) => first,
                 Err(_) => return Err(batch),
             };
+        let mut records = Vec::with_capacity(batch.commands.len());
         let mut attached = Vec::with_capacity(batch.commands.len());
         for (offset, request) in (1_u64..=count).zip(batch.commands) {
             let nonce = first + offset;
             let request = Arc::new(request);
-            pending.insert(
+            records.push((
                 nonce,
                 HostAdmissionRecord {
                     plugin_id: Arc::clone(&plugin_id),
                     request: Arc::downgrade(&request),
                     generation,
                 },
-            );
+            ));
             attached.push(ScriptCommand::HostAttached {
-                provenance: ScriptCommandProvenance::for_issued_host_plugin(
-                    Arc::clone(&plugin_id),
+                provenance: ScriptCommandProvenance {
+                    plugin_id: Arc::clone(&plugin_id),
                     nonce,
-                    self,
-                ),
+                    _cancellation: None,
+                },
                 request,
             });
+        }
+        let published = match self.pending.lock() {
+            Ok(mut pending)
+                if pending.len().saturating_add(attached.len())
+                    <= MAX_SCRIPT_COMMAND_QUEUE_CAPACITY =>
+            {
+                pending.extend(records);
+                true
+            }
+            Ok(_) => false,
+            Err(mut poisoned) => {
+                poisoned.get_mut().clear();
+                false
+            }
+        };
+        if !published {
+            return Err(CommandBatch {
+                limit: batch.limit,
+                commands: attached
+                    .into_iter()
+                    .map(|command| {
+                        let ScriptCommand::HostAttached { request, .. } = command else {
+                            unreachable!("only attached commands were constructed")
+                        };
+                        Arc::try_unwrap(request).expect("unpublished request has one owner")
+                    })
+                    .collect(),
+            });
+        }
+        // Only published admissions need cancellation. A capacity/poison
+        // refusal must not re-lock the ledger once for every discarded origin.
+        for command in &mut attached {
+            let ScriptCommand::HostAttached { provenance, .. } = command else {
+                unreachable!("only attached commands were constructed")
+            };
+            provenance._cancellation = Some(Arc::new(HostAdmissionCancellation {
+                ledger: Arc::downgrade(self),
+                nonce: provenance.nonce,
+            }));
         }
         Ok(attached)
     }
@@ -219,6 +235,7 @@ impl HostAdmissionLedger {
         {
             return Err(ScriptCommandAcceptanceError::RequestMismatch);
         }
+        drop(pending);
         Ok(AdmittedScriptCommand {
             plugin_id: record.plugin_id,
             request,
@@ -691,6 +708,12 @@ pub struct ScriptPluginTarget {
 }
 
 impl ScriptPluginTarget {
+    pub(crate) fn from_registration(plugin_id: &str) -> Self {
+        Self {
+            plugin_id: Arc::from(plugin_id),
+        }
+    }
+
     pub fn plugin_id(&self) -> &str {
         &self.plugin_id
     }
@@ -771,40 +794,30 @@ impl ScriptCommand {
             | Self::PluginStorageDelete { .. } => Some(RequiredCommandCapability::PluginStorage),
             Self::Operation { request } => Some(match request.operation() {
                 ScriptOperation::Inventory { .. } => RequiredCommandCapability::InventoryTransfers,
-                ScriptOperation::Resident { .. } => RequiredCommandCapability::PersistentResidents,
-                ScriptOperation::ResidentOrder { operation } => match operation {
-                    ScriptResidentOrderOperation::AssignWork { .. }
-                    | ScriptResidentOrderOperation::CancelWork { .. } => {
-                        RequiredCommandCapability::ResidentWork
+                ScriptOperation::Npc { .. } => RequiredCommandCapability::PersistentNpcs,
+                ScriptOperation::NpcOrder { operation } => match operation {
+                    ScriptNpcOrderOperation::AssignWork { .. }
+                    | ScriptNpcOrderOperation::SuspendWork { .. }
+                    | ScriptNpcOrderOperation::ResumeWork { .. }
+                    | ScriptNpcOrderOperation::AckWorkReceipts { .. }
+                    | ScriptNpcOrderOperation::CancelWork { .. } => {
+                        RequiredCommandCapability::NpcWork
                     }
-                    ScriptResidentOrderOperation::IssueOrder { .. }
-                    | ScriptResidentOrderOperation::CancelOrder { .. }
-                    | ScriptResidentOrderOperation::Demobilize { .. }
-                    | ScriptResidentOrderOperation::Capture { .. } => {
-                        RequiredCommandCapability::ResidentOrders
-                    }
+                    ScriptNpcOrderOperation::IssueOrder { .. }
+                    | ScriptNpcOrderOperation::UseItem { .. }
+                    | ScriptNpcOrderOperation::DeployItem { .. }
+                    | ScriptNpcOrderOperation::RetractItem { .. }
+                    | ScriptNpcOrderOperation::CaptureItem { .. }
+                    | ScriptNpcOrderOperation::CancelOrder { .. }
+                    | ScriptNpcOrderOperation::Query { .. } => RequiredCommandCapability::NpcOrders,
                 },
-                ScriptOperation::Settlement { operation } => match operation {
-                    ScriptSettlementOperation::ListSites { .. }
-                    | ScriptSettlementOperation::QuerySite { .. }
-                    | ScriptSettlementOperation::ReserveResidentSite { .. }
-                    | ScriptSettlementOperation::ReleaseResidentSite { .. }
-                    | ScriptSettlementOperation::Survey { .. } => {
-                        RequiredCommandCapability::WorldSites
-                    }
-                    ScriptSettlementOperation::PrepareStructure { .. }
-                    | ScriptSettlementOperation::AdvanceStructure { .. }
-                    | ScriptSettlementOperation::PauseStructure { .. }
-                    | ScriptSettlementOperation::ResumeStructure { .. }
-                    | ScriptSettlementOperation::CancelStructure { .. }
-                    | ScriptSettlementOperation::Status { .. }
-                    | ScriptSettlementOperation::BindWarehouse { .. }
-                    | ScriptSettlementOperation::BindVillageWarehouse { .. }
-                    | ScriptSettlementOperation::BindManualWarehouse { .. }
-                    | ScriptSettlementOperation::RecognizeBuilding { .. } => {
-                        RequiredCommandCapability::StructureOperations
-                    }
-                },
+                ScriptOperation::NpcRoute { .. } => RequiredCommandCapability::NpcOrders,
+                ScriptOperation::SettlementQuery { .. } | ScriptOperation::Settlement { .. } => {
+                    RequiredCommandCapability::Settlements
+                }
+                ScriptOperation::WorldStructure { .. } => {
+                    RequiredCommandCapability::WorldStructures
+                }
                 _ => RequiredCommandCapability::StorageBatches,
             }),
             Self::OpenInventoryMenu { .. } | Self::CloseInventoryMenu { .. } => {
@@ -1073,3 +1086,7 @@ impl HostCommandAdmission {
         Arc::clone(&self.plugin_id)
     }
 }
+
+#[cfg(test)]
+#[path = "command_admission_tests.rs"]
+mod tests;

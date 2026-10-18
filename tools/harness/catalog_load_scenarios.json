@@ -1,0 +1,2706 @@
+{
+  "schema_version": 1,
+  "source_notes": {
+    "owner_catalog": {
+      "markdown": ".analysis/SOLARIS_MINECRAFT_LOAD_CATALOG.md",
+      "json": ".analysis/SOLARIS_MINECRAFT_LOAD_CATALOG.json",
+      "status": "DESIGN_ONLY_NOT_EXECUTED",
+      "source_ambiguity": "Markdown has unnumbered headings and procedure step7 (Recovery), not a section7 containing12 controls. The12 names are discovered exclusively in tools/harness/load_matrix_scenarios and MATRIX_SCENARIOS, not asserted to be catalog-owned numbered scenarios. mixed-survival-long is an owner-requested harness composition, not an invented catalog ID.",
+      "numeric_slo": "Catalog proposed scale rungs are exploratory, not numeric acceptance SLO. Defaults19.5TPS,p99<=50ms,max<=250ms,RSS<=3072MiB are explicit operator/Main instructions2026-10-13, separately sourced and configurable."
+    },
+    "required_legacy_control_names": [
+      "dense-hostile",
+      "spread-passive",
+      "explore",
+      "built-base",
+      "fluids",
+      "village",
+      "combat",
+      "projectiles",
+      "farms",
+      "plugin-heavy",
+      "checkpoint-restart",
+      "long-session"
+    ],
+    "required_compound_ids": [
+      "MIX-01",
+      "MIX-02",
+      "MIX-04",
+      "MIX-08",
+      "MIX-18",
+      "MIX-21"
+    ],
+    "required_long_composition": "mixed-survival-long",
+    "additional_protocol_ids": [
+      "JOIN-01",
+      "CHUNK-01",
+      "join-ready-assisted"
+    ],
+    "outcome_classes": [
+      "UNSUPPORTED_MECHANIC",
+      "INFRA_BLOCKED",
+      "SETUP_FAILED",
+      "CORRECTNESS_FAIL",
+      "PERF_FAIL",
+      "PASS"
+    ],
+    "classification": "Unsupported requires evidence that a required game/extension mechanic is absent. Missing native fixture transport,bot stimulus,expected-state oracle,telemetry or owner release permission is INFRA_BLOCKED. Present recipe failing preparation/readiness is SETUP_FAILED; observed mismatch is CORRECTNESS_FAIL; measured explicit budget failure is PERF_FAIL. PASS requires actual named-scope work+oracle and never fills an absent proof.",
+    "capability_null": "Recipe eligible for runtime preflight, not a recorded successful run. catalog_closure:false marks separately named diagnostics. A runnable P0 protocol gate does not establish full Solaris vanilla parity.",
+    "runtime_hold": "Non-smoke runs require --parity-resume-receipt containing full_parity_verified:true and native_storage_verified:true from real owner-approved evidence. Smoke is exempt but no performance evidence.",
+    "execution": "Independent ordinary release v2 server and separate player_scale_bots process; isolated native world, explicit binary/data/fixture/recipe/command/schedule hashes and requested-client barrier. Public control fixture plus actual wire mirror and read-only native checkpoint/server-export images; eligibility is not executed evidence.",
+    "runtime_defaults": {
+      "clients": 10,
+      "seed": 42,
+      "view_distance": 4,
+      "control_measured_view_distance": 6,
+      "control_preparation_view_distance": 8,
+      "readiness_seconds": 30,
+      "steady_seconds": 20,
+      "burst_seconds": 10,
+      "recovery_seconds": 20
+    },
+    "fixture_identity_roles": {
+      "operator_setup": "load_setup",
+      "fresh_unassisted_verifier": "load_verify",
+      "measured_clients": "scale",
+      "permission_scope": "No measured operator permissions on exact JOIN-01; public finite-action controls explicitly use operator assistance. Hostile controls defer real survival transition to Run. Assistance is never earned-survival closure."
+    },
+    "telemetry_wait": "Event-driven port/child readiness and pushed after_tick/wait=true/min_samples=20 metrics long-poll, not periodic wall sleeps.",
+    "runtime_recipe_sources": {
+      "controls": "tools/harness/catalog_controls.py",
+      "compounds": "tools/harness/catalog_mixes.py",
+      "native_readback": "crates/mc-test-harness/src/bin/player_scale_bots_native.rs",
+      "source_integrity": "Read-only native snapshot/export must preserve exact source-world file hashes; restart keeps the same path/identity, without regeneration or repair."
+    },
+    "mapping_schema": "Unique stable scenario IDs. Legacy fixture identifiers/source parameters are reference intentions; active recipes/schedules/commands and receipt hashes define execution. MIX and long composition are eligible for native final-state checks, not full catalog trace/queue or vanilla-parity closure."
+  },
+  "scenarios": [
+    {
+      "id": "dense-hostile",
+      "kind": "legacy_control",
+      "catalog_ids": [
+        "FIGHT-02",
+        "WIRE-01"
+      ],
+      "catalog_closure": false,
+      "fixture": "dense-hostile",
+      "capability": {
+        "outcome": null,
+        "reason": "Public native-v2 fixture/oracle implemented in catalog_controls: all1024 authored zombie/husk UUIDs, real survival transition, received movement/damage/respawn and authoritative clean-stop entity state. Runtime must satisfy every work floor; this mapping is not executed evidence.",
+        "evidence": [
+          "tools/harness/catalog_controls.py",
+          "crates/mc-test-harness/src/bin/player_scale_bots_mechanics.rs",
+          "crates/mc-test-harness/src/bin/player_scale_bots_native.rs",
+          "tools/harness/load_matrix_scenarios/dense-hostile.json",
+          "crates/mc-test-harness/src/bin/load_matrix_fixtures.rs:148-243",
+          "crates/mc-test-harness/src/bin/load_matrix_fixtures.rs:903-904",
+          "crates/mc-core/src/tick.rs:5567-5923"
+        ]
+      },
+      "fixture_recipe": {
+        "kind": "legacy-offline-overlay",
+        "description": "1024 zombies/husks on one 15x15-chunk flat arena; ordinary AI, collisions and survival players at night, no NoAI/invulnerability.",
+        "required_native_bridge": "Validated native fixture authored/readback recipe preserving entities, inventory, POIs, simulation clock and pending ticks before run; never inject legacy checkpoint as native."
+      },
+      "behaviors": {
+        "stimulus": "All requested survival players walk; natural hostile chases/attacks/deaths/respawns. Preserve command setup and client args from control config.",
+        "client_args": [
+          "--no-edits",
+          "--survival",
+          "--respawn"
+        ],
+        "setup_commands": [
+          "gamemode survival",
+          "time set 18000",
+          "gamerule do_daylight_cycle false"
+        ],
+        "commands_are_administrative_fixture_assistance": true
+      },
+      "schedule": {
+        "clock": "monotonic_wall_time",
+        "epoch": "stdin run after every requested client is ready; preflight/setup excluded and separately timed",
+        "steady": {
+          "duration": "--steady-seconds",
+          "movement_hz_per_client": 20,
+          "edit_hz_per_client": 0,
+          "command_hz_bot0": 0,
+          "default_duration_seconds": 20
+        },
+        "burst": {
+          "duration": "--burst-seconds",
+          "movement_hz_per_client": 20,
+          "edit_hz_per_client": 0,
+          "command_hz_bot0": 0,
+          "default_duration_seconds": 10
+        },
+        "recovery": {
+          "duration": "--recovery-seconds",
+          "movement_hz_per_client": 0,
+          "edit_hz_per_client": 0,
+          "command_hz_bot0": 0,
+          "chat_hz_per_client": 0,
+          "rule": "No new gameplay or repair stimulus; keep readers and mandatory protocol liveness responses active. Autonomous simulation is not forcibly disabled.",
+          "default_duration_seconds": 20
+        },
+        "offer_accounting": "Compute scheduled slots from elapsed wall time, client count and declared rates, independently of responses/TPS. Keep offered, transport-admitted, skipped/dropped, actual server admission when observable, completed and client-observed separate; never call sent movement/command completion.",
+        "internal_deadlines": "Legacy persisted fluid/button/TNT deadlines are simulation ticks, separately recorded; wall windows never extend until those deadlines complete.",
+        "duration_policy": "20/10/20 seconds are executable control defaults, not catalog acceptance durations; long-session and mixed-survival-long must select explicit longer wall time. Smoke combined measurement windows<=120seconds; never label smoke performance/capacity evidence."
+      },
+      "work_proof": {
+        "legacy_requirements": [
+          {
+            "source": "bots",
+            "path": "health_damage_received",
+            "minimum_delta": 1
+          },
+          {
+            "source": "bots",
+            "path": "entity_moves_received",
+            "minimum_delta": 10
+          },
+          {
+            "source": "bots",
+            "path": "movements_sent",
+            "minimum_delta": 100
+          },
+          {
+            "source": "saved_world",
+            "path": "activity_samples.entity_positions",
+            "comparison": "changed"
+          }
+        ],
+        "required": [
+          "Observed health damage and entity movement; persisted UUID positions change. Record active population and natural deaths, not just initial1024."
+        ],
+        "scope": "Per-wall-window bot evidence; fixture final readback spans setup/warmup/run and is not measurement-only throughput."
+      },
+      "oracle": {
+        "contract": "Explicit Solaris control contract, pinned26.1.2 mechanics only where a dedicated expected-state oracle exists. catalog_ids show related risks, not equivalence to all catalog cases.",
+        "required": [
+          "No duplicate entity identity; survival health/death/respawn causality; no stale entity after removal."
+        ],
+        "unavailable_means": "INFRA_BLOCKED",
+        "diagnostic_completion": null
+      },
+      "invariants": [
+        "No duplicate entity identity; survival health/death/respawn causality; no stale entity after removal."
+      ],
+      "thresholds": {
+        "source": "explicit_operator_instruction_2026-10-13_not_catalog",
+        "defaults": {
+          "min_sustained_tps": 19.5,
+          "max_tick_p99_ms": 50,
+          "max_tick_max_ms": 250,
+          "correctness_failures": 0,
+          "max_rss_mb": 3072
+        },
+        "overrides": "--min-tps,--max-tick-p99-ms,--max-tick-max-ms,--max-rss-mb: all effective values recorded in receipt, defaults explicitly supplied by operator/Main, not by catalog.",
+        "evaluation": "Full per-window tick telemetry required; never combine stage percentiles. Smoke is non-performance evidence. Missing mandatory oracle/telemetry is INFRA_BLOCKED, never PASS.",
+        "work_floors": "Legacy activity minima below are nonzero-work control checks, not capacity or performance SLOs; saved_world deltas include setup/warmup unless same-window snapshots are available."
+      },
+      "legacy_parameters": {
+        "clients": 32,
+        "view_distance": 6,
+        "spacing": 256,
+        "group_size": 32,
+        "warmup_ticks": 200,
+        "measure_ticks": 1200
+      },
+      "legacy_ticks_not_wall_time": true
+    },
+    {
+      "id": "spread-passive",
+      "kind": "legacy_control",
+      "catalog_ids": [
+        "MOB-01",
+        "WIRE-02"
+      ],
+      "catalog_closure": false,
+      "fixture": "spread-passive",
+      "capability": {
+        "outcome": null,
+        "reason": "Four public full-density arenas,256 passive mobs each; received movement and authoritative native1024 UUID ownership/position oracle implemented. Viewdistance6 retained. Runtime failures remain classified; no cleanup or lower population can produce PASS.",
+        "evidence": [
+          "tools/harness/catalog_controls.py",
+          "crates/mc-test-harness/src/bin/player_scale_bots_native.rs",
+          "tools/harness/load_matrix_scenarios/spread-passive.json",
+          "crates/mc-test-harness/src/bin/load_matrix_fixtures.rs:59-68",
+          "crates/mc-test-harness/src/bin/load_matrix_fixtures.rs:183-243",
+          "crates/mc-test-harness/src/bin/load_matrix_fixtures.rs:905-909",
+          "crates/mc-core/src/tick.rs:6207-6284"
+        ]
+      },
+      "fixture_recipe": {
+        "kind": "legacy-offline-overlay",
+        "description": "1024 cow/sheep/pig/chicken entities:256 per flat arena at [0,0],[256,0],[0,256],[256,256], group_size4.",
+        "required_native_bridge": "Validated native fixture authored/readback recipe preserving entities, inventory, POIs, simulation clock and pending ticks before run; never inject legacy checkpoint as native."
+      },
+      "behaviors": {
+        "stimulus": "Independent player groups keep all four arenas loaded and walk; natural wandering and idle pauses.",
+        "client_args": [
+          "--no-edits"
+        ],
+        "setup_commands": [],
+        "commands_are_administrative_fixture_assistance": false
+      },
+      "schedule": {
+        "clock": "monotonic_wall_time",
+        "epoch": "stdin run after every requested client is ready; preflight/setup excluded and separately timed",
+        "steady": {
+          "duration": "--steady-seconds",
+          "movement_hz_per_client": 20,
+          "edit_hz_per_client": 0,
+          "command_hz_bot0": 0,
+          "default_duration_seconds": 20
+        },
+        "burst": {
+          "duration": "--burst-seconds",
+          "movement_hz_per_client": 20,
+          "edit_hz_per_client": 0,
+          "command_hz_bot0": 0,
+          "default_duration_seconds": 10
+        },
+        "recovery": {
+          "duration": "--recovery-seconds",
+          "movement_hz_per_client": 0,
+          "edit_hz_per_client": 0,
+          "command_hz_bot0": 0,
+          "chat_hz_per_client": 0,
+          "rule": "No new gameplay or repair stimulus; keep readers and mandatory protocol liveness responses active. Autonomous simulation is not forcibly disabled.",
+          "default_duration_seconds": 20
+        },
+        "offer_accounting": "Compute scheduled slots from elapsed wall time, client count and declared rates, independently of responses/TPS. Keep offered, transport-admitted, skipped/dropped, actual server admission when observable, completed and client-observed separate; never call sent movement/command completion.",
+        "internal_deadlines": "Legacy persisted fluid/button/TNT deadlines are simulation ticks, separately recorded; wall windows never extend until those deadlines complete.",
+        "duration_policy": "20/10/20 seconds are executable control defaults, not catalog acceptance durations; long-session and mixed-survival-long must select explicit longer wall time. Smoke combined measurement windows<=120seconds; never label smoke performance/capacity evidence."
+      },
+      "work_proof": {
+        "legacy_requirements": [
+          {
+            "source": "bots",
+            "path": "entity_moves_received",
+            "minimum_delta": 10
+          },
+          {
+            "source": "bots",
+            "path": "movements_sent",
+            "minimum_delta": 100
+          },
+          {
+            "source": "saved_world",
+            "path": "activity_samples.entity_positions",
+            "comparison": "changed"
+          }
+        ],
+        "required": [
+          "Received entity movement plus retained UUID position changes; per-arena actual loaded/ticking populations and moving/idle counts."
+        ],
+        "scope": "Per-wall-window bot evidence; fixture final readback spans setup/warmup/run and is not measurement-only throughput."
+      },
+      "oracle": {
+        "contract": "Explicit Solaris control contract, pinned26.1.2 mechanics only where a dedicated expected-state oracle exists. catalog_ids show related risks, not equivalence to all catalog cases.",
+        "required": [
+          "Entity ownership unique; positions legal; no disappearance hidden by cleanup or lowered view distance."
+        ],
+        "unavailable_means": "INFRA_BLOCKED",
+        "diagnostic_completion": null
+      },
+      "invariants": [
+        "Entity ownership unique; positions legal; no disappearance hidden by cleanup or lowered view distance."
+      ],
+      "thresholds": {
+        "source": "explicit_operator_instruction_2026-10-13_not_catalog",
+        "defaults": {
+          "min_sustained_tps": 19.5,
+          "max_tick_p99_ms": 50,
+          "max_tick_max_ms": 250,
+          "correctness_failures": 0,
+          "max_rss_mb": 3072
+        },
+        "overrides": "--min-tps,--max-tick-p99-ms,--max-tick-max-ms,--max-rss-mb: all effective values recorded in receipt, defaults explicitly supplied by operator/Main, not by catalog.",
+        "evaluation": "Full per-window tick telemetry required; never combine stage percentiles. Smoke is non-performance evidence. Missing mandatory oracle/telemetry is INFRA_BLOCKED, never PASS.",
+        "work_floors": "Legacy activity minima below are nonzero-work control checks, not capacity or performance SLOs; saved_world deltas include setup/warmup unless same-window snapshots are available."
+      },
+      "legacy_parameters": {
+        "clients": 16,
+        "view_distance": 6,
+        "spacing": 256,
+        "group_size": 4,
+        "warmup_ticks": 200,
+        "measure_ticks": 1200
+      },
+      "legacy_ticks_not_wall_time": true
+    },
+    {
+      "id": "explore",
+      "kind": "legacy_control",
+      "catalog_ids": [
+        "CHUNK-01"
+      ],
+      "catalog_closure": false,
+      "fixture": "explore",
+      "capability": {
+        "outcome": null,
+        "reason": "Public prepared control arena, fixed open-loop assisted walking and fresh received chunk/route work oracle implemented. It remains a diagnostic control, not an alias for exact CHUNK-01 survival/generation closure.",
+        "evidence": [
+          "tools/harness/catalog_controls.py",
+          "tools/harness/load_matrix_scenarios/explore.json",
+          "crates/mc-test-harness/src/bin/load_matrix_fixtures.rs:870-874",
+          "crates/mc-test-harness/src/bin/load_matrix_fixtures.rs:953-954",
+          "crates/mc-edge/src/bin/solaris-v2.rs:100-126",
+          "crates/mc-test-harness/src/bin/player_scale_bots.rs:749-925",
+          "tools/harness/backends/catalog_load.py:257-295,419-442"
+        ]
+      },
+      "fixture_recipe": {
+        "kind": "public-platform-assisted-exploration",
+        "description": "Publicly prepared,persisted v2 safe platform then fixed wall-rate straight walkers into fresh surrounding seed42 chunks. No offline legacy fixture is invoked. Creative teleport,dry-landing,item grant assistance remains declared; public setup does not prove native compact storage.",
+        "commands": [
+          "fill -32 63 -32 32 63 32 minecraft:grass_block",
+          "fill -32 64 -32 32 67 32 minecraft:air",
+          "fill -32 68 -32 32 71 32 minecraft:air",
+          "fill -32 72 -32 32 75 32 minecraft:air",
+          "fill -32 76 -32 32 79 32 minecraft:air",
+          "fill -32 80 -32 32 83 32 minecraft:air",
+          "fill -32 84 -32 32 87 32 minecraft:air",
+          "fill -32 88 -32 32 91 32 minecraft:air",
+          "fill -32 92 -32 32 95 32 minecraft:air",
+          "setworldspawn 0 64 0",
+          "gamerule doDaylightCycle false",
+          "gamerule doMobSpawning false",
+          "clear @s",
+          "spawnpoint @s 0 64 0",
+          "tp @s 0.5 64 0.5",
+          "gamemode survival @s"
+        ],
+        "legacy_fixture_invoked": false,
+        "requires_catalog_generation_oracle": false
+      },
+      "behaviors": {
+        "stimulus": "Fixed-rate ordinary position packets after readiness; --no-edits --explore. Record route refusals rather than silently reduce target clients.",
+        "client_args": [
+          "--no-edits",
+          "--explore"
+        ],
+        "setup_commands": [],
+        "commands_are_administrative_fixture_assistance": false
+      },
+      "schedule": {
+        "clock": "monotonic_wall_time",
+        "epoch": "stdin run after every requested client is ready; preflight/setup excluded and separately timed",
+        "steady": {
+          "duration": "--steady-seconds",
+          "movement_hz_per_client": 20,
+          "edit_hz_per_client": 0,
+          "command_hz_bot0": 0,
+          "chat_hz_per_client": 1,
+          "default_duration_seconds": 20
+        },
+        "burst": {
+          "duration": "--burst-seconds",
+          "movement_hz_per_client": 20,
+          "edit_hz_per_client": 0,
+          "command_hz_bot0": 0,
+          "chat_hz_per_client": 2,
+          "default_duration_seconds": 10
+        },
+        "recovery": {
+          "duration": "--recovery-seconds",
+          "movement_hz_per_client": 0,
+          "edit_hz_per_client": 0,
+          "command_hz_bot0": 0,
+          "chat_hz_per_client": 0,
+          "rule": "No new gameplay or repair stimulus; keep readers and mandatory protocol liveness responses active. Autonomous simulation is not forcibly disabled.",
+          "default_duration_seconds": 20
+        },
+        "offer_accounting": "Compute scheduled slots from elapsed wall time, client count and declared rates, independently of responses/TPS. Keep offered, transport-admitted, skipped/dropped, actual server admission when observable, completed and client-observed separate; never call sent movement/command completion.",
+        "internal_deadlines": "Legacy persisted fluid/button/TNT deadlines are simulation ticks, separately recorded; wall windows never extend until those deadlines complete.",
+        "duration_policy": "20/10/20 seconds are executable control defaults, not catalog acceptance durations; long-session and mixed-survival-long must select explicit longer wall time. Smoke combined measurement windows<=120seconds; never label smoke performance/capacity evidence."
+      },
+      "work_proof": {
+        "legacy_requirements": [
+          {
+            "source": "bots",
+            "path": "chunks_received",
+            "minimum_delta": 16
+          },
+          {
+            "source": "bots",
+            "path": "chunk_boundaries_crossed",
+            "minimum_delta": 16
+          },
+          {
+            "source": "saved_world",
+            "path": "activity_samples.stored_chunks",
+            "minimum_delta": 1
+          }
+        ],
+        "required": [
+          "Complete requested-client readiness; >=16 measured received chunks and snapshot-derived SetCenterChunk transitions, with positive conservative endpoint displacement. Client-predicted walking/sends do not establish route completion."
+        ],
+        "scope": "Per-wall-window bot evidence; fixture final readback spans setup/warmup/run and is not measurement-only throughput.",
+        "legacy_requirements_reference_only": true,
+        "implemented_diagnostic_checks": [
+          "ready_clients==requested",
+          "chunks_received>=requested with complete readiness window decode",
+          "work_done.completed.received_chunk_center_transitions>=16 and received_displacement_lower_bound_blocks>0, with complete per-client received transition chains",
+          "disconnects==0"
+        ]
+      },
+      "oracle": {
+        "contract": "Explicit Solaris control contract, pinned26.1.2 mechanics only where a dedicated expected-state oracle exists. catalog_ids show related risks, not equivalence to all catalog cases.",
+        "required": [
+          "No unready client removed from denominator; no generation/storage completion inferred from packet reception; no vanilla survival expedition claim."
+        ],
+        "unavailable_means": "INFRA_BLOCKED",
+        "diagnostic_completion": "Received decoded chunks and actual route progress; transport admission not generation/storage completion."
+      },
+      "invariants": [
+        "No unready client removed from denominator; no generation/storage completion inferred from packet reception; no vanilla survival expedition claim."
+      ],
+      "thresholds": {
+        "source": "explicit_operator_instruction_2026-10-13_not_catalog",
+        "defaults": {
+          "min_sustained_tps": 19.5,
+          "max_tick_p99_ms": 50,
+          "max_tick_max_ms": 250,
+          "correctness_failures": 0,
+          "max_rss_mb": 3072
+        },
+        "overrides": "--min-tps,--max-tick-p99-ms,--max-tick-max-ms,--max-rss-mb: all effective values recorded in receipt, defaults explicitly supplied by operator/Main, not by catalog.",
+        "evaluation": "Full per-window tick telemetry required; never combine stage percentiles. Smoke is non-performance evidence. Missing mandatory oracle/telemetry is INFRA_BLOCKED, never PASS.",
+        "work_floors": "Legacy activity minima below are nonzero-work control checks, not capacity or performance SLOs; saved_world deltas include setup/warmup unless same-window snapshots are available."
+      },
+      "legacy_parameters": {
+        "clients": 16,
+        "view_distance": 6,
+        "spacing": 256,
+        "group_size": 16,
+        "warmup_ticks": 200,
+        "measure_ticks": 1200
+      },
+      "legacy_ticks_not_wall_time": true
+    },
+    {
+      "id": "built-base",
+      "kind": "legacy_control",
+      "catalog_ids": [
+        "INV-05",
+        "INV-09",
+        "RED-06",
+        "ITEM-01"
+      ],
+      "catalog_closure": false,
+      "fixture": "built-base",
+      "capability": {
+        "outcome": null,
+        "reason": "Public64-furnace/128-hopper/64-loose-stack/512-button finite-stock fixture implemented through actual give/menu quickmoves/drop actions. Received smelting/transfer/physical release plus exact atomic native stock oracle; writes/acks are never completions.",
+        "evidence": [
+          "tools/harness/catalog_controls.py",
+          "crates/mc-test-harness/src/bin/player_scale_bots_native.rs",
+          "tools/harness/load_matrix_scenarios/built-base.json",
+          "crates/mc-test-harness/src/bin/load_matrix_fixtures.rs:245-334",
+          "crates/mc-test-harness/src/bin/load_matrix_fixtures.rs:910-910",
+          "crates/mc-core/src/tick.rs:2487-2495,3116-3333"
+        ]
+      },
+      "fixture_recipe": {
+        "kind": "legacy-offline-overlay",
+        "description": "64 fueled raw-iron furnaces,128 opposed circulating hoppers,64 dirt item stacks,512 powered buttons plus wire/lamps; releases at ticks240+160*burst.",
+        "required_native_bridge": "Validated native fixture authored/readback recipe preserving entities, inventory, POIs, simulation clock and pending ticks before run; never inject legacy checkpoint as native."
+      },
+      "behaviors": {
+        "stimulus": "Creative bots walk and ordinary block edits; background cooking, hopper circulation and staggered button releases. Fixture stock finite; do not auto-refill.",
+        "client_args": [],
+        "setup_commands": [],
+        "commands_are_administrative_fixture_assistance": false
+      },
+      "schedule": {
+        "clock": "monotonic_wall_time",
+        "epoch": "stdin run after every requested client is ready; preflight/setup excluded and separately timed",
+        "steady": {
+          "duration": "--steady-seconds",
+          "movement_hz_per_client": 20,
+          "edit_hz_per_client": 1,
+          "command_hz_bot0": 0,
+          "default_duration_seconds": 20
+        },
+        "burst": {
+          "duration": "--burst-seconds",
+          "movement_hz_per_client": 20,
+          "edit_hz_per_client": 2,
+          "command_hz_bot0": 0,
+          "default_duration_seconds": 10
+        },
+        "recovery": {
+          "duration": "--recovery-seconds",
+          "movement_hz_per_client": 0,
+          "edit_hz_per_client": 0,
+          "command_hz_bot0": 0,
+          "chat_hz_per_client": 0,
+          "rule": "No new gameplay or repair stimulus; keep readers and mandatory protocol liveness responses active. Autonomous simulation is not forcibly disabled.",
+          "default_duration_seconds": 20
+        },
+        "offer_accounting": "Compute scheduled slots from elapsed wall time, client count and declared rates, independently of responses/TPS. Keep offered, transport-admitted, skipped/dropped, actual server admission when observable, completed and client-observed separate; never call sent movement/command completion.",
+        "internal_deadlines": "Legacy persisted fluid/button/TNT deadlines are simulation ticks, separately recorded; wall windows never extend until those deadlines complete.",
+        "duration_policy": "20/10/20 seconds are executable control defaults, not catalog acceptance durations; long-session and mixed-survival-long must select explicit longer wall time. Smoke combined measurement windows<=120seconds; never label smoke performance/capacity evidence."
+      },
+      "work_proof": {
+        "legacy_requirements": [
+          {
+            "source": "saved_world",
+            "path": "activity_samples.powered_buttons",
+            "comparison": "changed"
+          },
+          {
+            "source": "bots",
+            "path": "break_updates_observed",
+            "minimum_delta": 1
+          },
+          {
+            "source": "bots",
+            "path": "place_updates_observed",
+            "minimum_delta": 1
+          },
+          {
+            "source": "saved_world",
+            "path": "activity_samples.furnace_output_items",
+            "minimum_delta": 1
+          }
+        ],
+        "required": [
+          "Break/place acknowledged and observed updates; powered button count changes; cooked output increases. Need transfer attempt/completion and item debit/credit ledger beyond static hopper placement."
+        ],
+        "scope": "Per-wall-window bot evidence; fixture final readback spans setup/warmup/run and is not measurement-only throughput."
+      },
+      "oracle": {
+        "contract": "Explicit Solaris control contract, pinned26.1.2 mechanics only where a dedicated expected-state oracle exists. catalog_ids show related risks, not equivalence to all catalog cases.",
+        "required": [
+          "Recipe/fuel/remainder transformations conserved; circulation creates no items; block ack is not observed mutation; scheduled release only affects its matching block."
+        ],
+        "unavailable_means": "INFRA_BLOCKED",
+        "diagnostic_completion": null
+      },
+      "invariants": [
+        "Recipe/fuel/remainder transformations conserved; circulation creates no items; block ack is not observed mutation; scheduled release only affects its matching block."
+      ],
+      "thresholds": {
+        "source": "explicit_operator_instruction_2026-10-13_not_catalog",
+        "defaults": {
+          "min_sustained_tps": 19.5,
+          "max_tick_p99_ms": 50,
+          "max_tick_max_ms": 250,
+          "correctness_failures": 0,
+          "max_rss_mb": 3072
+        },
+        "overrides": "--min-tps,--max-tick-p99-ms,--max-tick-max-ms,--max-rss-mb: all effective values recorded in receipt, defaults explicitly supplied by operator/Main, not by catalog.",
+        "evaluation": "Full per-window tick telemetry required; never combine stage percentiles. Smoke is non-performance evidence. Missing mandatory oracle/telemetry is INFRA_BLOCKED, never PASS.",
+        "work_floors": "Legacy activity minima below are nonzero-work control checks, not capacity or performance SLOs; saved_world deltas include setup/warmup unless same-window snapshots are available."
+      },
+      "legacy_parameters": {
+        "clients": 32,
+        "view_distance": 6,
+        "spacing": 256,
+        "group_size": 32,
+        "warmup_ticks": 200,
+        "measure_ticks": 1200
+      },
+      "legacy_ticks_not_wall_time": true
+    },
+    {
+      "id": "fluids",
+      "kind": "legacy_control",
+      "catalog_ids": [
+        "ENV-05",
+        "ENV-06"
+      ],
+      "catalog_closure": false,
+      "fixture": "fluids",
+      "capability": {
+        "outcome": null,
+        "reason": "Public128 capped elevated sources, finite64 plug releases per active wall window, real received topology/source/level transitions and native final physical cells. Natural cadence retained; legacy private tick deadlines are not claimed equivalent.",
+        "evidence": [
+          "tools/harness/catalog_controls.py",
+          "tools/harness/load_matrix_scenarios/fluids.json",
+          "crates/mc-test-harness/src/bin/load_matrix_fixtures.rs:335-355",
+          "crates/mc-test-harness/src/bin/load_matrix_fixtures.rs:911-911",
+          "crates/mc-core/src/tick.rs:2489-2490,2518"
+        ]
+      },
+      "fixture_recipe": {
+        "kind": "legacy-offline-overlay",
+        "description": "128 elevated alternating water/lava level0 sources at y70 on flat terrain; scheduled releases ticks240+16*n through2272.",
+        "required_native_bridge": "Validated native fixture authored/readback recipe preserving entities, inventory, POIs, simulation clock and pending ticks before run; never inject legacy checkpoint as native."
+      },
+      "behaviors": {
+        "stimulus": "No bot edits; players keep authored area resident, natural water/lava fluid ticks and interactions run.",
+        "client_args": [
+          "--no-edits"
+        ],
+        "setup_commands": [],
+        "commands_are_administrative_fixture_assistance": false
+      },
+      "schedule": {
+        "clock": "monotonic_wall_time",
+        "epoch": "stdin run after every requested client is ready; preflight/setup excluded and separately timed",
+        "steady": {
+          "duration": "--steady-seconds",
+          "movement_hz_per_client": 20,
+          "edit_hz_per_client": 0,
+          "command_hz_bot0": 0,
+          "default_duration_seconds": 20
+        },
+        "burst": {
+          "duration": "--burst-seconds",
+          "movement_hz_per_client": 20,
+          "edit_hz_per_client": 0,
+          "command_hz_bot0": 0,
+          "default_duration_seconds": 10
+        },
+        "recovery": {
+          "duration": "--recovery-seconds",
+          "movement_hz_per_client": 0,
+          "edit_hz_per_client": 0,
+          "command_hz_bot0": 0,
+          "chat_hz_per_client": 0,
+          "rule": "No new gameplay or repair stimulus; keep readers and mandatory protocol liveness responses active. Autonomous simulation is not forcibly disabled.",
+          "default_duration_seconds": 20
+        },
+        "offer_accounting": "Compute scheduled slots from elapsed wall time, client count and declared rates, independently of responses/TPS. Keep offered, transport-admitted, skipped/dropped, actual server admission when observable, completed and client-observed separate; never call sent movement/command completion.",
+        "internal_deadlines": "Legacy persisted fluid/button/TNT deadlines are simulation ticks, separately recorded; wall windows never extend until those deadlines complete.",
+        "duration_policy": "20/10/20 seconds are executable control defaults, not catalog acceptance durations; long-session and mixed-survival-long must select explicit longer wall time. Smoke combined measurement windows<=120seconds; never label smoke performance/capacity evidence."
+      },
+      "work_proof": {
+        "legacy_requirements": [
+          {
+            "source": "saved_world",
+            "path": "activity_samples.flowing_fluid_blocks",
+            "minimum_delta": 1
+          }
+        ],
+        "required": [
+          "Non-source flowing-fluid blocks increase, plus scheduled due/completed/remaining ages and final topology. Initial sources are not work proof."
+        ],
+        "scope": "Per-wall-window bot evidence; fixture final readback spans setup/warmup/run and is not measurement-only throughput."
+      },
+      "oracle": {
+        "contract": "Explicit Solaris control contract, pinned26.1.2 mechanics only where a dedicated expected-state oracle exists. catalog_ids show related risks, not equivalence to all catalog cases.",
+        "required": [
+          "Finite pending ticks drain or declared residual explained; source/topology agreement with pinned oracle; no missing final block updates."
+        ],
+        "unavailable_means": "INFRA_BLOCKED",
+        "diagnostic_completion": null
+      },
+      "invariants": [
+        "Finite pending ticks drain or declared residual explained; source/topology agreement with pinned oracle; no missing final block updates."
+      ],
+      "thresholds": {
+        "source": "explicit_operator_instruction_2026-10-13_not_catalog",
+        "defaults": {
+          "min_sustained_tps": 19.5,
+          "max_tick_p99_ms": 50,
+          "max_tick_max_ms": 250,
+          "correctness_failures": 0,
+          "max_rss_mb": 3072
+        },
+        "overrides": "--min-tps,--max-tick-p99-ms,--max-tick-max-ms,--max-rss-mb: all effective values recorded in receipt, defaults explicitly supplied by operator/Main, not by catalog.",
+        "evaluation": "Full per-window tick telemetry required; never combine stage percentiles. Smoke is non-performance evidence. Missing mandatory oracle/telemetry is INFRA_BLOCKED, never PASS.",
+        "work_floors": "Legacy activity minima below are nonzero-work control checks, not capacity or performance SLOs; saved_world deltas include setup/warmup unless same-window snapshots are available."
+      },
+      "legacy_parameters": {
+        "clients": 16,
+        "view_distance": 6,
+        "spacing": 256,
+        "group_size": 16,
+        "warmup_ticks": 200,
+        "measure_ticks": 1200
+      },
+      "legacy_ticks_not_wall_time": true
+    },
+    {
+      "id": "village",
+      "kind": "legacy_control",
+      "catalog_ids": [
+        "VIL-01",
+        "VIL-05"
+      ],
+      "catalog_closure": false,
+      "fixture": "village",
+      "capability": {
+        "outcome": null,
+        "reason": "Public64 ordinary adult villagers naturally acquire real beds/composters. Received UUID movement plus native farmer/profession/Brain/unique declared POI ownership oracle implemented; short control does not claim full day/work/rest/sleep or MIX-01 attempt-stream closure.",
+        "evidence": [
+          "tools/harness/catalog_controls.py",
+          "crates/mc-test-harness/src/bin/player_scale_bots_native.rs",
+          "tools/harness/load_matrix_scenarios/village.json",
+          "crates/mc-test-harness/src/bin/load_matrix_fixtures.rs:384-433",
+          "crates/mc-test-harness/src/bin/load_matrix_fixtures.rs:912-912",
+          "crates/mc-core/src/tick.rs:2557-2558"
+        ]
+      },
+      "fixture_recipe": {
+        "kind": "legacy-offline-overlay",
+        "description": "64 farmer villagers at [-64,-64] spacing16 with persisted home/job/meeting POIs, beds,composters,bells.",
+        "required_native_bridge": "Validated native fixture authored/readback recipe preserving entities, inventory, POIs, simulation clock and pending ticks before run; never inject legacy checkpoint as native."
+      },
+      "behaviors": {
+        "stimulus": "Players walk without edits; time set2000 and ordinary daylight cycle. Full day/work/rest/sleep coverage requires explicit longer wall schedule, not1200 legacy ticks.",
+        "client_args": [
+          "--no-edits"
+        ],
+        "setup_commands": [
+          "time set 2000",
+          "gamerule do_daylight_cycle true"
+        ],
+        "commands_are_administrative_fixture_assistance": true
+      },
+      "schedule": {
+        "clock": "monotonic_wall_time",
+        "epoch": "stdin run after every requested client is ready; preflight/setup excluded and separately timed",
+        "steady": {
+          "duration": "--steady-seconds",
+          "movement_hz_per_client": 20,
+          "edit_hz_per_client": 0,
+          "command_hz_bot0": 0,
+          "default_duration_seconds": 20
+        },
+        "burst": {
+          "duration": "--burst-seconds",
+          "movement_hz_per_client": 20,
+          "edit_hz_per_client": 0,
+          "command_hz_bot0": 0,
+          "default_duration_seconds": 10
+        },
+        "recovery": {
+          "duration": "--recovery-seconds",
+          "movement_hz_per_client": 0,
+          "edit_hz_per_client": 0,
+          "command_hz_bot0": 0,
+          "chat_hz_per_client": 0,
+          "rule": "No new gameplay or repair stimulus; keep readers and mandatory protocol liveness responses active. Autonomous simulation is not forcibly disabled.",
+          "default_duration_seconds": 20
+        },
+        "offer_accounting": "Compute scheduled slots from elapsed wall time, client count and declared rates, independently of responses/TPS. Keep offered, transport-admitted, skipped/dropped, actual server admission when observable, completed and client-observed separate; never call sent movement/command completion.",
+        "internal_deadlines": "Legacy persisted fluid/button/TNT deadlines are simulation ticks, separately recorded; wall windows never extend until those deadlines complete.",
+        "duration_policy": "20/10/20 seconds are executable control defaults, not catalog acceptance durations; long-session and mixed-survival-long must select explicit longer wall time. Smoke combined measurement windows<=120seconds; never label smoke performance/capacity evidence."
+      },
+      "work_proof": {
+        "legacy_requirements": [
+          {
+            "source": "bots",
+            "path": "entity_moves_received",
+            "minimum_delta": 1
+          },
+          {
+            "source": "saved_world",
+            "path": "activity_samples.entity_positions",
+            "comparison": "changed"
+          }
+        ],
+        "required": [
+          "Received movement and persisted positions are minimal control work only; exact VIL oracle requires visits, POI claims, work output and sleep transitions."
+        ],
+        "scope": "Per-wall-window bot evidence; fixture final readback spans setup/warmup/run and is not measurement-only throughput."
+      },
+      "oracle": {
+        "contract": "Explicit Solaris control contract, pinned26.1.2 mechanics only where a dedicated expected-state oracle exists. catalog_ids show related risks, not equivalence to all catalog cases.",
+        "required": [
+          "No duplicate POI claims; actual farmer identity/profession and legal retained brain state; decorative movement is not full village correctness."
+        ],
+        "unavailable_means": "INFRA_BLOCKED",
+        "diagnostic_completion": null
+      },
+      "invariants": [
+        "No duplicate POI claims; actual farmer identity/profession and legal retained brain state; decorative movement is not full village correctness."
+      ],
+      "thresholds": {
+        "source": "explicit_operator_instruction_2026-10-13_not_catalog",
+        "defaults": {
+          "min_sustained_tps": 19.5,
+          "max_tick_p99_ms": 50,
+          "max_tick_max_ms": 250,
+          "correctness_failures": 0,
+          "max_rss_mb": 3072
+        },
+        "overrides": "--min-tps,--max-tick-p99-ms,--max-tick-max-ms,--max-rss-mb: all effective values recorded in receipt, defaults explicitly supplied by operator/Main, not by catalog.",
+        "evaluation": "Full per-window tick telemetry required; never combine stage percentiles. Smoke is non-performance evidence. Missing mandatory oracle/telemetry is INFRA_BLOCKED, never PASS.",
+        "work_floors": "Legacy activity minima below are nonzero-work control checks, not capacity or performance SLOs; saved_world deltas include setup/warmup unless same-window snapshots are available."
+      },
+      "legacy_parameters": {
+        "clients": 16,
+        "view_distance": 6,
+        "spacing": 256,
+        "group_size": 16,
+        "warmup_ticks": 200,
+        "measure_ticks": 1200
+      },
+      "legacy_ticks_not_wall_time": true
+    },
+    {
+      "id": "combat",
+      "kind": "legacy_control",
+      "catalog_ids": [
+        "BLAST-03",
+        "BLAST-04",
+        "BLAST-05",
+        "JOIN-06"
+      ],
+      "catalog_closure": false,
+      "fixture": "combat",
+      "capability": {
+        "outcome": null,
+        "reason": "Public128 hostile mobs,96 finite ordinary primed TNT commands plus96 chain targets, fixed bounded creeper additions. Real explosion/removal/physical and health/death/respawn receipts; no deadline SNBT, recycling or packet-write completion.",
+        "evidence": [
+          "tools/harness/catalog_controls.py",
+          "crates/mc-test-harness/src/bin/player_scale_bots_mechanics.rs",
+          "tools/harness/load_matrix_scenarios/combat.json",
+          "crates/mc-test-harness/src/bin/load_matrix_fixtures.rs:434-454",
+          "crates/mc-test-harness/src/bin/load_matrix_fixtures.rs:913-913",
+          "crates/mc-core/src/tick.rs:2463,2546"
+        ]
+      },
+      "fixture_recipe": {
+        "kind": "legacy-offline-overlay",
+        "description": "128 hostile combatants,96 initial primed TNT at tick240+24*n through2520,chain TNT blocks; survival respawning players at night.",
+        "required_native_bridge": "Validated native fixture authored/readback recipe preserving entities, inventory, POIs, simulation clock and pending ticks before run; never inject legacy checkpoint as native."
+      },
+      "behaviors": {
+        "stimulus": "Natural attacks/explosions and fixed wall-rate bot0 ordinary summon-creeper command stream corresponding to legacy every120 ticks; record administrative stock additions separately.",
+        "client_args": [
+          "--no-edits",
+          "--survival",
+          "--respawn"
+        ],
+        "setup_commands": [
+          "gamemode survival",
+          "time set 18000",
+          "gamerule do_daylight_cycle false"
+        ],
+        "commands_are_administrative_fixture_assistance": true
+      },
+      "schedule": {
+        "clock": "monotonic_wall_time",
+        "epoch": "stdin run after every requested client is ready; preflight/setup excluded and separately timed",
+        "steady": {
+          "duration": "--steady-seconds",
+          "movement_hz_per_client": 20,
+          "edit_hz_per_client": 0,
+          "command_hz_bot0": 1,
+          "commands": [
+            "summon minecraft:creeper 8 64 8"
+          ],
+          "default_duration_seconds": 20
+        },
+        "burst": {
+          "duration": "--burst-seconds",
+          "movement_hz_per_client": 20,
+          "edit_hz_per_client": 0,
+          "command_hz_bot0": 2,
+          "commands": [
+            "summon minecraft:creeper 8 64 8"
+          ],
+          "default_duration_seconds": 10
+        },
+        "recovery": {
+          "duration": "--recovery-seconds",
+          "movement_hz_per_client": 0,
+          "edit_hz_per_client": 0,
+          "command_hz_bot0": 0,
+          "chat_hz_per_client": 0,
+          "rule": "No new gameplay or repair stimulus; keep readers and mandatory protocol liveness responses active. Autonomous simulation is not forcibly disabled.",
+          "default_duration_seconds": 20
+        },
+        "offer_accounting": "Compute scheduled slots from elapsed wall time, client count and declared rates, independently of responses/TPS. Keep offered, transport-admitted, skipped/dropped, actual server admission when observable, completed and client-observed separate; never call sent movement/command completion.",
+        "internal_deadlines": "Legacy persisted fluid/button/TNT deadlines are simulation ticks, separately recorded; wall windows never extend until those deadlines complete.",
+        "command_rate_policy": "Catalog mapping recipe rates1/2Hz are bounded protocol stimuli, not catalog SLOs or exact conversion of legacy every_ticks. Effective CLI/window rates override and must be receipted.",
+        "duration_policy": "20/10/20 seconds are executable control defaults, not catalog acceptance durations; long-session and mixed-survival-long must select explicit longer wall time. Smoke combined measurement windows<=120seconds; never label smoke performance/capacity evidence."
+      },
+      "work_proof": {
+        "legacy_requirements": [
+          {
+            "source": "bots",
+            "path": "explosions_received",
+            "minimum_delta": 1
+          },
+          {
+            "source": "bots",
+            "path": "commands_sent",
+            "minimum_delta": 1
+          },
+          {
+            "source": "saved_world",
+            "path": "activity_samples.primed_tnt_count",
+            "comparison": "changed"
+          }
+        ],
+        "required": [
+          "Explosion packets, changed persisted primed-TNT count, genuine damage/respawn; explosion due/completed and block/drop effects required for full oracle."
+        ],
+        "scope": "Per-wall-window bot evidence; fixture final readback spans setup/warmup/run and is not measurement-only throughput."
+      },
+      "oracle": {
+        "contract": "Explicit Solaris control contract, pinned26.1.2 mechanics only where a dedicated expected-state oracle exists. catalog_ids show related risks, not equivalence to all catalog cases.",
+        "required": [
+          "Finite initial TNT stock not recycled; bounded explicit summon stock; no duplicate blast/drop/entity owner; no ghost after death/respawn."
+        ],
+        "unavailable_means": "INFRA_BLOCKED",
+        "diagnostic_completion": null
+      },
+      "invariants": [
+        "Finite initial TNT stock not recycled; bounded explicit summon stock; no duplicate blast/drop/entity owner; no ghost after death/respawn."
+      ],
+      "thresholds": {
+        "source": "explicit_operator_instruction_2026-10-13_not_catalog",
+        "defaults": {
+          "min_sustained_tps": 19.5,
+          "max_tick_p99_ms": 50,
+          "max_tick_max_ms": 250,
+          "correctness_failures": 0,
+          "max_rss_mb": 3072
+        },
+        "overrides": "--min-tps,--max-tick-p99-ms,--max-tick-max-ms,--max-rss-mb: all effective values recorded in receipt, defaults explicitly supplied by operator/Main, not by catalog.",
+        "evaluation": "Full per-window tick telemetry required; never combine stage percentiles. Smoke is non-performance evidence. Missing mandatory oracle/telemetry is INFRA_BLOCKED, never PASS.",
+        "work_floors": "Legacy activity minima below are nonzero-work control checks, not capacity or performance SLOs; saved_world deltas include setup/warmup unless same-window snapshots are available."
+      },
+      "legacy_parameters": {
+        "clients": 16,
+        "view_distance": 6,
+        "spacing": 256,
+        "group_size": 16,
+        "warmup_ticks": 200,
+        "measure_ticks": 1200
+      },
+      "legacy_ticks_not_wall_time": true
+    },
+    {
+      "id": "projectiles",
+      "kind": "legacy_control",
+      "catalog_ids": [
+        "FIGHT-04",
+        "JOIN-06"
+      ],
+      "catalog_closure": false,
+      "fixture": "projectiles",
+      "capability": {
+        "outcome": null,
+        "reason": "Public128 skeletons and128 one-shot initial moving arrows; natural continued launches plus UUID/shooter/victim/damage/removal receipts required. Initial authored arrows never substitute for subsequent natural projectile work.",
+        "evidence": [
+          "tools/harness/catalog_controls.py",
+          "crates/mc-test-harness/src/bin/player_scale_bots_mechanics.rs",
+          "tools/harness/load_matrix_scenarios/projectiles.json",
+          "crates/mc-test-harness/src/bin/load_matrix_fixtures.rs:455-500",
+          "crates/mc-test-harness/src/bin/load_matrix_fixtures.rs:914-914",
+          "crates/mc-core/src/tick.rs:5922-5923"
+        ]
+      },
+      "fixture_recipe": {
+        "kind": "legacy-offline-overlay",
+        "description": "128 moving persisted arrows and128 skeletons with live line-of-sight survival targets; --anchor-chunk-walk --respawn.",
+        "required_native_bridge": "Validated native fixture authored/readback recipe preserving entities, inventory, POIs, simulation clock and pending ticks before run; never inject legacy checkpoint as native."
+      },
+      "behaviors": {
+        "stimulus": "Natural skeleton attack cooldown/ammunition semantics; player movement fixed wall rate, no bot edits. Initial arrows cannot replace continued launches.",
+        "client_args": [
+          "--no-edits",
+          "--survival",
+          "--respawn",
+          "--anchor-chunk-walk"
+        ],
+        "setup_commands": [
+          "gamemode survival",
+          "time set 18000",
+          "gamerule do_daylight_cycle false"
+        ],
+        "commands_are_administrative_fixture_assistance": true
+      },
+      "schedule": {
+        "clock": "monotonic_wall_time",
+        "epoch": "stdin run after every requested client is ready; preflight/setup excluded and separately timed",
+        "steady": {
+          "duration": "--steady-seconds",
+          "movement_hz_per_client": 20,
+          "edit_hz_per_client": 0,
+          "command_hz_bot0": 0,
+          "default_duration_seconds": 20
+        },
+        "burst": {
+          "duration": "--burst-seconds",
+          "movement_hz_per_client": 20,
+          "edit_hz_per_client": 0,
+          "command_hz_bot0": 0,
+          "default_duration_seconds": 10
+        },
+        "recovery": {
+          "duration": "--recovery-seconds",
+          "movement_hz_per_client": 0,
+          "edit_hz_per_client": 0,
+          "command_hz_bot0": 0,
+          "chat_hz_per_client": 0,
+          "rule": "No new gameplay or repair stimulus; keep readers and mandatory protocol liveness responses active. Autonomous simulation is not forcibly disabled.",
+          "default_duration_seconds": 20
+        },
+        "offer_accounting": "Compute scheduled slots from elapsed wall time, client count and declared rates, independently of responses/TPS. Keep offered, transport-admitted, skipped/dropped, actual server admission when observable, completed and client-observed separate; never call sent movement/command completion.",
+        "internal_deadlines": "Legacy persisted fluid/button/TNT deadlines are simulation ticks, separately recorded; wall windows never extend until those deadlines complete.",
+        "duration_policy": "20/10/20 seconds are executable control defaults, not catalog acceptance durations; long-session and mixed-survival-long must select explicit longer wall time. Smoke combined measurement windows<=120seconds; never label smoke performance/capacity evidence."
+      },
+      "work_proof": {
+        "legacy_requirements": [
+          {
+            "source": "bots",
+            "path": "projectiles_spawned",
+            "minimum_delta": 1
+          },
+          {
+            "source": "bots",
+            "path": "health_damage_received",
+            "minimum_delta": 1
+          },
+          {
+            "source": "bots",
+            "path": "movements_sent",
+            "minimum_delta": 100
+          }
+        ],
+        "required": [
+          "Deduplicated projectile spawn receipts during window, health damage and movement; exact arrow launch/hit/removal trace required, not startup arrow count."
+        ],
+        "scope": "Per-wall-window bot evidence; fixture final readback spans setup/warmup/run and is not measurement-only throughput."
+      },
+      "oracle": {
+        "contract": "Explicit Solaris control contract, pinned26.1.2 mechanics only where a dedicated expected-state oracle exists. catalog_ids show related risks, not equivalence to all catalog cases.",
+        "required": [
+          "Each projectile has one lifecycle/owner; no duplicate hits/damage; legal death/respawn and final removal."
+        ],
+        "unavailable_means": "INFRA_BLOCKED",
+        "diagnostic_completion": null
+      },
+      "invariants": [
+        "Each projectile has one lifecycle/owner; no duplicate hits/damage; legal death/respawn and final removal."
+      ],
+      "thresholds": {
+        "source": "explicit_operator_instruction_2026-10-13_not_catalog",
+        "defaults": {
+          "min_sustained_tps": 19.5,
+          "max_tick_p99_ms": 50,
+          "max_tick_max_ms": 250,
+          "correctness_failures": 0,
+          "max_rss_mb": 3072
+        },
+        "overrides": "--min-tps,--max-tick-p99-ms,--max-tick-max-ms,--max-rss-mb: all effective values recorded in receipt, defaults explicitly supplied by operator/Main, not by catalog.",
+        "evaluation": "Full per-window tick telemetry required; never combine stage percentiles. Smoke is non-performance evidence. Missing mandatory oracle/telemetry is INFRA_BLOCKED, never PASS.",
+        "work_floors": "Legacy activity minima below are nonzero-work control checks, not capacity or performance SLOs; saved_world deltas include setup/warmup unless same-window snapshots are available."
+      },
+      "legacy_parameters": {
+        "clients": 16,
+        "view_distance": 6,
+        "spacing": 256,
+        "group_size": 16,
+        "warmup_ticks": 200,
+        "measure_ticks": 1200
+      },
+      "legacy_ticks_not_wall_time": true
+    },
+    {
+      "id": "farms",
+      "kind": "legacy_control",
+      "catalog_ids": [
+        "ENV-01"
+      ],
+      "catalog_closure": false,
+      "fixture": "farms",
+      "capability": {
+        "outcome": null,
+        "reason": "Public11440 age-zero crops with all substrates, natural randomTickSpeed3 and irrigation. Fresh received legal crop/soil identities and positive measured age delta required; no deterministic RNG floor, acceleration, refill or sparse/dense catalog alias.",
+        "evidence": [
+          "tools/harness/catalog_controls.py",
+          "tools/harness/load_matrix_scenarios/farms.json",
+          "crates/mc-test-harness/src/bin/load_matrix_fixtures.rs:357-383",
+          "crates/mc-test-harness/src/bin/load_matrix_fixtures.rs:915-915",
+          "crates/mc-core/src/tick.rs:2487-2488"
+        ]
+      },
+      "fixture_recipe": {
+        "kind": "legacy-offline-overlay",
+        "description": "Irrigated80x160 age0 wheat/carrot/potato/beetroot field at y64 over moist farmland; natural random tick speed.",
+        "required_native_bridge": "Validated native fixture authored/readback recipe preserving entities, inventory, POIs, simulation clock and pending ticks before run; never inject legacy checkpoint as native."
+      },
+      "behaviors": {
+        "stimulus": "No bot edits; ordinary player residency, daytime6000 fixed. Natural growth only; administrative acceleration would require a separately named control.",
+        "client_args": [
+          "--no-edits"
+        ],
+        "setup_commands": [
+          "time set 6000",
+          "gamerule do_daylight_cycle false"
+        ],
+        "commands_are_administrative_fixture_assistance": true
+      },
+      "schedule": {
+        "clock": "monotonic_wall_time",
+        "epoch": "stdin run after every requested client is ready; preflight/setup excluded and separately timed",
+        "steady": {
+          "duration": "--steady-seconds",
+          "movement_hz_per_client": 20,
+          "edit_hz_per_client": 0,
+          "command_hz_bot0": 0,
+          "default_duration_seconds": 20
+        },
+        "burst": {
+          "duration": "--burst-seconds",
+          "movement_hz_per_client": 20,
+          "edit_hz_per_client": 0,
+          "command_hz_bot0": 0,
+          "default_duration_seconds": 10
+        },
+        "recovery": {
+          "duration": "--recovery-seconds",
+          "movement_hz_per_client": 0,
+          "edit_hz_per_client": 0,
+          "command_hz_bot0": 0,
+          "chat_hz_per_client": 0,
+          "rule": "No new gameplay or repair stimulus; keep readers and mandatory protocol liveness responses active. Autonomous simulation is not forcibly disabled.",
+          "default_duration_seconds": 20
+        },
+        "offer_accounting": "Compute scheduled slots from elapsed wall time, client count and declared rates, independently of responses/TPS. Keep offered, transport-admitted, skipped/dropped, actual server admission when observable, completed and client-observed separate; never call sent movement/command completion.",
+        "internal_deadlines": "Legacy persisted fluid/button/TNT deadlines are simulation ticks, separately recorded; wall windows never extend until those deadlines complete.",
+        "duration_policy": "20/10/20 seconds are executable control defaults, not catalog acceptance durations; long-session and mixed-survival-long must select explicit longer wall time. Smoke combined measurement windows<=120seconds; never label smoke performance/capacity evidence."
+      },
+      "work_proof": {
+        "legacy_requirements": [
+          {
+            "source": "saved_world",
+            "path": "activity_samples.crop_age_sum",
+            "minimum_delta": 1
+          }
+        ],
+        "required": [
+          "Persisted crop_age_sum increases; require random tick checks/committed growth and eligible active sections for measured-window work."
+        ],
+        "scope": "Per-wall-window bot evidence; fixture final readback spans setup/warmup/run and is not measurement-only throughput."
+      },
+      "oracle": {
+        "contract": "Explicit Solaris control contract, pinned26.1.2 mechanics only where a dedicated expected-state oracle exists. catalog_ids show related risks, not equivalence to all catalog cases.",
+        "required": [
+          "Legal crop age/type and substrate; no unexplained harvest/output; natural RNG variation respected; no claim of sparse/dense pairwise catalog closure."
+        ],
+        "unavailable_means": "INFRA_BLOCKED",
+        "diagnostic_completion": null
+      },
+      "invariants": [
+        "Legal crop age/type and substrate; no unexplained harvest/output; natural RNG variation respected; no claim of sparse/dense pairwise catalog closure."
+      ],
+      "thresholds": {
+        "source": "explicit_operator_instruction_2026-10-13_not_catalog",
+        "defaults": {
+          "min_sustained_tps": 19.5,
+          "max_tick_p99_ms": 50,
+          "max_tick_max_ms": 250,
+          "correctness_failures": 0,
+          "max_rss_mb": 3072
+        },
+        "overrides": "--min-tps,--max-tick-p99-ms,--max-tick-max-ms,--max-rss-mb: all effective values recorded in receipt, defaults explicitly supplied by operator/Main, not by catalog.",
+        "evaluation": "Full per-window tick telemetry required; never combine stage percentiles. Smoke is non-performance evidence. Missing mandatory oracle/telemetry is INFRA_BLOCKED, never PASS.",
+        "work_floors": "Legacy activity minima below are nonzero-work control checks, not capacity or performance SLOs; saved_world deltas include setup/warmup unless same-window snapshots are available."
+      },
+      "legacy_parameters": {
+        "clients": 16,
+        "view_distance": 6,
+        "spacing": 256,
+        "group_size": 16,
+        "warmup_ticks": 200,
+        "measure_ticks": 1200
+      },
+      "legacy_ticks_not_wall_time": true
+    },
+    {
+      "id": "plugin-heavy",
+      "kind": "legacy_control",
+      "catalog_ids": [
+        "EXT-10"
+      ],
+      "catalog_closure": false,
+      "fixture": "plugin-heavy",
+      "capability": {
+        "outcome": null,
+        "reason": "Real native-v2 towns plus economy deployment, two concurrent command actors and ordinary chest custody actions. Requires exact per-actor/window town/claim and balance state readback, one idempotent payment, per-package journal commits and ordinary tick/resource thresholds. Settlements remains excluded until intact Loader bundle negotiation is supported by scale bots; no manifest stripping or fake ACK.",
+        "evidence": [
+          "crates/mc-core/src/plugin.rs:498-548,1541-1648,1936-1956",
+          "crates/mc-edge/src/dashboard.rs:121-127,319-325",
+          "docs/PLUGINS.md",
+          "tools/harness/catalog_controls.py"
+        ]
+      },
+      "fixture_recipe": {
+        "kind": "public-native-control",
+        "description": "64-villager arena, two empty chests, copied/hashed solaris-towns and solaris-economy packages only; setup identity creates/claims load_matrix and seeds two scale actors at 100 coins each.",
+        "required_native_bridge": "Validated native fixture authored/readback recipe preserving entities, inventory, POIs, simulation clock and pending ticks before run; never inject legacy checkpoint as native."
+      },
+      "behaviors": {
+        "stimulus": "Two measured actors create/claim load_actor0/load_actor1, transfer seven coins exactly once, replay the same payment token, read exact 93/107 balances and one-claim towns in both windows, and quick-move one diamond into/out of their own chest in both windows. Other bots walk; all assistance is declared.",
+        "client_args": [
+          "--no-edits"
+        ],
+        "setup_commands": [
+          "town create load_matrix",
+          "town claim"
+        ],
+        "commands_are_administrative_fixture_assistance": true
+      },
+      "schedule": {
+        "clock": "monotonic_wall_time",
+        "epoch": "stdin run after every requested client is ready; preflight/setup excluded and separately timed",
+        "steady": {
+          "duration": "--steady-seconds",
+          "movement_hz_per_client": 20,
+          "edit_hz_per_client": 0,
+          "command_hz_bot0": 0,
+          "finite_action_source": "catalog_controls.py plugin-heavy: two actors; minimum 12000ms; explicit per-bot wall slots and literal expected readbacks",
+          "default_duration_seconds": 20
+        },
+        "burst": {
+          "duration": "--burst-seconds",
+          "movement_hz_per_client": 20,
+          "edit_hz_per_client": 0,
+          "command_hz_bot0": 0,
+          "finite_action_source": "catalog_controls.py plugin-heavy: two actors; minimum 8000ms; repeated state readbacks, chest round trips and same-token payment replay",
+          "default_duration_seconds": 10
+        },
+        "recovery": {
+          "duration": "--recovery-seconds",
+          "movement_hz_per_client": 0,
+          "edit_hz_per_client": 0,
+          "command_hz_bot0": 0,
+          "chat_hz_per_client": 0,
+          "rule": "No new gameplay or repair stimulus; keep readers and mandatory protocol liveness responses active. Autonomous simulation is not forcibly disabled.",
+          "default_duration_seconds": 20
+        },
+        "offer_accounting": "Compute scheduled slots from elapsed wall time, client count and declared rates, independently of responses/TPS. Keep offered, transport-admitted, skipped/dropped, actual server admission when observable, completed and client-observed separate; never call sent movement/command completion.",
+        "internal_deadlines": "Legacy persisted fluid/button/TNT deadlines are simulation ticks, separately recorded; wall windows never extend until those deadlines complete.",
+        "command_rate_policy": "Finite per-actor command/menu wall slots from the receipted recipe, not adaptive retries or command-count success. Recovery offers no new actions.",
+        "duration_policy": "20/10/20 seconds are executable control defaults, not catalog acceptance durations; long-session and mixed-survival-long must select explicit longer wall time. Smoke combined measurement windows<=120seconds; never label smoke performance/capacity evidence."
+      },
+      "work_proof": {
+        "legacy_requirements": [
+          {
+            "source": "bots",
+            "path": "commands_sent",
+            "minimum_delta": 20
+          },
+          {
+            "source": "bots",
+            "path": "command_feedback_received",
+            "minimum_delta": 20
+          }
+        ],
+        "required": [
+          "Exact town creation/claim outcomes and state queries for both actors, exact balances 93/107 after one seven-coin transfer plus same-token replay, journal-ACKed commits for each package and two received chest custody round trips per actor."
+        ],
+        "scope": "Per-wall-window bot evidence; fixture final readback spans setup/warmup/run and is not measurement-only throughput."
+      },
+      "oracle": {
+        "contract": "Explicit Solaris control contract, pinned26.1.2 mechanics only where a dedicated expected-state oracle exists. catalog_ids show related risks, not equivalence to all catalog cases.",
+        "required": [
+          "Durable one-claim load_matrix; load_actor0/load_actor1 each one member/claim; exact per-actor/window 93/107 balances; idempotent payment replay; one diamond conserved per player and empty chest/cursor after ordinary quick-moves. Missing state readback fails closed; generic command feedback is not evidence."
+        ],
+        "unavailable_means": "INFRA_BLOCKED",
+        "diagnostic_completion": null
+      },
+      "invariants": [
+        "Durable one-claim load_matrix; load_actor0/load_actor1 each one member/claim; exact per-actor/window 93/107 balances; idempotent payment replay; one diamond conserved per player and empty chest/cursor after ordinary quick-moves. Missing state readback fails closed; generic command feedback is not evidence."
+      ],
+      "thresholds": {
+        "source": "explicit_operator_instruction_2026-10-13_not_catalog",
+        "defaults": {
+          "min_sustained_tps": 19.5,
+          "max_tick_p99_ms": 50,
+          "max_tick_max_ms": 250,
+          "correctness_failures": 0,
+          "max_rss_mb": 3072
+        },
+        "overrides": "--min-tps,--max-tick-p99-ms,--max-tick-max-ms,--max-rss-mb: all effective values recorded in receipt, defaults explicitly supplied by operator/Main, not by catalog.",
+        "evaluation": "Full per-window tick telemetry required; never combine stage percentiles. Smoke is non-performance evidence. Missing mandatory oracle/telemetry is INFRA_BLOCKED, never PASS.",
+        "work_floors": "Legacy activity minima below are nonzero-work control checks, not capacity or performance SLOs; saved_world deltas include setup/warmup unless same-window snapshots are available."
+      },
+      "legacy_parameters": {
+        "clients": 16,
+        "view_distance": 6,
+        "spacing": 256,
+        "group_size": 16,
+        "warmup_ticks": 200,
+        "measure_ticks": 1200
+      },
+      "legacy_ticks_not_wall_time": true
+    },
+    {
+      "id": "checkpoint-restart",
+      "kind": "legacy_control",
+      "catalog_ids": [
+        "SAVE-01",
+        "SAVE-10",
+        "SAVE-11"
+      ],
+      "catalog_closure": false,
+      "fixture": "checkpoint-restart",
+      "capability": {
+        "outcome": null,
+        "reason": "Full public base,128 passive mobs,64 villagers and11440 crops; crops first planted after finite base stock preparation. Actual Saved-game ACK, same-path native restart, fresh exported physical/menu/UUID/Brain states and atomic stock conservation oracle implemented; no repair/regeneration.",
+        "evidence": [
+          "tools/harness/catalog_controls.py",
+          "tools/harness/backends/catalog_load.py",
+          "crates/mc-test-harness/src/bin/player_scale_bots_native.rs",
+          "tools/harness/load_matrix_scenarios/checkpoint-restart.json",
+          "crates/mc-test-harness/src/bin/load_matrix_fixtures.rs:916-923",
+          "crates/mc-test-harness/src/bin/load_matrix_fixtures.rs:603-800",
+          "crates/mc-edge/src/bin/solaris-v2.rs:140-151"
+        ]
+      },
+      "fixture_recipe": {
+        "kind": "legacy-offline-overlay",
+        "description": "Composite base64 furnaces/128 hoppers/512 buttons/64 loose stacks plus crop field,64 villagers at[8,-96] spacing12,128 passive animals.",
+        "required_native_bridge": "Validated native fixture authored/readback recipe preserving entities, inventory, POIs, simulation clock and pending ticks before run; never inject legacy checkpoint as native."
+      },
+      "behaviors": {
+        "stimulus": "Walk without edits; fixed wall-rate ordinary save-all requests under load, clean stop, restart exact same native world and verify no new fixture regeneration.",
+        "client_args": [
+          "--no-edits"
+        ],
+        "setup_commands": [
+          "time set 6000",
+          "gamerule do_daylight_cycle false"
+        ],
+        "commands_are_administrative_fixture_assistance": true
+      },
+      "schedule": {
+        "clock": "monotonic_wall_time",
+        "epoch": "stdin run after every requested client is ready; preflight/setup excluded and separately timed",
+        "steady": {
+          "duration": "--steady-seconds",
+          "movement_hz_per_client": 20,
+          "edit_hz_per_client": 0,
+          "command_hz_bot0": 1,
+          "commands": [
+            "save-all"
+          ],
+          "default_duration_seconds": 20
+        },
+        "burst": {
+          "duration": "--burst-seconds",
+          "movement_hz_per_client": 20,
+          "edit_hz_per_client": 0,
+          "command_hz_bot0": 2,
+          "commands": [
+            "save-all"
+          ],
+          "default_duration_seconds": 10
+        },
+        "recovery": {
+          "duration": "--recovery-seconds",
+          "movement_hz_per_client": 0,
+          "edit_hz_per_client": 0,
+          "command_hz_bot0": 0,
+          "chat_hz_per_client": 0,
+          "rule": "No new gameplay or repair stimulus; keep readers and mandatory protocol liveness responses active. Autonomous simulation is not forcibly disabled.",
+          "default_duration_seconds": 20
+        },
+        "offer_accounting": "Compute scheduled slots from elapsed wall time, client count and declared rates, independently of responses/TPS. Keep offered, transport-admitted, skipped/dropped, actual server admission when observable, completed and client-observed separate; never call sent movement/command completion.",
+        "internal_deadlines": "Legacy persisted fluid/button/TNT deadlines are simulation ticks, separately recorded; wall windows never extend until those deadlines complete.",
+        "command_rate_policy": "Catalog mapping recipe rates1/2Hz are bounded protocol stimuli, not catalog SLOs or exact conversion of legacy every_ticks. Effective CLI/window rates override and must be receipted.",
+        "duration_policy": "20/10/20 seconds are executable control defaults, not catalog acceptance durations; long-session and mixed-survival-long must select explicit longer wall time. Smoke combined measurement windows<=120seconds; never label smoke performance/capacity evidence."
+      },
+      "work_proof": {
+        "legacy_requirements": [
+          {
+            "source": "bots",
+            "path": "commands_sent",
+            "minimum_delta": 1
+          },
+          {
+            "source": "saved_world",
+            "path": "activity_samples.furnace_output_items",
+            "minimum_delta": 1
+          },
+          {
+            "source": "saved_world",
+            "path": "activity_samples.crop_age_sum",
+            "minimum_delta": 1
+          },
+          {
+            "source": "saved_world",
+            "path": "activity_samples.entity_positions",
+            "comparison": "changed"
+          }
+        ],
+        "required": [
+          "Checkpoint request vs accepted vs durable completion separated; furnace output/crop growth/entity positions; persisted stable bedrock markers and authored passive/villager UUID/kind equality after restart."
+        ],
+        "scope": "Per-wall-window bot evidence; fixture final readback spans setup/warmup/run and is not measurement-only throughput."
+      },
+      "oracle": {
+        "contract": "Explicit Solaris control contract, pinned26.1.2 mechanics only where a dedicated expected-state oracle exists. catalog_ids show related risks, not equivalence to all catalog cases.",
+        "required": [
+          "No duplicated/lost item/entity owners; restart source world bytes/hash/identity recorded; permitted durability tail only; save command sent is not fsync/checkpoint completion."
+        ],
+        "unavailable_means": "INFRA_BLOCKED",
+        "diagnostic_completion": null
+      },
+      "invariants": [
+        "No duplicated/lost item/entity owners; restart source world bytes/hash/identity recorded; permitted durability tail only; save command sent is not fsync/checkpoint completion."
+      ],
+      "thresholds": {
+        "source": "explicit_operator_instruction_2026-10-13_not_catalog",
+        "defaults": {
+          "min_sustained_tps": 19.5,
+          "max_tick_p99_ms": 50,
+          "max_tick_max_ms": 250,
+          "correctness_failures": 0,
+          "max_rss_mb": 3072
+        },
+        "overrides": "--min-tps,--max-tick-p99-ms,--max-tick-max-ms,--max-rss-mb: all effective values recorded in receipt, defaults explicitly supplied by operator/Main, not by catalog.",
+        "evaluation": "Full per-window tick telemetry required; never combine stage percentiles. Smoke is non-performance evidence. Missing mandatory oracle/telemetry is INFRA_BLOCKED, never PASS.",
+        "work_floors": "Legacy activity minima below are nonzero-work control checks, not capacity or performance SLOs; saved_world deltas include setup/warmup unless same-window snapshots are available."
+      },
+      "legacy_parameters": {
+        "clients": 32,
+        "view_distance": 6,
+        "spacing": 256,
+        "group_size": 32,
+        "warmup_ticks": 200,
+        "measure_ticks": 1200
+      },
+      "legacy_ticks_not_wall_time": true
+    },
+    {
+      "id": "long-session",
+      "kind": "legacy_control",
+      "catalog_ids": [
+        "SAVE-12"
+      ],
+      "catalog_closure": false,
+      "fixture": "long-session",
+      "capability": {
+        "outcome": null,
+        "reason": "Full finite public base plus256 passive mobs, separate measured resource/queue/work windows and native ownership/stock proof. Non-smoke requires at least600 seconds; short smoke cannot close long-session or mixed-survival-long. No natural idle/exhaustion PASS.",
+        "evidence": [
+          "tools/harness/catalog_controls.py",
+          "tools/harness/backends/catalog_load.py",
+          "tools/harness/load_matrix_scenarios/long-session.json",
+          "crates/mc-test-harness/src/bin/load_matrix_fixtures.rs:924-927",
+          "crates/mc-test-harness/src/bin/load_matrix_fixtures.rs:969-972",
+          "crates/mc-core/src/tick.rs:2487-2495,6280-6283"
+        ]
+      },
+      "fixture_recipe": {
+        "kind": "legacy-offline-overlay",
+        "description": "Composite base with256 passive animals; finite initial furnace/input stock, unchanged world for full session.",
+        "required_native_bridge": "Validated native fixture authored/readback recipe preserving entities, inventory, POIs, simulation clock and pending ticks before run; never inject legacy checkpoint as native."
+      },
+      "behaviors": {
+        "stimulus": "Sustained no-edit walking and loaded AI/circulation; legacy12000 measure ticks nominal600 seconds is NOT catalog1/6/24-hour survival soak. Continue fixed wall window even when fuel or input exhausts; exhaustion recorded.",
+        "client_args": [
+          "--no-edits"
+        ],
+        "setup_commands": [],
+        "commands_are_administrative_fixture_assistance": false
+      },
+      "schedule": {
+        "clock": "monotonic_wall_time",
+        "epoch": "stdin run after every requested client is ready; preflight/setup excluded and separately timed",
+        "steady": {
+          "duration": "--steady-seconds",
+          "movement_hz_per_client": 20,
+          "edit_hz_per_client": 0,
+          "command_hz_bot0": 0,
+          "default_duration_seconds": 20
+        },
+        "burst": {
+          "duration": "--burst-seconds",
+          "movement_hz_per_client": 20,
+          "edit_hz_per_client": 0,
+          "command_hz_bot0": 0,
+          "default_duration_seconds": 10
+        },
+        "recovery": {
+          "duration": "--recovery-seconds",
+          "movement_hz_per_client": 0,
+          "edit_hz_per_client": 0,
+          "command_hz_bot0": 0,
+          "chat_hz_per_client": 0,
+          "rule": "No new gameplay or repair stimulus; keep readers and mandatory protocol liveness responses active. Autonomous simulation is not forcibly disabled.",
+          "default_duration_seconds": 20
+        },
+        "offer_accounting": "Compute scheduled slots from elapsed wall time, client count and declared rates, independently of responses/TPS. Keep offered, transport-admitted, skipped/dropped, actual server admission when observable, completed and client-observed separate; never call sent movement/command completion.",
+        "internal_deadlines": "Legacy persisted fluid/button/TNT deadlines are simulation ticks, separately recorded; wall windows never extend until those deadlines complete.",
+        "duration_policy": "20/10/20 seconds are executable control defaults, not catalog acceptance durations; long-session and mixed-survival-long must select explicit longer wall time. Smoke combined measurement windows<=120seconds; never label smoke performance/capacity evidence."
+      },
+      "work_proof": {
+        "legacy_requirements": [
+          {
+            "source": "bots",
+            "path": "movements_sent",
+            "minimum_delta": 1000
+          },
+          {
+            "source": "saved_world",
+            "path": "activity_samples.entity_positions",
+            "comparison": "changed"
+          },
+          {
+            "source": "saved_world",
+            "path": "activity_samples.furnace_output_items",
+            "minimum_delta": 1
+          }
+        ],
+        "required": [
+          "Movement/entity position and initial cooking evidence plus RSS/backlog/durable progress time series; prove useful continuing work and differentiate finite startup output."
+        ],
+        "scope": "Per-wall-window bot evidence; fixture final readback spans setup/warmup/run and is not measurement-only throughput."
+      },
+      "oracle": {
+        "contract": "Explicit Solaris control contract, pinned26.1.2 mechanics only where a dedicated expected-state oracle exists. catalog_ids show related risks, not equivalence to all catalog cases.",
+        "required": [
+          "RSS endpoint slope is diagnostic not leak proof; natural idle/exhaustion cannot masquerade as sustained production; final queues/resource trend and clean restart invariants."
+        ],
+        "unavailable_means": "INFRA_BLOCKED",
+        "diagnostic_completion": null
+      },
+      "invariants": [
+        "RSS endpoint slope is diagnostic not leak proof; natural idle/exhaustion cannot masquerade as sustained production; final queues/resource trend and clean restart invariants."
+      ],
+      "thresholds": {
+        "source": "explicit_operator_instruction_2026-10-13_not_catalog",
+        "defaults": {
+          "min_sustained_tps": 19.5,
+          "max_tick_p99_ms": 50,
+          "max_tick_max_ms": 250,
+          "correctness_failures": 0,
+          "max_rss_mb": 3072
+        },
+        "overrides": "--min-tps,--max-tick-p99-ms,--max-tick-max-ms,--max-rss-mb: all effective values recorded in receipt, defaults explicitly supplied by operator/Main, not by catalog.",
+        "evaluation": "Full per-window tick telemetry required; never combine stage percentiles. Smoke is non-performance evidence. Missing mandatory oracle/telemetry is INFRA_BLOCKED, never PASS.",
+        "work_floors": "Legacy activity minima below are nonzero-work control checks, not capacity or performance SLOs; saved_world deltas include setup/warmup unless same-window snapshots are available."
+      },
+      "legacy_parameters": {
+        "clients": 32,
+        "view_distance": 6,
+        "spacing": 256,
+        "group_size": 32,
+        "warmup_ticks": 200,
+        "measure_ticks": 12000
+      },
+      "legacy_ticks_not_wall_time": true
+    },
+    {
+      "id": "MIX-01",
+      "kind": "catalog_compound",
+      "catalog_ids": [
+        "MIX-01",
+        "VIL-01",
+        "VIL-04",
+        "VIL-05",
+        "JOIN-01"
+      ],
+      "catalog_closure": true,
+      "fixture": null,
+      "capability": {
+        "outcome": null,
+        "reason": "Runnable native final-state oracle: valid unique villager POI ownership after workstation changes and readiness of the requested login cohort. No acquire/release attempt trace or trade causality proof is claimed.",
+        "evidence": [
+          "tools/harness/catalog_mixes.py",
+          ".analysis/SOLARIS_MINECRAFT_LOAD_CATALOG.json:compound_scenarios/MIX-01",
+          "crates/mc-test-harness/src/bin/load_matrix_fixtures.rs:384-433",
+          "crates/mc-test-harness/src/bin/player_scale_bots.rs:749-925,1810-1844",
+          "crates/mc-core/src/tick.rs:2557-2559"
+        ]
+      },
+      "fixture_recipe": {
+        "kind": "native-composite-required",
+        "description": "Non-smoke: 100 clients (25 quarter residents plus 75 fresh logins), 10,000 identified villagers in 25 quarters, 10,000 beds and initial workstations plus 5,000 replacement workstations; finite dawn/workstation loss. Smoke remains 16 villagers. Receipts separate declared scale from actual native population, beds and workstations, including unrelated generated villagers.",
+        "legacy_layout_candidates": [
+          "village"
+        ],
+        "not_runnable_by_reusing_control_name": true
+      },
+      "behaviors": {
+        "stimulus": "Fixed-time dawn/workstation change and login cohort with explicit fixture assistance; no accepted trade or earned-survival claim."
+      },
+      "schedule": {
+        "clock": "monotonic_wall_time",
+        "epoch": "stdin run after every requested client is ready; preflight/setup excluded and separately timed",
+        "steady": {
+          "duration": "--steady-seconds",
+          "movement_hz_per_client": 20,
+          "edit_hz_per_client": 0,
+          "command_hz_bot0": 0,
+          "transition_and_work": "Establish identified villager population and initial native POI ownership.",
+          "default_duration_seconds": 20
+        },
+        "burst": {
+          "duration": "--burst-seconds",
+          "movement_hz_per_client": 20,
+          "edit_hz_per_client": 0,
+          "command_hz_bot0": 0,
+          "transition_and_work": "Fixed-time dawn transition and workstation losses; release a separate unassisted-login cohort process exactly at burst start and require every requested client ready plus its first echo before recovery. No arbitrary replacement villagers.",
+          "default_duration_seconds": 10
+        },
+        "recovery": {
+          "duration": "--recovery-seconds",
+          "movement_hz_per_client": 0,
+          "edit_hz_per_client": 0,
+          "command_hz_bot0": 0,
+          "chat_hz_per_client": 0,
+          "rule": "No new gameplay or repair stimulus; keep readers and mandatory protocol liveness responses active. Autonomous simulation is not forcibly disabled.",
+          "transition_and_work": "Stop external stimulus and compare final valid unique POI claims and cohort readiness.",
+          "default_duration_seconds": 20
+        },
+        "offer_accounting": "Compute scheduled slots from elapsed wall time, client count and declared rates, independently of responses/TPS. Keep offered, transport-admitted, skipped/dropped, actual server admission when observable, completed and client-observed separate; never call sent movement/command completion.",
+        "internal_deadlines": "Legacy persisted fluid/button/TNT deadlines are simulation ticks, separately recorded; wall windows never extend until those deadlines complete.",
+        "duration_policy": "20/10/20 seconds are executable control defaults, not catalog acceptance durations; long-session and mixed-survival-long must select explicit longer wall time. Smoke combined measurement windows<=120seconds; never label smoke performance/capacity evidence."
+      },
+      "work_proof": {
+        "required": [
+          "Final native villager identities and valid unique POI assignments",
+          "Initial/final native comparison shows at least one villager changing from its destroyed initial site to a surviving site and increasing last_worked_at_poi memory",
+          "Separate unassisted-login cohort starts exactly at burst; every requested client reaches ready and first echo before recovery"
+        ],
+        "scope": "Native initial/final ownership and actual-work memory plus cohort readiness; no POI attempt or trade ledger.",
+        "transport_is_not_completion": true
+      },
+      "oracle": {
+        "contract": "Owner-accepted native final-state POI and cohort oracle.",
+        "required": [
+          "Final villager POIs reference valid workstations with no duplicate claim",
+          "At least one villager changes from its destroyed initial site to a surviving site and increases last_worked_at_poi memory",
+          "All requested burst-time unassisted cohort clients are ready with first echo before recovery"
+        ]
+      },
+      "invariants": [
+        "Final villager POIs reference valid workstations with no duplicate claim",
+        "At least one villager changes from its destroyed initial site to a surviving site and increases last_worked_at_poi memory",
+        "All requested burst-time unassisted cohort clients are ready with first echo before recovery"
+      ],
+      "thresholds": {
+        "source": "explicit_operator_instruction_2026-10-13_not_catalog",
+        "defaults": {
+          "min_sustained_tps": 19.5,
+          "max_tick_p99_ms": 50,
+          "max_tick_max_ms": 250,
+          "correctness_failures": 0,
+          "max_rss_mb": 3072
+        },
+        "overrides": "--min-tps,--max-tick-p99-ms,--max-tick-max-ms,--max-rss-mb: all effective values recorded in receipt, defaults explicitly supplied by operator/Main, not by catalog.",
+        "evaluation": "Full per-window tick telemetry required; never combine stage percentiles. Smoke is non-performance evidence. Missing mandatory oracle/telemetry is INFRA_BLOCKED, never PASS.",
+        "work_floors": "Legacy activity minima below are nonzero-work control checks, not capacity or performance SLOs; saved_world deltas include setup/warmup unless same-window snapshots are available."
+      },
+      "catalog_proposed_scale": "100 \u043a\u043b\u0438\u0435\u043d\u0442\u043e\u0432, 10k \u0436\u0438\u0442\u0435\u043b\u0435\u0439, 25 \u043a\u0432\u0430\u0440\u0442\u0430\u043b\u043e\u0432; 100k \u043e\u0442\u0434\u0435\u043b\u044c\u043d\u043e synthetic",
+      "scale_is_not_slo": true
+    },
+    {
+      "id": "MIX-02",
+      "kind": "catalog_compound",
+      "catalog_ids": [
+        "MIX-02",
+        "INV-02",
+        "INV-06",
+        "INV-07",
+        "ITEM-05"
+      ],
+      "catalog_closure": true,
+      "fixture": null,
+      "capability": {
+        "outcome": null,
+        "reason": "Runnable native final item conservation and free-branch throughput oracle. No rejected-transfer immutability or per-contender debit/credit trace is required or claimed.",
+        "evidence": [
+          "tools/harness/catalog_mixes.py",
+          ".analysis/SOLARIS_MINECRAFT_LOAD_CATALOG.json:compound_scenarios/MIX-02",
+          "crates/mc-test-harness/src/bin/load_matrix_fixtures.rs:245-334",
+          "crates/mc-core/src/tick.rs:2491-2495,4176-4220,4843-4850",
+          "crates/mc-test-harness/src/bin/player_scale_bots.rs:164-198"
+        ]
+      },
+      "fixture_recipe": {
+        "kind": "native-composite-required",
+        "description": "Non-smoke: 25 players contend over the core chest and visit 256 hopper-to-chest sorter modules. Public give/menu preparation introduces exactly 16,384 nether wart once, alongside 1,856 finite core dirt; no refill loop. Native receipts count actual modules, harvested owners and item totals. Smoke retains the small full/free branch fixture.",
+        "legacy_layout_candidates": [
+          "built-base"
+        ],
+        "not_runnable_by_reusing_control_name": true
+      },
+      "behaviors": {
+        "stimulus": "Finite assisted item stock with a full branch and a free branch; observe actual free-branch transfers, not natural harvest or contested menu causality."
+      },
+      "schedule": {
+        "clock": "monotonic_wall_time",
+        "epoch": "stdin run after every requested client is ready; preflight/setup excluded and separately timed",
+        "steady": {
+          "duration": "--steady-seconds",
+          "movement_hz_per_client": 20,
+          "edit_hz_per_client": 0,
+          "command_hz_bot0": 0,
+          "transition_and_work": "Record declared initial stock and branch inventories.",
+          "default_duration_seconds": 20
+        },
+        "burst": {
+          "duration": "--burst-seconds",
+          "movement_hz_per_client": 20,
+          "edit_hz_per_client": 0,
+          "command_hz_bot0": 0,
+          "transition_and_work": "Run full and free branches with finite stock.",
+          "default_duration_seconds": 10
+        },
+        "recovery": {
+          "duration": "--recovery-seconds",
+          "movement_hz_per_client": 0,
+          "edit_hz_per_client": 0,
+          "command_hz_bot0": 0,
+          "chat_hz_per_client": 0,
+          "rule": "No new gameplay or repair stimulus; keep readers and mandatory protocol liveness responses active. Autonomous simulation is not forcibly disabled.",
+          "transition_and_work": "Stop producer and player clicks; observe permitted residual full branch and convergence of free branch without extra wakeup item.",
+          "default_duration_seconds": 20
+        },
+        "offer_accounting": "Compute scheduled slots from elapsed wall time, client count and declared rates, independently of responses/TPS. Keep offered, transport-admitted, skipped/dropped, actual server admission when observable, completed and client-observed separate; never call sent movement/command completion.",
+        "internal_deadlines": "Legacy persisted fluid/button/TNT deadlines are simulation ticks, separately recorded; wall windows never extend until those deadlines complete.",
+        "duration_policy": "20/10/20 seconds are executable control defaults, not catalog acceptance durations; long-session and mixed-survival-long must select explicit longer wall time. Smoke combined measurement windows<=120seconds; never label smoke performance/capacity evidence."
+      },
+      "work_proof": {
+        "required": [
+          "Initial and final native item totals across every declared owner",
+          "Positive net free-branch throughput"
+        ],
+        "scope": "Final conservation and useful throughput, not a per-attempt transfer ledger.",
+        "transport_is_not_completion": true
+      },
+      "oracle": {
+        "contract": "Owner-accepted native item conservation and free-throughput oracle.",
+        "required": [
+          "Total declared item count is conserved across native owners",
+          "Free branch transfers items while blocked stock may remain"
+        ]
+      },
+      "invariants": [
+        "Total declared item count is conserved across native owners",
+        "Free branch transfers items while blocked stock may remain"
+      ],
+      "thresholds": {
+        "source": "explicit_operator_instruction_2026-10-13_not_catalog",
+        "defaults": {
+          "min_sustained_tps": 19.5,
+          "max_tick_p99_ms": 50,
+          "max_tick_max_ms": 250,
+          "correctness_failures": 0,
+          "max_rss_mb": 3072
+        },
+        "overrides": "--min-tps,--max-tick-p99-ms,--max-tick-max-ms,--max-rss-mb: all effective values recorded in receipt, defaults explicitly supplied by operator/Main, not by catalog.",
+        "evaluation": "Full per-window tick telemetry required; never combine stage percentiles. Smoke is non-performance evidence. Missing mandatory oracle/telemetry is INFRA_BLOCKED, never PASS.",
+        "work_floors": "Legacy activity minima below are nonzero-work control checks, not capacity or performance SLOs; saved_world deltas include setup/warmup unless same-window snapshots are available."
+      },
+      "catalog_proposed_scale": "25 \u0438\u0433\u0440\u043e\u043a\u043e\u0432, \u0441\u043e\u0442\u043d\u0438 sorter modules, \u0444\u0438\u043a\u0441\u0438\u0440\u043e\u0432\u0430\u043d\u043d\u044b\u0439 \u043f\u043e\u0442\u043e\u043a harvest",
+      "scale_is_not_slo": true
+    },
+    {
+      "id": "MIX-04",
+      "kind": "catalog_compound",
+      "catalog_ids": [
+        "MIX-04",
+        "RED-04",
+        "RED-09",
+        "BLAST-08",
+        "ENV-05"
+      ],
+      "catalog_closure": true,
+      "fixture": null,
+      "capability": {
+        "outcome": null,
+        "reason": "Runnable slime/honey adhesive piston, gravity and water fixture with pinned native final blocks and adhesive final-state conservation. Overlapping initial group footprints and lateral passengers are covered; no transaction trace is claimed.",
+        "evidence": [
+          "tools/harness/catalog_mixes.py",
+          "crates/mc-core/src/redstone/piston.rs:62-169",
+          ".analysis/SOLARIS_MINECRAFT_LOAD_CATALOG.json:compound_scenarios/MIX-04",
+          "crates/mc-test-harness/src/bin/load_matrix_fixtures.rs:245-355",
+          "crates/mc-core/src/redstone/piston.rs:35-114,194-285",
+          "crates/mc-core/src/tick.rs:2487-2518"
+        ]
+      },
+      "fixture_recipe": {
+        "kind": "native-composite-required",
+        "description": "Non-smoke: eight piston machines in four overlapping slime/honey/shared-gold rigs at y64/72/80/88 around the same x16/z16 four-chunk corner, with four gravity/water devices and one finite unload/reload. Pin every old/new cell. Smoke retains one two-piston rig. Native receipts count actual piston bases.",
+        "legacy_layout_candidates": [
+          "built-base",
+          "fluids"
+        ],
+        "not_runnable_by_reusing_control_name": true
+      },
+      "behaviors": {
+        "stimulus": "Fixed finite adhesive piston activation, support removal and water release, with tp @a away and reload mid-burst; compare pinned old/new native block cells."
+      },
+      "schedule": {
+        "clock": "monotonic_wall_time",
+        "epoch": "stdin run after every requested client is ready; preflight/setup excluded and separately timed",
+        "steady": {
+          "duration": "--steady-seconds",
+          "movement_hz_per_client": 20,
+          "edit_hz_per_client": 0,
+          "command_hz_bot0": 0,
+          "transition_and_work": "Validate each device movement and ordinary gravity/fluid lifecycle against pinned expected states at low scale.",
+          "default_duration_seconds": 20
+        },
+        "burst": {
+          "duration": "--burst-seconds",
+          "movement_hz_per_client": 20,
+          "edit_hz_per_client": 0,
+          "command_hz_bot0": 0,
+          "transition_and_work": "Activate slime/honey groups with shared and lateral gold passengers, gravity and water; move all players away and reload mid-burst.",
+          "default_duration_seconds": 10
+        },
+        "recovery": {
+          "duration": "--recovery-seconds",
+          "movement_hz_per_client": 0,
+          "edit_hz_per_client": 0,
+          "command_hz_bot0": 0,
+          "chat_hz_per_client": 0,
+          "rule": "No new gameplay or repair stimulus; keep readers and mandatory protocol liveness responses active. Autonomous simulation is not forcibly disabled.",
+          "transition_and_work": "Stop external input and compare pinned native final blocks.",
+          "default_duration_seconds": 20
+        },
+        "offer_accounting": "Compute scheduled slots from elapsed wall time, client count and declared rates, independently of responses/TPS. Keep offered, transport-admitted, skipped/dropped, actual server admission when observable, completed and client-observed separate; never call sent movement/command completion.",
+        "internal_deadlines": "Legacy persisted fluid/button/TNT deadlines are simulation ticks, separately recorded; wall windows never extend until those deadlines complete.",
+        "duration_policy": "20/10/20 seconds are executable control defaults, not catalog acceptance durations; long-session and mixed-survival-long must select explicit longer wall time. Smoke combined measurement windows<=120seconds; never label smoke performance/capacity evidence."
+      },
+      "work_proof": {
+        "required": [
+          "Finite slime/honey adhesive piston, gravity and water inputs plus mid-burst away/reload",
+          "Native final blocks at every pinned fixture position"
+        ],
+        "scope": "Pinned final blocks and adhesive passenger conservation; no transaction trace, unload-order or pending-work proof.",
+        "transport_is_not_completion": true
+      },
+      "oracle": {
+        "contract": "Owner-accepted pinned native adhesive piston/gravity/water final-block oracle.",
+        "required": [
+          "Slime/honey shared and lateral passengers conserve blocks at pinned old/new cells; gravity and water final blocks match pinned expected states after away/reload"
+        ]
+      },
+      "invariants": [
+        "Slime/honey shared and lateral passengers conserve blocks at pinned old/new cells; gravity and water final blocks match pinned expected states after away/reload"
+      ],
+      "thresholds": {
+        "source": "explicit_operator_instruction_2026-10-13_not_catalog",
+        "defaults": {
+          "min_sustained_tps": 19.5,
+          "max_tick_p99_ms": 50,
+          "max_tick_max_ms": 250,
+          "correctness_failures": 0,
+          "max_rss_mb": 3072
+        },
+        "overrides": "--min-tps,--max-tick-p99-ms,--max-tick-max-ms,--max-rss-mb: all effective values recorded in receipt, defaults explicitly supplied by operator/Main, not by catalog.",
+        "evaluation": "Full per-window tick telemetry required; never combine stage percentiles. Smoke is non-performance evidence. Missing mandatory oracle/telemetry is INFRA_BLOCKED, never PASS.",
+        "work_floors": "Legacy activity minima below are nonzero-work control checks, not capacity or performance SLOs; saved_world deltas include setup/warmup unless same-window snapshots are available."
+      },
+      "catalog_proposed_scale": "\u041d\u0435\u0441\u043a\u043e\u043b\u044c\u043a\u043e \u043c\u0430\u0448\u0438\u043d \u0432\u043e\u043a\u0440\u0443\u0433 \u0443\u0433\u043b\u0430 \u0447\u0435\u0442\u044b\u0440\u0451\u0445 \u0447\u0430\u043d\u043a\u043e\u0432",
+      "scale_is_not_slo": true
+    },
+    {
+      "id": "MIX-08",
+      "kind": "catalog_compound",
+      "catalog_ids": [
+        "MIX-08",
+        "JOIN-06",
+        "WIRE-03",
+        "WIRE-09"
+      ],
+      "catalog_closure": true,
+      "fixture": null,
+      "capability": {
+        "outcome": null,
+        "reason": "Runnable designated limited reader with death/respawn and independent normal-reader progress. Final identity/state checks do not prove internal viewer queue age or complete epoch history.",
+        "evidence": [
+          "tools/harness/catalog_mixes.py",
+          ".analysis/SOLARIS_MINECRAFT_LOAD_CATALOG.json:compound_scenarios/MIX-08",
+          "crates/mc-test-harness/src/bin/player_scale_bots.rs:1131-1155",
+          "crates/mc-edge/src/config.rs:13-34",
+          "crates/mc-edge/src/bin/solaris-v2.rs:100-151"
+        ]
+      },
+      "fixture_recipe": {
+        "kind": "native-composite-required",
+        "description": "Non-smoke: 100 clients, exactly one designated 1024-byte/s slow reader, 128 fixed-UUID ordinary cows, death/respawn and reader resume. Smoke uses two cows. Actual ready clients and native known-mob counts are receipted; unrelated generated animals are not mistaken for fixture identities.",
+        "legacy_layout_candidates": [
+          "dense-hostile",
+          "projectiles"
+        ],
+        "not_runnable_by_reusing_control_name": true
+      },
+      "behaviors": {
+        "stimulus": "Slow only designated socket consumption using an isolated controlled reader, keep actors/normal readers fixed-rate, trigger legal death then ordinary PerformRespawn, resume slow reader at fixed time. Read throttling distinct from actor admission."
+      },
+      "schedule": {
+        "clock": "monotonic_wall_time",
+        "epoch": "stdin run after every requested client is ready; preflight/setup excluded and separately timed",
+        "steady": {
+          "duration": "--steady-seconds",
+          "movement_hz_per_client": 20,
+          "edit_hz_per_client": 0,
+          "command_hz_bot0": 0,
+          "transition_and_work": "Normal readers establish ready, known mob visibility and player health; save observer baselines.",
+          "default_duration_seconds": 20
+        },
+        "burst": {
+          "duration": "--burst-seconds",
+          "movement_hz_per_client": 20,
+          "edit_hz_per_client": 0,
+          "command_hz_bot0": 0,
+          "transition_and_work": "Apply one bounded reader limit and real death/respawn while scene actors continue unchanged fixed wall demand.",
+          "default_duration_seconds": 10
+        },
+        "recovery": {
+          "duration": "--recovery-seconds",
+          "movement_hz_per_client": 0,
+          "edit_hz_per_client": 0,
+          "command_hz_bot0": 0,
+          "chat_hz_per_client": 0,
+          "rule": "No new gameplay or repair stimulus; keep readers and mandatory protocol liveness responses active. Autonomous simulation is not forcibly disabled.",
+          "transition_and_work": "Resume limited reader and observe respawn plus normal-reader progress without additional gameplay.",
+          "default_duration_seconds": 20
+        },
+        "offer_accounting": "Compute scheduled slots from elapsed wall time, client count and declared rates, independently of responses/TPS. Keep offered, transport-admitted, skipped/dropped, actual server admission when observable, completed and client-observed separate; never call sent movement/command completion.",
+        "internal_deadlines": "Legacy persisted fluid/button/TNT deadlines are simulation ticks, separately recorded; wall windows never extend until those deadlines complete.",
+        "duration_policy": "20/10/20 seconds are executable control defaults, not catalog acceptance durations; long-session and mixed-survival-long must select explicit longer wall time. Smoke combined measurement windows<=120seconds; never label smoke performance/capacity evidence."
+      },
+      "work_proof": {
+        "required": [
+          "Designated limited reader receives death/respawn and resumes",
+          "Normal readers make independent observed progress"
+        ],
+        "scope": "Client-visible respawn/progress only; no per-viewer queue-age proof.",
+        "transport_is_not_completion": true
+      },
+      "oracle": {
+        "contract": "Owner-accepted limited-reader respawn and normal-progress oracle.",
+        "required": [
+          "Limited reader completes respawn and receives current state",
+          "Normal readers continue observed progress independently"
+        ]
+      },
+      "invariants": [
+        "Limited reader completes respawn and receives current state",
+        "Normal readers continue observed progress independently"
+      ],
+      "thresholds": {
+        "source": "explicit_operator_instruction_2026-10-13_not_catalog",
+        "defaults": {
+          "min_sustained_tps": 19.5,
+          "max_tick_p99_ms": 50,
+          "max_tick_max_ms": 250,
+          "correctness_failures": 0,
+          "max_rss_mb": 3072
+        },
+        "overrides": "--min-tps,--max-tick-p99-ms,--max-tick-max-ms,--max-rss-mb: all effective values recorded in receipt, defaults explicitly supplied by operator/Main, not by catalog.",
+        "evaluation": "Full per-window tick telemetry required; never combine stage percentiles. Smoke is non-performance evidence. Missing mandatory oracle/telemetry is INFRA_BLOCKED, never PASS.",
+        "work_floors": "Legacy activity minima below are nonzero-work control checks, not capacity or performance SLOs; saved_world deltas include setup/warmup unless same-window snapshots are available."
+      },
+      "catalog_proposed_scale": "100 \u043a\u043b\u0438\u0435\u043d\u0442\u043e\u0432, \u043e\u0434\u0438\u043d slow reader, \u0438\u0437\u0432\u0435\u0441\u0442\u043d\u044b\u0435 mobs",
+      "scale_is_not_slo": true
+    },
+    {
+      "id": "MIX-18",
+      "kind": "catalog_compound",
+      "catalog_ids": [
+        "MIX-18",
+        "CHUNK-01",
+        "CHUNK-10",
+        "SAVE-03",
+        "SAVE-10"
+      ],
+      "catalog_closure": true,
+      "fixture": null,
+      "capability": {
+        "outcome": null,
+        "reason": "Runnable outbound/return route, accepted edit and same-identity native restart oracle. No generation/save admission trace or queue-age proof is claimed.",
+        "evidence": [
+          "tools/harness/catalog_mixes.py",
+          ".analysis/SOLARIS_MINECRAFT_LOAD_CATALOG.json:compound_scenarios/MIX-18",
+          "crates/mc-test-harness/src/bin/player_scale_bots.rs:63-70",
+          "crates/mc-test-harness/src/bin/load_matrix_fixtures.rs:953-954",
+          "crates/mc-edge/src/bin/solaris-v2.rs:140-151"
+        ]
+      },
+      "fixture_recipe": {
+        "kind": "native-composite-required",
+        "description": "Non-smoke: fresh native world, 4096-block outbound route with 32 public waypoints and 31 reverse waypoints, minimum 33-second steady/burst windows, accepted returned-chunk edit and same-world restart. Generated-save buffer is bounded at 1024 chunks, batches at 64 and one in-flight job. Smoke retains the 192-block route. Receipts retain declared route scale and observed ready/native counts.",
+        "legacy_layout_candidates": [
+          "explore",
+          "checkpoint-restart"
+        ],
+        "not_runnable_by_reusing_control_name": true
+      },
+      "behaviors": {
+        "stimulus": "Fixed wall-time outbound exploration then return along same path; one ordinary identified edit in returned generated chunk, stop external inputs, clean shutdown before background generated result can erase edit. No failure-triggered adaptive turnaround."
+      },
+      "schedule": {
+        "clock": "monotonic_wall_time",
+        "epoch": "stdin run after every requested client is ready; preflight/setup excluded and separately timed",
+        "steady": {
+          "duration": "--steady-seconds",
+          "movement_hz_per_client": 20,
+          "edit_hz_per_client": 0,
+          "command_hz_bot0": 0,
+          "transition_and_work": "Observe outbound route progress and received chunks.",
+          "default_duration_seconds": 20
+        },
+        "burst": {
+          "duration": "--burst-seconds",
+          "movement_hz_per_client": 20,
+          "edit_hz_per_client": 0,
+          "command_hz_bot0": 0,
+          "transition_and_work": "Fixed-time reverse route and legal returned-chunk edit with ack and observed final block state.",
+          "default_duration_seconds": 10
+        },
+        "recovery": {
+          "duration": "--recovery-seconds",
+          "movement_hz_per_client": 0,
+          "edit_hz_per_client": 0,
+          "command_hz_bot0": 0,
+          "chat_hz_per_client": 0,
+          "rule": "No new gameplay or repair stimulus; keep readers and mandatory protocol liveness responses active. Autonomous simulation is not forcibly disabled.",
+          "transition_and_work": "No new movement/edit after final mutation; clean stop and readback/restart compare declared durable edit and chunk identity.",
+          "default_duration_seconds": 20
+        },
+        "offer_accounting": "Compute scheduled slots from elapsed wall time, client count and declared rates, independently of responses/TPS. Keep offered, transport-admitted, skipped/dropped, actual server admission when observable, completed and client-observed separate; never call sent movement/command completion.",
+        "internal_deadlines": "Legacy persisted fluid/button/TNT deadlines are simulation ticks, separately recorded; wall windows never extend until those deadlines complete.",
+        "duration_policy": "20/10/20 seconds are executable control defaults, not catalog acceptance durations; long-session and mixed-survival-long must select explicit longer wall time. Smoke combined measurement windows<=120seconds; never label smoke performance/capacity evidence."
+      },
+      "work_proof": {
+        "required": [
+          "Observed outbound and return route progress",
+          "Accepted edit with received block post-image and same-target native restart readback"
+        ],
+        "scope": "Accepted edit persistence under clean same-identity restart, not save-queue causality.",
+        "transport_is_not_completion": true
+      },
+      "oracle": {
+        "contract": "Owner-accepted edit persistence on clean same-identity native restart.",
+        "required": [
+          "Accepted target edit survives clean shutdown and restart",
+          "Restart uses the same world path and identity without regeneration or repair"
+        ]
+      },
+      "invariants": [
+        "Accepted target edit survives clean shutdown and restart",
+        "Restart uses the same world path and identity without regeneration or repair"
+      ],
+      "thresholds": {
+        "source": "explicit_operator_instruction_2026-10-13_not_catalog",
+        "defaults": {
+          "min_sustained_tps": 19.5,
+          "max_tick_p99_ms": 50,
+          "max_tick_max_ms": 250,
+          "correctness_failures": 0,
+          "max_rss_mb": 3072
+        },
+        "overrides": "--min-tps,--max-tick-p99-ms,--max-tick-max-ms,--max-rss-mb: all effective values recorded in receipt, defaults explicitly supplied by operator/Main, not by catalog.",
+        "evaluation": "Full per-window tick telemetry required; never combine stage percentiles. Smoke is non-performance evidence. Missing mandatory oracle/telemetry is INFRA_BLOCKED, never PASS.",
+        "work_floors": "Legacy activity minima below are nonzero-work control checks, not capacity or performance SLOs; saved_world deltas include setup/warmup unless same-window snapshots are available."
+      },
+      "catalog_proposed_scale": "\u0414\u043b\u0438\u043d\u043d\u044b\u0439 \u043f\u0443\u0442\u044c, bounded generated-save queue",
+      "scale_is_not_slo": true
+    },
+    {
+      "id": "MIX-21",
+      "kind": "catalog_compound",
+      "catalog_ids": [
+        "MIX-21",
+        "BLAST-12",
+        "WIRE-06",
+        "WIRE-07",
+        "SAVE-02"
+      ],
+      "catalog_closure": true,
+      "fixture": null,
+      "capability": {
+        "outcome": null,
+        "reason": "Runnable finite blast/final block/entity changes with zero-input recovery and native restart comparison. No all-family queue drain or oldest-age trace is claimed.",
+        "evidence": [
+          "tools/harness/catalog_mixes.py",
+          ".analysis/SOLARIS_MINECRAFT_LOAD_CATALOG.json:compound_scenarios/MIX-21",
+          "crates/mc-test-harness/src/bin/player_scale_bots.rs:130-163",
+          "crates/mc-test-harness/src/bin/load_matrix_fixtures.rs:434-454,603-800",
+          "crates/mc-edge/src/bin/solaris-v2.rs:140-151"
+        ]
+      },
+      "fixture_recipe": {
+        "kind": "native-composite-required",
+        "description": "Non-smoke: 1024 ordinary combat mobs, finite 96-TNT blast stock, then one last block mutation, one identified entity move and one removal before zero-input recovery. Smoke retains 128 mobs. Actual native entity/block counts and ready readers are receipted; final reader/native/restart oracles are unchanged.",
+        "legacy_layout_candidates": [
+          "combat",
+          "built-base"
+        ],
+        "not_runnable_by_reusing_control_name": true
+      },
+      "behaviors": {
+        "stimulus": "Deliver fixed finite blast/action schedule; final unique block/entity changes at declared wall time; set every gameplay demand rate to0, then observe without periodic repair commands or extra movements."
+      },
+      "schedule": {
+        "clock": "monotonic_wall_time",
+        "epoch": "stdin run after every requested client is ready; preflight/setup excluded and separately timed",
+        "steady": {
+          "duration": "--steady-seconds",
+          "movement_hz_per_client": 20,
+          "edit_hz_per_client": 0,
+          "command_hz_bot0": 0,
+          "transition_and_work": "Record initial observer/native states and RSS.",
+          "default_duration_seconds": 20
+        },
+        "burst": {
+          "duration": "--burst-seconds",
+          "movement_hz_per_client": 20,
+          "edit_hz_per_client": 0,
+          "command_hz_bot0": 0,
+          "transition_and_work": "Consume finite stock and create declared final block/entity changes.",
+          "default_duration_seconds": 10
+        },
+        "recovery": {
+          "duration": "--recovery-seconds",
+          "movement_hz_per_client": 0,
+          "edit_hz_per_client": 0,
+          "command_hz_bot0": 0,
+          "chat_hz_per_client": 0,
+          "rule": "No new gameplay or repair stimulus; keep readers and mandatory protocol liveness responses active. Autonomous simulation is not forcibly disabled.",
+          "transition_and_work": "Full zero-input recovery window: only protocol liveness/control/read responses; compare all observers and persisted final state at deadline, clean stop/restart if oracle requires.",
+          "default_duration_seconds": 20
+        },
+        "offer_accounting": "Compute scheduled slots from elapsed wall time, client count and declared rates, independently of responses/TPS. Keep offered, transport-admitted, skipped/dropped, actual server admission when observable, completed and client-observed separate; never call sent movement/command completion.",
+        "internal_deadlines": "Legacy persisted fluid/button/TNT deadlines are simulation ticks, separately recorded; wall windows never extend until those deadlines complete.",
+        "duration_policy": "20/10/20 seconds are executable control defaults, not catalog acceptance durations; long-session and mixed-survival-long must select explicit longer wall time. Smoke combined measurement windows<=120seconds; never label smoke performance/capacity evidence."
+      },
+      "work_proof": {
+        "required": [
+          "Finite declared final block/entity mutations and zero-input recovery",
+          "Full live schedule_complete image at recovery end before bot or server shutdown",
+          "Every resident reader's independently applied final block/entity positions/removals and native restart equivalents"
+        ],
+        "scope": "Final state convergence only; no all-family pending-work or queue-drain proof.",
+        "transport_is_not_completion": true
+      },
+      "oracle": {
+        "contract": "Owner-accepted final client/native restart agreement after finite demand.",
+        "required": [
+          "Every resident reader's live schedule_complete image at recovery end agrees on final blocks and identified entities before bot or server shutdown; native restart additionally agrees",
+          "Recovery adds no gameplay wakeup or repair stimulus"
+        ]
+      },
+      "invariants": [
+        "Every resident reader's live schedule_complete image at recovery end agrees on final blocks and identified entities before bot or server shutdown; native restart additionally agrees",
+        "Recovery adds no gameplay wakeup or repair stimulus"
+      ],
+      "thresholds": {
+        "source": "explicit_operator_instruction_2026-10-13_not_catalog",
+        "defaults": {
+          "min_sustained_tps": 19.5,
+          "max_tick_p99_ms": 50,
+          "max_tick_max_ms": 250,
+          "correctness_failures": 0,
+          "max_rss_mb": 3072
+        },
+        "overrides": "--min-tps,--max-tick-p99-ms,--max-tick-max-ms,--max-rss-mb: all effective values recorded in receipt, defaults explicitly supplied by operator/Main, not by catalog.",
+        "evaluation": "Full per-window tick telemetry required; never combine stage percentiles. Smoke is non-performance evidence. Missing mandatory oracle/telemetry is INFRA_BLOCKED, never PASS.",
+        "work_floors": "Legacy activity minima below are nonzero-work control checks, not capacity or performance SLOs; saved_world deltas include setup/warmup unless same-window snapshots are available."
+      },
+      "catalog_proposed_scale": "\u041a\u043e\u043d\u0435\u0447\u043d\u044b\u0439 burst \u0441 \u043f\u043e\u0441\u043b\u0435\u0434\u043d\u0438\u043c\u0438 state changes",
+      "scale_is_not_slo": true
+    },
+    {
+      "id": "mixed-survival-long",
+      "kind": "harness_composite",
+      "catalog_ids": [
+        "SAVE-12",
+        "MOB-01",
+        "VIL-01",
+        "INV-05",
+        "INV-09",
+        "ENV-01",
+        "JOIN-04",
+        "SAVE-01",
+        "WIRE-06",
+        "WIRE-07"
+      ],
+      "catalog_closure": true,
+      "fixture": null,
+      "capability": {
+        "outcome": null,
+        "reason": "Runnable long-duration composition of reachable native controls and their existing final-state oracles. Assisted finite stock is explicit; no earned crafting/food/trade survival or full queue trace is claimed.",
+        "evidence": [
+          ".analysis/SOLARIS_MINECRAFT_LOAD_CATALOG.json:groups/SAVE/SAVE-12",
+          "tools/harness/load_matrix_scenarios/long-session.json",
+          "crates/mc-test-harness/src/bin/load_matrix_fixtures.rs:916-927,969-972",
+          "crates/mc-test-harness/src/bin/player_scale_bots.rs:749-925"
+        ]
+      },
+      "fixture_recipe": {
+        "kind": "native-control-composition",
+        "description": "Non-smoke composes the full 10,000-villager/25-quarter/100-client town, eight corner-overlap piston machines, gravity/water and finite 1024-mob/96-TNT final-mutation fixture; at least 600 seconds of measurement remains mandatory. Smoke is explicitly tiny. Receipts distinguish actual native/readiness counts from declared demand; short setup proofs are PREPARED, never performance or oracle PASS.",
+        "legacy_layout_candidates": [
+          "checkpoint-restart",
+          "long-session"
+        ]
+      },
+      "behaviors": {
+        "stimulus": "Run reachable native control movement, finite mechanisms and declared cohorts at fixed wall-time boundaries. Assistance is explicit and never counted as earned survival."
+      },
+      "schedule": {
+        "clock": "monotonic_wall_time",
+        "epoch": "stdin run after every requested client is ready; preflight/setup excluded and separately timed",
+        "steady": {
+          "duration": "Explicit operator wall duration via --steady-seconds; long-duration evidence records the actual selected duration",
+          "movement_hz_per_client": 20,
+          "edit_hz_per_client": 0,
+          "command_hz_bot0": 0,
+          "transition_and_work": "Compose reachable native control actions and existing work floors with finite stock.",
+          "default_duration_seconds": 20
+        },
+        "burst": {
+          "duration": "--burst-seconds",
+          "movement_hz_per_client": 20,
+          "edit_hz_per_client": 0,
+          "command_hz_bot0": 0,
+          "transition_and_work": "Run declared reachable finite control actions and requested cohorts; no unsupported crafting/trade/reconnect oracle is implied.",
+          "default_duration_seconds": 10
+        },
+        "recovery": {
+          "duration": "--recovery-seconds",
+          "movement_hz_per_client": 0,
+          "edit_hz_per_client": 0,
+          "command_hz_bot0": 0,
+          "chat_hz_per_client": 0,
+          "rule": "No new gameplay or repair stimulus; keep readers and mandatory protocol liveness responses active. Autonomous simulation is not forcibly disabled.",
+          "transition_and_work": "All inputs0; connected read observers plus clean checkpoint/shutdown/restart oracle, no save/repair poll commands if they would stimulate final output.",
+          "default_duration_seconds": 20
+        },
+        "offer_accounting": "Compute scheduled slots from elapsed wall time, client count and declared rates, independently of responses/TPS. Keep offered, transport-admitted, skipped/dropped, actual server admission when observable, completed and client-observed separate; never call sent movement/command completion.",
+        "internal_deadlines": "Legacy persisted fluid/button/TNT deadlines are simulation ticks, separately recorded; wall windows never extend until those deadlines complete.",
+        "duration_policy": "20/10/20 seconds are executable control defaults, not catalog acceptance durations; long-session and mixed-survival-long must select explicit longer wall time. Smoke combined measurement windows<=120seconds; never label smoke performance/capacity evidence."
+      },
+      "work_proof": {
+        "required": [
+          "Each composed reachable control satisfies its own work floor and native final-state oracle",
+          "Initial/final native villager comparison shows at least one destroyed initial site replaced by a surviving site and increased last_worked_at_poi memory",
+          "Full live schedule_complete image at recovery end before bot or server shutdown",
+          "Requested clients and actual wall duration are recorded",
+          "Per-window performance samples and final native restart comparison"
+        ],
+        "transport_is_not_completion": true
+      },
+      "oracle": {
+        "contract": "Composition of reachable native control oracles, not full earned-survival closure.",
+        "required": [
+          "Every composed control satisfies its declared native oracle",
+          "Assisted finite stock is not reported as earned survival",
+          "At least one villager changes from its destroyed initial site to a surviving site and increases last_worked_at_poi memory",
+          "Full live schedule_complete image at recovery end agrees on final declared client/native state before bot or server shutdown; same-world restart additionally agrees"
+        ]
+      },
+      "invariants": [
+        "Every composed control satisfies its declared native oracle",
+        "Assisted finite stock is not reported as earned survival",
+        "At least one villager changes from its destroyed initial site to a surviving site and increases last_worked_at_poi memory",
+        "Full live schedule_complete image at recovery end agrees on final declared client/native state before bot or server shutdown; same-world restart additionally agrees"
+      ],
+      "thresholds": {
+        "source": "explicit_operator_instruction_2026-10-13_not_catalog",
+        "defaults": {
+          "min_sustained_tps": 19.5,
+          "max_tick_p99_ms": 50,
+          "max_tick_max_ms": 250,
+          "correctness_failures": 0,
+          "max_rss_mb": 3072
+        },
+        "overrides": "--min-tps,--max-tick-p99-ms,--max-tick-max-ms,--max-rss-mb: all effective values recorded in receipt, defaults explicitly supplied by operator/Main, not by catalog.",
+        "evaluation": "Full per-window tick telemetry required; never combine stage percentiles. Smoke is non-performance evidence. Missing mandatory oracle/telemetry is INFRA_BLOCKED, never PASS.",
+        "work_floors": "Legacy activity minima below are nonzero-work control checks, not capacity or performance SLOs; saved_world deltas include setup/warmup unless same-window snapshots are available."
+      }
+    },
+    {
+      "id": "JOIN-01",
+      "kind": "catalog_p0",
+      "catalog_ids": [
+        "JOIN-01"
+      ],
+      "catalog_closure": true,
+      "fixture": null,
+      "capability": {
+        "outcome": null,
+        "reason": "Implemented protocol-only survival login/control: simultaneous unassisted clients into a publicly prepared,persisted safe platform; each first ordinary chat interaction has a causal server echo. Runtime requires complete fixture/readiness/echo oracle; no executed evidence claimed by this mapping. This is not render/FPS evidence or full gameplay/entity-visibility parity.",
+        "evidence": [
+          ".analysis/SOLARIS_MINECRAFT_LOAD_CATALOG.json:groups/JOIN/JOIN-01",
+          "tools/harness/backends/catalog_load.py:26-32,220-254,257-295,419-442",
+          "crates/mc-test-harness/src/bin/player_scale_bots.rs (--unassisted-login,--verify-platform,chat echo contract)"
+        ]
+      },
+      "fixture_recipe": {
+        "kind": "public-join-platform",
+        "description": "Fresh isolated seed42 v2 world, exactly one operator preparation client executes ordinary bounded public commands. Clear y64..95 in eight four-high slabs,each65x65x4 below public fill limit. Cleanly stop/save,hash world,restart and verify received center/corner grass columns at feet64 with clearance before measuring. Storage-portable public setup does not prove native compact storage.",
+        "commands": [
+          "fill -32 63 -32 32 63 32 minecraft:grass_block",
+          "fill -32 64 -32 32 67 32 minecraft:air",
+          "fill -32 68 -32 32 71 32 minecraft:air",
+          "fill -32 72 -32 32 75 32 minecraft:air",
+          "fill -32 76 -32 32 79 32 minecraft:air",
+          "fill -32 80 -32 32 83 32 minecraft:air",
+          "fill -32 84 -32 32 87 32 minecraft:air",
+          "fill -32 88 -32 32 91 32 minecraft:air",
+          "fill -32 92 -32 32 95 32 minecraft:air",
+          "setworldspawn 0 64 0",
+          "gamerule doDaylightCycle false",
+          "gamerule doMobSpawning false",
+          "clear @s",
+          "spawnpoint @s 0 64 0",
+          "tp @s 0.5 64 0.5",
+          "gamemode survival @s"
+        ],
+        "bounds": {
+          "floor_y": 63,
+          "spawn": [
+            0,
+            64,
+            0
+          ],
+          "horizontal_min": [
+            -32,
+            -32
+          ],
+          "horizontal_max": [
+            32,
+            32
+          ],
+          "clear_y": [
+            64,
+            95
+          ]
+        },
+        "verify": "Fresh unassisted verifier decodes five requested center/corner grass columns at feet64 with clearance after clean save/restart. Each measured JOIN-01 client verifies the same five columns before ready. Restart oracle is sampled-column proof, not full65x65 block verification; setup command feedback alone is insufficient.",
+        "assistance": "One operator fixture client only before measurement. Measured JOIN-01 clients have no operator grant,creative teleport,item grant or alternate spawn search.",
+        "restart_oracle": "Clean setup/save/stop,exact world hash and fresh-client decode verify platform persists. Does not prove unrelated native entity/item/timer parity."
+      },
+      "behaviors": {
+        "kind": "unassisted-join",
+        "client_args": [
+          "--unassisted-login",
+          "--survival",
+          "--no-edits",
+          "--verify-platform"
+        ],
+        "stimulus": "All requested clients connect once concurrently at the platform, then fixed20Hz offered movement and independent uniquely tagged chat offers1Hz steady/2Hz burst; ordinary chat is the confirmed first interaction.",
+        "setup_commands_on_measured_clients": []
+      },
+      "schedule": {
+        "clock": "monotonic_wall_time",
+        "epoch": "stdin run after every requested client is ready; preflight/setup excluded and separately timed",
+        "steady": {
+          "duration": "--steady-seconds",
+          "movement_hz_per_client": 20,
+          "edit_hz_per_client": 0,
+          "command_hz_bot0": 0,
+          "chat_hz_per_client": 1,
+          "default_duration_seconds": 20
+        },
+        "burst": {
+          "duration": "--burst-seconds",
+          "movement_hz_per_client": 20,
+          "edit_hz_per_client": 0,
+          "command_hz_bot0": 0,
+          "chat_hz_per_client": 2,
+          "default_duration_seconds": 10
+        },
+        "recovery": {
+          "duration": "--recovery-seconds",
+          "movement_hz_per_client": 0,
+          "edit_hz_per_client": 0,
+          "command_hz_bot0": 0,
+          "chat_hz_per_client": 0,
+          "rule": "No new gameplay or repair stimulus; keep readers and mandatory protocol liveness responses active. Autonomous simulation is not forcibly disabled.",
+          "default_duration_seconds": 20
+        },
+        "offer_accounting": "Compute scheduled slots from elapsed wall time, client count and declared rates, independently of responses/TPS. Keep offered, transport-admitted, skipped/dropped, actual server admission when observable, completed and client-observed separate; never call sent movement/command completion.",
+        "internal_deadlines": "Legacy persisted fluid/button/TNT deadlines are simulation ticks, separately recorded; wall windows never extend until those deadlines complete.",
+        "arrival": {
+          "clock": "monotonic_wall_time",
+          "offered": "Exactly requested clients released concurrently once by --unassisted-login; no Semaphore(3) across measured logins",
+          "observed": "Common connection-release wall start and maximum actual per-bot ready producer timestamp; ready==requested within --readiness-seconds (default30). Individual connect latency distributions are not exported. Setup connection excluded from denominator.",
+          "window": "One finite initial login burst before steady gameplay epoch; login elapsed time receipted separately, not hidden in steady TPS."
+        },
+        "duration_policy": "20/10/20 seconds are executable control defaults, not catalog acceptance durations; long-session and mixed-survival-long must select explicit longer wall time. Smoke combined measurement windows<=120seconds; never label smoke performance/capacity evidence."
+      },
+      "work_proof": {
+        "required": [
+          "ready_clients==requested and every requested platform verified after restart",
+          "Initial complete received/decoded chunk window and confirmed spawn teleport for every client",
+          "chat_echo_clients==requested using exact own-chat marker per client",
+          "Per-window offered/admitted/dropped movement/chat and actually observed chat echo counts; no transport-to-completion inference"
+        ],
+        "completed": [
+          "causal received chat echoes",
+          "initial ready and decoded platform/chunk proofs"
+        ],
+        "not_measured": [
+          "render/application FPS",
+          "general movement authoritative mirror",
+          "full entity visibility pairs",
+          "all-family persistence/drain"
+        ]
+      },
+      "oracle": {
+        "contract": "Explicit public Solaris26.1.2 protocol login/survival/chat echo contract at pre-created safe platform; pinned block identities and observed server echo",
+        "required": [
+          "Every requested unique offline survival identity reaches Play,decoded initial window,teleport confirmation and verified persisted safe platform; no silent smaller client set",
+          "Each requested client receives its own exact uniquely tagged chat echo from server after ready; sent chat/movement counts are not completed actions",
+          "No operator/creative/tp/dirt preparation on measured JOIN-01 clients; all assistance exclusively declared fixture setup",
+          "After fixed-time stop, new movement/chat commands cease; liveness replies/connected readers remain; missing completion/backlog oracle is recorded, not inferred from idle CPU"
+        ],
+        "unavailable_means": "INFRA_BLOCKED"
+      },
+      "invariants": [
+        "Every requested unique offline survival identity reaches Play,decoded initial window,teleport confirmation and verified persisted safe platform; no silent smaller client set",
+        "Each requested client receives its own exact uniquely tagged chat echo from server after ready; sent chat/movement counts are not completed actions",
+        "No operator/creative/tp/dirt preparation on measured JOIN-01 clients; all assistance exclusively declared fixture setup",
+        "After fixed-time stop, new movement/chat commands cease; liveness replies/connected readers remain; missing completion/backlog oracle is recorded, not inferred from idle CPU"
+      ],
+      "thresholds": {
+        "source": "explicit_operator_instruction_2026-10-13_not_catalog",
+        "defaults": {
+          "min_sustained_tps": 19.5,
+          "max_tick_p99_ms": 50,
+          "max_tick_max_ms": 250,
+          "correctness_failures": 0,
+          "max_rss_mb": 3072
+        },
+        "overrides": "--min-tps,--max-tick-p99-ms,--max-tick-max-ms,--max-rss-mb: all effective values recorded in receipt, defaults explicitly supplied by operator/Main, not by catalog.",
+        "evaluation": "Full per-window tick telemetry required; never combine stage percentiles. Smoke is non-performance evidence. Missing mandatory oracle/telemetry is INFRA_BLOCKED, never PASS.",
+        "work_floors": "Legacy activity minima below are nonzero-work control checks, not capacity or performance SLOs; saved_world deltas include setup/warmup unless same-window snapshots are available."
+      }
+    },
+    {
+      "id": "CHUNK-01",
+      "kind": "catalog_p0",
+      "catalog_ids": [
+        "CHUNK-01"
+      ],
+      "catalog_closure": true,
+      "fixture": null,
+      "capability": {
+        "outcome": "INFRA_BLOCKED",
+        "reason": "Exact survival fresh-world expedition has no native generation/persisted-chunk revision oracle. Existing explore is an assisted decoded-terrain protocol diagnostic; do not silently substitute it for catalog closure.",
+        "evidence": [
+          ".analysis/SOLARIS_MINECRAFT_LOAD_CATALOG.json:groups/CHUNK/CHUNK-01",
+          "crates/mc-test-harness/src/bin/player_scale_bots.rs:749-925",
+          "tools/harness/backends/catalog_load.py:419-442"
+        ]
+      },
+      "fixture_recipe": {
+        "kind": "fresh-native-survival-route-required",
+        "description": "No authored chunks on expedition route; verified normal survival spawn and seeded legal walkable outbound route. Record complete native world/data/protocol hashes and generation/durable frontier."
+      },
+      "behaviors": {
+        "stimulus": "Straight ordinary survival expedition with fixed wall-time movement offers and real position/chunk-crossing evidence; no admin teleport or route search pretending to be survival."
+      },
+      "schedule": {
+        "clock": "monotonic_wall_time",
+        "epoch": "stdin run after every requested client is ready; preflight/setup excluded and separately timed",
+        "steady": {
+          "duration": "--steady-seconds",
+          "movement_hz_per_client": 20,
+          "edit_hz_per_client": 0,
+          "command_hz_bot0": 0,
+          "default_duration_seconds": 20
+        },
+        "burst": {
+          "duration": "--burst-seconds",
+          "movement_hz_per_client": 20,
+          "edit_hz_per_client": 0,
+          "command_hz_bot0": 0,
+          "default_duration_seconds": 10
+        },
+        "recovery": {
+          "duration": "--recovery-seconds",
+          "movement_hz_per_client": 0,
+          "edit_hz_per_client": 0,
+          "command_hz_bot0": 0,
+          "chat_hz_per_client": 0,
+          "rule": "No new gameplay or repair stimulus; keep readers and mandatory protocol liveness responses active. Autonomous simulation is not forcibly disabled.",
+          "default_duration_seconds": 20
+        },
+        "offer_accounting": "Compute scheduled slots from elapsed wall time, client count and declared rates, independently of responses/TPS. Keep offered, transport-admitted, skipped/dropped, actual server admission when observable, completed and client-observed separate; never call sent movement/command completion.",
+        "internal_deadlines": "Legacy persisted fluid/button/TNT deadlines are simulation ticks, separately recorded; wall windows never extend until those deadlines complete.",
+        "duration_policy": "20/10/20 seconds are executable control defaults, not catalog acceptance durations; long-session and mixed-survival-long must select explicit longer wall time. Smoke combined measurement windows<=120seconds; never label smoke performance/capacity evidence."
+      },
+      "work_proof": {
+        "required": [
+          "Actual walking distance/chunk crossings and received decoded route chunks",
+          "Unique generation/load admissions/completions plus native durable chunk/revision readback after clean shutdown"
+        ],
+        "transport_is_not_completion": true
+      },
+      "oracle": {
+        "contract": "Pinned26.1.2 terrain seed/version and explicitly accepted Solaris generation/durability contract",
+        "required": [
+          "Unique fresh chunks requested/generated/published in declared route; legitimate movement reaches intended new terrain",
+          "Native saved chunk/revision matches generated/edited state after clean shutdown/restart; packet reception is not persistence completion",
+          "No silent administrative teleport/dirt/creative assistance inside ordinary survival catalog run"
+        ],
+        "unavailable_means": "INFRA_BLOCKED"
+      },
+      "invariants": [
+        "Unique fresh chunks requested/generated/published in declared route; legitimate movement reaches intended new terrain",
+        "Native saved chunk/revision matches generated/edited state after clean shutdown/restart; packet reception is not persistence completion",
+        "No silent administrative teleport/dirt/creative assistance inside ordinary survival catalog run"
+      ],
+      "thresholds": {
+        "source": "explicit_operator_instruction_2026-10-13_not_catalog",
+        "defaults": {
+          "min_sustained_tps": 19.5,
+          "max_tick_p99_ms": 50,
+          "max_tick_max_ms": 250,
+          "correctness_failures": 0,
+          "max_rss_mb": 3072
+        },
+        "overrides": "--min-tps,--max-tick-p99-ms,--max-tick-max-ms,--max-rss-mb: all effective values recorded in receipt, defaults explicitly supplied by operator/Main, not by catalog.",
+        "evaluation": "Full per-window tick telemetry required; never combine stage percentiles. Smoke is non-performance evidence. Missing mandatory oracle/telemetry is INFRA_BLOCKED, never PASS.",
+        "work_floors": "Legacy activity minima below are nonzero-work control checks, not capacity or performance SLOs; saved_world deltas include setup/warmup unless same-window snapshots are available."
+      }
+    },
+    {
+      "id": "join-ready-assisted",
+      "kind": "diagnostic",
+      "catalog_ids": [
+        "JOIN-01"
+      ],
+      "catalog_closure": false,
+      "fixture": null,
+      "capability": {
+        "outcome": null,
+        "reason": "Supported separately named assisted readiness/block-edit diagnostic. Existing bounded3-client preparation,creative teleport and dirt grant are declared; it cannot close exact JOIN-01.",
+        "evidence": [
+          "tools/harness/backends/catalog_load.py:257-295,419-442",
+          "crates/mc-test-harness/src/bin/player_scale_bots.rs:749-925"
+        ]
+      },
+      "fixture_recipe": {
+        "kind": "public-join-platform",
+        "description": "Fresh isolated seed42 v2 world, exactly one operator preparation client executes ordinary bounded public commands. Clear y64..95 in eight four-high slabs,each65x65x4 below public fill limit. Cleanly stop/save,hash world,restart and verify received center/corner grass columns at feet64 with clearance before measuring. Storage-portable public setup does not prove native compact storage.",
+        "commands": [
+          "fill -32 63 -32 32 63 32 minecraft:grass_block",
+          "fill -32 64 -32 32 67 32 minecraft:air",
+          "fill -32 68 -32 32 71 32 minecraft:air",
+          "fill -32 72 -32 32 75 32 minecraft:air",
+          "fill -32 76 -32 32 79 32 minecraft:air",
+          "fill -32 80 -32 32 83 32 minecraft:air",
+          "fill -32 84 -32 32 87 32 minecraft:air",
+          "fill -32 88 -32 32 91 32 minecraft:air",
+          "fill -32 92 -32 32 95 32 minecraft:air",
+          "setworldspawn 0 64 0",
+          "gamerule doDaylightCycle false",
+          "gamerule doMobSpawning false",
+          "clear @s",
+          "spawnpoint @s 0 64 0",
+          "tp @s 0.5 64 0.5",
+          "gamemode survival @s"
+        ],
+        "bounds": {
+          "floor_y": 63,
+          "spawn": [
+            0,
+            64,
+            0
+          ],
+          "horizontal_min": [
+            -32,
+            -32
+          ],
+          "horizontal_max": [
+            32,
+            32
+          ],
+          "clear_y": [
+            64,
+            95
+          ]
+        },
+        "verify": "Fresh unassisted verifier decodes five requested center/corner grass columns at feet64 with clearance after clean save/restart. Restart oracle is sampled-column proof, not full65x65 block verification; setup command feedback alone is insufficient.",
+        "assistance": "Measured clients deliberately retain operator creative teleport,dry landing and granted dirt from existing player_scale_bots preparation.",
+        "restart_oracle": "Clean setup/save/stop,exact world hash and fresh-client decode verify platform persists. Does not prove unrelated native entity/item/timer parity."
+      },
+      "behaviors": {
+        "kind": "assisted-ready-edits",
+        "client_args": [
+          "--open-loop"
+        ],
+        "stimulus": "After every requested client ready, fixed20Hz movement,1Hz ordinary creative edits and1/2Hz uniquely tagged chat in steady/burst. Recovery no gameplay."
+      },
+      "schedule": {
+        "clock": "monotonic_wall_time",
+        "epoch": "stdin run after every requested client is ready; preflight/setup excluded and separately timed",
+        "steady": {
+          "duration": "--steady-seconds",
+          "movement_hz_per_client": 20,
+          "edit_hz_per_client": 1,
+          "command_hz_bot0": 0,
+          "chat_hz_per_client": 1,
+          "default_duration_seconds": 20
+        },
+        "burst": {
+          "duration": "--burst-seconds",
+          "movement_hz_per_client": 20,
+          "edit_hz_per_client": 1,
+          "command_hz_bot0": 0,
+          "chat_hz_per_client": 2,
+          "default_duration_seconds": 10
+        },
+        "recovery": {
+          "duration": "--recovery-seconds",
+          "movement_hz_per_client": 0,
+          "edit_hz_per_client": 0,
+          "command_hz_bot0": 0,
+          "chat_hz_per_client": 0,
+          "rule": "No new gameplay or repair stimulus; keep readers and mandatory protocol liveness responses active. Autonomous simulation is not forcibly disabled.",
+          "default_duration_seconds": 20
+        },
+        "offer_accounting": "Compute scheduled slots from elapsed wall time, client count and declared rates, independently of responses/TPS. Keep offered, transport-admitted, skipped/dropped, actual server admission when observable, completed and client-observed separate; never call sent movement/command completion.",
+        "internal_deadlines": "Legacy persisted fluid/button/TNT deadlines are simulation ticks, separately recorded; wall windows never extend until those deadlines complete.",
+        "duration_policy": "20/10/20 seconds are executable control defaults, not catalog acceptance durations; long-session and mixed-survival-long must select explicit longer wall time. Smoke combined measurement windows<=120seconds; never label smoke performance/capacity evidence."
+      },
+      "work_proof": {
+        "required": [
+          "ready_clients==requested",
+          "break_updates_observed>0 and place_updates_observed>0",
+          "Received decoded chunks; per-window offered/admitted/dropped/edit ack+observations kept distinct"
+        ],
+        "scope": "Aggregate observed break/place work only; not per-client full survival proof."
+      },
+      "oracle": {
+        "contract": "Explicit assisted protocol control; legal matched block update is stronger than send/ack, but not vanilla full-world oracle",
+        "required": [
+          "All requested clients reach ready; assisted creative landing/item grant explicitly labeled",
+          "Both break and place have actual observed block-update work, not mere acknowledgement or sent packet",
+          "Action admission/refusal and pending-cap drops remain explicit; drain never injects repair edits",
+          "No claim of simultaneous survival admission,earned inventory,vanilla closure or render/application correctness"
+        ],
+        "unavailable_means": "INFRA_BLOCKED"
+      },
+      "invariants": [
+        "All requested clients reach ready; assisted creative landing/item grant explicitly labeled",
+        "Both break and place have actual observed block-update work, not mere acknowledgement or sent packet",
+        "Action admission/refusal and pending-cap drops remain explicit; drain never injects repair edits",
+        "No claim of simultaneous survival admission,earned inventory,vanilla closure or render/application correctness"
+      ],
+      "thresholds": {
+        "source": "explicit_operator_instruction_2026-10-13_not_catalog",
+        "defaults": {
+          "min_sustained_tps": 19.5,
+          "max_tick_p99_ms": 50,
+          "max_tick_max_ms": 250,
+          "correctness_failures": 0,
+          "max_rss_mb": 3072
+        },
+        "overrides": "--min-tps,--max-tick-p99-ms,--max-tick-max-ms,--max-rss-mb: all effective values recorded in receipt, defaults explicitly supplied by operator/Main, not by catalog.",
+        "evaluation": "Full per-window tick telemetry required; never combine stage percentiles. Smoke is non-performance evidence. Missing mandatory oracle/telemetry is INFRA_BLOCKED, never PASS.",
+        "work_floors": "Legacy activity minima below are nonzero-work control checks, not capacity or performance SLOs; saved_world deltas include setup/warmup unless same-window snapshots are available."
+      }
+    }
+  ]
+}

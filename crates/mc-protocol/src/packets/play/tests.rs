@@ -247,10 +247,34 @@ fn open_sign_editor_id_and_layout_match_protocol_dump() {
     expected.write_i64(packet.position);
     expected.write_bool(true);
     assert_eq!(buf, expected);
-
     let mut cursor: &[u8] = &buf;
     assert_eq!(
         ClientboundOpenSignEditor::decode(&mut cursor).unwrap(),
+        packet
+    );
+    assert!(cursor.is_empty());
+}
+
+#[test]
+fn block_destruction_id_and_layout_match_local_vanilla_codec() {
+    assert_eq!(ClientboundBlockDestruction::ID, 0x05);
+    let packet = ClientboundBlockDestruction {
+        breaker_entity_id: 300,
+        position: pack_block_pos(10, 64, 20),
+        progress: 7,
+    };
+    let mut body = Vec::new();
+    packet.encode(&mut body).unwrap();
+
+    let mut expected = Vec::new();
+    expected.write_varint(300);
+    expected.write_i64(packet.position);
+    expected.write_u8(7);
+    assert_eq!(body, expected);
+
+    let mut cursor: &[u8] = &body;
+    assert_eq!(
+        ClientboundBlockDestruction::decode(&mut cursor).unwrap(),
         packet
     );
     assert!(cursor.is_empty());
@@ -833,6 +857,24 @@ fn move_entity_pos_rot_id_and_wire_layout_match_server_javap() {
 }
 
 #[test]
+fn move_entity_rot_id_and_wire_layout_match_server_javap() {
+    assert_eq!(MoveEntityRot::ID, 0x38);
+    let packet = MoveEntityRot {
+        entity_id: 300,
+        yaw: 64,
+        pitch: 250,
+        on_ground: true,
+    };
+    let mut buf = Vec::new();
+    packet.encode(&mut buf).unwrap();
+    assert_eq!(buf, vec![0xAC, 0x02, 0x40, 0xFA, 0x01]);
+
+    let mut cursor: &[u8] = &buf;
+    assert_eq!(MoveEntityRot::decode(&mut cursor).unwrap(), packet);
+    assert!(cursor.is_empty());
+}
+
+#[test]
 fn move_entity_delta_scales_to_vanilla_short_units() {
     assert_eq!(MoveEntityPosRot::delta_to_short(1.0 / 4096.0), 1);
     assert_eq!(MoveEntityPosRot::delta_to_short(-0.5), -2048);
@@ -1062,6 +1104,336 @@ fn clientbound_commands_literal_and_greedy_string_tree_matches_javap_layout() {
     assert!(cursor.is_empty());
 }
 
+fn command_parser_packet(parser: CommandArgumentParser) -> ClientboundCommands {
+    ClientboundCommands {
+        nodes: vec![
+            CommandNode::root(vec![1]),
+            CommandNode::argument("v", parser, Vec::new(), true),
+        ],
+        root_index: 0,
+    }
+}
+
+fn command_parser_wire_body(parser_wire: &[u8]) -> Vec<u8> {
+    // Two nodes: root -> executable argument "v", followed by root index 0.
+    let mut body = vec![2, 0, 1, 1, 6, 0, 1, b'v'];
+    body.extend_from_slice(parser_wire);
+    body.push(0);
+    body
+}
+
+fn assert_command_parser_wire(parser: CommandArgumentParser, parser_wire: &[u8]) {
+    let packet = command_parser_packet(parser);
+    let expected = command_parser_wire_body(parser_wire);
+    let mut encoded = Vec::new();
+    packet.encode(&mut encoded).unwrap();
+    assert_eq!(encoded, expected, "{packet:?}");
+    let mut cursor = expected.as_slice();
+    assert_eq!(ClientboundCommands::decode(&mut cursor).unwrap(), packet);
+    assert!(cursor.is_empty());
+}
+
+#[test]
+fn command_argument_parser_ids_and_properties_match_vanilla_26_1_2() {
+    use CommandArgumentParser as P;
+    // ArgumentTypeInfos.bootstrap registration order and SingletonArgumentInfo.
+    let singleton_cases = [
+        (P::Bool, 0),
+        (P::GameProfile, 7),
+        (P::BlockPos, 8),
+        (P::ColumnPos, 9),
+        (P::Vec3, 10),
+        (P::Vec2, 11),
+        (P::BlockState, 12),
+        (P::BlockPredicate, 13),
+        (P::ItemStack, 14),
+        (P::ItemPredicate, 15),
+        (P::Color, 16),
+        (P::HexColor, 17),
+        (P::Component, 18),
+        (P::Style, 19),
+        (P::Message, 20),
+        (P::NbtCompoundTag, 21),
+        (P::NbtTag, 22),
+        (P::NbtPath, 23),
+        (P::Objective, 24),
+        (P::ObjectiveCriteria, 25),
+        (P::Operation, 26),
+        (P::Angle, 28),
+        (P::Rotation, 29),
+        (P::ScoreboardSlot, 30),
+        (P::Swizzle, 32),
+        (P::Team, 33),
+        (P::ResourceLocation, 36),
+        (P::EntityAnchor, 38),
+        (P::GameMode, 42),
+        (P::Uuid, 56),
+    ];
+    for (parser, id) in singleton_cases {
+        assert_command_parser_wire(parser, &[id]);
+    }
+    for (kind, property) in [
+        (CommandStringKind::SingleWord, 0),
+        (CommandStringKind::QuotablePhrase, 1),
+        (CommandStringKind::GreedyPhrase, 2),
+    ] {
+        assert_command_parser_wire(P::String(kind), &[5, property]);
+    }
+    for flags in 0..=3 {
+        assert_command_parser_wire(
+            P::Entity {
+                single: flags & 1 != 0,
+                players_only: flags & 2 != 0,
+            },
+            &[6, flags],
+        );
+    }
+    for flags in 0..=1 {
+        assert_command_parser_wire(
+            P::ScoreHolder {
+                multiple: flags != 0,
+            },
+            &[31, flags],
+        );
+    }
+    assert_command_parser_wire(P::Time { min: 20 }, &[43, 0, 0, 0, 20]);
+    assert_command_parser_wire(P::Time { min: -1 }, &[43, 255, 255, 255, 255]);
+    for (parser, id) in [
+        (
+            P::Resource {
+                registry: Identifier::parse("minecraft:entity_type").unwrap(),
+            },
+            46,
+        ),
+        (
+            P::ResourceKey {
+                registry: Identifier::parse("minecraft:enchantment").unwrap(),
+            },
+            47,
+        ),
+    ] {
+        let name = if id == 46 {
+            "minecraft:entity_type"
+        } else {
+            "minecraft:enchantment"
+        };
+        let mut wire = vec![id, name.len() as u8];
+        wire.extend_from_slice(name.as_bytes());
+        assert_command_parser_wire(parser, &wire);
+    }
+}
+
+#[test]
+fn command_numeric_parser_bounds_match_vanilla_flags_and_big_endian_properties() {
+    use CommandArgumentParser as P;
+    // Each numeric ArgumentInfo writes one flags byte, then min and max if set.
+    // Cover no bound, min only, max only, and both bounds for every numeric type.
+    for flags in 0..=3 {
+        let has_min = flags & 1 != 0;
+        let has_max = flags & 2 != 0;
+        let mut integer_wire = vec![3, flags];
+        let mut long_wire = vec![4, flags];
+        let mut float_wire = vec![1, flags];
+        let mut double_wire = vec![2, flags];
+        if has_min {
+            integer_wire.extend_from_slice(&(-257i32).to_be_bytes());
+            long_wire.extend_from_slice(&(-4_294_967_297i64).to_be_bytes());
+            float_wire.extend_from_slice(&(-1.25f32).to_bits().to_be_bytes());
+            double_wire.extend_from_slice(&(-1.25f64).to_bits().to_be_bytes());
+        }
+        if has_max {
+            integer_wire.extend_from_slice(&256i32.to_be_bytes());
+            long_wire.extend_from_slice(&4_294_967_296i64.to_be_bytes());
+            float_wire.extend_from_slice(&2.5f32.to_bits().to_be_bytes());
+            double_wire.extend_from_slice(&2.5f64.to_bits().to_be_bytes());
+        }
+        assert_command_parser_wire(
+            P::Integer {
+                min: has_min.then_some(-257),
+                max: has_max.then_some(256),
+            },
+            &integer_wire,
+        );
+        assert_command_parser_wire(
+            P::Long {
+                min: has_min.then_some(-4_294_967_297),
+                max: has_max.then_some(4_294_967_296),
+            },
+            &long_wire,
+        );
+        assert_command_parser_wire(
+            P::Float {
+                min: has_min.then_some((-1.25f32).to_bits()),
+                max: has_max.then_some(2.5f32.to_bits()),
+            },
+            &float_wire,
+        );
+        assert_command_parser_wire(
+            P::Double {
+                min: has_min.then_some((-1.25f64).to_bits()),
+                max: has_max.then_some(2.5f64.to_bits()),
+            },
+            &double_wire,
+        );
+    }
+    // Preserve the property bits even when the two bounds compare equal.
+    assert_command_parser_wire(
+        P::Float {
+            min: Some((-0.0f32).to_bits()),
+            max: Some(0.0f32.to_bits()),
+        },
+        &[1, 3, 128, 0, 0, 0, 0, 0, 0, 0],
+    );
+    assert_command_parser_wire(
+        P::Double {
+            min: Some((-0.0f64).to_bits()),
+            max: Some(0.0f64.to_bits()),
+        },
+        &[2, 3, 128, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+    );
+}
+
+#[test]
+fn command_argument_parser_rejects_invalid_bounds_flags_and_truncated_properties() {
+    use CommandArgumentParser as P;
+    let invalid_bounds = [
+        P::Integer {
+            min: Some(2),
+            max: Some(1),
+        },
+        P::Long {
+            min: Some(2),
+            max: Some(1),
+        },
+        P::Float {
+            min: Some(2.0f32.to_bits()),
+            max: Some(1.0f32.to_bits()),
+        },
+        P::Double {
+            min: Some(2.0f64.to_bits()),
+            max: Some(1.0f64.to_bits()),
+        },
+        P::Float {
+            min: Some(f32::NAN.to_bits()),
+            max: None,
+        },
+        P::Float {
+            min: None,
+            max: Some(f32::INFINITY.to_bits()),
+        },
+        P::Double {
+            min: Some(f64::NEG_INFINITY.to_bits()),
+            max: None,
+        },
+        P::Double {
+            min: None,
+            max: Some(f64::NAN.to_bits()),
+        },
+    ];
+    for parser in invalid_bounds {
+        assert_eq!(
+            command_parser_packet(parser).encode(&mut Vec::new()),
+            Err(CodecError::NotSupported("invalid command numeric bounds")),
+        );
+    }
+    // Invalid intervals and nonfinite floating bounds must also fail on decode.
+    for (id, min, max) in [
+        (3, 2i32.to_be_bytes().to_vec(), 1i32.to_be_bytes().to_vec()),
+        (4, 2i64.to_be_bytes().to_vec(), 1i64.to_be_bytes().to_vec()),
+        (
+            1,
+            2.0f32.to_bits().to_be_bytes().to_vec(),
+            1.0f32.to_bits().to_be_bytes().to_vec(),
+        ),
+        (
+            2,
+            2.0f64.to_bits().to_be_bytes().to_vec(),
+            1.0f64.to_bits().to_be_bytes().to_vec(),
+        ),
+        (
+            1,
+            f32::NAN.to_bits().to_be_bytes().to_vec(),
+            1.0f32.to_bits().to_be_bytes().to_vec(),
+        ),
+        (
+            2,
+            0.0f64.to_bits().to_be_bytes().to_vec(),
+            f64::INFINITY.to_bits().to_be_bytes().to_vec(),
+        ),
+    ] {
+        let mut wire = vec![id, 3];
+        wire.extend_from_slice(&min);
+        wire.extend_from_slice(&max);
+        let body = command_parser_wire_body(&wire);
+        assert_eq!(
+            ClientboundCommands::decode(&mut body.as_slice()),
+            Err(CodecError::NotSupported("invalid command numeric bounds")),
+        );
+    }
+    for id in [1, 2, 3, 4, 6, 31] {
+        let body = command_parser_wire_body(&[id, 128]);
+        assert_eq!(
+            ClientboundCommands::decode(&mut body.as_slice()),
+            Err(CodecError::NotSupported("invalid command argument flags")),
+        );
+    }
+    for wire in [&[5, 3][..], &[57][..]] {
+        let body = command_parser_wire_body(wire);
+        assert!(matches!(
+            ClientboundCommands::decode(&mut body.as_slice()),
+            Err(CodecError::NotSupported(_)),
+        ));
+    }
+    for (id, property) in [
+        (1, vec![3, 0, 0, 0, 0, 0, 0, 0, 0]),
+        (2, vec![3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
+        (3, vec![3, 0, 0, 0, 0, 0, 0, 0, 0]),
+        (4, vec![3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
+        (6, vec![0]),
+        (31, vec![0]),
+        (43, vec![0, 0, 0, 0]),
+        (46, vec![1, b'a']),
+        (47, vec![1, b'a']),
+    ] {
+        for available in 0..property.len() {
+            let mut body = vec![2, 0, 1, 1, 6, 0, 1, b'v', id];
+            body.extend_from_slice(&property[..available]);
+            assert!(
+                matches!(
+                    ClientboundCommands::decode(&mut body.as_slice()),
+                    Err(CodecError::Underflow { .. }),
+                ),
+                "parser id {id}, property bytes {available}"
+            );
+        }
+    }
+}
+
+#[test]
+fn command_registry_properties_precede_custom_suggestions() {
+    let registry = Identifier::parse("minecraft:entity_type").unwrap();
+    let suggestions = Identifier::parse("minecraft:ask_server").unwrap();
+    let mut packet = command_parser_packet(CommandArgumentParser::Resource { registry });
+    if let CommandNodeKind::Argument {
+        suggestions: target,
+        ..
+    } = &mut packet.nodes[1].kind
+    {
+        *target = Some(suggestions);
+    }
+    let mut body = Vec::new();
+    packet.encode(&mut body).unwrap();
+    let mut expected = vec![2, 0, 1, 1, 0x16, 0, 1, b'v', 46, 21];
+    expected.extend_from_slice(b"minecraft:entity_type");
+    expected.push(20);
+    expected.extend_from_slice(b"minecraft:ask_server");
+    expected.push(0);
+    assert_eq!(body, expected);
+    let mut cursor = body.as_slice();
+    assert_eq!(ClientboundCommands::decode(&mut cursor).unwrap(), packet);
+    assert!(cursor.is_empty());
+}
+
 #[test]
 fn clientbound_system_chat_id_and_layout_match_local_decompiled_sources() {
     assert_eq!(ClientboundSystemChat::ID, 0x79);
@@ -1123,7 +1495,7 @@ fn serverbound_resource_pack_id_and_layout_match_local_decompiled_sources() {
     assert_eq!(ServerboundResourcePack::ID, 0x31);
     let packet = ServerboundResourcePack {
         status: ResourcePackStatus {
-            id: uuid::Uuid::from_u128(0x0011_2233_4455_6677_8899_aabb_ccdd_eeff),
+            id: Uuid::from_u128(0x0011_2233_4455_6677_8899_aabb_ccdd_eeff),
             action: ResourcePackAction::FailedReload,
         },
     };
@@ -1147,21 +1519,36 @@ fn serverbound_resource_pack_id_and_layout_match_local_decompiled_sources() {
 #[test]
 fn serverbound_player_command_id_and_layout_match_protocol_dump() {
     assert_eq!(ServerboundPlayerCommand::ID, 0x2A);
-    let packet = ServerboundPlayerCommand {
-        entity_id: 123,
-        action: PlayerCommandAction::StartSprinting,
-        data: 0,
-    };
-    let mut buf = Vec::new();
-    packet.encode(&mut buf).unwrap();
-    assert_eq!(buf, vec![123, 3, 0]);
-
-    let mut cursor: &[u8] = &buf;
-    assert_eq!(
-        ServerboundPlayerCommand::decode(&mut cursor).unwrap(),
-        packet
-    );
-    assert!(cursor.is_empty());
+    // Local 26.1.2 ServerboundPlayerCommandPacket$Action.values() has seven
+    // actions; shift keys moved to ServerboundPlayerInputPacket.
+    for (ordinal, action) in [
+        (0, PlayerCommandAction::StopSleeping),
+        (1, PlayerCommandAction::StartSprinting),
+        (2, PlayerCommandAction::StopSprinting),
+        (3, PlayerCommandAction::StartRidingJump),
+        (4, PlayerCommandAction::StopRidingJump),
+        (5, PlayerCommandAction::OpenInventory),
+        (6, PlayerCommandAction::StartFallFlying),
+    ] {
+        let packet = ServerboundPlayerCommand {
+            entity_id: 123,
+            action,
+            data: 0,
+        };
+        let bytes = vec![123, ordinal, 0];
+        let mut encoded = Vec::new();
+        packet.encode(&mut encoded).unwrap();
+        assert_eq!(encoded, bytes);
+        let mut cursor = bytes.as_slice();
+        assert_eq!(
+            ServerboundPlayerCommand::decode(&mut cursor).unwrap(),
+            packet
+        );
+        assert!(cursor.is_empty());
+    }
+    for ordinal in [7, 8, 127] {
+        assert!(ServerboundPlayerCommand::decode(&mut &[123, ordinal, 0][..]).is_err());
+    }
 }
 
 #[test]
@@ -1241,7 +1628,7 @@ fn update_recipes_stonecutter_id_and_layout_match_local_vanilla_sources() {
         }],
         stonecutter_recipes: vec![StonecutterRecipeEntry {
             input: RecipeBookIngredient::Items(vec![14, 15]),
-            result: RecipeBookSlotDisplay::ItemStack(ItemStack::new(16, 2)),
+            result: RecipeBookSlotDisplay::ItemStack(Box::new(ItemStack::new(16, 2))),
         }],
     };
 
@@ -1313,6 +1700,10 @@ fn remove_player_packets_round_trip() {
     let uuid = Uuid::from_u128(0x00112233445566778899aabbccddeeff);
     round_trip(RemoveEntities {
         entity_ids: vec![42, 43],
+    });
+    // Batched despawns of dense mob areas exceed 1024 ids in one packet.
+    round_trip(RemoveEntities {
+        entity_ids: (0..5000).collect(),
     });
     round_trip(PlayerInfoRemove {
         profile_ids: vec![uuid],
@@ -1457,7 +1848,7 @@ fn level_chunk_with_light_round_trips_with_non_empty_light_masks() {
 fn level_chunk_with_light_round_trips_with_block_entities() {
     // Network-NBT compound with one byte tag inside, modelling a
     // (toy) block entity payload.
-    let nbt = mc_nbt::Tag::Compound(vec![("k".to_string(), mc_nbt::Tag::Byte(42))]);
+    let nbt = Tag::Compound(vec![("k".to_string(), Tag::Byte(42))]);
     round_trip(LevelChunkWithLight {
         chunk_x: 4,
         chunk_z: -8,

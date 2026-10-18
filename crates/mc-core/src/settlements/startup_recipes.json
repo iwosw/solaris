@@ -1,0 +1,701 @@
+[
+  {
+    "id": "solaris-settlements:oak_planks",
+    "revision": "1",
+    "station": "minecraft:crafting_table",
+    "duration_ticks": 200,
+    "inputs": [
+      {
+        "item": "minecraft:oak_log",
+        "tag": null,
+        "count": 1,
+        "components": null
+      }
+    ],
+    "outputs": [
+      {
+        "item": "minecraft:oak_planks",
+        "count": 4,
+        "components": {
+          "damage": null,
+          "enchantments": [],
+          "custom_name": null,
+          "item_model": null,
+          "stew_effects": [],
+          "max_damage": null,
+          "custom_data": null
+        }
+      }
+    ],
+    "remainders": [],
+    "tools": [
+      {
+        "item": "minecraft:wooden_axe",
+        "components": null,
+        "wear": 1
+      }
+    ]
+  },
+  {
+    "id": "solaris-settlements:stick",
+    "revision": "1",
+    "station": "minecraft:crafting_table",
+    "duration_ticks": 80,
+    "inputs": [
+      {
+        "item": "minecraft:oak_planks",
+        "tag": null,
+        "count": 2,
+        "components": null
+      }
+    ],
+    "outputs": [
+      {
+        "item": "minecraft:stick",
+        "count": 4,
+        "components": {
+          "damage": null,
+          "enchantments": [],
+          "custom_name": null,
+          "item_model": null,
+          "stew_effects": [],
+          "max_damage": null,
+          "custom_data": null
+        }
+      }
+    ],
+    "remainders": [],
+    "tools": []
+  },
+  {
+    "id": "solaris-settlements:wooden_pickaxe",
+    "revision": "1",
+    "station": "minecraft:crafting_table",
+    "duration_ticks": 240,
+    "inputs": [
+      {
+        "item": "minecraft:oak_planks",
+        "tag": null,
+        "count": 3,
+        "components": null
+      },
+      {
+        "item": "minecraft:stick",
+        "tag": null,
+        "count": 2,
+        "components": null
+      }
+    ],
+    "outputs": [
+      {
+        "item": "minecraft:wooden_pickaxe",
+        "count": 1,
+        "components": {
+          "damage": 0,
+          "enchantments": [],
+          "custom_name": null,
+          "item_model": null,
+          "stew_effects": [],
+          "max_damage": 59,
+          "custom_data": [
+            10,
+            0,
+            0,
+            8,
+            0,
+            7,
+            113,
+            117,
+            97,
+            108,
+            105,
+            116,
+            121,
+            0,
+            8,
+            111,
+            114,
+            100,
+            105,
+            110,
+            97,
+            114,
+            121,
+            0
+          ]
+        }
+      }
+    ],
+    "remainders": [],
+    "tools": []
+  },
+  {
+    "id": "solaris-settlements:wooden_hoe",
+    "revision": "1",
+    "station": "minecraft:crafting_table",
+    "duration_ticks": 240,
+    "inputs": [
+      {
+        "item": "minecraft:oak_planks",
+        "tag": null,
+        "count": 2,
+        "components": null
+      },
+      {
+        "item": "minecraft:stick",
+        "tag": null,
+        "count": 2,
+        "components": null
+      }
+    ],
+    "outputs": [
+      {
+        "item": "minecraft:wooden_hoe",
+        "count": 1,
+        "components": {
+          "damage": 0,
+          "enchantments": [],
+          "custom_name": null,
+          "item_model": null,
+          "stew_effects": [],
+          "max_damage": 59,
+          "custom_data": [
+            10,
+            0,
+            0,
+            8,
+            0,
+            7,
+            113,
+            117,
+            97,
+            108,
+            105,
+            116,
+            121,
+            0,
+            8,
+            111,
+            114,
+            100,
+            105,
+            110,
+            97,
+            114,
+            121,
+            0
+          ]
+        }
+      }
+    ],
+    "remainders": [],
+    "tools": []
+  },
+  {
+    "id": "solaris-settlements:wooden_axe",
+    "revision": "1",
+    "station": "minecraft:crafting_table",
+    "duration_ticks": 240,
+    "inputs": [
+      {
+        "item": "minecraft:oak_planks",
+        "tag": null,
+        "count": 3,
+        "components": null
+      },
+      {
+        "item": "minecraft:stick",
+        "tag": null,
+        "count": 2,
+        "components": null
+      }
+    ],
+    "outputs": [
+      {
+        "item": "minecraft:wooden_axe",
+        "count": 1,
+        "components": {
+          "damage": 0,
+          "enchantments": [],
+          "custom_name": null,
+          "item_model": null,
+          "stew_effects": [],
+          "max_damage": 59,
+          "custom_data": [
+            10,
+            0,
+            0,
+            8,
+            0,
+            7,
+            113,
+            117,
+            97,
+            108,
+            105,
+            116,
+            121,
+            0,
+            8,
+            111,
+            114,
+            100,
+            105,
+            110,
+            97,
+            114,
+            121,
+            0
+          ]
+        }
+      }
+    ],
+    "remainders": [],
+    "tools": []
+  },
+  {
+    "id": "solaris-settlements:stone_pickaxe",
+    "revision": "1",
+    "station": "minecraft:crafting_table",
+    "duration_ticks": 320,
+    "inputs": [
+      {
+        "item": "minecraft:cobblestone",
+        "tag": null,
+        "count": 3,
+        "components": null
+      },
+      {
+        "item": "minecraft:stick",
+        "tag": null,
+        "count": 2,
+        "components": null
+      }
+    ],
+    "outputs": [
+      {
+        "item": "minecraft:stone_pickaxe",
+        "count": 1,
+        "components": {
+          "damage": 0,
+          "enchantments": [],
+          "custom_name": null,
+          "item_model": null,
+          "stew_effects": [],
+          "max_damage": 131,
+          "custom_data": [
+            10,
+            0,
+            0,
+            8,
+            0,
+            7,
+            113,
+            117,
+            97,
+            108,
+            105,
+            116,
+            121,
+            0,
+            8,
+            111,
+            114,
+            100,
+            105,
+            110,
+            97,
+            114,
+            121,
+            0
+          ]
+        }
+      }
+    ],
+    "remainders": [],
+    "tools": []
+  },
+  {
+    "id": "solaris-settlements:bread",
+    "revision": "1",
+    "station": "minecraft:crafting_table",
+    "duration_ticks": 120,
+    "inputs": [
+      {
+        "item": "minecraft:wheat",
+        "tag": null,
+        "count": 3,
+        "components": null
+      }
+    ],
+    "outputs": [
+      {
+        "item": "minecraft:bread",
+        "count": 1,
+        "components": {
+          "damage": null,
+          "enchantments": [],
+          "custom_name": null,
+          "item_model": null,
+          "stew_effects": [],
+          "max_damage": null,
+          "custom_data": null
+        }
+      }
+    ],
+    "remainders": [],
+    "tools": []
+  },
+  {
+    "id": "solaris-settlements:sugar",
+    "revision": "1",
+    "station": "minecraft:crafting_table",
+    "duration_ticks": 80,
+    "inputs": [
+      {
+        "item": "minecraft:sugar_cane",
+        "tag": null,
+        "count": 1,
+        "components": null
+      }
+    ],
+    "outputs": [
+      {
+        "item": "minecraft:sugar",
+        "count": 1,
+        "components": {
+          "damage": null,
+          "enchantments": [],
+          "custom_name": null,
+          "item_model": null,
+          "stew_effects": [],
+          "max_damage": null,
+          "custom_data": null
+        }
+      }
+    ],
+    "remainders": [],
+    "tools": []
+  },
+  {
+    "id": "solaris-settlements:cake",
+    "revision": "1",
+    "station": "minecraft:crafting_table",
+    "duration_ticks": 320,
+    "inputs": [
+      {
+        "item": "minecraft:milk_bucket",
+        "tag": null,
+        "count": 3,
+        "components": null
+      },
+      {
+        "item": "minecraft:sugar",
+        "tag": null,
+        "count": 2,
+        "components": null
+      },
+      {
+        "item": "minecraft:egg",
+        "tag": null,
+        "count": 1,
+        "components": null
+      },
+      {
+        "item": "minecraft:wheat",
+        "tag": null,
+        "count": 3,
+        "components": null
+      }
+    ],
+    "outputs": [
+      {
+        "item": "minecraft:cake",
+        "count": 1,
+        "components": {
+          "damage": null,
+          "enchantments": [],
+          "custom_name": null,
+          "item_model": null,
+          "stew_effects": [],
+          "max_damage": null,
+          "custom_data": null
+        }
+      }
+    ],
+    "remainders": [
+      {
+        "item": "minecraft:bucket",
+        "count": 3,
+        "components": {
+          "damage": null,
+          "enchantments": [],
+          "custom_name": null,
+          "item_model": null,
+          "stew_effects": [],
+          "max_damage": null,
+          "custom_data": null
+        }
+      }
+    ],
+    "tools": []
+  },
+  {
+    "id": "solaris-settlements:repair_wooden_pickaxe",
+    "revision": "1",
+    "station": "minecraft:crafting_table",
+    "duration_ticks": 240,
+    "inputs": [
+      {
+        "item": "minecraft:wooden_pickaxe",
+        "tag": null,
+        "count": 1,
+        "components": {
+          "damage": 10,
+          "enchantments": [],
+          "custom_name": null,
+          "item_model": null,
+          "stew_effects": [],
+          "max_damage": 59,
+          "custom_data": [
+            10,
+            0,
+            0,
+            8,
+            0,
+            7,
+            113,
+            117,
+            97,
+            108,
+            105,
+            116,
+            121,
+            0,
+            8,
+            111,
+            114,
+            100,
+            105,
+            110,
+            97,
+            114,
+            121,
+            0
+          ]
+        }
+      },
+      {
+        "item": "minecraft:oak_planks",
+        "tag": null,
+        "count": 1,
+        "components": null
+      }
+    ],
+    "outputs": [
+      {
+        "item": "minecraft:wooden_pickaxe",
+        "count": 1,
+        "components": {
+          "damage": 0,
+          "enchantments": [],
+          "custom_name": null,
+          "item_model": null,
+          "stew_effects": [],
+          "max_damage": 59,
+          "custom_data": [
+            10,
+            0,
+            0,
+            8,
+            0,
+            7,
+            113,
+            117,
+            97,
+            108,
+            105,
+            116,
+            121,
+            0,
+            8,
+            111,
+            114,
+            100,
+            105,
+            110,
+            97,
+            114,
+            121,
+            0
+          ]
+        }
+      }
+    ],
+    "remainders": [],
+    "tools": []
+  },
+  {
+    "id": "solaris-settlements:salvage_wooden_pickaxe",
+    "revision": "1",
+    "station": "minecraft:crafting_table",
+    "duration_ticks": 120,
+    "inputs": [
+      {
+        "item": "minecraft:wooden_pickaxe",
+        "tag": null,
+        "count": 1,
+        "components": {
+          "damage": 0,
+          "enchantments": [],
+          "custom_name": null,
+          "item_model": null,
+          "stew_effects": [],
+          "max_damage": 59,
+          "custom_data": [
+            10,
+            0,
+            0,
+            8,
+            0,
+            7,
+            113,
+            117,
+            97,
+            108,
+            105,
+            116,
+            121,
+            0,
+            8,
+            111,
+            114,
+            100,
+            105,
+            110,
+            97,
+            114,
+            121,
+            0
+          ]
+        }
+      }
+    ],
+    "outputs": [
+      {
+        "item": "minecraft:stick",
+        "count": 1,
+        "components": {
+          "damage": null,
+          "enchantments": [],
+          "custom_name": null,
+          "item_model": null,
+          "stew_effects": [],
+          "max_damage": null,
+          "custom_data": null
+        }
+      }
+    ],
+    "remainders": [],
+    "tools": []
+  },
+  {
+    "id": "solaris-settlements:saddle",
+    "revision": "1",
+    "station": "minecraft:crafting_table",
+    "duration_ticks": 240,
+    "inputs": [
+      {
+        "item": "minecraft:leather",
+        "tag": null,
+        "count": 3,
+        "components": null
+      },
+      {
+        "item": "minecraft:iron_ingot",
+        "tag": null,
+        "count": 1,
+        "components": null
+      }
+    ],
+    "outputs": [
+      {
+        "item": "minecraft:saddle",
+        "count": 1,
+        "components": {
+          "damage": null,
+          "enchantments": [],
+          "custom_name": null,
+          "item_model": null,
+          "stew_effects": [],
+          "max_damage": null,
+          "custom_data": null
+        }
+      }
+    ],
+    "remainders": [],
+    "tools": []
+  },
+  {
+    "id": "solaris-settlements:hay_block",
+    "revision": "1",
+    "station": "minecraft:crafting_table",
+    "duration_ticks": 80,
+    "inputs": [
+      {
+        "item": "minecraft:wheat",
+        "tag": null,
+        "count": 9,
+        "components": null
+      }
+    ],
+    "outputs": [
+      {
+        "item": "minecraft:hay_block",
+        "count": 1,
+        "components": {
+          "damage": null,
+          "enchantments": [],
+          "custom_name": null,
+          "item_model": null,
+          "stew_effects": [],
+          "max_damage": null,
+          "custom_data": null
+        }
+      }
+    ],
+    "remainders": [],
+    "tools": []
+  },
+  {
+    "id": "solaris-settlements:open_hay",
+    "revision": "1",
+    "station": "minecraft:crafting_table",
+    "duration_ticks": 40,
+    "inputs": [
+      {
+        "item": "minecraft:hay_block",
+        "tag": null,
+        "count": 1,
+        "components": null
+      }
+    ],
+    "outputs": [
+      {
+        "item": "minecraft:wheat",
+        "count": 9,
+        "components": {
+          "damage": null,
+          "enchantments": [],
+          "custom_name": null,
+          "item_model": null,
+          "stew_effects": [],
+          "max_damage": null,
+          "custom_data": null
+        }
+      }
+    ],
+    "remainders": [],
+    "tools": []
+  }
+]

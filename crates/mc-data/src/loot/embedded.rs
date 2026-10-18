@@ -101,6 +101,7 @@ pub(super) fn parse_blocks(
                                     max: raw.max,
                                 }
                             },
+                            components: None,
                         });
                         drop.random_chance = raw.chance;
                         drop.fortune_chances = raw.fortune_chances;

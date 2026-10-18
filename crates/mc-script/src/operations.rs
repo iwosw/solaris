@@ -4,13 +4,50 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     MAX_INVENTORY_STORAGE_MUTATIONS, MAX_PLUGIN_STORAGE_KEY_BYTES, MAX_SCRIPT_ID_BYTES,
-    MAX_SCRIPT_WORLD_TIME, ScriptDtoError, ScriptOwnedInventoryOperation, ScriptResidentOperation,
-    ScriptResidentOrderOperation, ScriptSettlementOperation, ScriptSettlementResult,
-    ScriptStorageMutation, validate_bounded_nonempty, validate_bounded_value,
+    MAX_SCRIPT_WORLD_TIME, ScriptDtoError, ScriptNpcOperation, ScriptNpcOrderOperation,
+    ScriptOwnedInventoryOperation, ScriptStorageMutation, ScriptWorldStructureOperation,
+    ScriptWorldStructureResult, validate_bounded_nonempty, validate_bounded_value,
     validate_plugin_storage_value, validate_script_id,
 };
 
 pub const MAX_STORAGE_SCAN_PAGE: usize = 64;
+
+/// One positive version of a full key in the authenticated caller's namespace.
+/// Absent keys never match; deletion/recreation cannot restore an old version.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+#[non_exhaustive]
+pub struct ScriptPluginStorageVersionGuard {
+    pub key: String,
+    pub version: u64,
+}
+
+impl ScriptPluginStorageVersionGuard {
+    #[must_use]
+    pub fn new(key: String, version: u64) -> Self {
+        Self { key, version }
+    }
+}
+
+pub fn validate_plugin_storage_version_guards(
+    guards: &[ScriptPluginStorageVersionGuard],
+) -> Result<(), ScriptDtoError> {
+    if guards.len() > MAX_INVENTORY_STORAGE_MUTATIONS {
+        return Err(ScriptDtoError::InvalidBounds);
+    }
+    let mut keys = BTreeSet::new();
+    for guard in guards {
+        validate_bounded_nonempty(
+            "storage guard key",
+            &guard.key,
+            MAX_PLUGIN_STORAGE_KEY_BYTES,
+        )?;
+        if guard.version == 0 || guard.version > MAX_SCRIPT_WORLD_TIME || !keys.insert(&guard.key) {
+            return Err(ScriptDtoError::InvalidBounds);
+        }
+    }
+    Ok(())
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
@@ -31,14 +68,23 @@ pub enum ScriptOperation {
     Inventory {
         operation: ScriptOwnedInventoryOperation,
     },
-    Resident {
-        operation: ScriptResidentOperation,
+    Npc {
+        operation: ScriptNpcOperation,
     },
-    ResidentOrder {
-        operation: ScriptResidentOrderOperation,
+    SettlementQuery {
+        query: crate::ScriptSettlementQuery,
     },
     Settlement {
-        operation: ScriptSettlementOperation,
+        operation: crate::ScriptSettlementOperation,
+    },
+    NpcOrder {
+        operation: ScriptNpcOrderOperation,
+    },
+    NpcRoute {
+        operation: crate::ScriptNpcRouteOperation,
+    },
+    WorldStructure {
+        operation: ScriptWorldStructureOperation,
     },
 }
 
@@ -47,6 +93,8 @@ pub enum ScriptOperation {
 pub struct ScriptOperationRequest {
     request_id: String,
     operation: ScriptOperation,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    expected_plugin_storage_versions: Vec<ScriptPluginStorageVersionGuard>,
 }
 
 #[derive(Deserialize)]
@@ -54,13 +102,16 @@ pub struct ScriptOperationRequest {
 struct UncheckedOperationRequest {
     request_id: String,
     operation: ScriptOperation,
+    #[serde(default)]
+    expected_plugin_storage_versions: Vec<ScriptPluginStorageVersionGuard>,
 }
 
 impl TryFrom<UncheckedOperationRequest> for ScriptOperationRequest {
     type Error = ScriptDtoError;
 
     fn try_from(value: UncheckedOperationRequest) -> Result<Self, Self::Error> {
-        Self::try_new(value.request_id, value.operation)
+        Self::try_new(value.request_id, value.operation)?
+            .with_expected_plugin_storage_versions(value.expected_plugin_storage_versions)
     }
 }
 
@@ -74,14 +125,17 @@ impl ScriptOperationRequest {
                 mutations.sort_unstable_by(|left, right| left.key().cmp(right.key()));
             }
             ScriptOperation::Inventory { operation } => operation.canonicalize(),
-            ScriptOperation::Resident { operation } => operation.canonicalize(),
-            ScriptOperation::ResidentOrder { operation } => operation.canonicalize(),
-            ScriptOperation::Settlement { operation } => operation.canonicalize(),
+            ScriptOperation::Npc { operation } => operation.canonicalize(),
+            ScriptOperation::SettlementQuery { query } => query.canonicalize(),
+            ScriptOperation::NpcOrder { operation } => operation.canonicalize(),
+            ScriptOperation::NpcRoute { operation } => operation.canonicalize(),
+            ScriptOperation::WorldStructure { operation } => operation.canonicalize(),
             _ => {}
         }
         let request = Self {
             request_id: validate_script_id(request_id.as_ref())?,
             operation,
+            expected_plugin_storage_versions: Vec::new(),
         };
         request.validate()?;
         Ok(request)
@@ -95,20 +149,38 @@ impl ScriptOperationRequest {
         &self.operation
     }
 
+    pub fn with_expected_plugin_storage_versions(
+        mut self,
+        mut guards: Vec<ScriptPluginStorageVersionGuard>,
+    ) -> Result<Self, ScriptDtoError> {
+        guards.sort_unstable_by(|left, right| left.key.cmp(&right.key));
+        validate_plugin_storage_version_guards(&guards)?;
+        self.expected_plugin_storage_versions = guards;
+        Ok(self)
+    }
+
+    pub fn expected_plugin_storage_versions(&self) -> &[ScriptPluginStorageVersionGuard] {
+        &self.expected_plugin_storage_versions
+    }
+
     pub fn operation_id(&self) -> Option<&str> {
         match &self.operation {
             ScriptOperation::StorageBatch { operation_id, .. }
             | ScriptOperation::Status { operation_id } => Some(operation_id),
             ScriptOperation::StorageScan { .. } => None,
             ScriptOperation::Inventory { operation } => operation.operation_id(),
-            ScriptOperation::Resident { operation } => operation.operation_id(),
-            ScriptOperation::ResidentOrder { operation } => operation.operation_id(),
-            ScriptOperation::Settlement { operation } => operation.operation_id(),
+            ScriptOperation::Npc { operation } => operation.operation_id(),
+            ScriptOperation::SettlementQuery { .. } => None,
+            ScriptOperation::Settlement { operation } => Some(operation.operation_id()),
+            ScriptOperation::NpcOrder { operation } => operation.operation_id(),
+            ScriptOperation::NpcRoute { operation } => operation.operation_id(),
+            ScriptOperation::WorldStructure { operation } => operation.operation_id(),
         }
     }
 
     pub fn validate(&self) -> Result<(), ScriptDtoError> {
         crate::validate_script_id_value(&self.request_id)?;
+        validate_plugin_storage_version_guards(&self.expected_plugin_storage_versions)?;
         match &self.operation {
             ScriptOperation::StorageBatch {
                 operation_id,
@@ -139,9 +211,12 @@ impl ScriptOperationRequest {
                 crate::validate_script_id_value(operation_id)
             }
             ScriptOperation::Inventory { operation } => operation.validate(),
-            ScriptOperation::Resident { operation } => operation.validate(),
-            ScriptOperation::ResidentOrder { operation } => operation.validate(),
+            ScriptOperation::Npc { operation } => operation.validate(),
+            ScriptOperation::SettlementQuery { query } => query.validate(),
             ScriptOperation::Settlement { operation } => operation.validate(),
+            ScriptOperation::NpcOrder { operation } => operation.validate(),
+            ScriptOperation::NpcRoute { operation } => operation.validate(),
+            ScriptOperation::WorldStructure { operation } => operation.validate(),
         }
     }
 }
@@ -303,14 +378,20 @@ pub enum ScriptOperationPayload {
     OwnedInventory {
         result: Box<crate::ScriptOwnedInventoryResult>,
     },
-    Resident {
-        result: Box<crate::ScriptResidentResult>,
-    },
-    ResidentOrder {
-        result: Box<crate::ScriptResidentOrderResult>,
+    Npc {
+        result: Box<crate::ScriptNpcResult>,
     },
     Settlement {
-        result: Box<ScriptSettlementResult>,
+        result: Box<crate::ScriptSettlementResult>,
+    },
+    NpcOrder {
+        result: Box<crate::ScriptNpcOrderResult>,
+    },
+    NpcRoute {
+        result: Box<crate::ScriptNpcRouteResult>,
+    },
+    WorldStructure {
+        result: Box<ScriptWorldStructureResult>,
     },
 }
 
@@ -391,9 +472,11 @@ impl ScriptOperationOutcome {
         }
         match &self.payload {
             ScriptOperationPayload::None => Ok(()),
-            ScriptOperationPayload::Resident { result } => result.validate(),
-            ScriptOperationPayload::ResidentOrder { result } => result.validate(),
+            ScriptOperationPayload::Npc { result } => result.validate(),
             ScriptOperationPayload::Settlement { result } => result.validate(),
+            ScriptOperationPayload::NpcOrder { result } => result.validate(),
+            ScriptOperationPayload::NpcRoute { result } => result.validate(),
+            ScriptOperationPayload::WorldStructure { result } => result.validate(),
             ScriptOperationPayload::OwnedInventory { result } => result.validate(),
             ScriptOperationPayload::StorageBatch { changes } => {
                 if changes.is_empty() || changes.len() > MAX_INVENTORY_STORAGE_MUTATIONS {

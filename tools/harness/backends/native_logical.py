@@ -12,7 +12,7 @@ from .. import runtime
 from ..profiles import ProfileContext
 from . import native_client
 from .client_probes import _server_binary
-from .gameplay import cpu_usage, peak_rss_kib, plugin_directory, require_tools
+from .gameplay import cpu_usage, peak_rss_kib, plugin_directory, prepare_operator_fixture, require_tools
 from .probe_steps import ProbeSteps, item_count
 
 REQUIRED_TOOLS = {
@@ -134,24 +134,14 @@ bind_address = "127.0.0.1"
 port = {port}
 [auth]
 online_mode = false
-[admin]
-operators = ["{username}"]
-allow_local_dev_operators = false
 [plugins]
 directory = {json.dumps(str(plugins))}
 [data]
 world_dir = {json.dumps(str(artifact / "world"))}
 vanilla_data_dir = "data/vanilla"
 seed = 81
-[simulation]
-random_tick_speed = 0
-friendly_spawn_interval_ticks = 0
-hostile_spawn_interval_ticks = 0
-[chunk_pipeline]
-worker_threads = 1
-[autoscale]
-enabled = false
 ''')
+    prepare_operator_fixture(ctx, [username])
     evidence = ctx.client_evidence
     with binary.open("rb") as source:
         digest = hashlib.file_digest(source, "sha256").hexdigest()

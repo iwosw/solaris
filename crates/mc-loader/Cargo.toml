@@ -1,0 +1,26 @@
+[package]
+name = "mc-loader"
+description = "Solaris Loader client-bundle wire contract (ADR 0010)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+mc-data = { path = "../mc-data" }
+mc-script = { path = "../mc-script" }
+mc-world = { path = "../mc-world" }
+bytes = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+thiserror = { workspace = true }
+zip = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"

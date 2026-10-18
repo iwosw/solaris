@@ -1,14 +1,14 @@
 //! Native compact Earth source. All preparation runs on the caller's load worker.
 //! Natural queries and village plans never activate entities or write native state.
 use std::cell::RefCell;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
 
 use mc_data::Identifier;
 use mc_data::items::ItemRegistry;
 use mc_data::loot::chest_26_1_2::ChestLootCatalog;
 use mc_world::native::NativeError;
-use mc_world::storage::{NativeChunkProvider, NativeNaturalSource, NaturalTerrainColumn};
+use mc_world::storage::{NativeNaturalSource, NaturalTerrainColumn};
 use mc_world::{
     BiomeSection, BlockRegistry, BlockStateId, Chunk, ChunkPos, GeneratedVillageSite, Heightmap,
     MAX_Y, MIN_Y, PackedBitArray,
@@ -45,21 +45,29 @@ pub struct EarthRuntime {
 }
 
 type RegionCache = BTreeMap<([u8; 32], GeoNodeId), Arc<RegionPlan>>;
-type VillageSuitabilityCache = BTreeMap<([u8; 32], (i32, i32)), Arc<Mutex<Option<bool>>>>;
+type VillageKey = ([u8; 32], (i32, i32));
 
-fn evict_completed_villages(cache: &mut VillageSuitabilityCache, limit: usize) {
-    while cache.len() > limit {
-        let ready = cache.iter().find_map(|(key, entry)| {
-            entry
-                .try_lock()
-                .is_ok_and(|value| value.is_some())
-                .then_some(*key)
-        });
-        let Some(key) = ready else {
-            // In-flight entries are bounded by the existing source-worker admission.
-            break;
-        };
-        cache.remove(&key);
+/// Only completed facts are shared. Cold footprint scans run on the caller's
+/// worker, outside every cache lock; concurrent misses may compute equal facts.
+#[derive(Default)]
+struct VillageSuitabilityCache {
+    entries: HashMap<VillageKey, bool>,
+    order: VecDeque<VillageKey>,
+}
+
+impl VillageSuitabilityCache {
+    fn insert(&mut self, key: VillageKey, dry: bool) -> bool {
+        if let Some(existing) = self.entries.get(&key) {
+            return *existing;
+        }
+        if self.entries.len() == VILLAGE_CACHE_ENTRIES
+            && let Some(evicted) = self.order.pop_front()
+        {
+            self.entries.remove(&evicted);
+        }
+        self.entries.insert(key, dry);
+        self.order.push_back(key);
+        dry
     }
 }
 
@@ -151,10 +159,18 @@ impl<'a> EarthBaseSource<'a> {
             .regions
             .lock()
             .map_err(|_| PrepareError::Invalid("Earth region cache poisoned"))?;
-        if cache.len() == REGION_CACHE_ENTRIES {
-            cache.pop_first();
+        if let Some(existing) = cache.get(&(self.identity.bytes(), node)) {
+            return Ok(Arc::clone(existing));
         }
+        let evicted = if cache.len() == REGION_CACHE_ENTRIES {
+            cache.pop_first()
+        } else {
+            None
+        };
         cache.insert((self.identity.bytes(), node), Arc::clone(&plan));
+        // A last-reference region drop can release large prepared arrays.
+        drop(cache);
+        drop(evicted);
         Ok(plan)
     }
 
@@ -228,43 +244,25 @@ impl<'a> EarthBaseSource<'a> {
 
     fn dry_village(&self, plan: &VillagePlan) -> Result<bool, PrepareError> {
         let key = (self.identity.bytes(), plan.start_chunk());
-        let entry = {
-            let mut cache = self
-                .cache
-                .dry_villages
-                .lock()
-                .map_err(|_| PrepareError::Invalid("Earth village cache poisoned"))?;
-            if let Some(entry) = cache.get(&key) {
-                Arc::clone(entry)
-            } else {
-                evict_completed_villages(&mut cache, VILLAGE_CACHE_ENTRIES - 1);
-                let entry = Arc::new(Mutex::new(None));
-                cache.insert(key, Arc::clone(&entry));
-                entry
-            }
-        };
-        // Coalesce a plan's cold scan without serializing unrelated villages.
-        let mut ready = entry
+        if let Some(dry) = self
+            .cache
+            .dry_villages
             .lock()
-            .map_err(|_| PrepareError::Invalid("Earth village suitability poisoned"))?;
-        if let Some(dry) = *ready {
+            .map_err(|_| PrepareError::Invalid("Earth village cache poisoned"))?
+            .entries
+            .get(&key)
+            .copied()
+        {
             return Ok(dry);
         }
-        let result = self.compute_dry_village(plan);
-        if let Ok(dry) = &result {
-            *ready = Some(*dry);
-        }
-        drop(ready);
+        // A failed scan is never cached, so a later caller retries the real facts.
+        let dry = self.compute_dry_village(plan)?;
         let mut cache = self
             .cache
             .dry_villages
             .lock()
             .map_err(|_| PrepareError::Invalid("Earth village cache poisoned"))?;
-        if result.is_err() {
-            cache.remove(&key);
-        }
-        evict_completed_villages(&mut cache, VILLAGE_CACHE_ENTRIES);
-        result
+        Ok(cache.insert(key, dry))
     }
 
     fn compute_dry_village(&self, plan: &VillagePlan) -> Result<bool, PrepareError> {
@@ -659,53 +657,6 @@ impl EarthRuntime {
     }
     pub fn locate_safe_spawn(&self) -> Result<SpawnLocation, PrepareError> {
         self.base_source().locate_safe_spawn(self.world.playable())
-    }
-}
-
-impl NativeChunkProvider for EarthRuntime {
-    fn natural_source(&self) -> Option<&dyn NativeNaturalSource> {
-        Some(self)
-    }
-
-    fn load_base(&self, dimension: u32, position: ChunkPos) -> Result<Option<Chunk>, NativeError> {
-        if dimension != 0 {
-            return Err(NativeError::Invalid(
-                "Earth native source does not own this dimension",
-            ));
-        }
-        self.world
-            .store()
-            .resolve_base(dimension, position, &self.blocks, &self.items, || {
-                // Imported coverage is resolved first and wins even beyond the
-                // procedural domain. Only uncovered procedural cells are denied.
-                let domain = self.world.definition().input().domain;
-                let x = i64::from(position.x) * 16;
-                let z = i64::from(position.z) * 16;
-                if x + 16 <= domain.min_x
-                    || z + 16 <= domain.min_z
-                    || x >= domain.max_x_exclusive
-                    || z >= domain.max_z_exclusive
-                {
-                    return Ok(None);
-                }
-                self.base_source()
-                    .materialize_chunk(position)
-                    .map(Some)
-                    .map_err(|error| NativeError::Source(error.to_string()))
-            })
-    }
-    fn load_effective(
-        &self,
-        dimension: u32,
-        position: ChunkPos,
-    ) -> Result<Option<Chunk>, NativeError> {
-        let Some(base) = self.load_base(dimension, position)? else {
-            return Ok(None);
-        };
-        self.world
-            .store()
-            .compose(dimension, &base, &self.blocks, &self.items)
-            .map(Some)
     }
 }
 

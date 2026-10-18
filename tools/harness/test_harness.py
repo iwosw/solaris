@@ -12,7 +12,6 @@ import json
 import os
 import select
 import signal
-import struct
 import subprocess
 import sys
 import tempfile
@@ -23,7 +22,6 @@ from unittest import mock
 from . import __main__ as cli
 from . import profiles, runtime
 from .backends import driver
-from .backends import load_matrix, player_scale
 from types import SimpleNamespace
 
 
@@ -53,6 +51,142 @@ class DriverLabelTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             self.assertEqual(driver.run_quality_label(Path(tmp)), "draft")
 
+
+
+class RunTestPolicyTests(unittest.TestCase):
+    def test_default_nextest_gate_keeps_all_targets_and_cpu_parallelism(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            ctx = profiles.ProfileContext(Path(tmp))
+            env = {key: value for key, value in os.environ.items()
+                   if key not in {"RUST_TEST_THREADS", "NEXTEST_TEST_THREADS"}}
+            with mock.patch.dict(os.environ, env, clear=True):
+                with mock.patch.object(profiles, "_run_command", return_value={}) as run:
+                    with mock.patch.object(profiles, "_test_scope_memory", return_value={}):
+                        details = profiles.run_test(ctx)
+                self.assertNotIn("RUST_TEST_THREADS", os.environ)
+            self.assertEqual(run.call_args.args[0], [
+                "cargo", "nextest", "run",
+                "--profile", "default", "--ignore-default-filter", "--no-fail-fast",
+                "--no-tests=fail", "--workspace", "--all-targets",
+            ])
+            self.assertNotIn("RUST_TEST_THREADS", run.call_args.kwargs["env"])
+            self.assertEqual(details["test_runner"], "nextest")
+            self.assertEqual(details["nextest_test_threads_env"], "num-cpus")
+            self.assertIsNone(details["rust_test_threads_env"])
+
+    def test_full_gate_preserves_explicit_concurrency(self) -> None:
+        for overrides, expected in [
+            ({"NEXTEST_TEST_THREADS": "6"}, "6"),
+            ({"RUST_TEST_THREADS": "3", "NEXTEST_TEST_THREADS": "6"}, "3"),
+        ]:
+            with self.subTest(overrides=overrides), tempfile.TemporaryDirectory() as tmp:
+                env = {key: value for key, value in os.environ.items()
+                       if key not in {"RUST_TEST_THREADS", "NEXTEST_TEST_THREADS"}}
+                env.update(overrides)
+                with mock.patch.dict(os.environ, env, clear=True):
+                    with mock.patch.object(profiles, "_run_command", return_value={}) as run:
+                        with mock.patch.object(profiles, "_test_scope_memory", return_value={}):
+                            profiles.run_test(profiles.ProfileContext(Path(tmp)))
+                self.assertEqual(run.call_args.kwargs["env"]["NEXTEST_TEST_THREADS"], expected)
+
+    def test_nextest_failure_is_not_retried_with_cargo(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            with mock.patch.object(profiles, "_run_command", side_effect=RuntimeError("nextest failed")) as run:
+                with self.assertRaisesRegex(RuntimeError, "nextest failed"):
+                    profiles.run_test(profiles.ProfileContext(Path(tmp)))
+            run.assert_called_once()
+
+    def test_non_execution_flags_cannot_pass_the_gate(self) -> None:
+        for flag in ["--no-run", "--help", "-h", "--version", "-V"]:
+            with self.subTest(flag=flag), tempfile.TemporaryDirectory() as tmp:
+                with mock.patch.object(profiles, "_run_command") as run:
+                    with self.assertRaisesRegex(ValueError, "must execute tests"):
+                        profiles.run_test(profiles.ProfileContext(Path(tmp), extra_args=[flag]))
+                run.assert_not_called()
+
+    def test_focused_selectors_and_nextest_threads_use_the_same_runner(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            args = ["-p", "mc-edge", "--lib", "--test-threads=2", "inventory"]
+            ctx = profiles.ProfileContext(Path(tmp), extra_args=args)
+            with mock.patch.dict(os.environ, {"RUST_TEST_THREADS": "3"}):
+                with mock.patch.object(profiles, "_run_command", return_value={}) as run:
+                    with mock.patch.object(profiles, "_test_scope_memory", return_value={}):
+                        profiles.run_test(ctx)
+            self.assertEqual(run.call_args.args[0], [
+                "cargo", "nextest", "run",
+                "--profile", "default", "--ignore-default-filter", "--no-fail-fast",
+                "--no-tests=fail", *args,
+            ])
+            self.assertEqual(run.call_args.kwargs["env"]["NEXTEST_TEST_THREADS"], "3")
+
+    def test_selected_run_profile_reaches_scope(self) -> None:
+        for profile in ["test", "correctness", "check"]:
+            with self.subTest(profile=profile):
+                with mock.patch.object(cli, "_exec_in_scope", return_value=0) as scope:
+                    self.assertEqual(cli.main(["run", profile]), 0)
+                scope.assert_called_once_with(profile)
+
+    def test_profile_memory_defaults_match_admission_and_scope(self) -> None:
+        env = {key: value for key, value in os.environ.items()
+               if key not in {cli.CPU_SCOPE_ENV, cli.MEMORY_MAX_ENV}}
+        for profile, expected in [("test", "12G"), ("correctness", "12G"), ("check", "4G"), (None, "4G")]:
+            with self.subTest(profile=profile), mock.patch.dict(os.environ, env, clear=True):
+                with mock.patch.object(cli, "_default_cpu_quota", return_value="600%"):
+                    with mock.patch.object(cli, "_available_bytes", return_value=16 * 1024**3):
+                        with mock.patch.object(cli, "_scope_command", return_value=["scope"]) as scope:
+                            with mock.patch.object(cli.subprocess, "run", return_value=SimpleNamespace(returncode=0)):
+                                with contextlib.redirect_stdout(io.StringIO()):
+                                    self.assertEqual(cli._exec_in_scope(profile), 0)
+                scope.assert_called_once_with("600%", expected)
+
+    def test_test_profile_admission_uses_twelve_gib_and_preserves_focused_override(self) -> None:
+        env = {key: value for key, value in os.environ.items()
+               if key not in {cli.CPU_SCOPE_ENV, cli.MEMORY_MAX_ENV}}
+        with mock.patch.dict(os.environ, env, clear=True):
+            with mock.patch.object(cli, "_default_cpu_quota", return_value="600%"):
+                with mock.patch.object(cli, "_available_bytes", return_value=12 * 1024**3):
+                    with mock.patch.object(cli, "_scope_command", return_value=["scope"]) as scope:
+                        with contextlib.redirect_stderr(io.StringIO()):
+                            self.assertEqual(cli._exec_in_scope("test"), 1)
+                        scope.assert_not_called()
+                with mock.patch.dict(os.environ, {cli.MEMORY_MAX_ENV: "8G"}):
+                    with mock.patch.object(cli, "_available_bytes", return_value=16 * 1024**3):
+                        with mock.patch.object(cli, "_scope_command", return_value=["scope"]) as scope:
+                            with mock.patch.object(cli.subprocess, "run", return_value=SimpleNamespace(returncode=0)):
+                                with contextlib.redirect_stdout(io.StringIO()):
+                                    self.assertEqual(cli._exec_in_scope("correctness"), 0)
+                        scope.assert_called_once_with("600%", "8G")
+
+    def test_scope_command_applies_the_resolved_profile_cap(self) -> None:
+        with mock.patch.object(cli.shutil, "which", return_value="/usr/bin/systemd-run"):
+            with mock.patch.object(cli.subprocess, "run", return_value=SimpleNamespace(stdout="running")):
+                command = cli._scope_command("600%", "12G")
+        self.assertIn("MemoryMax=12G", command)
+
+    def test_scope_peak_is_read_before_transient_scope_exits(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            cgroup = root / "cgroup"
+            cgroup.write_text("0::/solaris-heavy.slice/test.scope\n")
+            scope = root / "solaris-heavy.slice/test.scope"
+            scope.mkdir(parents=True)
+            (scope / "memory.peak").write_text("512\n")
+            (scope / "memory.max").write_text("1024\n")
+            (scope / "memory.events").write_text("max 3\noom 0\noom_kill 0\n")
+            (scope / "memory.swap.peak").write_text("128\n")
+            self.assertEqual(profiles._test_scope_memory(cgroup, root), {
+                "memory_peak_bytes": 512,
+                "memory_limit_bytes": 1024,
+                "memory_cgroup": "/solaris-heavy.slice/test.scope",
+                "memory_events": {"max": 3, "oom": 0, "oom_kill": 0},
+                "memory_swap_peak_bytes": 128,
+            })
+
+    def test_missing_scope_is_not_reported_as_zero_memory(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            details = profiles._test_scope_memory(Path(tmp) / "missing", Path(tmp))
+            self.assertIsNone(details["memory_peak_bytes"])
+            self.assertIn("memory_peak_error", details)
 
 
 class ReceiptContractTests(unittest.TestCase):
@@ -136,200 +270,6 @@ class ReceiptContractTests(unittest.TestCase):
         self.assertEqual(payload["status"], "failed")
         self.assertEqual(payload["client"], "native")
         self.assertEqual(payload["commands"], [])
-
-
-class PlayerScaleReceiptTests(unittest.TestCase):
-    def test_fresh_chunk_headers_ignore_timestamps_and_staged_files(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            world = Path(tmp)
-            region = world / "region"
-            region.mkdir()
-            locations = [0] * 1024
-            locations[31] = (2 << 8) | 1
-            path = region / "r.-1.2.mca"
-            path.write_bytes(struct.pack(">1024I", *locations) + b"\xff" * 4096)
-            initial = player_scale._anvil_chunk_positions(world)
-            self.assertEqual(initial, {(-1, 64)})
-            locations[1023] = (3 << 8) | 1
-            path.write_bytes(struct.pack(">1024I", *locations) + b"\xff" * 4096)
-            (region / ".r.-1.2.mca.tmp.123").write_bytes(b"\xff" * 8192)
-            stored = player_scale._anvil_chunk_positions(world)
-            self.assertEqual(stored - initial, {(-1, 95)})
-
-    def measured_rung(self, timeout_counter=None):
-        counters = {"disconnects": 0, "action_ack_timeouts": 0,
-                    "action_observation_timeouts": 0}
-        def sample(source, monotonic, ticks):
-            return {"monotonic_ns": monotonic, "unix_ns": monotonic + 1_700_000_000_000_000_000,
-                    "bot_counters": dict(counters),
-                    "server": {"cpu_seconds": ticks / 100, "rss_bytes": 1024,
-                               "user_cpu_seconds": ticks * 0.0095,
-                               "system_cpu_seconds": ticks * 0.0005,
-                               "peak_rss_bytes": 1024},
-                    "bots": {"cpu_seconds": ticks / 1000, "rss_bytes": 1024,
-                             "user_cpu_seconds": ticks * 0.00095,
-                             "system_cpu_seconds": ticks * 0.00005,
-                             "peak_rss_bytes": 1024},
-                    "host_cpus": {
-                        "cpu2": {"busy_seconds": monotonic / 1e9 * 0.8,
-                                 "total_seconds": monotonic / 1e9},
-                        "cpu3": {"busy_seconds": monotonic / 1e9 * 0.1,
-                                 "total_seconds": monotonic / 1e9}},
-                    "dashboard": {"simulation_tick": ticks,
-                        "tick": {"source_tick": source,
-                                 "total": {"samples": 1200, "p95_us": 1000},
-                                 "stages": {}},
-                        "chunks": {"generated_total": 0, "streamed_total": 0},
-                        "network": {"bytes_written": 0}}}
-        start, end = sample(100, 0, 100), sample(1300, 60_000_000_000, 1300)
-        if timeout_counter:
-            end["bot_counters"][timeout_counter] = 1
-        rung = player_scale.Rung.__new__(player_scale.Rung)
-        rung.args = SimpleNamespace(measure_ticks=1200, min_tps=18)
-        rung.clients, rung.server_cores = 2, 1
-        rung.server_cpus = "2"
-        rung.measured, rung.idle = [end], None
-        rung.receipt, rung.ready, rung.profile_process = {"errors": []}, True, None
-        rung.summarize(start, end)
-        return rung
-
-    def test_foreign_cpu_share_requires_single_cpu_attribution(self) -> None:
-        rung = self.measured_rung()
-        measured = rung.receipt["measurement"]["foreign_cpu_load"]["cpus"]
-        self.assertAlmostEqual(measured["cpu2"]["foreign_cpu_percent_one_core"], 60)
-        self.assertAlmostEqual(measured["cpu3"]["foreign_cpu_percent_one_core"], 10)
-        start = {"monotonic_ns": 0, "server": {"cpu_seconds": 0},
-                 "host_cpus": {"cpu2": {"busy_seconds": 0}, "cpu3": {"busy_seconds": 0}}}
-        end = {"monotonic_ns": 1_000_000_000, "server": {"cpu_seconds": 0.51},
-               "host_cpus": {"cpu2": {"busy_seconds": 0.5}, "cpu3": {"busy_seconds": 0.1}}}
-        single = player_scale.foreign_cpu_load(start, end, "2")["cpus"]["cpu2"]
-        self.assertLess(single["foreign_cpu_seconds_raw"], 0)
-        self.assertEqual(single["foreign_cpu_percent_one_core"], 0)
-        multi = player_scale.foreign_cpu_load(start, end, "0,2")["cpus"]["cpu2"]
-        self.assertIsNone(multi["foreign_cpu_percent_one_core"])
-
-    def test_action_timeouts_reject_otherwise_healthy_rung(self) -> None:
-        healthy = self.measured_rung()
-        self.assertEqual(healthy.receipt["status"], "passed")
-        self.assertTrue(healthy.receipt["acceptance"]["baseline_holds"])
-        for counter in ("action_ack_timeouts", "action_observation_timeouts"):
-            with self.subTest(counter=counter):
-                rung = self.measured_rung(counter)
-                self.assertEqual(rung.receipt["status"], "failed")
-                self.assertFalse(rung.receipt["acceptance"]["baseline_holds"])
-
-    def test_final_action_timeout_revokes_sampled_acceptance(self) -> None:
-        for counter in ("action_ack_timeouts", "action_observation_timeouts"):
-            with self.subTest(counter=counter):
-                rung = self.measured_rung()
-                rung.validate_final_bot_report({"success": True, "disconnects": 0,
-                                                counter: 1})
-                self.assertEqual(rung.receipt["status"], "failed")
-                self.assertFalse(rung.receipt["acceptance"]["baseline_holds"])
-                self.assertEqual(rung.receipt["acceptance"][counter], 1)
-
-    def test_smoke_backend_exit_zero_is_not_canonical_pass(self) -> None:
-        original_run = profiles._run_command
-        def lightweight_command(argv, ctx, log_name, **kwargs):
-            if log_name == "player-scale-build.log":
-                command = [sys.executable, "-c", "pass"]
-            else:
-                receipt = ctx.artifact_dir / "bench" / "receipt.json"
-                source = (
-                    "import json; from pathlib import Path; "
-                    f"p=Path({str(receipt)!r}); p.parent.mkdir(); "
-                    "p.write_text(json.dumps({'status':'smoke_only','baseline_holds':False})); "
-                    "print(json.dumps({'event':'final','status':'smoke_only','receipt':str(p)}))"
-                )
-                command = [sys.executable, "-c", source]
-            return original_run(command, ctx, log_name, **kwargs)
-        with tempfile.TemporaryDirectory() as tmp:
-            output = io.StringIO()
-            with mock.patch.object(cli, "ARTIFACT_ROOT", Path(tmp)):
-                with mock.patch.object(profiles, "_run_command", lightweight_command):
-                    with contextlib.redirect_stdout(output):
-                        code = cli.cmd_run(["player-scale"])
-            payload = json.loads(next(Path(tmp).glob("*/result.json")).read_text())
-        self.assertEqual(code, 0)
-        self.assertEqual(payload["status"], "prepared")
-        self.assertEqual(payload["details"]["backend_status"], "smoke_only")
-        self.assertNotIn("[harness] PASS", output.getvalue())
-
-
-class LoadMatrixCliTests(unittest.TestCase):
-    def test_full_off_core_lifecycle_keeps_long_window_and_single_cpu(self) -> None:
-        async def fixture(*args, **kwargs):
-            return {"status": "prepared"}
-
-        async def dry_run(rung):
-            # Construct the real inherited Rung, but do not launch its processes.
-            rung.receipt["status"] = "smoke_only"
-            return rung.receipt
-
-        with tempfile.TemporaryDirectory() as tmp:
-            argv = ["load-matrix", "--label", "release-main",
-                    "--server-bin", sys.executable, "--bots-bin", sys.executable,
-                    "--fixture-bin", sys.executable, "--out", tmp,
-                    "--scenario", "long-session", "--no-single-core",
-                    "--smoke-cpus", "1,4"]
-            with mock.patch.object(sys, "argv", argv), \
-                 mock.patch.object(load_matrix, "initialize_world", fixture), \
-                 mock.patch.object(load_matrix, "fixture_report", fixture), \
-                 mock.patch.object(load_matrix.MatrixRung, "run", dry_run), \
-                 contextlib.redirect_stdout(io.StringIO()):
-                code = load_matrix.main()
-            summary = json.loads(next(Path(tmp).glob("*/receipt.json")).read_text())
-            receipt = json.loads(Path(summary["receipts"][0]).read_text())
-        self.assertEqual(code, 0)
-        self.assertFalse(receipt["canonical"])
-        self.assertEqual(receipt["server_cpus"], "1")
-        self.assertEqual(receipt["server_affinity_logical_cpus"], 1)
-        self.assertEqual(receipt["measure_ticks_requested"], 12000)
-
-
-class LoadMatrixRestartIdentityTests(unittest.TestCase):
-    def setUp(self) -> None:
-        self.cow = {"uuid": "authored-cow", "kind": "minecraft:cow"}
-        self.villager = {"uuid": "authored-villager", "kind": "minecraft:villager"}
-        self.item = {"uuid": "authored-item", "kind": "minecraft:item"}
-        self.fixture = {"entities": [self.cow, self.villager, self.item]}
-
-    def test_dynamic_hostile_despawn_does_not_invalidate_authored_restart(self) -> None:
-        hostile = {"uuid": "natural-skeleton", "kind": "minecraft:skeleton"}
-        newcomer = {"uuid": "new-natural-zombie", "kind": "minecraft:zombie"}
-        before = {"entities": [self.cow, self.villager, self.item, hostile]}
-        after = {"entities": [{**self.cow, "position": [12, 64, 8]}, self.villager, newcomer]}
-        proof = load_matrix.restart_entity_identity_proof(self.fixture, before, after)
-        self.assertTrue(proof["authored"]["retained"])
-        self.assertEqual(proof["authored"]["missing"], [])
-        self.assertEqual(proof["dynamic"]["missing"], [("natural-skeleton", "minecraft:skeleton")])
-
-    def test_missing_saved_authored_animal_invalidates_restart(self) -> None:
-        proof = load_matrix.restart_entity_identity_proof(
-            self.fixture, {"entities": [self.cow, self.villager]},
-            {"entities": [self.villager]})
-        self.assertFalse(proof["authored"]["retained"])
-        self.assertEqual(proof["authored"]["missing"], [("authored-cow", "minecraft:cow")])
-
-    def test_changed_authored_type_invalidates_restart(self) -> None:
-        proof = load_matrix.restart_entity_identity_proof(
-            self.fixture, {"entities": [self.cow, self.villager]},
-            {"entities": [self.cow, {**self.villager, "kind": "minecraft:zombie_villager"}]})
-        self.assertFalse(proof["authored"]["retained"])
-        self.assertEqual(proof["authored"]["missing"],
-                         [("authored-villager", "minecraft:villager")])
-
-    def test_authored_entity_already_absent_before_restart_is_not_required(self) -> None:
-        proof = load_matrix.restart_entity_identity_proof(
-            self.fixture, {"entities": [self.cow]}, {"entities": [self.cow]})
-        self.assertTrue(proof["authored"]["retained"])
-        self.assertEqual(proof["authored"]["before"], [("authored-cow", "minecraft:cow")])
-
-    def test_empty_saved_authored_cohort_cannot_prove_persistence(self) -> None:
-        hostile = {"uuid": "natural-skeleton", "kind": "minecraft:skeleton"}
-        proof = load_matrix.restart_entity_identity_proof(
-            self.fixture, {"entities": [hostile]}, {"entities": [hostile]})
-        self.assertFalse(proof["authored"]["retained"])
 
 
 class SharedClientProbeTests(unittest.TestCase):
@@ -447,7 +387,7 @@ class ScenarioCatalogTests(unittest.TestCase):
             owner="test",
             evidence="native",
             profile="fake-profile",
-            selector=("-p", "mc-net", "--lib", "fake"),
+            selector=("-p", "mc-edge", "--lib", "fake"),
             tests=tests,
             proves="nothing",
             limits="test fixture",
@@ -467,7 +407,7 @@ class ScenarioCatalogTests(unittest.TestCase):
     def test_named_scenario_rejects_free_form_arguments(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             with mock.patch.object(cli, "ARTIFACT_ROOT", Path(tmp)):
-                code = cli.cmd_run(["scenario", "container-transfer-recovery", "extra-arg"])
+                code = cli.cmd_run(["scenario", "inventory-client", "extra-arg"])
             self.assertEqual(code, 2)
             payload = json.loads(next(Path(tmp).glob("*/result.json")).read_text())
             self.assertEqual(payload["status"], "failed")
@@ -478,7 +418,7 @@ class ScenarioCatalogTests(unittest.TestCase):
             with mock.patch.object(cli, "ARTIFACT_ROOT", Path(tmp)):
                 output = io.StringIO()
                 with contextlib.redirect_stdout(output):
-                    self.assertEqual(cli.cmd_explain(["container-transfer-recovery"]), 0)
+                    self.assertEqual(cli.cmd_explain(["inventory-client"]), 0)
                     self.assertEqual(cli.cmd_explain(["no-such-scenario"]), 2)
             self.assertEqual(list(Path(tmp).iterdir()), [])
 

@@ -2,7 +2,7 @@
 //! refused before any guest code exists.
 
 use mc_plugin_host::{PackageError, PluginLimits, load_package};
-use mc_script::{ClientContentKind, ClientLoader, ClientPermission, PluginWorldgenOreProfile};
+use mc_script::{ClientContentKind, ClientLoader, ClientPermission};
 
 /// One package directory with `plugin.toml` and an artifact of `artifact` bytes.
 fn package(manifest: &str, artifact: &[u8]) -> tempfile::TempDir {
@@ -41,7 +41,7 @@ version = "1.2.3"
 artifact = "client/rich-content.zip"
 sha256 = "2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881"
 size_bytes = 1
-loaders = ["fabric", "neoforge", "forge"]
+loaders = ["fabric", "neoforge", "forge", "native"]
 content = ["blocks", "items", "views", "view_actions", "assets"]
 permissions = [
   "register_blocks",
@@ -65,29 +65,6 @@ const ASSET_ARTIFACT_FILE: &[(&str, &[u8])] = &[("client/assets.zip", CLIENT_ART
 const SCREEN_ARTIFACT_FILE: &[(&str, &[u8])] = &[("client/screen.zip", CLIENT_ARTIFACT)];
 /// No artifact at all, for the case that declares one nothing ships.
 const NO_FILES: &[(&str, &[u8])] = &[];
-
-/// The world generation a package declares: the ore profile the deployed
-/// geological-mines package ships, and a settlement profile with one authored
-/// building, its inhabitant and one extension.
-const WORLDGEN: &str = r#"[worldgen]
-ore_profile = "realistic_deposits"
-settlement_profile = "plains_village_prototype"
-
-[[worldgen.settlement_buildings]]
-id = "plaza"
-template = "plains_fountain"
-role = "meeting_point"
-
-[[worldgen.settlement_inhabitants]]
-id = "elder"
-kind = "villager"
-building = "plaza"
-job = "unemployed"
-
-[[worldgen.settlement_extensions]]
-id = "annex"
-building = "plaza"
-"#;
 
 #[test]
 fn a_component_package_loads_with_its_manifest_contract() {
@@ -188,7 +165,8 @@ fn a_client_bundle_reaches_the_loader_as_validated_bytes() {
         &[
             ClientLoader::Fabric,
             ClientLoader::NeoForge,
-            ClientLoader::Forge
+            ClientLoader::Forge,
+            ClientLoader::Native,
         ]
     );
     assert_eq!(
@@ -393,125 +371,30 @@ fn a_client_artifact_that_escapes_the_package_is_refused() {
 
 #[test]
 fn a_feature_capability_must_be_required_and_not_merely_declared() {
-    let declared = "capabilities = [\"world_sites\", \"structure_operations\"]\n";
+    let declared = "capabilities = [\"world_structures\"]\n";
     let root = package(&manifest("0.7.0", declared), b"component-bytes");
     let error = load_package(root.path(), &PluginLimits::default())
         .expect_err("a feature capability without its feature must be refused");
-    assert!(
-        error
-            .to_string()
-            .contains("world_sites capability requires required_features"),
-        "the refusal names the rule: {error}"
-    );
+    assert!(matches!(error, PackageError::Manifest { .. }));
 
     let root = package(
         &manifest(
             "0.7.0",
-            "capabilities = [\"world_sites\", \"structure_operations\"]\nrequired_features = [\"world_sites\", \"structure_operations\"]\n",
+            "capabilities = [\"world_structures\"]\nrequired_features = [\"world_structures\"]\n",
         ),
         b"component-bytes",
     );
     let loaded = load_package(root.path(), &PluginLimits::default()).expect("package loads");
     assert_eq!(
         loaded.required_features().to_vec(),
-        vec!["world_sites".to_owned(), "structure_operations".to_owned()]
+        vec!["world_structures".to_owned()]
     );
 
     let root = package(
-        &manifest("0.7.0", "required_features = [\"warehouse_v2\"]\n"),
+        &manifest("0.7.0", "required_features = [\"unknown_feature\"]\n"),
         b"component-bytes",
     );
     let error = load_package(root.path(), &PluginLimits::default())
         .expect_err("a feature core does not know must be refused, not ignored");
-    assert!(
-        error
-            .to_string()
-            .contains("unsupported required plugin feature"),
-        "the refusal names the feature: {error}"
-    );
-}
-
-#[test]
-fn a_deployed_package_publishes_the_facts_core_reads() {
-    let root = package(
-        &manifest(
-            "0.7.0",
-            "capabilities = [\"world_sites\", \"structure_operations\"]\nrequired_features = [\"world_sites\", \"structure_operations\"]\n",
-        ),
-        b"component-bytes",
-    );
-    let loaded = load_package(root.path(), &PluginLimits::default()).expect("package loads");
-
-    let facts = loaded.to_plugin_package();
-    assert_eq!(facts.plugin_id(), "hello");
-    assert_eq!(
-        facts.package_dir(),
-        root.path(),
-        "core reads a package's authored catalog from the directory it was loaded from"
-    );
-    assert!(
-        facts.declares_feature("world_sites") && facts.declares_feature("structure_operations"),
-        "the settlement catalog owner is the package that required both features"
-    );
-    assert!(
-        !facts.declares_feature("inventory_transfers"),
-        "a feature the manifest never required is not reported"
-    );
-}
-
-#[test]
-fn a_component_worldgen_section_reaches_the_canonical_profile() {
-    let root = package(&manifest("0.7.0", WORLDGEN), b"component-bytes");
-    let loaded = load_package(root.path(), &PluginLimits::default()).expect("package loads");
-
-    assert_eq!(
-        loaded.worldgen_ore_profile(),
-        Some(PluginWorldgenOreProfile::RealisticDeposits),
-        "the deployed ore profile survives a component deployment"
-    );
-    let plan = loaded
-        .worldgen_settlement_plan()
-        .expect("the declared settlement profile is a plan");
-    assert_eq!(
-        plan.owner_plugin_id(),
-        "hello",
-        "the plan is owned by the package that declared it"
-    );
-    assert_eq!(plan.profile().contract_name(), "plains_village_prototype");
-    assert_eq!(plan.buildings().len(), 1, "the authored buildings are kept");
-    assert_eq!(plan.buildings()[0].id(), "plaza");
-    assert_eq!(plan.buildings()[0].role().contract_name(), "meeting_point");
-    assert_eq!(
-        plan.inhabitants()[0].building_id(),
-        "plaza",
-        "the authored inhabitant still references its building"
-    );
-    assert_eq!(
-        plan.extensions()[0].id(),
-        "hello:annex",
-        "an extension is namespaced to the package that declared it"
-    );
-
-    // A section that names no profile would silently mean "vanilla", and a
-    // profile core does not know would silently mean "no ore"; both fail here.
-    let root = package(&manifest("0.7.0", "[worldgen]\n"), b"component-bytes");
-    let error = load_package(root.path(), &PluginLimits::default())
-        .expect_err("an empty worldgen section must be refused");
-    assert!(
-        error
-            .to_string()
-            .contains("worldgen must declare ore_profile or settlement_profile"),
-        "the refusal names the rule: {error}"
-    );
-
-    let root = package(
-        &manifest("0.7.0", "[worldgen]\nore_profile = \"unknown\"\n"),
-        b"component-bytes",
-    );
-    let error = load_package(root.path(), &PluginLimits::default())
-        .expect_err("an unknown ore profile must be refused, not ignored");
-    assert!(
-        matches!(error, PackageError::Manifest { .. }),
-        "the refusal is about the manifest: {error}"
-    );
+    assert!(matches!(error, PackageError::Manifest { .. }));
 }

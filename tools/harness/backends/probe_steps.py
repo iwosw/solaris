@@ -38,8 +38,13 @@ class ProbeSteps:
             entry["error"] = str(error)
             raise
 
-    def observe(self) -> dict[str, Any]:
+    def observe(self, *, wait_for_play: bool = False) -> dict[str, Any]:
         state = self.call("minecraft_observe")
+        if wait_for_play and state.get("in_play") is not True:
+            # Only declared respawn/travel boundaries may await a rebuilt world.
+            # The Play tool remains bounded and errors/timeouts still fail.
+            self.call("minecraft_wait_for_play", {"timeout_seconds": self.remaining()})
+            state = self.call("minecraft_observe")
         self.check("in_play", state.get("in_play") is True)
         return state
 
@@ -48,13 +53,14 @@ class ProbeSteps:
         if not condition:
             raise RuntimeError(f"{self.report['id']} assertion failed: {name}")
 
-    def wait(self, predicate: Callable[[dict[str, Any]], bool], label: str) -> dict[str, Any]:
-        state = self.observe()
+    def wait(self, predicate: Callable[[dict[str, Any]], bool], label: str,
+             *, wait_for_play: bool = False) -> dict[str, Any]:
+        state = self.observe(wait_for_play=wait_for_play)
         while not predicate(state):
             self.call("minecraft_wait_for_state_change", {
                 "observed_version": state["state_version"], "timeout_seconds": self.remaining(),
             })
-            state = self.observe()
+            state = self.observe(wait_for_play=wait_for_play)
         self.check(label, True)
         return state
 

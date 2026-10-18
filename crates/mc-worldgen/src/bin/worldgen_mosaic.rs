@@ -4,17 +4,18 @@ use std::process::ExitCode;
 use std::sync::Arc;
 
 use mc_world::BlockRegistry;
-use mc_worldgen::{
-    MosaicConfig, TellusWorldgenSettings, TerrainGenerator, WorldgenMode, render_mosaic,
-    write_mosaic,
+use mc_worldgen::earth::{
+    EarthRuntime,
+    prepared::{PrepareOptions, PreparedWorld},
 };
+use mc_worldgen::{MosaicConfig, render_earth_mosaic, write_mosaic};
 
-const USAGE: &str = "usage: worldgen_mosaic --seed <i64> --center-x <i32> --center-z <i32> \\
+const USAGE: &str = "usage: worldgen_mosaic --world-dir <path> --center-x <i32> --center-z <i32> \\
     --extent <u32> --blocks-per-pixel <u32> --output-dir <path>";
 
 #[derive(Debug)]
 struct Args {
-    seed: i64,
+    world_dir: PathBuf,
     center_x: i32,
     center_z: i32,
     extent: u32,
@@ -38,12 +39,12 @@ fn run() -> Result<(), String> {
         BlockRegistry::from_report(&mc_data::blocks::solaris_required_blocks_report())
             .map_err(|error| format!("failed to build production block registry: {error}"))?,
     );
-    let generator = TerrainGenerator::with_worldgen_mode(
-        args.seed,
-        registry,
-        WorldgenMode::TellusLike(TellusWorldgenSettings::default()),
+    let world = Arc::new(
+        PreparedWorld::open(&args.world_dir, None, PrepareOptions::default())
+            .map_err(|error| error.to_string())?,
     );
-    let images = render_mosaic(
+    let generator = EarthRuntime::new(world, registry, None).map_err(|error| error.to_string())?;
+    let images = render_earth_mosaic(
         &generator,
         &MosaicConfig {
             center_x: args.center_x,
@@ -55,7 +56,7 @@ fn run() -> Result<(), String> {
     .map_err(|error| error.to_string())?;
     write_mosaic(&images, &args.output_dir).map_err(|error| error.to_string())?;
     println!(
-        "wrote {}x{} Tellus mosaic covering {}x{} blocks to {}",
+        "wrote {}x{} prepared Earth mosaic covering {}x{} blocks to {}",
         images.width,
         images.height,
         args.extent,
@@ -66,7 +67,7 @@ fn run() -> Result<(), String> {
 }
 
 fn parse_args(arguments: impl IntoIterator<Item = String>) -> Result<Args, String> {
-    let mut seed = None;
+    let mut world_dir = None;
     let mut center_x = None;
     let mut center_z = None;
     let mut extent = None;
@@ -82,7 +83,7 @@ fn parse_args(arguments: impl IntoIterator<Item = String>) -> Result<Args, Strin
             .next()
             .ok_or_else(|| format!("missing value for {flag}"))?;
         match flag.as_str() {
-            "--seed" => seed = Some(parse_value(&flag, &value)?),
+            "--world-dir" => world_dir = Some(PathBuf::from(value)),
             "--center-x" => center_x = Some(parse_value(&flag, &value)?),
             "--center-z" => center_z = Some(parse_value(&flag, &value)?),
             "--extent" => extent = Some(parse_value(&flag, &value)?),
@@ -93,7 +94,7 @@ fn parse_args(arguments: impl IntoIterator<Item = String>) -> Result<Args, Strin
     }
 
     Ok(Args {
-        seed: seed.ok_or("missing required --seed")?,
+        world_dir: world_dir.ok_or("missing required --world-dir")?,
         center_x: center_x.ok_or("missing required --center-x")?,
         center_z: center_z.ok_or("missing required --center-z")?,
         extent: extent.ok_or("missing required --extent")?,
@@ -109,15 +110,4 @@ where
     value
         .parse()
         .map_err(|_| format!("invalid value for {flag}: {value}"))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn all_arguments_are_explicit_and_required() {
-        let error = parse_args(["--seed".to_owned(), "712816".to_owned()]).unwrap_err();
-        assert_eq!(error, "missing required --center-x");
-    }
 }

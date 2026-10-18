@@ -40,9 +40,19 @@ pub(crate) fn decode(
             endpoint: endpoint(query.endpoint),
             expected_revision: query.expected_revision,
         },
+        wire::InventoryOperation::PlacementRoom(query) => {
+            ScriptOwnedInventoryOperation::PlacementRoom {
+                source: expected_revision(query.source)?,
+                source_slot: query.source_slot,
+                destination: expected_revision(query.destination)?,
+            }
+        }
         wire::InventoryOperation::Transfer(transfer) => ScriptOwnedInventoryOperation::Transfer {
             operation_id: transfer.operation_id,
             actor_id: transfer.actor_id,
+            execution_permit: transfer.execution_permit.map(|permit| {
+                mc_script::ScriptNpcExecutionPermit::new(permit.route_ref, permit.executor_epoch)
+            }),
             transfers: transfer
                 .transfers
                 .into_iter()
@@ -54,11 +64,47 @@ pub(crate) fn decode(
                 .map(expected_revision)
                 .collect::<Result<Vec<_>, _>>()?,
         },
+        wire::InventoryOperation::ConsumeReservation(transfer) => {
+            ScriptOwnedInventoryOperation::ConsumeReservation {
+                operation_id: transfer.operation_id,
+                actor_id: transfer.actor_id,
+                execution_permit: transfer.execution_permit.map(|permit| {
+                    mc_script::ScriptNpcExecutionPermit::new(
+                        permit.route_ref,
+                        permit.executor_epoch,
+                    )
+                }),
+                reservation_ref: transfer.reservation_ref,
+                expected_reservation_revision: transfer.expected_reservation_revision,
+                portion: transfer.portion,
+                resource_plan: resource_plan(transfer.resource_plan),
+                transfers: transfer
+                    .transfers
+                    .into_iter()
+                    .map(owned_item_transfer)
+                    .collect(),
+                expected_revisions: transfer
+                    .expected_revisions
+                    .into_iter()
+                    .map(expected_revision)
+                    .collect::<Result<Vec<_>, _>>()?,
+            }
+        }
         wire::InventoryOperation::Reserve(reserve) => ScriptOwnedInventoryOperation::Reserve {
             operation_id: reserve.operation_id,
             endpoint: endpoint(reserve.endpoint),
             resource_plan: resource_plan(reserve.resource_plan),
             expected_revision: fence(reserve.expected_revision)?,
+        },
+        wire::InventoryOperation::ReservationStatus(query) => {
+            ScriptOwnedInventoryOperation::ReservationStatus {
+                reservation_ref: query.reservation_ref,
+            }
+        }
+        wire::InventoryOperation::Release(release) => ScriptOwnedInventoryOperation::Release {
+            operation_id: release.operation_id,
+            reservation_ref: release.reservation_ref,
+            expected_revision: release.expected_revision,
         },
     })
 }
@@ -70,6 +116,23 @@ pub(crate) fn encode_result(value: &ScriptOwnedInventoryResult) -> Option<wire::
         ScriptOwnedInventoryResult::Snapshot { inventory } => {
             wire::InventoryResult::Snapshot(snapshot(inventory)?)
         }
+        ScriptOwnedInventoryResult::PlacementRoom {
+            source,
+            source_slot,
+            destination,
+            slots,
+        } => wire::InventoryResult::PlacementRoom(wire::InventoryPlacementRoom {
+            source: contract_expected_revision(source)?,
+            source_slot: *source_slot,
+            destination: contract_expected_revision(destination)?,
+            slots: slots
+                .iter()
+                .map(|slot| wire::InventoryPlacementSlot {
+                    slot: slot.slot,
+                    room: slot.room,
+                })
+                .collect(),
+        }),
         ScriptOwnedInventoryResult::Transfer { inventories } => wire::InventoryResult::Transfer(
             inventories
                 .iter()
@@ -79,6 +142,16 @@ pub(crate) fn encode_result(value: &ScriptOwnedInventoryResult) -> Option<wire::
         ScriptOwnedInventoryResult::Reservation { reservation } => {
             wire::InventoryResult::Reservation(reservation_snapshot(reservation)?)
         }
+        ScriptOwnedInventoryResult::ReservedTransfer {
+            reservation,
+            inventories,
+        } => wire::InventoryResult::ReservedTransfer(wire::InventoryReservedTransfer {
+            reservation: reservation_snapshot(reservation)?,
+            inventories: inventories
+                .iter()
+                .map(snapshot)
+                .collect::<Option<Vec<_>>>()?,
+        }),
         _ => return None,
     })
 }
@@ -87,8 +160,8 @@ pub(crate) fn encode_result(value: &ScriptOwnedInventoryResult) -> Option<wire::
 /// the host checks a callback's answer against.
 ///
 /// A record carries many strings rather than one, and the server's own DTO
-/// already bounds every one of them - a 128-byte warehouse handle, a 64-byte
-/// resident handle, a 64-byte operation id, 128-byte resource ids - so the whole
+/// already bounds every one of them - a 128-byte dimension identifier, a 64-byte
+/// npc handle, a 64-byte operation id, 128-byte resource ids - so the whole
 /// record is bounded by construction and charging every string here would refuse
 /// a record the DTO admits. What this answers is the longest single string the
 /// guest put in the record, exactly as the rest of a staged batch is charged its
@@ -96,8 +169,19 @@ pub(crate) fn encode_result(value: &ScriptOwnedInventoryResult) -> Option<wire::
 pub(crate) fn max_text_bytes(value: &wire::InventoryOperation) -> usize {
     match value {
         wire::InventoryOperation::Query(query) => endpoint_text_bytes(&query.endpoint),
+        wire::InventoryOperation::PlacementRoom(query) => {
+            endpoint_text_bytes(&query.source.endpoint)
+                .max(endpoint_text_bytes(&query.destination.endpoint))
+                .max(query.source.fence.snapshot_hash.len())
+                .max(query.destination.fence.snapshot_hash.len())
+        }
         wire::InventoryOperation::Transfer(transfer) => {
-            let mut longest = transfer.operation_id.len();
+            let mut longest = transfer.operation_id.len().max(
+                transfer
+                    .execution_permit
+                    .as_ref()
+                    .map_or(0, |permit| permit.route_ref.len()),
+            );
             for item in &transfer.transfers {
                 longest = longest
                     .max(endpoint_text_bytes(&item.source))
@@ -107,6 +191,34 @@ pub(crate) fn max_text_bytes(value: &wire::InventoryOperation) -> usize {
                 longest = longest
                     .max(endpoint_text_bytes(&expected.endpoint))
                     .max(expected.fence.snapshot_hash.len());
+            }
+            longest
+        }
+        wire::InventoryOperation::ConsumeReservation(transfer) => {
+            let mut longest = transfer
+                .operation_id
+                .len()
+                .max(transfer.reservation_ref.len())
+                .max(
+                    transfer
+                        .execution_permit
+                        .as_ref()
+                        .map_or(0, |permit| permit.route_ref.len()),
+                );
+            for item in &transfer.transfers {
+                longest = longest
+                    .max(endpoint_text_bytes(&item.source))
+                    .max(endpoint_text_bytes(&item.destination));
+            }
+            for expected in &transfer.expected_revisions {
+                longest = longest
+                    .max(endpoint_text_bytes(&expected.endpoint))
+                    .max(expected.fence.snapshot_hash.len());
+            }
+            for portion in &transfer.resource_plan.portions {
+                for material in &portion.materials {
+                    longest = longest.max(material.resource_id.len());
+                }
             }
             longest
         }
@@ -123,6 +235,11 @@ pub(crate) fn max_text_bytes(value: &wire::InventoryOperation) -> usize {
             }
             longest
         }
+        wire::InventoryOperation::ReservationStatus(query) => query.reservation_ref.len(),
+        wire::InventoryOperation::Release(release) => release
+            .operation_id
+            .len()
+            .max(release.reservation_ref.len()),
     }
 }
 
@@ -131,9 +248,9 @@ pub(crate) fn max_text_bytes(value: &wire::InventoryOperation) -> usize {
 fn endpoint_text_bytes(value: &wire::InventoryEndpoint) -> usize {
     match value {
         wire::InventoryEndpoint::PlayerInventory(_) => 0,
-        wire::InventoryEndpoint::Warehouse(handle)
-        | wire::InventoryEndpoint::ResidentEquipment(handle)
-        | wire::InventoryEndpoint::ResidentCarry(handle) => handle.len(),
+        wire::InventoryEndpoint::Container(container) => container.dimension.len(),
+        wire::InventoryEndpoint::NpcEquipment(handle)
+        | wire::InventoryEndpoint::NpcCarry(handle) => handle.len(),
     }
 }
 
@@ -143,31 +260,46 @@ fn endpoint(value: wire::InventoryEndpoint) -> ScriptInventoryEndpoint {
         wire::InventoryEndpoint::PlayerInventory(player_id) => {
             ScriptInventoryEndpoint::PlayerInventory { player_id }
         }
-        wire::InventoryEndpoint::Warehouse(handle) => ScriptInventoryEndpoint::Warehouse { handle },
-        wire::InventoryEndpoint::ResidentEquipment(handle) => {
-            ScriptInventoryEndpoint::ResidentEquipment { handle }
+        wire::InventoryEndpoint::Container(container) => ScriptInventoryEndpoint::Container {
+            dimension: container.dimension,
+            position: mc_script::ScriptBlockPosition::new(
+                container.position.x,
+                container.position.y,
+                container.position.z,
+            ),
+        },
+        wire::InventoryEndpoint::NpcEquipment(handle) => {
+            ScriptInventoryEndpoint::NpcEquipment { handle }
         }
-        wire::InventoryEndpoint::ResidentCarry(handle) => {
-            ScriptInventoryEndpoint::ResidentCarry { handle }
-        }
+        wire::InventoryEndpoint::NpcCarry(handle) => ScriptInventoryEndpoint::NpcCarry { handle },
     }
 }
 
 /// One server endpoint as the contract names it, or nothing for a variant this
 /// contract does not name yet.
-fn contract_endpoint(value: &ScriptInventoryEndpoint) -> Option<wire::InventoryEndpoint> {
+pub(crate) fn contract_endpoint(
+    value: &ScriptInventoryEndpoint,
+) -> Option<wire::InventoryEndpoint> {
     Some(match value {
         ScriptInventoryEndpoint::PlayerInventory { player_id } => {
             wire::InventoryEndpoint::PlayerInventory(*player_id)
         }
-        ScriptInventoryEndpoint::Warehouse { handle } => {
-            wire::InventoryEndpoint::Warehouse(handle.clone())
+        ScriptInventoryEndpoint::Container {
+            dimension,
+            position,
+        } => wire::InventoryEndpoint::Container(wire::ContainerEndpoint {
+            dimension: dimension.clone(),
+            position: crate::bindings::solaris::plugin::types::BlockPosition {
+                x: position.x,
+                y: position.y,
+                z: position.z,
+            },
+        }),
+        ScriptInventoryEndpoint::NpcEquipment { handle } => {
+            wire::InventoryEndpoint::NpcEquipment(handle.clone())
         }
-        ScriptInventoryEndpoint::ResidentEquipment { handle } => {
-            wire::InventoryEndpoint::ResidentEquipment(handle.clone())
-        }
-        ScriptInventoryEndpoint::ResidentCarry { handle } => {
-            wire::InventoryEndpoint::ResidentCarry(handle.clone())
+        ScriptInventoryEndpoint::NpcCarry { handle } => {
+            wire::InventoryEndpoint::NpcCarry(handle.clone())
         }
         _ => return None,
     })
@@ -267,7 +399,7 @@ fn item_slot(value: &mc_script::ScriptInventorySlot) -> Option<wire::InventorySl
 }
 
 /// One server item as the contract names it, components included.
-fn item(value: &mc_script::ScriptInventoryItem) -> Option<wire::InventoryItem> {
+pub(crate) fn item(value: &mc_script::ScriptInventoryItem) -> Option<wire::InventoryItem> {
     Some(wire::InventoryItem {
         resource_id: value.resource_id.clone(),
         count: value.count,
@@ -282,6 +414,16 @@ fn item(value: &mc_script::ScriptInventoryItem) -> Option<wire::InventoryItem> {
             .collect(),
         custom_name: value.custom_name.clone(),
         item_model: value.item_model.clone(),
+        max_damage: value.max_damage,
+        custom_data: value.custom_data.clone(),
+        stew_effects: value
+            .stew_effects
+            .iter()
+            .map(|effect| wire::InventoryStewEffect {
+                id: effect.id.clone(),
+                duration: effect.duration,
+            })
+            .collect(),
     })
 }
 
@@ -307,5 +449,46 @@ fn reservation_snapshot(
         bound_to: value.bound_to.clone(),
         released: value.released,
         receipt_watermark: value.receipt_watermark,
+    })
+}
+
+/// Actual acknowledged native death custody, preserving every item component.
+pub(super) fn encode_npc_death_cargo_receipt(
+    value: &mc_script::ScriptNpcDeathCargoReceipt,
+) -> Option<wire::NpcDeathCargoReceipt> {
+    Some(wire::NpcDeathCargoReceipt {
+        receipt_ref: value.receipt_ref.clone(),
+        handle: value.handle.clone(),
+        entity_uuid: value.entity_uuid.clone(),
+        dimension: value.dimension.clone(),
+        position: crate::bindings::solaris::plugin::types::Position {
+            x: value.position.x(),
+            y: value.position.y(),
+            z: value.position.z(),
+        },
+        yaw: value.yaw,
+        pitch: value.pitch,
+        death_tick: value.death_tick,
+        source_inventory_revision: value.source_inventory_revision,
+        executor_epoch: value.executor_epoch,
+        world_decision_id: value.world_decision_id,
+        loot: value
+            .loot
+            .iter()
+            .map(|loot| {
+                Some(wire::NpcDeathLoot {
+                    inventory: match loot.inventory {
+                        mc_script::ScriptNpcDeathInventory::Carry => wire::NpcDeathInventory::Carry,
+                        mc_script::ScriptNpcDeathInventory::Equipment => {
+                            wire::NpcDeathInventory::Equipment
+                        }
+                        _ => return None,
+                    },
+                    slot: loot.slot,
+                    entity_uuid: loot.entity_uuid.clone(),
+                    item: item(&loot.item)?,
+                })
+            })
+            .collect::<Option<Vec<_>>>()?,
     })
 }

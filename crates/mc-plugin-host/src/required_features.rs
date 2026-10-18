@@ -1,11 +1,9 @@
 //! The manifest's `required_features` rule, for every package the host loads.
 //!
 //! A capability name is what a package asks the operator to grant; a required
-//! feature is what the package tells core about its authored data - the durable
-//! subsystems it cannot run without, which core reads before a world exists (a
-//! deployed settlement profile, for one). The two lists share one vocabulary, and
-//! a package that declares a feature-capability without also requiring it would
-//! silently ship data core is not told to load, so the pair is checked together.
+//! feature declares a generic durable engine subsystem that the package needs.
+//! The two lists share one vocabulary; a feature-capability must also appear in
+//! required_features, so startup discovery and command admission agree.
 //!
 //! This is the component deployment's only required-feature rule, so one package
 //! cannot be admitted with data core is not told to load.
@@ -13,14 +11,13 @@
 use mc_script::{MAX_MANIFEST_CAPABILITIES, validate_script_id_value};
 
 /// Capability names a package must also declare in `required_features`.
-const FEATURE_CAPABILITIES: [&str; 7] = [
+const FEATURE_CAPABILITIES: [&str; 6] = [
     "storage_batches",
     "inventory_transfers",
-    "persistent_residents",
-    "resident_work",
-    "resident_orders",
-    "world_sites",
-    "structure_operations",
+    "persistent_npcs",
+    "npc_work",
+    "npc_orders",
+    "world_structures",
 ];
 
 /// Validate one manifest's `required_features` against its own `capabilities`.

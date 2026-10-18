@@ -2,10 +2,10 @@
 //!
 //! The runtime that answers a question lives in another crate, so what is pinned
 //! here is only the boundary's own contract: one bounded FIFO shared with events
-//! and control input, one absolute deadline, one in-flight bound, one live ticket
-//! per decision, and one commit point that refuses everything a game owner may not
-//! apply. Nothing here sleeps or waits on a clock: every deadline is injected, and
-//! every host answer is taken from the boundary's own FIFO by this test itself.
+//! and control input, one absolute host-answer deadline, one in-flight bound, one
+//! live ticket per decision, and one commit point that refuses everything a game
+//! owner may not apply. Nothing here sleeps or waits on a clock: deadlines and
+//! answer times are injected, and every host answer comes from the boundary FIFO.
 
 use std::num::NonZeroUsize;
 use std::time::{Duration, Instant};
@@ -103,7 +103,16 @@ fn take_request(endpoint: &mut ScriptHostEndpoint) -> precommit::Request {
 /// Answer the next question on the FIFO, the way the runtime does.
 fn answer_next(endpoint: &mut ScriptHostEndpoint, decision: HookDecision) {
     take_request(endpoint)
-        .answer(decision)
+        .answer(decision, Vec::new())
+        .expect("a live requester");
+}
+
+/// Model host receipt strictly before the injected deadline, without sleeping.
+fn answer_before_deadline(endpoint: &mut ScriptHostEndpoint, decision: HookDecision) {
+    let request = take_request(endpoint);
+    let answered_at = request.deadline() - Duration::from_nanos(1);
+    request
+        .answer_at(decision, Vec::new(), answered_at)
         .expect("a live requester");
 }
 
@@ -156,7 +165,7 @@ async fn a_registered_question_reaches_the_host_and_commits_once() {
     assert_eq!(context.edits().len(), 1);
     assert_eq!(context.edits()[0].proposed_state, 4);
     request
-        .answer(HookDecision::Keep)
+        .answer(HookDecision::Keep, Vec::new())
         .expect("a live requester");
 
     let mut approval = pending.resolve().await.expect("the host answered");
@@ -168,6 +177,49 @@ async fn a_registered_question_reaches_the_host_and_commits_once() {
     assert_eq!(approval.consume(), Err(HookFailure::Stale));
 }
 
+#[derive(Debug)]
+struct MovedKey(std::sync::atomic::AtomicBool);
+
+impl precommit::StorageVersionFence for MovedKey {
+    fn is_current(&self) -> bool {
+        !self.0.load(std::sync::atomic::Ordering::Acquire)
+    }
+}
+
+#[tokio::test]
+async fn an_approval_carries_its_storage_guards_and_the_binding_every_copy_shares() {
+    let (boundary, mut endpoint) = script_boundary_pair(nonzero(4), nonzero(4));
+    boundary
+        .set_precommit_hooks(vec![judge(HookKind::Build)])
+        .expect("a roster of one");
+    let pending = boundary
+        .begin_precommit(build_question())
+        .expect("a registered boundary queues the question");
+    take_request(&mut endpoint)
+        .answer(
+            HookDecision::Keep,
+            vec![precommit::HookStorageVersionGuards::new(
+                "judge".to_owned(),
+                vec![ScriptPluginStorageVersionGuard::new("war".to_owned(), 7)],
+            )],
+        )
+        .expect("a live requester");
+
+    let approval = pending.resolve().await.expect("the host answered");
+    assert_eq!(approval.expected_plugin_storage_versions().len(), 1);
+    assert!(
+        approval.storage_fence().is_none(),
+        "binding is the storage owner's act, never the boundary's"
+    );
+    let moved = Arc::new(MovedKey(std::sync::atomic::AtomicBool::new(false)));
+    let bound = approval.with_storage_fence(moved.clone());
+    let copy = bound.clone();
+    assert!(copy.storage_fence().expect("bound").is_current());
+    moved.0.store(true, std::sync::atomic::Ordering::Release);
+    assert!(!bound.storage_fence().expect("bound").is_current());
+    assert!(!copy.storage_fence().expect("bound").is_current());
+}
+
 #[tokio::test]
 async fn a_cancelled_decision_is_refused_at_the_commit() {
     let (boundary, mut endpoint) = script_boundary_pair(nonzero(4), nonzero(4));
@@ -176,9 +228,9 @@ async fn a_cancelled_decision_is_refused_at_the_commit() {
         .expect("a roster of one");
 
     let pending = boundary
-        .begin_precommit(build_question())
+        .begin_precommit_with_deadline(build_question(), Instant::now())
         .expect("a registered boundary queues the question");
-    answer_next(&mut endpoint, HookDecision::Cancel);
+    answer_before_deadline(&mut endpoint, HookDecision::Cancel);
 
     let mut approval = pending.resolve().await.expect("the host answered");
     // The decision is readable before the commit, so an owner can refuse the
@@ -211,19 +263,19 @@ async fn a_decision_the_question_cannot_carry_is_refused() {
 }
 
 #[tokio::test]
-async fn an_expired_approval_is_refused_at_the_commit() {
-    // The deadline is injected as already passed. The direct path answers at once,
-    // so what is exercised here is the commit's own expiry fence rather than a
-    // race against a clock.
+async fn an_already_expired_direct_question_is_refused_at_admission() {
+    // With no host, direct admission is immediate, but cannot accept a request
+    // whose original preview/queue-inclusive deadline was already exhausted.
     let (boundary, _endpoint) = script_boundary_pair(nonzero(4), nonzero(4));
-    let mut approval = boundary
-        .begin_precommit_with_deadline(build_question(), Instant::now())
-        .expect("no registration is no question")
-        .resolve()
-        .await
-        .expect("the direct path decides immediately");
-    assert_eq!(approval.decision(), HookDecision::Keep);
-    assert_eq!(approval.consume(), Err(HookFailure::Expired));
+    assert_eq!(
+        boundary
+            .begin_precommit_with_deadline(build_question(), Instant::now())
+            .expect("no registration is no question")
+            .resolve()
+            .await
+            .err(),
+        Some(HookFailure::Expired)
+    );
 }
 
 #[tokio::test]
@@ -246,6 +298,72 @@ async fn a_question_the_host_never_answers_ends_at_its_deadline() {
 }
 
 #[tokio::test]
+async fn a_timely_host_answer_survives_a_later_native_tick_boundary() {
+    let (boundary, mut endpoint) = script_boundary_pair(nonzero(4), nonzero(4));
+    boundary
+        .set_precommit_hooks(vec![judge(HookKind::Build)])
+        .unwrap();
+    // Inject an elapsed deadline and receipt just before it. Both resolving the
+    // already-buffered answer and native consumption happen after that deadline.
+    let deadline = Instant::now();
+    let pending = boundary
+        .begin_precommit_with_deadline(build_question(), deadline)
+        .unwrap();
+    answer_before_deadline(&mut endpoint, HookDecision::Keep);
+    let mut approval = pending.resolve().await.expect("timely host receipt");
+    assert!(Instant::now() >= deadline);
+    let mut copy = approval.clone();
+    assert_eq!(approval.consume(), Ok(HookDecision::Keep));
+    assert_eq!(copy.consume(), Err(HookFailure::Stale));
+}
+
+#[tokio::test]
+async fn a_late_buffered_host_answer_is_expired_even_when_already_ready() {
+    for offset in [Duration::ZERO, Duration::from_nanos(1)] {
+        let (boundary, mut endpoint) = script_boundary_pair(nonzero(4), nonzero(4));
+        boundary
+            .set_precommit_hooks(vec![judge(HookKind::Build)])
+            .unwrap();
+        let deadline = Instant::now();
+        let pending = boundary
+            .begin_precommit_with_deadline(build_question(), deadline)
+            .unwrap();
+        take_request(&mut endpoint)
+            .answer_at(HookDecision::Keep, Vec::new(), deadline + offset)
+            .unwrap();
+        assert_eq!(pending.resolve().await.err(), Some(HookFailure::Expired));
+    }
+}
+
+#[test]
+fn nonblocking_resolution_keeps_timely_answers_but_refuses_late_receipt() {
+    let (boundary, mut endpoint) = script_boundary_pair(nonzero(4), nonzero(4));
+    boundary
+        .set_precommit_hooks(vec![judge(HookKind::Build)])
+        .unwrap();
+    let deadline = Instant::now();
+    let mut pending = boundary
+        .begin_precommit_with_deadline(build_question(), deadline)
+        .unwrap();
+    answer_before_deadline(&mut endpoint, HookDecision::Keep);
+    let mut approval = pending.try_resolve().unwrap().expect("timely receipt");
+    assert_eq!(approval.consume(), Ok(HookDecision::Keep));
+    assert_eq!(
+        pending.try_resolve().unwrap().err(),
+        Some(HookFailure::Stale)
+    );
+
+    let mut late = boundary
+        .begin_precommit_with_deadline(build_question(), deadline)
+        .unwrap();
+    answer_next(&mut endpoint, HookDecision::Keep);
+    assert_eq!(
+        late.try_resolve().unwrap().err(),
+        Some(HookFailure::Expired)
+    );
+}
+
+#[tokio::test]
 async fn a_roster_change_makes_a_live_ticket_stale() {
     let (boundary, mut endpoint) = script_boundary_pair(nonzero(4), nonzero(4));
     let hooks = vec![judge(HookKind::Damage)];
@@ -254,9 +372,9 @@ async fn a_roster_change_makes_a_live_ticket_stale() {
         .expect("a roster of one");
 
     let pending = boundary
-        .begin_precommit(damage_question(20.0))
+        .begin_precommit_with_deadline(damage_question(20.0), Instant::now())
         .expect("a registered boundary queues the question");
-    answer_next(&mut endpoint, HookDecision::Replace(5.0));
+    answer_before_deadline(&mut endpoint, HookDecision::Replace(5.0));
     let mut approval = pending.resolve().await.expect("the host answered");
     assert_eq!(approval.amount(), Some(5.0));
 
@@ -381,12 +499,26 @@ async fn a_revoked_source_registration_makes_the_decision_stale() {
     // authority it came from was withdrawn: the decision is refused, so authority
     // that no longer exists can never be spent.
     let pending = boundary
-        .begin_precommit(context)
+        .begin_precommit_with_deadline(context, Instant::now())
         .expect("the source still held its registration when it asked");
-    answer_next(&mut endpoint, HookDecision::Keep);
+    answer_before_deadline(&mut endpoint, HookDecision::Keep);
     let mut later = pending.resolve().await.expect("the host answered");
     endpoint.unregister_plugin_routes("actor-plugin");
     assert_eq!(later.consume(), Err(HookFailure::Stale));
+}
+
+#[test]
+fn a_direct_approval_still_rechecks_its_source_registration() {
+    let (boundary, endpoint) = script_boundary_pair(nonzero(4), nonzero(4));
+    endpoint
+        .register_plugin_routes(&source_manifest("actor-plugin", "entity_damage"))
+        .unwrap();
+    let mut pending = boundary
+        .begin_precommit(plugin_damage_question("actor-plugin", 20.0))
+        .unwrap();
+    let mut approval = pending.try_resolve().unwrap().unwrap();
+    endpoint.unregister_plugin_routes("actor-plugin");
+    assert_eq!(approval.consume(), Err(HookFailure::Stale));
 }
 
 #[tokio::test]
@@ -526,9 +658,81 @@ async fn the_deadline_created_for_a_question_covers_the_whole_chain() {
     assert_eq!(context.kind(), "minecraft:generic");
     assert_eq!(context.source(), &HookActor::Environment);
     request
-        .answer(HookDecision::Keep)
+        .answer(HookDecision::Keep, Vec::new())
         .expect("a live requester");
 
     let mut approval = pending.resolve().await.expect("the host answered");
     assert_eq!(approval.consume(), Ok(HookDecision::Keep));
+}
+
+#[test]
+fn nonblocking_resolution_works_without_a_tokio_runtime_and_preserves_the_single_use_ticket() {
+    let (boundary, mut endpoint) = script_boundary_pair(nonzero(4), nonzero(4));
+    boundary
+        .set_precommit_hooks(vec![judge(HookKind::Build)])
+        .unwrap();
+    let mut pending = boundary.begin_precommit(build_question()).unwrap();
+    assert!(pending.try_resolve().is_none());
+    let guards = vec![precommit::HookStorageVersionGuards::new(
+        "judge".to_owned(),
+        vec![ScriptPluginStorageVersionGuard::new("claim".to_owned(), 7)],
+    )];
+    take_request(&mut endpoint)
+        .answer(HookDecision::Keep, guards.clone())
+        .unwrap();
+    let mut approval = pending.try_resolve().expect("delivered answer").unwrap();
+    assert_eq!(approval.expected_plugin_storage_versions(), guards);
+    assert_eq!(
+        pending.try_resolve().unwrap().err(),
+        Some(HookFailure::Stale)
+    );
+    let mut copy = approval.clone();
+    assert_eq!(approval.consume(), Ok(HookDecision::Keep));
+    assert_eq!(copy.consume(), Err(HookFailure::Stale));
+}
+
+#[test]
+fn nonblocking_resolution_refuses_expired_failed_and_abandoned_questions() {
+    let (boundary, mut endpoint) = script_boundary_pair(nonzero(4), nonzero(4));
+    boundary
+        .set_precommit_hooks(vec![judge(HookKind::Build)])
+        .unwrap();
+    let mut expired = boundary
+        .begin_precommit_with_deadline(build_question(), Instant::now())
+        .unwrap();
+    let question = take_request(&mut endpoint);
+    assert_eq!(
+        expired.try_resolve().unwrap().err(),
+        Some(HookFailure::Expired)
+    );
+    assert_eq!(
+        question.answer(HookDecision::Keep, Vec::new()),
+        Err(precommit::HookAnswerError::Abandoned)
+    );
+    let mut failed = boundary.begin_precommit(build_question()).unwrap();
+    take_request(&mut endpoint)
+        .fail(HookFailure::Invalid)
+        .unwrap();
+    assert_eq!(
+        failed.try_resolve().unwrap().err(),
+        Some(HookFailure::Invalid)
+    );
+    let mut abandoned = boundary.begin_precommit(build_question()).unwrap();
+    drop(take_request(&mut endpoint));
+    assert_eq!(
+        abandoned.try_resolve().unwrap().err(),
+        Some(HookFailure::Unavailable)
+    );
+}
+
+#[test]
+fn nonblocking_direct_resolution_is_immediate_and_then_terminal() {
+    let (boundary, _endpoint) = script_boundary_pair(nonzero(1), nonzero(1));
+    let mut pending = boundary.begin_precommit(build_question()).unwrap();
+    let mut approval = pending.try_resolve().expect("direct answer").unwrap();
+    assert_eq!(approval.consume(), Ok(HookDecision::Keep));
+    assert_eq!(
+        pending.try_resolve().unwrap().err(),
+        Some(HookFailure::Stale)
+    );
 }

@@ -27,6 +27,7 @@
 | [log-15-deferred-acceptance-source-corrections.md](log-15-deferred-acceptance-source-corrections.md) | 09-23 | CP-014 R1 chain и серия source-audit правок с отложенным client acceptance. |
 | [log-16-headless-plugin-checkpoints-cp030-046.md](log-16-headless-plugin-checkpoints-cp030-046.md) | 09-23 | CP-030…CP-046 headless: inventory kernel, WIT handles, durable payment, combat, squads. |
 | [log-17-latest-checkpoints-cp047-048.md](log-17-latest-checkpoints-cp047-048.md) | 09-25/09-26 | CP-047 combat recovery и CP-048 birth record layer. |
+| [log-18-2026-10-parallel-tracks.md](log-18-2026-10-parallel-tracks.md) | 10-01…10-02 | Tick budget/dispatch/fences и strict gate FAIL, Earth W0–W4/W5 blocked, generic-core/domain-plugin purge, CP-049+ lineage/guards, native Rust client C00–C02 и source contracts C03+, процесс параллельных агентов. |
 
 Каждая часть начинается со списка своих секций — по нему ищется нужный чекпоинт без чтения
 файла целиком. Части 09–17 нарезаны из журнала 2026-09-26 (CP-REFACTOR-000); текст внутри

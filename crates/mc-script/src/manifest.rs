@@ -9,11 +9,11 @@ pub enum ScriptCommandCapability {
     PluginStorage,
     StorageBatches,
     InventoryTransfers,
-    PersistentResidents,
-    ResidentWork,
-    ResidentOrders,
-    WorldSites,
-    StructureOperations,
+    PersistentNpcs,
+    Settlements,
+    NpcWork,
+    NpcOrders,
+    WorldStructures,
     InventoryMenus,
     InventoryStorageTransactions,
     PlayerInventory,
@@ -34,11 +34,11 @@ pub enum ScriptCommandCapabilityKind {
     PluginStorage,
     StorageBatches,
     InventoryTransfers,
-    PersistentResidents,
-    ResidentWork,
-    ResidentOrders,
-    WorldSites,
-    StructureOperations,
+    PersistentNpcs,
+    Settlements,
+    NpcWork,
+    NpcOrders,
+    WorldStructures,
     InventoryMenus,
     InventoryStorageTransactions,
     PlayerInventory,
@@ -58,11 +58,11 @@ impl ScriptCommandCapabilityKind {
             Self::PluginStorage => "plugin_storage",
             Self::StorageBatches => "storage_batches",
             Self::InventoryTransfers => "inventory_transfers",
-            Self::PersistentResidents => "persistent_residents",
-            Self::ResidentWork => "resident_work",
-            Self::ResidentOrders => "resident_orders",
-            Self::WorldSites => "world_sites",
-            Self::StructureOperations => "structure_operations",
+            Self::PersistentNpcs => "persistent_npcs",
+            Self::Settlements => "settlements",
+            Self::NpcWork => "npc_work",
+            Self::NpcOrders => "npc_orders",
+            Self::WorldStructures => "world_structures",
             Self::InventoryMenus => "inventory_menus",
             Self::InventoryStorageTransactions => "inventory_storage_transactions",
             Self::PlayerInventory => "player_inventory",
@@ -82,11 +82,11 @@ impl ScriptCommandCapabilityKind {
             Self::PluginStorage => "plugin storage",
             Self::StorageBatches => "storage batches",
             Self::InventoryTransfers => "inventory transfer",
-            Self::PersistentResidents => "persistent resident",
-            Self::ResidentWork => "resident work order",
-            Self::ResidentOrders => "resident squad order",
-            Self::WorldSites => "settlement site",
-            Self::StructureOperations => "structure operation",
+            Self::PersistentNpcs => "persistent NPC",
+            Self::Settlements => "settlement operation",
+            Self::NpcWork => "NPC work order",
+            Self::NpcOrders => "NPC group order",
+            Self::WorldStructures => "world structure operation",
             Self::InventoryMenus => "inventory menu",
             Self::InventoryStorageTransactions => "inventory storage transaction",
             Self::PlayerInventory => "player inventory transaction",
@@ -107,11 +107,11 @@ pub(super) enum RequiredCommandCapability<'a> {
     PluginStorage,
     StorageBatches,
     InventoryTransfers,
-    PersistentResidents,
-    ResidentWork,
-    ResidentOrders,
-    WorldSites,
-    StructureOperations,
+    PersistentNpcs,
+    Settlements,
+    NpcWork,
+    NpcOrders,
+    WorldStructures,
     InventoryMenus,
     InventoryStorageTransactions,
     PlayerInventory,
@@ -131,11 +131,11 @@ impl RequiredCommandCapability<'_> {
             Self::PluginStorage => ScriptCommandCapabilityKind::PluginStorage,
             Self::StorageBatches => ScriptCommandCapabilityKind::StorageBatches,
             Self::InventoryTransfers => ScriptCommandCapabilityKind::InventoryTransfers,
-            Self::PersistentResidents => ScriptCommandCapabilityKind::PersistentResidents,
-            Self::ResidentWork => ScriptCommandCapabilityKind::ResidentWork,
-            Self::ResidentOrders => ScriptCommandCapabilityKind::ResidentOrders,
-            Self::WorldSites => ScriptCommandCapabilityKind::WorldSites,
-            Self::StructureOperations => ScriptCommandCapabilityKind::StructureOperations,
+            Self::PersistentNpcs => ScriptCommandCapabilityKind::PersistentNpcs,
+            Self::Settlements => ScriptCommandCapabilityKind::Settlements,
+            Self::NpcWork => ScriptCommandCapabilityKind::NpcWork,
+            Self::NpcOrders => ScriptCommandCapabilityKind::NpcOrders,
+            Self::WorldStructures => ScriptCommandCapabilityKind::WorldStructures,
             Self::InventoryMenus => ScriptCommandCapabilityKind::InventoryMenus,
             Self::InventoryStorageTransactions => {
                 ScriptCommandCapabilityKind::InventoryStorageTransactions
@@ -287,11 +287,11 @@ impl ScriptPluginManifest {
             "storage" => Ok(self.declare_plugin_storage()),
             "storage_batches" => Ok(self.declare_storage_batches()),
             "inventory_transfers" => Ok(self.declare_inventory_transfers()),
-            "persistent_residents" => Ok(self.declare_persistent_residents()),
-            "resident_work" => Ok(self.declare_resident_work()),
-            "resident_orders" => Ok(self.declare_resident_orders()),
-            "world_sites" => Ok(self.declare_world_sites()),
-            "structure_operations" => Ok(self.declare_structure_operations()),
+            "persistent_npcs" => Ok(self.declare_persistent_npcs()),
+            "settlements" => Ok(self.declare_settlements()),
+            "npc_work" => Ok(self.declare_npc_work()),
+            "npc_orders" => Ok(self.declare_npc_orders()),
+            "world_structures" => Ok(self.declare_world_structures()),
             "inventory_menus" => Ok(self.declare_inventory_menus()),
             "inventory_storage_transactions" => Ok(self.declare_inventory_storage_transactions()),
             "player_inventory" => Ok(self.declare_player_inventory()),
@@ -420,33 +420,33 @@ impl ScriptPluginManifest {
         self
     }
 
-    /// Declare durable resident handles, lifecycle queries, spawn and release.
-    pub fn declare_persistent_residents(mut self) -> Self {
-        self.push_capability(ScriptCommandCapability::PersistentResidents);
+    /// Declare durable NPC handles, lifecycle queries, spawn and release.
+    pub fn declare_persistent_npcs(mut self) -> Self {
+        self.push_capability(ScriptCommandCapability::PersistentNpcs);
         self
     }
 
-    /// Declare bounded resident work orders and their cancellation.
-    pub fn declare_resident_work(mut self) -> Self {
-        self.push_capability(ScriptCommandCapability::ResidentWork);
+    /// Declare native settlement queries and closed S1 mutations.
+    pub fn declare_settlements(mut self) -> Self {
+        self.push_capability(ScriptCommandCapability::Settlements);
         self
     }
 
-    /// Declare bounded resident squad orders, combat policy and demobilisation.
-    pub fn declare_resident_orders(mut self) -> Self {
-        self.push_capability(ScriptCommandCapability::ResidentOrders);
+    /// Declare bounded physical NPC work orders and their cancellation.
+    pub fn declare_npc_work(mut self) -> Self {
+        self.push_capability(ScriptCommandCapability::NpcWork);
         self
     }
 
-    /// Declare settlement site discovery, queries, resident reservation and surveys.
-    pub fn declare_world_sites(mut self) -> Self {
-        self.push_capability(ScriptCommandCapability::WorldSites);
+    /// Declare bounded physical NPC group controls.
+    pub fn declare_npc_orders(mut self) -> Self {
+        self.push_capability(ScriptCommandCapability::NpcOrders);
         self
     }
 
-    /// Declare durable structure preparation, advancement, pause, cancel and status.
-    pub fn declare_structure_operations(mut self) -> Self {
-        self.push_capability(ScriptCommandCapability::StructureOperations);
+    /// Declare physical world-feature queries, surveys, structures and worksites.
+    pub fn declare_world_structures(mut self) -> Self {
+        self.push_capability(ScriptCommandCapability::WorldStructures);
         self
     }
 
@@ -842,9 +842,7 @@ impl ScriptPluginManifest {
                     let channel = validate_custom_payload_channel(channel)?.to_owned();
                     let capability = ScriptCommandCapability::CustomPayloadChannel { channel };
                     if normalized_capabilities.contains(&capability) {
-                        return Err(ScriptPluginManifestError::DuplicateCapability {
-                            capability: capability.clone(),
-                        });
+                        return Err(ScriptPluginManifestError::DuplicateCapability { capability });
                     }
                     normalized_capabilities.push(capability);
                 }
@@ -852,11 +850,11 @@ impl ScriptPluginManifest {
                 | ScriptCommandCapability::PluginStorage
                 | ScriptCommandCapability::StorageBatches
                 | ScriptCommandCapability::InventoryTransfers
-                | ScriptCommandCapability::PersistentResidents
-                | ScriptCommandCapability::ResidentWork
-                | ScriptCommandCapability::ResidentOrders
-                | ScriptCommandCapability::WorldSites
-                | ScriptCommandCapability::StructureOperations
+                | ScriptCommandCapability::PersistentNpcs
+                | ScriptCommandCapability::Settlements
+                | ScriptCommandCapability::NpcWork
+                | ScriptCommandCapability::NpcOrders
+                | ScriptCommandCapability::WorldStructures
                 | ScriptCommandCapability::InventoryMenus
                 | ScriptCommandCapability::InventoryStorageTransactions
                 | ScriptCommandCapability::PlayerInventory
@@ -1015,20 +1013,20 @@ impl ValidatedScriptPluginManifest {
                 ScriptCommandCapability::InventoryTransfers => {
                     capabilities = capabilities.allow_inventory_transfers();
                 }
-                ScriptCommandCapability::PersistentResidents => {
-                    capabilities = capabilities.allow_persistent_residents();
+                ScriptCommandCapability::PersistentNpcs => {
+                    capabilities = capabilities.allow_persistent_npcs();
                 }
-                ScriptCommandCapability::ResidentWork => {
-                    capabilities = capabilities.allow_resident_work();
+                ScriptCommandCapability::Settlements => {
+                    capabilities = capabilities.allow_settlements();
                 }
-                ScriptCommandCapability::ResidentOrders => {
-                    capabilities = capabilities.allow_resident_orders();
+                ScriptCommandCapability::NpcWork => {
+                    capabilities = capabilities.allow_npc_work();
                 }
-                ScriptCommandCapability::WorldSites => {
-                    capabilities = capabilities.allow_world_sites();
+                ScriptCommandCapability::NpcOrders => {
+                    capabilities = capabilities.allow_npc_orders();
                 }
-                ScriptCommandCapability::StructureOperations => {
-                    capabilities = capabilities.allow_structure_operations();
+                ScriptCommandCapability::WorldStructures => {
+                    capabilities = capabilities.allow_world_structures();
                 }
                 ScriptCommandCapability::InventoryMenus => {
                     capabilities = capabilities.allow_inventory_menus();
@@ -1197,11 +1195,11 @@ pub struct CommandCapabilities {
     plugin_storage: bool,
     storage_batches: bool,
     inventory_transfers: bool,
-    persistent_residents: bool,
-    resident_work: bool,
-    resident_orders: bool,
-    world_sites: bool,
-    structure_operations: bool,
+    persistent_npcs: bool,
+    settlements: bool,
+    npc_work: bool,
+    npc_orders: bool,
+    world_structures: bool,
     inventory_menus: bool,
     inventory_storage_transactions: bool,
     player_inventory: bool,
@@ -1251,27 +1249,28 @@ impl CommandCapabilities {
         self
     }
 
-    pub(crate) fn allow_persistent_residents(mut self) -> Self {
-        self.persistent_residents = true;
+    pub(crate) fn allow_persistent_npcs(mut self) -> Self {
+        self.persistent_npcs = true;
         self
     }
 
-    pub(crate) fn allow_resident_work(mut self) -> Self {
-        self.resident_work = true;
+    pub(crate) fn allow_settlements(mut self) -> Self {
+        self.settlements = true;
         self
     }
 
-    pub(crate) fn allow_resident_orders(mut self) -> Self {
-        self.resident_orders = true;
+    pub(crate) fn allow_npc_work(mut self) -> Self {
+        self.npc_work = true;
         self
     }
 
-    pub(crate) fn allow_world_sites(mut self) -> Self {
-        self.world_sites = true;
+    pub(crate) fn allow_npc_orders(mut self) -> Self {
+        self.npc_orders = true;
         self
     }
-    pub(crate) fn allow_structure_operations(mut self) -> Self {
-        self.structure_operations = true;
+
+    pub(crate) fn allow_world_structures(mut self) -> Self {
+        self.world_structures = true;
         self
     }
 
@@ -1348,11 +1347,11 @@ impl CommandCapabilities {
             RequiredCommandCapability::PluginStorage => self.plugin_storage,
             RequiredCommandCapability::StorageBatches => self.storage_batches,
             RequiredCommandCapability::InventoryTransfers => self.inventory_transfers,
-            RequiredCommandCapability::PersistentResidents => self.persistent_residents,
-            RequiredCommandCapability::ResidentWork => self.resident_work,
-            RequiredCommandCapability::ResidentOrders => self.resident_orders,
-            RequiredCommandCapability::WorldSites => self.world_sites,
-            RequiredCommandCapability::StructureOperations => self.structure_operations,
+            RequiredCommandCapability::PersistentNpcs => self.persistent_npcs,
+            RequiredCommandCapability::Settlements => self.settlements,
+            RequiredCommandCapability::NpcWork => self.npc_work,
+            RequiredCommandCapability::NpcOrders => self.npc_orders,
+            RequiredCommandCapability::WorldStructures => self.world_structures,
             RequiredCommandCapability::InventoryMenus => self.inventory_menus,
             RequiredCommandCapability::InventoryStorageTransactions => {
                 self.inventory_storage_transactions

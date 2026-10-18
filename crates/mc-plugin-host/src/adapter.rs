@@ -14,13 +14,14 @@ use mc_script::{
     CommandBatch as ScriptCommandBatch, CommandBatchError, CommandCapabilities,
     ScriptAxisAlignedZone, ScriptClientSelectionConstraints, ScriptClientSound,
     ScriptClientViewAction, ScriptClientViewField, ScriptClientViewFormation,
-    ScriptClientViewMarker, ScriptClientViewModel, ScriptClientViewOpen, ScriptClientViewPresent,
-    ScriptClientViewResourceEntry, ScriptClientViewRow, ScriptClientViewTab, ScriptCommand,
-    ScriptDtoError, ScriptInventoryMenu, ScriptInventoryMenuItem, ScriptInventoryMenuSlot,
-    ScriptInventoryResourceDelta, ScriptInventoryStorageTransaction, ScriptLoaderItemGrantRequest,
-    ScriptOnlinePlayersRequest, ScriptOperation, ScriptOperationRequest, ScriptPlayerId,
-    ScriptPlayerTeleportRequest, ScriptPluginStorageCompareAndSwapRequest,
-    ScriptPluginStorageGetRequest, ScriptPosition, ScriptStorageMutation, ScriptZoneProtection,
+    ScriptClientViewMarker, ScriptClientViewMarkerPosition, ScriptClientViewModel,
+    ScriptClientViewOpen, ScriptClientViewPresent, ScriptClientViewResourceEntry,
+    ScriptClientViewRow, ScriptClientViewTab, ScriptCommand, ScriptDtoError, ScriptInventoryMenu,
+    ScriptInventoryMenuItem, ScriptInventoryMenuSlot, ScriptInventoryResourceDelta,
+    ScriptInventoryStorageTransaction, ScriptLoaderItemGrantRequest, ScriptOnlinePlayersRequest,
+    ScriptOperation, ScriptOperationRequest, ScriptPlayerId, ScriptPlayerTeleportRequest,
+    ScriptPluginStorageCompareAndSwapRequest, ScriptPluginStorageGetRequest, ScriptPosition,
+    ScriptStorageMutation, ScriptZoneProtection,
 };
 
 use crate::bindings::solaris::plugin::client_presentation::{
@@ -231,21 +232,42 @@ fn convert(
         }),
         Command::Operation(request) => {
             let operation = match request.operation {
-                DomainOperation::Settlement(value) => ScriptOperation::Settlement {
-                    operation: crate::domain_settlements::decode(value)?,
+                DomainOperation::WorldStructure(value) => ScriptOperation::WorldStructure {
+                    operation: crate::domain_world_structures::decode(value)?,
                 },
-                DomainOperation::Resident(value) => ScriptOperation::Resident {
-                    operation: crate::domain_residents::decode(value)?,
+                DomainOperation::Npc(value) => ScriptOperation::Npc {
+                    operation: crate::domain_npcs::decode(value)?,
                 },
-                DomainOperation::ResidentOrder(value) => ScriptOperation::ResidentOrder {
-                    operation: crate::domain_residents::decode_order(value)?,
+                DomainOperation::NpcOrder(value) => ScriptOperation::NpcOrder {
+                    operation: crate::domain_npcs::decode_order(value)?,
+                },
+                DomainOperation::NpcRoute(value) => ScriptOperation::NpcRoute {
+                    operation: crate::domain_npc_routes::decode(value)?,
                 },
                 DomainOperation::Inventory(value) => ScriptOperation::Inventory {
                     operation: crate::domain_inventories::decode(value)?,
                 },
+                DomainOperation::QuerySettlement(value) => ScriptOperation::SettlementQuery {
+                    query: crate::domain_settlements::decode_query(value)?,
+                },
+                DomainOperation::SettlementAction(value) => ScriptOperation::Settlement {
+                    operation: crate::domain_settlements::decode_action(value)?,
+                },
             };
             Ok(ScriptCommand::Operation {
-                request: ScriptOperationRequest::try_new(request.request, operation)?,
+                request: ScriptOperationRequest::try_new(request.request, operation)?
+                    .with_expected_plugin_storage_versions(
+                        request
+                            .expected_plugin_storage_versions
+                            .into_iter()
+                            .map(|guard| {
+                                mc_script::ScriptPluginStorageVersionGuard::new(
+                                    guard.key,
+                                    guard.version,
+                                )
+                            })
+                            .collect(),
+                    )?,
             })
         }
         // A zone is a box of finite coordinates and nothing else, and the DTO the
@@ -529,6 +551,17 @@ fn view_model(model: ViewModel) -> Result<ScriptClientViewModel, AdapterError> {
                 marker.action_id,
                 marker.formation.map(formation),
                 marker.radius,
+                marker
+                    .position
+                    .map(|position| {
+                        ScriptClientViewMarkerPosition::try_new(
+                            &position.dimension,
+                            position.x,
+                            position.y,
+                            position.z,
+                        )
+                    })
+                    .transpose()?,
             )
         })
         .collect::<Result<Vec<_>, _>>()?;

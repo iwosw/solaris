@@ -1,18 +1,15 @@
-//! Closed schema-2 client view DTOs and the wire-3 view lifecycle requests.
+//! Bounded declarative client views and server-owned view lifecycle requests.
 //!
-//! These types are the frozen shared contract between the core UI endpoint and
-//! the Solaris Loader: bundle schema 2 / wire protocol 3, a closed widget model
-//! of bounded rows/fields/actions and explicit byte bounds on every string.
-//! They carry no client authority: the server supplies view instance ids,
-//! revisions, actor identity and prices, and a plugin may only echo a
-//! server-issued selection context.
+//! Plugins supply their own display keys, values and actions. Core validates
+//! transport bounds and owns view instance ids, revisions, actor identity and
+//! selection contexts; it assigns no gameplay or economic meaning to the model.
 
 use serde::Serialize;
 use serde::ser::{SerializeMap, Serializer};
 
 use crate::{
-    ScriptDtoError, ScriptPlayerId, check_contract_resource_id, validate_bounded_nonempty,
-    validate_contract_resource_id, validate_script_id,
+    ScriptDtoError, ScriptPlayerId, ScriptPosition, check_contract_resource_id,
+    validate_bounded_nonempty, validate_contract_resource_id, validate_script_id,
 };
 
 /// Largest encoded wire-3 view message, including its protocol header.
@@ -50,64 +47,21 @@ pub const MAX_CLIENT_VIEW_SELECTION_TTL_TICKS: u64 = 72_000;
 /// Largest exactly-representable revision or sequence on the component boundary.
 pub const MAX_CLIENT_VIEW_EXACT_INTEGER: u64 = (1_u64 << 53) - 1;
 
-/// The six declarative settlement screen kinds of contract section 8.2.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-#[non_exhaustive]
-pub enum ScriptClientViewScreenKind {
-    Settlement,
-    Construction,
-    Economy,
-    Garrison,
-    Army,
-    Hud,
-}
+/// A bounded plugin-defined screen/request identifier. Core assigns no product meaning.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
+#[serde(transparent)]
+pub struct ScriptClientViewKey(String);
 
-impl ScriptClientViewScreenKind {
-    #[must_use]
-    pub const fn contract_name(self) -> &'static str {
-        match self {
-            Self::Settlement => "settlement",
-            Self::Construction => "construction",
-            Self::Economy => "economy",
-            Self::Garrison => "garrison",
-            Self::Army => "army",
-            Self::Hud => "hud",
-        }
-    }
-}
-
-/// The two key-driven view kinds a client may explicitly request.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-#[non_exhaustive]
-pub enum ScriptClientViewRequestKind {
-    Settlement,
-    Army,
-}
-
-impl ScriptClientViewRequestKind {
-    #[must_use]
-    pub const fn contract_name(self) -> &'static str {
-        match self {
-            Self::Settlement => "settlement",
-            Self::Army => "army",
-        }
+impl ScriptClientViewKey {
+    pub fn try_new(value: &str) -> Result<Self, ScriptDtoError> {
+        validate_bounded_nonempty("client view key", value, MAX_CLIENT_VIEW_ID_BYTES)?;
+        check_contract_resource_id(value)?;
+        Ok(Self(value.to_owned()))
     }
 
     #[must_use]
-    pub const fn screen_kind(self) -> ScriptClientViewScreenKind {
-        match self {
-            Self::Settlement => ScriptClientViewScreenKind::Settlement,
-            Self::Army => ScriptClientViewScreenKind::Army,
-        }
-    }
-
-    #[must_use]
-    pub fn from_contract_name(value: &str) -> Option<Self> {
-        match value {
-            "settlement" => Some(Self::Settlement),
-            "army" => Some(Self::Army),
-            _ => None,
-        }
+    pub fn as_str(&self) -> &str {
+        &self.0
     }
 }
 
@@ -312,7 +266,7 @@ impl ScriptClientViewTab {
     }
 }
 
-/// One server-authoritative resource amount shown in a resource panel.
+/// One plugin-supplied pair of nonnegative display amounts.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct ScriptClientViewResourceEntry {
     id: String,
@@ -351,6 +305,25 @@ impl ScriptClientViewResourceEntry {
     }
 }
 
+/// Display geometry only; it cannot become a selection target or query world state.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ScriptClientViewMarkerPosition {
+    dimension: String,
+    #[serde(flatten)]
+    coordinates: ScriptPosition,
+}
+
+impl ScriptClientViewMarkerPosition {
+    pub fn try_new(dimension: &str, x: f64, y: f64, z: f64) -> Result<Self, ScriptDtoError> {
+        check_contract_resource_id(dimension)?;
+        let coordinates = ScriptPosition::try_new(x, y, z).ok_or(ScriptDtoError::InvalidBounds)?;
+        Ok(Self {
+            dimension: dimension.to_owned(),
+            coordinates,
+        })
+    }
+}
+
 /// One world-selection affordance. `selection_token` is the opaque,
 /// server-issued selection-context id the client may only echo.
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -364,6 +337,8 @@ pub struct ScriptClientViewMarker {
     formation: Option<ScriptClientViewFormation>,
     #[serde(skip_serializing_if = "Option::is_none")]
     radius: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    position: Option<ScriptClientViewMarkerPosition>,
 }
 
 impl Eq for ScriptClientViewMarker {}
@@ -375,6 +350,7 @@ impl ScriptClientViewMarker {
         action_id: Option<String>,
         formation: Option<ScriptClientViewFormation>,
         radius: Option<f64>,
+        position: Option<ScriptClientViewMarkerPosition>,
     ) -> Result<Self, ScriptDtoError> {
         validate_bounded_nonempty("view marker id", marker_id, MAX_CLIENT_VIEW_ID_BYTES)?;
         if let Some(token) = selection_token.as_deref() {
@@ -399,6 +375,7 @@ impl ScriptClientViewMarker {
             action_id,
             formation,
             radius,
+            position,
         })
     }
 

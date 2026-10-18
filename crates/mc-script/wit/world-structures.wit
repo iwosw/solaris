@@ -1,0 +1,112 @@
+// Generic physical facts and owner-scoped world mutations. Product policy lives in plugins.
+interface world-structures {
+    use types.{block-position};
+    record world-bounds { min: block-position, max: block-position }
+    enum chunk-availability { loaded, unloaded }
+    enum structure-state { prepared, running, paused, committed, cancelled }
+    record world-feature-block { at: block-position, block: string }
+    /// Exact live facts. block is absent only when unavailable; all flags then false.
+    /// door/bed are registry identity facts, not openness or usability decisions.
+    record world-block-property { key: string, value: string }
+    /// Properties are canonical: sorted by unique key, each key/value at most 64 bytes.
+    record world-block-facts { at: block-position, block: option<string>, properties: list<world-block-property>, standable: bool, container: bool, door: bool, bed: bool }
+    record world-block-query { world-revision: u64, blocks: list<world-block-facts> }
+    record query-blocks { dimension: string, positions: list<block-position> }
+    record world-feature {
+        feature-id: string,
+        kind: string,
+        dimension: string,
+        bounds: world-bounds,
+        contents-known: bool,
+        blocks: list<world-feature-block>,
+        interaction-points: list<worksite-interaction-point>,
+        entity-ids: list<string>,
+    }
+    record world-feature-page { features: list<world-feature>, cursor: option<string> }
+    record survey-snapshot {
+        dimension: string,
+        bounds: world-bounds,
+        revision: u64,
+        world-revision: u64,
+        chunk-availability: chunk-availability,
+        survey-token: string,
+        usable-plots: u32,
+        water-columns: u32,
+        existing-structures: u32,
+        biome-tags: list<string>,
+        resource-tags: list<string>,
+    }
+    record structure-material { %resource: string, quantity: u64 }
+    record structure-stage-plan { stage: string, block-count: u32, work-units: u64, materials: list<structure-material> }
+    record structure-receipt { structure-id: string, stage: string, sequence: u64, block-count: u32, work-units: u64, consumed: list<structure-material>, revision: u64 }
+    record structure-snapshot {
+        structure-id: string,
+        blueprint-id: string,
+        dimension: string,
+        state: structure-state,
+        revision: u64,
+        origin: block-position,
+        rotation: u16,
+        reserved-footprint: block-position,
+        stages: list<structure-stage-plan>,
+        current-stage-index: u32,
+        completed-work-units: u64,
+        resource-plan-hash: string,
+        reservation-ref: option<string>,
+        watermark: u64,
+        consumed: list<structure-material>,
+        remaining: list<structure-material>,
+        pause-reason: option<string>,
+        interaction-points: list<worksite-interaction-point>,
+    }
+    record worksite-block { at: block-position, block: string }
+    record worksite-workstation { at: block-position, capability: string }
+    variant worksite-interaction-point {
+        entrance(block-position),
+        block(worksite-block),
+        workstation(worksite-workstation),
+        container(block-position),
+    }
+    record worksite-request { footprint: world-bounds, interaction-points: list<worksite-interaction-point>, survey-token: string, expected-world-revision: u64 }
+    record worksite-snapshot { worksite-id: string, footprint: world-bounds, interaction-points: list<worksite-interaction-point>, world-revision: u64, revision: u64 }
+    enum worksite-failure { unloaded, missing-block, missing-workstation, missing-container, blocked-entrance, unwalkable }
+    record worksite-point-failure { at: block-position, reason: worksite-failure }
+    record worksite-check { worksite-id: string, world-revision: u64, valid: bool, blocked-points: list<worksite-point-failure> }
+    record structure-check { structure-id: string, plugin-id: string, world-revision: u64, valid: bool, blocked-points: list<worksite-point-failure> }
+    record list-features { cursor: option<string>, limit: u8 }
+    record query-feature { feature-id: string }
+    record survey { dimension: string, bounds: world-bounds }
+    record prepare-structure { operation-id: string, dimension: string, blueprint-id: string, anchor: block-position, rotation: u16, survey-token: string, expected-world-revision: u64, expected-blueprint-hash: option<string> }
+    record advance-structure { operation-id: string, structure-id: string, stage: string, reservation-ref: string, expected-revision: u64, work-units: u64 }
+    record change-structure-state { operation-id: string, structure-id: string, expected-revision: u64 }
+    record structure-status { structure-id: string }
+    record register-worksite { operation-id: string, request: worksite-request }
+    record worksite-status { worksite-id: string }
+    variant world-structure-operation {
+        query-blocks(query-blocks),
+        list-features(list-features),
+        query-feature(query-feature),
+        survey(survey),
+        prepare-structure(prepare-structure),
+        advance-structure(advance-structure),
+        pause-structure(change-structure-state),
+        resume-structure(change-structure-state),
+        cancel-structure(change-structure-state),
+        status(structure-status),
+        check-structure(structure-status),
+        register-worksite(register-worksite),
+        worksite-status(worksite-status),
+        check-worksite(worksite-status),
+    }
+    variant world-structure-result {
+        blocks(world-block-query),
+        features(world-feature-page),
+        feature(world-feature),
+        survey(survey-snapshot),
+        structure(structure-snapshot),
+        receipt(structure-receipt),
+        worksite(worksite-snapshot),
+        worksite-check(worksite-check),
+        structure-check(structure-check),
+    }
+}

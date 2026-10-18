@@ -1,0 +1,267 @@
+use crate::boundary::{ConnectionId, PlayerInput};
+use crate::intent::{Footprint, Intent, IntentKind};
+use crate::tick::{SNEAKING_FLAG, TickSampler, TickState, update_player_crouching};
+use mc_physics::mth;
+
+pub(in crate::tick) fn move_input(
+    state: &mut TickState,
+    connection: &ConnectionId,
+    input: &PlayerInput,
+    intents: &mut Vec<Intent>,
+) {
+    let Some(entity) = state.connections.by_connection.get(connection).copied() else {
+        return;
+    };
+    let Some(slot) = state.entities.slot_of(entity) else {
+        return;
+    };
+    if state
+        .players
+        .get(&entity)
+        .is_some_and(|player| player.awaiting_teleport.is_some())
+    {
+        return;
+    }
+    let current_position = state.entities.pos(slot);
+    let [current_yaw, current_pitch, _] = state.entities.rot(slot);
+    let (position, yaw, pitch, on_ground) = match input {
+        PlayerInput::Move {
+            position,
+            yaw,
+            pitch,
+            on_ground,
+            ..
+        } => (position, yaw, pitch, on_ground),
+        PlayerInput::MoveRotation {
+            yaw,
+            pitch,
+            on_ground,
+            ..
+        } => (&current_position, yaw, pitch, on_ground),
+        PlayerInput::MoveStatus { on_ground, .. } => {
+            (&current_position, &current_yaw, &current_pitch, on_ground)
+        }
+        _ => unreachable!(),
+    };
+    if !position.iter().all(|value| value.is_finite()) || !yaw.is_finite() || !pitch.is_finite() {
+        return;
+    }
+    if crate::mounts::vehicle(state, entity).is_some() {
+        state.entities.set_rot(slot, *yaw, *pitch);
+        return;
+    }
+    crate::tick::elytra::refresh(state, entity);
+    let fall_flying = state
+        .players
+        .get(&entity)
+        .is_some_and(|player| player.fall_flying);
+    let old = state.entities.pos(slot);
+    let was_grounded = state.entities.ground(slot);
+    let displacement = [
+        position[0] - old[0],
+        position[1] - old[1],
+        position[2] - old[2],
+    ];
+    let distance_sq = displacement[0] * displacement[0]
+        + displacement[1] * displacement[1]
+        + displacement[2] * displacement[2];
+    // Local 26.1.2 ServerGamePacketListenerImpl.handleMovePlayer uses a
+    // 300 squared-distance allowance for gliding, versus 100 for walking.
+    // Rocket acceleration is client-simulated; collision checks still apply.
+    let movement_limit = if fall_flying { 300.0 } else { 100.0 };
+    if distance_sq > movement_limit {
+        state.correct_position(*connection, old, *yaw, *pitch);
+        return;
+    }
+    let sampler = TickSampler {
+        world: &state.world,
+        registry: &state.registry,
+    };
+    let body = state.entities.body(slot);
+    let half_width = body.half_width;
+    let height = body.height;
+    let resolved = mc_physics::resolve_collision_displacement(
+        &sampler,
+        mc_physics::Vec3::new(old[0], old[1], old[2]),
+        mc_physics::Aabb { half_width, height },
+        mc_physics::Vec3::new(displacement[0], displacement[1], displacement[2]),
+        *on_ground,
+        mc_physics::STEP_HEIGHT,
+    );
+    let new_pos = if let Some(fixed) = resolved {
+        let fixed_pos = [
+            old[0] + fixed.delta.x,
+            old[1] + fixed.delta.y,
+            old[2] + fixed.delta.z,
+        ];
+        state.entities.set_pos(slot, fixed_pos);
+        state.entities.set_rot(slot, *yaw, *pitch);
+        state.entities.set_ground(slot, fixed.grounded);
+        fixed_pos
+    } else {
+        state.entities.set_pos(slot, *position);
+        state.entities.set_rot(slot, *yaw, *pitch);
+        state.entities.set_ground(slot, *on_ground);
+        *position
+    };
+    crate::physical_defense::accepted_movement(
+        state,
+        slot,
+        mth::length2(new_pos[0] - old[0], new_pos[2] - old[2]),
+    );
+    if state.entities.ground(slot) && mth::length2(new_pos[0] - old[0], new_pos[2] - old[2]) >= 0.1
+    {
+        crate::vibration::emit(
+            state,
+            new_pos,
+            crate::vibration::GameEvent::Step,
+            Some(entity),
+        );
+    }
+    if let Some(player) = state.players.get_mut(&entity) {
+        player.known_horizontal_movement_squared =
+            (new_pos[0] - old[0]).powi(2) + (new_pos[2] - old[2]).powi(2);
+    }
+    let sneaking = state.entities.row(slot).appearance.shared_flags & SNEAKING_FLAG != 0;
+    update_player_crouching(state, entity, slot, sneaking);
+    crate::statistics::movement(state, entity, slot, old, new_pos, *on_ground);
+    if new_pos
+        .iter()
+        .zip(position)
+        .any(|(actual, reported)| (actual - reported).abs() > 0.001)
+    {
+        state.correct_position(*connection, new_pos, *yaw, *pitch);
+    }
+    // Charge only accepted movement, not a clipped client prediction.
+    if let Some(player) = state.players.get_mut(&entity)
+        && !player.creative()
+        && !player.spectator()
+    {
+        let dx = new_pos[0] - old[0];
+        let dz = new_pos[2] - old[2];
+        let horizontal = (dx * dx + dz * dz).sqrt() as f32;
+        let rate = if player.sprinting {
+            crate::survival::SPRINT_EXHAUSTION_PER_METER
+        } else {
+            0.0
+        };
+        let before = (player.vitals.food, player.vitals.saturation);
+        player.vitals.add_exhaustion(horizontal * rate);
+        if was_grounded && new_pos[1] > old[1] && !on_ground {
+            player.vitals.add_exhaustion(if player.sprinting {
+                crate::survival::SPRINT_JUMP_EXHAUSTION
+            } else {
+                crate::survival::JUMP_EXHAUSTION
+            });
+        }
+        if before != (player.vitals.food, player.vitals.saturation) {
+            let health = player.health_change();
+            state.push_player(*connection, health);
+        }
+    }
+    // Fall damage on landing, on the client's ground flag as
+    // vanilla (`doCheckFallDamage`); water and climbables reset.
+    let feet = [
+        new_pos[0].floor() as i32,
+        new_pos[1].floor() as i32,
+        new_pos[2].floor() as i32,
+    ];
+    let cushioned = state
+        .world
+        .block_at(feet[0], feet[1], feet[2])
+        .is_some_and(|id| {
+            id == state.registry.states.water
+                || state
+                    .registry
+                    .blocks
+                    .by_id(mc_world::BlockStateId(id))
+                    .is_some_and(|block| crate::statistics::climbable(state, block.block.raw_id))
+        });
+    let damage = state.players.get_mut(&entity).map_or(0.0, |player| {
+        let dy = new_pos[1] - old[1];
+        if fall_flying && matches!(input, PlayerInput::Move { .. }) && dy > -0.5 {
+            player.fall_distance = 0.0;
+        }
+        player.fall(dy, *on_ground, cushioned)
+    });
+    if damage > 0.0 {
+        let seq = state.next_seq(entity);
+        intents.push(Intent {
+            actor: entity,
+            seq,
+            kind: IntentKind::DamageEntity {
+                target: entity,
+                amount: damage,
+                kind: crate::survival::DamageKind::Fall,
+                source: None,
+            },
+            footprint: Footprint {
+                entity_reads: vec![entity],
+                entity_writes: vec![entity],
+                ..Default::default()
+            },
+        });
+    }
+    if *on_ground {
+        crate::tick::elytra::land(state, entity);
+    } else {
+        crate::tick::elytra::refresh(state, entity);
+    }
+}
+
+pub(in crate::tick) fn sneak(
+    state: &mut TickState,
+    (connection, sneaking): (&ConnectionId, &bool),
+) {
+    let Some(entity) = state.connections.by_connection.get(connection).copied() else {
+        return;
+    };
+    let Some(slot) = state.entities.slot_of(entity) else {
+        return;
+    };
+    if *sneaking {
+        crate::mounts::dismount(state, entity);
+    }
+    update_player_crouching(state, entity, slot, *sneaking);
+}
+
+pub(in crate::tick) fn vehicle_input(
+    state: &mut TickState,
+    (connection, flags): (&ConnectionId, &u8),
+) {
+    if let Some(entity) = state.connections.entity_of(*connection)
+        && let Some(slot) = state.entities.slot_of(entity)
+    {
+        let input = if crate::mounts::vehicle(state, entity).is_some() {
+            *flags
+        } else {
+            0
+        };
+        state.entities.row_mut(slot).entity_life.mount.input = input;
+    }
+}
+
+pub(in crate::tick) fn move_vehicle(
+    state: &mut TickState,
+    (connection, position, yaw, pitch, on_ground): (&ConnectionId, &[f64; 3], &f32, &f32, &bool),
+) {
+    crate::mounts::move_vehicle(state, *connection, *position, *yaw, *pitch, *on_ground);
+}
+
+pub(in crate::tick) fn sprint(
+    state: &mut TickState,
+    (connection, sprinting): (&ConnectionId, &bool),
+) {
+    if let Some(entity) = state.connections.entity_of(*connection)
+        && state.entities.slot_of(entity).is_some()
+        && let Some(player) = state.players.get_mut(&entity)
+    {
+        player.sprinting = *sprinting;
+    }
+}
+
+pub(in crate::tick) fn leave_bed(state: &mut TickState, connection: &ConnectionId) {
+    if let Some(entity) = state.connections.by_connection.get(connection).copied() {
+        crate::sleep::wake(state, entity);
+    }
+}

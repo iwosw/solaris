@@ -1,0 +1,92 @@
+use super::*;
+
+fn server(root: &std::path::Path) -> EdgeServer {
+    let mut config = mc_core::CoreConfig::new(root.join("world"), 42);
+    config.vanilla_data_dir =
+        Some(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data/vanilla"));
+    config.view_distance = 0;
+    config.simulation_distance = 0;
+    let core = Arc::new(mc_core::Core::open(config).unwrap());
+    let mut cfg = crate::config::EdgeConfig {
+        server_dir: root.join("server"),
+        ..Default::default()
+    };
+    std::fs::create_dir_all(&cfg.server_dir).unwrap();
+    cfg.data.world_dir = root.join("world");
+    cfg.data.vanilla_data_dir =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data/vanilla");
+    cfg.auth.online_mode = false;
+    let data = crate::server::load_vanilla_data(&cfg).unwrap();
+    let tags = crate::server::load_tags(&cfg, &data).unwrap();
+    EdgeServer::new(core, data, tags, cfg).unwrap()
+}
+
+#[tokio::test]
+async fn console_runs_native_and_admin_commands_and_stop_checkpoints() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = server(dir.path());
+    tokio::time::timeout(
+        std::time::Duration::from_secs(30),
+        execute(&server, "/time set 4321"),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    execute(&server, "op Alice").await.unwrap();
+    let ops: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(server.cfg.server_dir.join("ops.json")).unwrap())
+            .unwrap();
+    assert_eq!(ops[0]["name"], "Alice");
+    assert_eq!(ops[0]["level"], 4);
+    // No default executor is invented; missing self targets return normal feedback.
+    execute(&server, "gamemode creative").await.unwrap();
+    let changes: Vec<_> = server
+        .hub
+        .try_drain_outbox()
+        .into_iter()
+        .flat_map(|(_, changes)| changes)
+        .collect();
+    assert!(format!("{changes:?}").contains("argument.entity.notfound.player"));
+    execute(&server, "stop extra").await.unwrap();
+    execute(&server, "stop").await.unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let world = server.cfg.data.world_dir.clone();
+    tokio::time::timeout(
+        std::time::Duration::from_secs(30),
+        crate::server::serve(listener, server),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert!(world.join("native/state.redb").is_file());
+    let reopened = mc_core::Core::open({
+        let mut config = mc_core::CoreConfig::new(world, 42);
+        config.vanilla_data_dir =
+            Some(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data/vanilla"));
+        config
+    })
+    .unwrap();
+    reopened.shutdown();
+}
+
+#[test]
+fn console_feedback_keeps_translated_arguments_and_literal_text() {
+    let content = mc_nbt::Tag::Compound(vec![
+        (
+            "translate".into(),
+            mc_nbt::Tag::String("commands.time.set".into()),
+        ),
+        (
+            "with".into(),
+            mc_nbt::Tag::List(mc_nbt::ListTag {
+                element_type: mc_nbt::tag_type::STRING,
+                elements: vec![mc_nbt::Tag::String("4321".into())],
+            }),
+        ),
+    ]);
+    assert_eq!(component_text(&content), "commands.time.set: 4321");
+    assert_eq!(
+        component_text(&mc_nbt::Tag::String("saved".into())),
+        "saved"
+    );
+}

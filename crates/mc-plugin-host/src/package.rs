@@ -22,8 +22,7 @@ use std::path::{Path, PathBuf};
 
 use mc_script::{
     COMPONENT_PLUGIN_API_VERSION, ClientBundle, MAX_PLUGIN_MANIFEST_BYTES, PluginPackage,
-    PluginSettlementPlan, PluginWorldgenOreProfile, ScriptPluginManifest,
-    ValidatedScriptPluginManifest,
+    PluginWorldgenOreProfile, ScriptPluginManifest, ValidatedScriptPluginManifest,
     precommit::{HookKind, HookRegistration},
 };
 use serde::Deserialize;
@@ -75,10 +74,10 @@ pub struct PackageManifest {
     pub player_commands: Vec<String>,
     /// Pre-commit hooks this package implements, as it declares them.
     ///
-    /// A declaration says which questions the package can answer and nothing
-    /// else: exporting a hook in the component does not register it, and an
-    /// operator registration for a hook the package does not declare is refused
-    /// instead of being asked a question the package never claimed to answer.
+    /// A declaration says which questions the package can answer. Directory-only
+    /// deployments register every supported declaration; operator-configured
+    /// deployments use their explicit roster. Exporting a hook alone does not
+    /// register it, and a registration for an undeclared hook is refused.
     #[serde(default)]
     pub hooks: Vec<String>,
     /// Client bundles this package ships, validated against their artifacts.
@@ -155,9 +154,7 @@ impl LoadedPackage {
 
     /// The feature-capability names the manifest requires, in declaration order.
     ///
-    /// This is what core reads to decide which authored-data subsystems a
-    /// deployment needs - the settlement profile and the structure catalog among
-    /// them - so it reaches the boundary exactly as the package declared it.
+    /// This is what core reads to admit generic native operation families.
     #[must_use]
     pub fn required_features(&self) -> &[String] {
         &self.required_features
@@ -166,9 +163,9 @@ impl LoadedPackage {
     /// The pre-commit hooks the package declares it implements, in declaration
     /// order.
     ///
-    /// A declaration is a capability claim and nothing more: it neither registers
-    /// the package nor makes a question reach it, and a component that exports a
-    /// hook it never declared is never asked that question.
+    /// Discovery decides which declarations are registered: directory-only
+    /// deployments register every supported kind, while operator deployments use
+    /// their explicit roster. An undeclared hook is never asked.
     #[must_use]
     pub fn declared_hooks(&self) -> &[HookKind] {
         &self.declared_hooks
@@ -180,19 +177,19 @@ impl LoadedPackage {
         self.declared_hooks.contains(&kind)
     }
 
-    /// The operator registrations this package was authorized for, in the chain's
-    /// own order.
+    /// The deployment registrations this package was authorized for, in the
+    /// chain's own order.
     ///
-    /// Discovery attaches these; a package loaded directly has none, because a
-    /// registration is the operator's decision and not the package's. The host
-    /// asks exactly these questions, in this order, and publishes them as the
-    /// boundary's roster.
+    /// Discovery attaches these from either the explicit operator roster or the
+    /// supported directory declarations. A package loaded directly has none. The
+    /// host asks exactly these questions and publishes them as the boundary's
+    /// roster.
     #[must_use]
     pub fn precommit_registrations(&self) -> &[HookRegistration] {
         &self.precommit_registrations
     }
 
-    /// Attach the operator registrations discovery authorized for this package.
+    /// Attach the deployment registrations discovery authorized for this package.
     pub(crate) fn attach_precommit_registrations(&mut self, registrations: Vec<HookRegistration>) {
         self.precommit_registrations = registrations;
     }
@@ -207,12 +204,6 @@ impl LoadedPackage {
     #[must_use]
     pub const fn worldgen_ore_profile(&self) -> Option<PluginWorldgenOreProfile> {
         self.worldgen.ore_profile()
-    }
-
-    /// The settlement plan this package declares, if any.
-    #[must_use]
-    pub fn worldgen_settlement_plan(&self) -> Option<&PluginSettlementPlan> {
-        self.worldgen.settlement_plan()
     }
 
     /// The deployment facts core needs about this package, for the boundary's
@@ -295,18 +286,18 @@ pub fn load_package(root: &Path, limits: &PluginLimits) -> Result<LoadedPackage,
         })?;
         if declared_hooks.contains(&kind) {
             return Err(PackageError::Manifest {
-                path: manifest_path.clone(),
+                path: manifest_path,
                 message: format!("hook {hook:?} is declared twice"),
             });
         }
         declared_hooks.push(kind);
     }
-    let worldgen = worldgen::materialize_worldgen(manifest.plugin_id(), parsed.worldgen).map_err(
-        |message| PackageError::Manifest {
+    let worldgen = worldgen::materialize_worldgen(parsed.worldgen).map_err(|message| {
+        PackageError::Manifest {
             path: manifest_path.clone(),
             message,
-        },
-    )?;
+        }
+    })?;
     let client_bundles =
         client_bundle::materialize_client_bundles(root, manifest.plugin_id(), parsed.client)
             .map_err(|message| PackageError::ClientBundle {

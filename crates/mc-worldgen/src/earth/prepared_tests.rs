@@ -63,22 +63,36 @@ fn p01_cache_budgets_preserve_identity_root_facts_and_all_base_bytes() {
             let pos = ChunkPos { x, z };
             let a_base = a
                 .store()
-                .resolve_base(0, pos, &blocks, &items(), || {
-                    Ok(a.root_plan()
-                        .basin_fixture()
-                        .unwrap()
-                        .materialize_chunk(pos, &blocks))
-                })
+                .resolve_base(
+                    0,
+                    pos,
+                    &blocks,
+                    &items(),
+                    &mc_data::loot::chest_26_1_2::ChestLootCatalog::new(),
+                    || {
+                        Ok(a.root_plan()
+                            .basin_fixture()
+                            .unwrap()
+                            .materialize_chunk(pos, &blocks))
+                    },
+                )
                 .unwrap()
                 .unwrap();
             let b_base = b
                 .store()
-                .resolve_base(0, pos, &blocks, &items(), || {
-                    Ok(b.root_plan()
-                        .basin_fixture()
-                        .unwrap()
-                        .materialize_chunk(pos, &blocks))
-                })
+                .resolve_base(
+                    0,
+                    pos,
+                    &blocks,
+                    &items(),
+                    &mc_data::loot::chest_26_1_2::ChestLootCatalog::new(),
+                    || {
+                        Ok(b.root_plan()
+                            .basin_fixture()
+                            .unwrap()
+                            .materialize_chunk(pos, &blocks))
+                    },
+                )
                 .unwrap()
                 .unwrap();
             assert_eq!(base_bytes(&a_base, &blocks), base_bytes(&b_base, &blocks));
@@ -119,37 +133,11 @@ fn p02_bounds_expand_shrink_retains_base_coordinates_and_durable_saves() {
         .block(&Identifier::parse("minecraft:air").unwrap())
         .unwrap()
         .default;
-    let mut owner = mc_world::WorldStorage::in_memory(Arc::clone(&blocks));
-    owner.commit_chunk_snapshot(pos, base.clone()).unwrap();
-    let position = mc_world::BlockPos {
-        x: 33,
-        y: 92,
-        z: 33,
-    };
-    let (result, touched) = owner
-        .mutation_view()
-        .apply_block_edits_conditionally_journaled(
-            7,
-            &[mc_world::ResidentBlockEdit {
-                pos: position,
-                new_state: air,
-                preserve_light: false,
-            }],
-            &[mc_world::ResidentBlockPrecondition {
-                pos: position,
-                expected_state: owner.get_cached_block(position).unwrap(),
-                expected_token: owner.block_mutation_token(position).unwrap(),
-            }],
-            &[],
-            None,
-            None,
-        );
-    assert!(matches!(
-        result,
-        mc_world::ResidentBlockEditBatchResult::Applied(_)
-    ));
-    assert_eq!(touched, [pos]);
-    let edited = owner.cached_chunk_snapshot(pos).unwrap();
+    let mut edited = base.clone();
+    edited.set_block(1, 92, 1, air).unwrap();
+    edited
+        .extras
+        .push(("SolarisJournalLsn".into(), mc_nbt::Tag::Long(7)));
     world
         .store()
         .apply_snapshots(
@@ -191,7 +179,13 @@ fn p02_bounds_expand_shrink_retains_base_coordinates_and_durable_saves() {
     assert_eq!(base_bytes(&reopened_base, &blocks), before);
     let effective = world
         .store()
-        .compose(0, &reopened_base, &blocks, &items())
+        .compose(
+            0,
+            &reopened_base,
+            &blocks,
+            &items(),
+            &mc_data::loot::chest_26_1_2::ChestLootCatalog::new(),
+        )
         .unwrap();
     assert_eq!(effective.get_block(1, 92, 1), Some(air));
     assert_eq!(effective.world_journal_lsn(), 7);

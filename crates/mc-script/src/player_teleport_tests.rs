@@ -70,10 +70,6 @@ async fn admitted_player_teleport_is_capability_gated_and_builds_targeted_result
             "player_unavailable",
         ),
         (
-            ScriptPlayerTeleportFailure::TeleportPending,
-            "teleport_pending",
-        ),
-        (
             ScriptPlayerTeleportFailure::RuntimeUnavailable,
             "runtime_unavailable",
         ),

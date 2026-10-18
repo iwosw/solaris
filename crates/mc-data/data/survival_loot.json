@@ -1,27 +1,221 @@
 {
-  "entities": {
-    "minecraft:chicken": "minecraft:chicken",
-    "minecraft:cod": "minecraft:cod",
-    "minecraft:cow": [
-      "minecraft:leather",
-      "minecraft:beef"
-    ],
-    "minecraft:goat": "minecraft:mutton",
-    "minecraft:hoglin": "minecraft:porkchop",
-    "minecraft:mooshroom": "minecraft:beef",
-    "minecraft:pig": "minecraft:porkchop",
-    "minecraft:rabbit": "minecraft:rabbit",
-    "minecraft:salmon": "minecraft:salmon",
-    "minecraft:sheep": [
-      "minecraft:white_wool",
-      "minecraft:mutton"
-    ],
-    "minecraft:skeleton": "minecraft:bone",
-    "minecraft:spider": "minecraft:string",
-    "minecraft:tropical_fish": "minecraft:tropical_fish",
-    "minecraft:zombie": "minecraft:rotten_flesh"
-  },
   "blocks": {
+    "minecraft:acacia_hanging_sign": {
+      "sequence": "minecraft:blocks/acacia_hanging_sign",
+      "drops": [
+        {
+          "item": "minecraft:acacia_hanging_sign",
+          "survives_explosion": true
+        }
+      ]
+    },
+    "minecraft:acacia_wall_hanging_sign": {
+      "sequence": "minecraft:blocks/acacia_hanging_sign",
+      "drops": [
+        {
+          "item": "minecraft:acacia_hanging_sign",
+          "survives_explosion": true
+        }
+      ]
+    },
+    "minecraft:bamboo_hanging_sign": {
+      "sequence": "minecraft:blocks/bamboo_hanging_sign",
+      "drops": [
+        {
+          "item": "minecraft:bamboo_hanging_sign",
+          "survives_explosion": true
+        }
+      ]
+    },
+    "minecraft:bamboo_wall_hanging_sign": {
+      "sequence": "minecraft:blocks/bamboo_hanging_sign",
+      "drops": [
+        {
+          "item": "minecraft:bamboo_hanging_sign",
+          "survives_explosion": true
+        }
+      ]
+    },
+    "minecraft:birch_hanging_sign": {
+      "sequence": "minecraft:blocks/birch_hanging_sign",
+      "drops": [
+        {
+          "item": "minecraft:birch_hanging_sign",
+          "survives_explosion": true
+        }
+      ]
+    },
+    "minecraft:birch_wall_hanging_sign": {
+      "sequence": "minecraft:blocks/birch_hanging_sign",
+      "drops": [
+        {
+          "item": "minecraft:birch_hanging_sign",
+          "survives_explosion": true
+        }
+      ]
+    },
+    "minecraft:cherry_hanging_sign": {
+      "sequence": "minecraft:blocks/cherry_hanging_sign",
+      "drops": [
+        {
+          "item": "minecraft:cherry_hanging_sign",
+          "survives_explosion": true
+        }
+      ]
+    },
+    "minecraft:cherry_wall_hanging_sign": {
+      "sequence": "minecraft:blocks/cherry_hanging_sign",
+      "drops": [
+        {
+          "item": "minecraft:cherry_hanging_sign",
+          "survives_explosion": true
+        }
+      ]
+    },
+    "minecraft:crimson_hanging_sign": {
+      "sequence": "minecraft:blocks/crimson_hanging_sign",
+      "drops": [
+        {
+          "item": "minecraft:crimson_hanging_sign",
+          "survives_explosion": true
+        }
+      ]
+    },
+    "minecraft:crimson_wall_hanging_sign": {
+      "sequence": "minecraft:blocks/crimson_hanging_sign",
+      "drops": [
+        {
+          "item": "minecraft:crimson_hanging_sign",
+          "survives_explosion": true
+        }
+      ]
+    },
+    "minecraft:dark_oak_hanging_sign": {
+      "sequence": "minecraft:blocks/dark_oak_hanging_sign",
+      "drops": [
+        {
+          "item": "minecraft:dark_oak_hanging_sign",
+          "survives_explosion": true
+        }
+      ]
+    },
+    "minecraft:dark_oak_wall_hanging_sign": {
+      "sequence": "minecraft:blocks/dark_oak_hanging_sign",
+      "drops": [
+        {
+          "item": "minecraft:dark_oak_hanging_sign",
+          "survives_explosion": true
+        }
+      ]
+    },
+    "minecraft:jungle_hanging_sign": {
+      "sequence": "minecraft:blocks/jungle_hanging_sign",
+      "drops": [
+        {
+          "item": "minecraft:jungle_hanging_sign",
+          "survives_explosion": true
+        }
+      ]
+    },
+    "minecraft:jungle_wall_hanging_sign": {
+      "sequence": "minecraft:blocks/jungle_hanging_sign",
+      "drops": [
+        {
+          "item": "minecraft:jungle_hanging_sign",
+          "survives_explosion": true
+        }
+      ]
+    },
+    "minecraft:mangrove_hanging_sign": {
+      "sequence": "minecraft:blocks/mangrove_hanging_sign",
+      "drops": [
+        {
+          "item": "minecraft:mangrove_hanging_sign",
+          "survives_explosion": true
+        }
+      ]
+    },
+    "minecraft:mangrove_wall_hanging_sign": {
+      "sequence": "minecraft:blocks/mangrove_hanging_sign",
+      "drops": [
+        {
+          "item": "minecraft:mangrove_hanging_sign",
+          "survives_explosion": true
+        }
+      ]
+    },
+    "minecraft:oak_hanging_sign": {
+      "sequence": "minecraft:blocks/oak_hanging_sign",
+      "drops": [
+        {
+          "item": "minecraft:oak_hanging_sign",
+          "survives_explosion": true
+        }
+      ]
+    },
+    "minecraft:oak_wall_hanging_sign": {
+      "sequence": "minecraft:blocks/oak_hanging_sign",
+      "drops": [
+        {
+          "item": "minecraft:oak_hanging_sign",
+          "survives_explosion": true
+        }
+      ]
+    },
+    "minecraft:pale_oak_hanging_sign": {
+      "sequence": "minecraft:blocks/pale_oak_hanging_sign",
+      "drops": [
+        {
+          "item": "minecraft:pale_oak_hanging_sign",
+          "survives_explosion": true
+        }
+      ]
+    },
+    "minecraft:pale_oak_wall_hanging_sign": {
+      "sequence": "minecraft:blocks/pale_oak_hanging_sign",
+      "drops": [
+        {
+          "item": "minecraft:pale_oak_hanging_sign",
+          "survives_explosion": true
+        }
+      ]
+    },
+    "minecraft:spruce_hanging_sign": {
+      "sequence": "minecraft:blocks/spruce_hanging_sign",
+      "drops": [
+        {
+          "item": "minecraft:spruce_hanging_sign",
+          "survives_explosion": true
+        }
+      ]
+    },
+    "minecraft:spruce_wall_hanging_sign": {
+      "sequence": "minecraft:blocks/spruce_hanging_sign",
+      "drops": [
+        {
+          "item": "minecraft:spruce_hanging_sign",
+          "survives_explosion": true
+        }
+      ]
+    },
+    "minecraft:warped_hanging_sign": {
+      "sequence": "minecraft:blocks/warped_hanging_sign",
+      "drops": [
+        {
+          "item": "minecraft:warped_hanging_sign",
+          "survives_explosion": true
+        }
+      ]
+    },
+    "minecraft:warped_wall_hanging_sign": {
+      "sequence": "minecraft:blocks/warped_hanging_sign",
+      "drops": [
+        {
+          "item": "minecraft:warped_hanging_sign",
+          "survives_explosion": true
+        }
+      ]
+    },
     "minecraft:coal_ore": "minecraft:coal",
     "minecraft:copper_ore": "minecraft:raw_copper",
     "minecraft:dark_oak_leaves": {

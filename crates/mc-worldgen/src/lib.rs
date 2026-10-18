@@ -18,6 +18,7 @@ pub mod vanilla_climate;
 pub mod vanilla_density;
 pub mod vanilla_features;
 pub mod village;
+pub mod world_contract;
 
 #[cfg(test)]
 mod blueprint_tests;
@@ -99,7 +100,11 @@ pub use terrain::{HeightContextStats, height_context_stats, reset_height_context
 /// 25: vanilla overworld uses the local 26.1.2 noise router and expanded
 /// multi-noise biome preset; village gates sample the actual 3D start stub.
 /// Existing analogue worlds must not grow newly routed vanilla chunks.
-pub const WORLDGEN_REVISION: u32 = 25;
+///
+/// 26: ore feature size controls ellipsoid geometry rather than a guaranteed
+/// block count; revision-25 worlds must not mix the inflated ore distribution
+/// with newly generated vanilla-like veins.
+pub const WORLDGEN_REVISION: u32 = 26;
 
 /// Crate version, exposed so other crates and the binary can report it.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

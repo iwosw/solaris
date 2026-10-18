@@ -91,7 +91,7 @@ def render(run_dir: Path, output: Path) -> None:
     draw.text((margin, 16), "Solaris seed 712816 - owner terrain review", fill="white", font=title_font)
     draw.text(
         (margin, 54),
-        f"Fresh tellus_like world - real Java 26.1.2 client - run {run_dir.name}",
+        f"Fresh native world - real Java 26.1.2 client - run {run_dir.name}",
         fill="#cfcfcf",
         font=label_font,
     )

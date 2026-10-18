@@ -63,6 +63,7 @@ enum DiskClientLoader {
     #[serde(rename = "neoforge")]
     NeoForge,
     Forge,
+    Native,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -156,6 +157,7 @@ pub fn materialize_client_bundles(
                 DiskClientLoader::Fabric => ClientLoader::Fabric,
                 DiskClientLoader::NeoForge => ClientLoader::NeoForge,
                 DiskClientLoader::Forge => ClientLoader::Forge,
+                DiskClientLoader::Native => ClientLoader::Native,
             }),
             "loaders",
             &bundle.id,

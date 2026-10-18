@@ -10,8 +10,8 @@ on:
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: "-D warnings"
-  SOLARIS_LOADER_REVISION: bab2329c707d4bff026f22b65162e93b432ab50c
-  SOLARIS_PLUGINS_REVISION: 9adf5aebceb7595ca75f8e93ad82ef01739d328a
+  SOLARIS_LOADER_REVISION: 060cf44b264a8404a6c8cf629c14867d6e5cd212
+  SOLARIS_PLUGINS_REVISION: 7fe8efaf6aa76735a88c066236fc6bad2c18318f
 
 permissions:
   contents: read
@@ -78,6 +78,37 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: solaris -> target
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest@0.9.143
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "25"
+      - name: Extract local vanilla test data (never redistributed)
+        run: |
+          python3 - <<'PY'
+          import hashlib
+          import json
+          from pathlib import Path
+          from urllib.request import urlopen
+
+          version = "26.1.2"
+          with urlopen("https://piston-meta.mojang.com/mc/game/version_manifest_v2.json") as response:
+              versions = json.load(response)["versions"]
+          metadata_url = next(entry["url"] for entry in versions if entry["id"] == version)
+          with urlopen(metadata_url) as response:
+              server = json.load(response)["downloads"]["server"]
+          with urlopen(server["url"]) as response:
+              content = response.read()
+          if hashlib.sha1(content).hexdigest() != server["sha1"]:
+              raise SystemExit("Minecraft server checksum mismatch")
+          destination = Path(".analysis/server.jar")
+          destination.parent.mkdir(parents=True, exist_ok=True)
+          destination.write_bytes(content)
+          print(f"Verified Minecraft {version} server: {server['sha1']}")
+          PY
+          tools/extract-vanilla-data.sh .analysis/server.jar
       - run: python3 -m tools.harness run test
       - name: Retain failed test receipts
         if: failure()
@@ -223,7 +254,7 @@ jobs:
       - name: Build server binary
         env:
           TARGET: ${{ matrix.target }}
-        run: cargo build --locked --release -p mc-server --bin mc-server --target "$TARGET"
+        run: cargo build --locked --release -p mc-edge --bin solaris-v2 --target "$TARGET"
       - name: Package release asset
         env:
           TARGET: ${{ matrix.target }}
@@ -232,7 +263,7 @@ jobs:
           asset="solaris-${TARGET}.tar.gz"
           package_dir="dist/package-${TARGET}"
           mkdir -p "$package_dir"
-          install -m 0755 "target/${TARGET}/release/mc-server" "$package_dir/solaris"
+          install -m 0755 "target/${TARGET}/release/solaris-v2" "$package_dir/solaris"
           install -m 0644 README.md example.toml LICENSE-APACHE LICENSE-MIT "$package_dir/"
           install -m 0644 "docs/releases/${GITHUB_REF_NAME}.md" "$package_dir/CHANGELOG.md"
           printf '%s\n' "$GITHUB_REF_NAME" > "$package_dir/VERSION"
@@ -242,7 +273,7 @@ jobs:
             cd dist
             sha256sum "$asset" > "${asset}.sha256"
           )
-      - name: Smoke release asset
+      - name: Smoke packaged CLI
         env:
           TARGET: ${{ matrix.target }}
           TAG: ${{ github.ref_name }}
@@ -253,10 +284,11 @@ jobs:
           mkdir -p "$smoke_dir"
           tar -xzf "$archive" -C "$smoke_dir"
           test "$(cat "$smoke_dir/VERSION")" = "$TAG"
-          test "$("$smoke_dir/solaris" --version)" = "mc-server ${TAG#v}"
+          "$smoke_dir/solaris" --help >/dev/null
           (
             cd "$smoke_dir"
-            ./solaris --check --config example.toml >/dev/null
+            # Content startup requires the operator's licensed cache.
+            ./solaris --config example.toml content verify --help >/dev/null
           )
       - uses: actions/upload-artifact@v4
         with:
@@ -288,7 +320,8 @@ jobs:
         run: |
           set -euo pipefail
           release_args=(--repo "$GITHUB_REPOSITORY" --verify-tag --title "Solaris ${TAG}")
-          if [[ "$TAG" == *-* ]]; then
+          # Every 0.x release is preliminary (draft maturity); keep it off `latest`.
+          if [[ "$TAG" == *-* || "$TAG" == v0.* ]]; then
             release_args+=(--prerelease)
           fi
           notes_file="docs/releases/${TAG}.md"

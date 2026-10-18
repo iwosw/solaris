@@ -15,55 +15,13 @@ port = 25565
 [auth]
 # Offline loopback profile for local real-client testing only.
 online_mode = false
-whitelist_enabled = false
-whitelist = []
-banned_players = []
-
-[admin]
-operators = []
-allow_local_dev_operators = false
 
 [plugins]
 directory = "plugins"
 
 [data]
-# Worldgen v11 persists revision, seed, mode, ore/settlement profiles, geometry, and spawn.
-world_dir = ".analysis/test-world-v11"
+# Native world for local play; preserve older worlds separately.
+world_dir = ".analysis/test-world-v12"
 vanilla_data_dir = "data/vanilla"
 seed = 0
-worldgen_mode = "tellus_like"
 
-[simulation]
-random_tick_speed = 5
-save_interval_ticks = 1200
-# Manual play keeps both natural categories. The automated P04 continuity gate
-# writes an isolated effective config with hostile attempts disabled.
-friendly_spawn_interval_ticks = 400
-hostile_spawn_interval_ticks = 20
-friendly_spawn_chunk_budget = 48
-hostile_spawn_chunk_budget = 4
-
-[chunk_pipeline]
-chunk_send_rate = 8
-chunk_load_rate = 16
-chunk_generate_rate = 16
-chunk_prepare_budget_ms = 0
-chunk_prepare_batch_size = 8
-chunk_result_queue_size = 64
-region_cache_size = 9
-# Dev/field profile: two shared CPU workers and one IO worker. The startup bake
-# uses the same number, so one server on a development box - or several servers
-# in one gate run - cannot claim every core. 0 (or omitting the key) derives the
-# split from the process CPU limit.
-worker_threads = 2
-# compression_level = 1
-
-[autoscale]
-enabled = true
-profile = "balanced"
-min_view_distance = 4
-max_view_distance = 4
-# target_tick_ms = 50
-# target_first_chunk_ms = 1500
-# scale_down_after_ticks = 3
-# scale_up_after_ticks = 10

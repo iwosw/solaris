@@ -37,6 +37,7 @@ use crate::{
 use mc_script::precommit::{
     BuildContext as NativeBuildContext, DamageContext as NativeDamageContext,
     DamageTarget as NativeDamageTarget, HookActor as NativeHookActor, HookDecision,
+    HookHandlerResult,
 };
 use wasmtime::component::{Component, Linker};
 use wasmtime::{Store, Trap};
@@ -360,7 +361,7 @@ impl<S: HostServices + 'static> PluginInstance<S> {
         &mut self,
         context: &NativeBuildContext,
         deadline: Instant,
-    ) -> Result<HookDecision, HostError> {
+    ) -> Result<HookHandlerResult, HostError> {
         let context = build_context(context)?;
         self.hook_call("before-build", deadline, |guest| {
             guest
@@ -368,12 +369,15 @@ impl<S: HostServices + 'static> PluginInstance<S> {
                 .solaris_plugin_precommit()
                 .call_before_build(&mut guest.store, &context)
         })
-        .and_then(|answer| match answer {
-            Ok(BuildDecision::Keep) => Ok(HookDecision::Keep),
-            Ok(BuildDecision::Cancel) => Ok(HookDecision::Cancel),
-            Err(error) => Err(HostError::Answer(format!(
-                "before-build refused by the guest: {error:?}"
-            ))),
+        .and_then(|answer| {
+            let answer = answer.map_err(|error| {
+                HostError::Answer(format!("before-build refused by the guest: {error:?}"))
+            })?;
+            let decision = match answer.decision {
+                BuildDecision::Keep => HookDecision::Keep,
+                BuildDecision::Cancel => HookDecision::Cancel,
+            };
+            hook_handler_result(decision, answer.expected_plugin_storage_versions)
         })
     }
 
@@ -383,7 +387,7 @@ impl<S: HostServices + 'static> PluginInstance<S> {
         &mut self,
         context: &NativeDamageContext,
         deadline: Instant,
-    ) -> Result<HookDecision, HostError> {
+    ) -> Result<HookHandlerResult, HostError> {
         let context = damage_context(context)?;
         self.hook_call("before-damage", deadline, |guest| {
             guest
@@ -391,17 +395,22 @@ impl<S: HostServices + 'static> PluginInstance<S> {
                 .solaris_plugin_precommit()
                 .call_before_damage(&mut guest.store, &context)
         })
-        .and_then(|answer| match answer {
-            Ok(DamageDecision::Keep) => Ok(HookDecision::Keep),
-            Ok(DamageDecision::Cancel) => Ok(HookDecision::Cancel),
-            Ok(DamageDecision::Replace(amount)) => {
-                HookDecision::replacement(amount).ok_or_else(|| {
-                    HostError::Answer("before-damage returned an invalid replacement".to_owned())
-                })
-            }
-            Err(error) => Err(HostError::Answer(format!(
-                "before-damage refused by the guest: {error:?}"
-            ))),
+        .and_then(|answer| {
+            let answer = answer.map_err(|error| {
+                HostError::Answer(format!("before-damage refused by the guest: {error:?}"))
+            })?;
+            let decision = match answer.decision {
+                DamageDecision::Keep => HookDecision::Keep,
+                DamageDecision::Cancel => HookDecision::Cancel,
+                DamageDecision::Replace(amount) => {
+                    HookDecision::replacement(amount).ok_or_else(|| {
+                        HostError::Answer(
+                            "before-damage returned an invalid replacement".to_owned(),
+                        )
+                    })?
+                }
+            };
+            hook_handler_result(decision, answer.expected_plugin_storage_versions)
         })
     }
 
@@ -437,6 +446,20 @@ impl<S: HostServices + 'static> PluginInstance<S> {
             Err(error) => Err(HostError::Answer(format!("{error:?}"))),
         }
     }
+}
+
+fn hook_handler_result(
+    decision: HookDecision,
+    guards: Vec<crate::bindings::solaris::plugin::types::PluginStorageVersionGuard>,
+) -> Result<HookHandlerResult, HostError> {
+    let guards = guards
+        .into_iter()
+        .map(|guard| mc_script::ScriptPluginStorageVersionGuard::new(guard.key, guard.version))
+        .collect::<Vec<_>>();
+    mc_script::validate_plugin_storage_version_guards(&guards).map_err(|_| {
+        HostError::Answer("precommit returned invalid storage version guards".to_owned())
+    })?;
+    Ok(HookHandlerResult::new(decision, guards))
 }
 
 fn build_context(context: &NativeBuildContext) -> Result<BuildContext, HostError> {
@@ -518,11 +541,18 @@ impl<S: HostServices> crate::bindings::solaris::plugin::commands::Host for Insta
 
 impl<S: HostServices> crate::bindings::solaris::plugin::storage::Host for InstanceState<S> {}
 
-impl<S: HostServices> crate::bindings::solaris::plugin::settlements::Host for InstanceState<S> {}
+impl<S: HostServices> crate::bindings::solaris::plugin::world_structures::Host
+    for InstanceState<S>
+{
+}
 
 impl<S: HostServices> crate::bindings::solaris::plugin::inventories::Host for InstanceState<S> {}
 
-impl<S: HostServices> crate::bindings::solaris::plugin::residents::Host for InstanceState<S> {}
+impl<S: HostServices> crate::bindings::solaris::plugin::npcs::Host for InstanceState<S> {}
+
+impl<S: HostServices> crate::bindings::solaris::plugin::npc_routes::Host for InstanceState<S> {}
+
+impl<S: HostServices> crate::bindings::solaris::plugin::settlements::Host for InstanceState<S> {}
 
 impl<S: HostServices> crate::bindings::solaris::plugin::domain_operations::Host
     for InstanceState<S>
@@ -573,8 +603,20 @@ impl<S: HostServices + 'static> Host for InstanceState<S> {
 fn classify(engine: &wasmtime::Engine, what: &str, error: wasmtime::Error) -> HostError {
     let _ = engine;
     match error.downcast_ref::<Trap>() {
-        Some(Trap::OutOfFuel) => HostError::Budget,
-        Some(Trap::Interrupt) => HostError::Budget,
+        Some(Trap::OutOfFuel) => {
+            tracing::warn!(
+                callback = what,
+                "guest callback spent its whole fuel allowance"
+            );
+            HostError::Budget
+        }
+        Some(Trap::Interrupt) => {
+            tracing::warn!(
+                callback = what,
+                "guest callback crossed the wall-clock epoch deadline"
+            );
+            HostError::Budget
+        }
         Some(trap) => HostError::Trap(format!("{what}: {trap}")),
         None => HostError::Trap(format!("{what}: {error}")),
     }

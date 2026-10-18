@@ -29,139 +29,29 @@ fn state(blocks: &BlockRegistry, name: &str) -> BlockStateId {
 }
 
 #[test]
-fn native_and_borrowed_source_agree_on_natural_water_without_activation() {
-    let directory = tempfile::tempdir().unwrap();
-    let definition = definition();
-    let world = Arc::new(
-        prepare(
-            directory.path(),
-            &definition,
-            definition.input().domain,
-            PrepareOptions::default(),
-        )
-        .unwrap(),
-    );
-    let blocks = registry();
-    let items = Arc::new(mc_data::items::solaris_required_items());
-    let loot = ChestLootCatalog::new();
-    let cache = EarthSourceCache::default();
-    let borrowed = EarthBaseSource::new(
-        world.definition(),
-        world.identity(),
-        world.root_plan(),
-        &blocks,
-        None,
-        StructureLoot {
-            seed: 42,
-            catalog: &loot,
-            items: &items,
-        },
-        &cache,
-    )
-    .unwrap();
-    let runtime = EarthRuntime::new(Arc::clone(&world), Arc::clone(&blocks), None)
-        .unwrap()
-        .with_chest_loot(loot.clone(), items.clone());
-    let position = ChunkPos { x: -1, z: -1 };
-    let pure = borrowed.materialize_chunk(position).unwrap();
-    let base = runtime.load_base(0, position).unwrap().unwrap();
-    let water = state(&blocks, "minecraft:water");
-    for z in 0..16u8 {
-        for x in 0..16u8 {
-            let column = runtime
-                .natural_column(-16 + i32::from(x), -16 + i32::from(z))
-                .unwrap();
-            assert_ne!(base.get_block(x, column.ground_y, z), Some(runtime.air));
-            if let Some(surface) = column.water_surface_y {
-                for y in column.ground_y + 1..=surface {
-                    assert_eq!(base.get_block(x, y, z), Some(water));
-                }
-                assert_eq!(base.get_block(x, surface + 1, z), Some(runtime.air));
-            }
-            for y in MIN_Y..MAX_Y {
-                assert_eq!(base.get_block(x, y, z), pure.get_block(x, y, z));
-            }
-        }
+fn village_suitability_cache_evicts_one_completed_fact_in_fifo_order() {
+    let mut cache = VillageSuitabilityCache::default();
+    let key = |index: i32| ([7; 32], (index, -index));
+    for index in 0..VILLAGE_CACHE_ENTRIES as i32 {
+        let dry = index % 2 == 0;
+        assert_eq!(cache.insert(key(index), dry), dry);
     }
-    assert_eq!(world.store().record_counts().unwrap(), Default::default());
-    assert!(base.generated_entities().is_empty());
-    assert_eq!(base.world_journal_lsn(), 0);
-    assert!(!base.dirty);
-    assert!(
-        runtime
-            .load_base(0, ChunkPos { x: 4, z: 0 })
-            .unwrap()
-            .is_none()
-    );
-    assert!(runtime.load_effective(1, position).is_err());
-}
-
-#[test]
-fn native_provider_reopen_composes_edits_and_preserves_imported_air() {
-    let directory = tempfile::tempdir().unwrap();
-    let definition = definition();
-    let blocks = registry();
-    let items = Arc::new(mc_data::items::solaris_required_items());
-    let position = ChunkPos { x: -1, z: -1 };
-    let imported_position = ChunkPos { x: 1, z: 1 };
-    let air = state(&blocks, "minecraft:air");
-    let gold = state(&blocks, "minecraft:gold_block");
-    {
-        let world = Arc::new(
-            prepare(
-                directory.path(),
-                &definition,
-                definition.input().domain,
-                PrepareOptions::default(),
-            )
-            .unwrap(),
+    assert!(cache.insert(key(0), false), "an existing fact wins a race");
+    assert_eq!(cache.order.len(), VILLAGE_CACHE_ENTRIES);
+    let next = VILLAGE_CACHE_ENTRIES as i32;
+    assert!(!cache.insert(key(next), false));
+    assert_eq!(cache.entries.len(), VILLAGE_CACHE_ENTRIES);
+    assert_eq!(cache.order.len(), VILLAGE_CACHE_ENTRIES);
+    assert!(!cache.entries.contains_key(&key(0)));
+    for index in 1..=next {
+        assert_eq!(
+            cache.entries.get(&key(index)),
+            Some(&(index < next && index % 2 == 0))
         );
-        let runtime = EarthRuntime::new(Arc::clone(&world), Arc::clone(&blocks), None)
-            .unwrap()
-            .with_chest_loot(ChestLootCatalog::new(), items.clone());
-        let base = runtime.load_base(0, position).unwrap().unwrap();
-        let mut effective = base.clone();
-        effective.set_block(3, MIN_Y + 4, 5, gold).unwrap();
-        world
-            .store()
-            .apply_offline_snapshot(0, &base, &mut effective, &blocks, &items)
-            .unwrap();
-        let imported = Chunk::empty(
-            imported_position,
-            air,
-            Identifier::parse("minecraft:plains").unwrap(),
-        );
-        world
-            .store()
-            .import_chunk(0, &imported, &blocks, &items)
-            .unwrap();
     }
-    let world = Arc::new(
-        PreparedWorld::open(
-            directory.path(),
-            Some(&definition),
-            PrepareOptions::default(),
-        )
-        .unwrap(),
-    );
-    let runtime = EarthRuntime::new(Arc::clone(&world), Arc::clone(&blocks), None)
-        .unwrap()
-        .with_chest_loot(ChestLootCatalog::new(), items);
-    let base = runtime.load_base(0, position).unwrap().unwrap();
-    let effective = runtime.load_effective(0, position).unwrap().unwrap();
-    assert_ne!(base.get_block(3, MIN_Y + 4, 5), Some(gold));
-    assert_eq!(effective.get_block(3, MIN_Y + 4, 5), Some(gold));
-    assert_eq!(
-        effective.get_block(4, MIN_Y + 4, 5),
-        base.get_block(4, MIN_Y + 4, 5)
-    );
-    let imported = runtime
-        .load_effective(0, imported_position)
-        .unwrap()
-        .unwrap();
-    for y in MIN_Y..MAX_Y {
-        assert_eq!(imported.get_block(8, y, 8), Some(air));
-    }
+    // World identities remain part of the key.
+    assert!(cache.insert(([8; 32], (next, -next)), true));
+    assert_eq!(cache.entries.get(&key(next)), Some(&false));
 }
 
 #[test]
@@ -215,87 +105,6 @@ fn spawn_refuses_insufficient_playable_clearance_and_fixture_roots() {
 }
 
 #[test]
-fn finite_boundary_halo_denies_only_uncovered_chunks_after_import_resolution() {
-    let directory = tempfile::tempdir().unwrap();
-    let mut input = DefinitionInput::earth_root(42);
-    input.domain = PlaneBounds {
-        min_x: -33,
-        min_z: -33,
-        max_x_exclusive: 33,
-        max_z_exclusive: 33,
-    };
-    input.macro_cell_m = 16.0;
-    input.climate_cell_m = 32.0;
-    let definition = input.validate().unwrap();
-    let playable = PlaneBounds {
-        min_x: -32,
-        min_z: -32,
-        max_x_exclusive: 32,
-        max_z_exclusive: 32,
-    };
-    let world = Arc::new(
-        prepare(
-            directory.path(),
-            &definition,
-            playable,
-            PrepareOptions::default(),
-        )
-        .unwrap(),
-    );
-    let blocks = registry();
-    let items = Arc::new(mc_data::items::solaris_required_items());
-    let runtime = EarthRuntime::new(Arc::clone(&world), Arc::clone(&blocks), None)
-        .unwrap()
-        .with_chest_loot(ChestLootCatalog::new(), Arc::clone(&items));
-    let air = state(&blocks, "minecraft:air");
-    let imported_position = ChunkPos { x: 3, z: 0 };
-    let mut imported = Chunk::empty(
-        imported_position,
-        air,
-        Identifier::parse("minecraft:plains").unwrap(),
-    );
-    let gold = state(&blocks, "minecraft:gold_block");
-    imported.set_block(5, MIN_Y + 4, 7, gold).unwrap();
-    world
-        .store()
-        .import_chunk(0, &imported, &blocks, &items)
-        .unwrap();
-
-    // A valid playable boundary can admit its whole view/light halo. Missing
-    // physical coverage is absence, not a fatal procedural preparation error.
-    for z in -4..=3 {
-        for x in -4..=3 {
-            let position = ChunkPos { x, z };
-            let base = runtime.load_base(0, position).unwrap();
-            if position == imported_position {
-                assert_eq!(base.unwrap().get_block(5, MIN_Y + 4, 7), Some(gold));
-            } else if !(-3..=2).contains(&x) || !(-3..=2).contains(&z) {
-                assert!(base.is_none(), "uncovered halo {position:?}");
-                assert!(runtime.load_effective(0, position).unwrap().is_none());
-            } else {
-                assert!(base.is_some(), "overlapping physical chunk {position:?}");
-            }
-        }
-    }
-    for (chunk_x, valid_x, padding_x, world_x) in [(2, 0, 1, 32), (-3, 15, 14, -33)] {
-        let position = ChunkPos { x: chunk_x, z: 0 };
-        let base = runtime.load_base(0, position).unwrap().unwrap();
-        let column = runtime.natural_column(world_x, 0).unwrap();
-        assert_ne!(base.get_block(valid_x, column.ground_y, 0), Some(air));
-        for y in MIN_Y..MAX_Y {
-            assert_eq!(base.get_block(padding_x, y, 0), Some(air));
-        }
-    }
-    let restored_import = runtime
-        .load_effective(0, imported_position)
-        .unwrap()
-        .unwrap();
-    assert_eq!(restored_import.get_block(5, MIN_Y + 4, 7), Some(gold));
-    assert_eq!(restored_import.get_block(6, MIN_Y + 4, 7), Some(air));
-    assert_eq!(world.store().record_counts().unwrap().imported_chunks, 1);
-}
-
-#[test]
 fn prepared_natural_consumer_reads_exact_base_without_native_activation() {
     let directory = tempfile::tempdir().unwrap();
     let definition = definition();
@@ -310,7 +119,7 @@ fn prepared_natural_consumer_reads_exact_base_without_native_activation() {
     );
     let blocks = registry();
     let runtime = EarthRuntime::new(Arc::clone(&world), Arc::clone(&blocks), None).unwrap();
-    let source = runtime.natural_source().unwrap();
+    let source: &dyn NativeNaturalSource = &runtime;
     assert_eq!(source.seed(), definition.input().seed);
     for (x, z) in [(-64, -64), (63, 63), (0, 0)] {
         assert!(source.contains_column(x, z));
@@ -333,14 +142,11 @@ fn prepared_natural_consumer_reads_exact_base_without_native_activation() {
             !natural.geology_ecology.ecology.wet && natural.geology_ecology.ecology.slope <= 0.7,
         );
         let base = runtime
-            .load_base(
-                0,
-                ChunkPos {
-                    x: x.div_euclid(16),
-                    z: z.div_euclid(16),
-                },
-            )
-            .unwrap()
+            .base_source()
+            .materialize_chunk(ChunkPos {
+                x: x.div_euclid(16),
+                z: z.div_euclid(16),
+            })
             .unwrap();
         let (lx, lz) = (x.rem_euclid(16) as u8, z.rem_euclid(16) as u8);
         assert_ne!(base.get_block(lx, fact.ground_y, lz), Some(runtime.air));
@@ -467,7 +273,23 @@ fn prepared_site_consumer_reports_only_villages_written_into_exact_base() {
     )
     .unwrap();
     let consumer: &dyn NativeNaturalSource = &base;
-    let sites = consumer.prepare_village_sites((0, 0), (0, 0)).unwrap();
+    let start = std::sync::Barrier::new(2);
+    let query = || {
+        start.wait();
+        consumer.prepare_village_sites((0, 0), (0, 0)).unwrap()
+    };
+    let sites = std::thread::scope(|scope| {
+        let first = scope.spawn(query);
+        let second = scope.spawn(query);
+        let sites = first.join().unwrap();
+        assert_eq!(sites, second.join().unwrap());
+        sites
+    });
+    assert_eq!(
+        sites,
+        consumer.prepare_village_sites((0, 0), (0, 0)).unwrap(),
+        "concurrent cold scans and cached queries must return identical sites"
+    );
     assert_eq!(sites.len(), 1, "flat dry start must be accepted");
     let site = &sites[0];
     assert_eq!(site.start_chunk, (0, 0));

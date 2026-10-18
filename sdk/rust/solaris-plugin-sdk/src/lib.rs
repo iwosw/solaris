@@ -22,24 +22,56 @@ pub mod bindings {
         world: "plugin",
         pub_export_macro: true,
         default_bindings_module: "solaris_plugin_sdk::bindings",
+        additional_derives: [serde::Serialize, serde::Deserialize],
     });
 }
 
 pub use bindings::export as __export;
 pub use bindings::exports::solaris::plugin::{events, lifecycle, precommit};
 pub use bindings::solaris::plugin::{
-    client_presentation, commands, domain_operations, host, inventories, operation_types,
-    residents, settlements, storage, types, world_events,
+    client_presentation, commands, domain_operations, host, inventories, npc_routes, npcs,
+    operation_types, settlements, storage, types, world_events,
 };
 
 mod glue;
 mod inventory_ops;
-mod resident_ops;
+mod npc_ops;
+mod npc_route_ops;
 mod settlement_ops;
+mod world_structure_ops;
+/// Generic physical world facts and durable worksite/structure operations.
+pub mod world_structures {
+    pub use crate::bindings::solaris::plugin::world_structures::*;
+    pub use crate::world_structure_ops::*;
+}
 
 pub use inventory_ops::*;
-pub use resident_ops::*;
+pub use npc_ops::*;
+pub use npc_route_ops::*;
 pub use settlement_ops::*;
+pub use world_structure_ops::*;
+
+/// Native settlement records, households, and district plans.
+pub mod settlements_api {
+    pub use crate::bindings::solaris::plugin::settlements::*;
+    pub use crate::settlement_ops::*;
+}
+
+/// Attach exact positive storage versions to a native domain operation.
+/// The authenticated package namespace is implicit; mismatch refuses without
+/// physical effects. Wrap an inventory/NPC/route/world-structure helper, never
+/// an unrelated chat, timer or storage command.
+#[must_use]
+pub fn with_expected_plugin_storage_versions(
+    mut command: Command,
+    guards: Vec<types::PluginStorageVersionGuard>,
+) -> Command {
+    let Command::Operation(request) = &mut command else {
+        panic!("storage version guards require a native domain operation");
+    };
+    request.expected_plugin_storage_versions = guards;
+    command
+}
 
 pub use client_presentation::{
     BeginClientSelection, CancelClientSelection, ClientCommand, CloseClientView,
@@ -61,8 +93,8 @@ pub use events::{
 };
 pub use lifecycle::{InitContext, StartupContribution};
 pub use precommit::{
-    BuildContext, BuildDecision, BuildEdit, DamageContext, DamageDecision, DamageTarget, HookActor,
-    HookPlayer,
+    BuildContext, BuildDecision, BuildEdit, BuildResult, DamageContext, DamageDecision,
+    DamageResult, DamageTarget, HookActor, HookPlayer,
 };
 pub use storage::{StorageCasOutcome, StorageFailure, StorageGetOutcome, StorageRecord};
 pub use types::{LogLevel, PluginError};
@@ -202,8 +234,11 @@ pub trait Plugin: Sized + 'static {
     /// [`Plugin::on_events`] instead. Answering from state the callback itself
     /// maintains is also what makes the decision reproducible, because the same
     /// context must keep deciding the same way.
-    fn before_build(&mut self, _context: &BuildContext) -> Result<BuildDecision, Failure> {
-        Ok(BuildDecision::Keep)
+    fn before_build(&mut self, _context: &BuildContext) -> Result<BuildResult, Failure> {
+        Ok(BuildResult {
+            decision: BuildDecision::Keep,
+            expected_plugin_storage_versions: Vec::new(),
+        })
     }
 
     /// One before-damage question, asked only for a registration an operator made
@@ -218,8 +253,11 @@ pub trait Plugin: Sized + 'static {
     /// instead: no later handler is asked and the damage is refused whatever the
     /// handlers before it decided, so an earlier `Replace` is discarded. The
     /// default keeps the amount it was asked about.
-    fn before_damage(&mut self, _context: &DamageContext) -> Result<DamageDecision, Failure> {
-        Ok(DamageDecision::Keep)
+    fn before_damage(&mut self, _context: &DamageContext) -> Result<DamageResult, Failure> {
+        Ok(DamageResult {
+            decision: DamageDecision::Keep,
+            expected_plugin_storage_versions: Vec::new(),
+        })
     }
 
     /// Best-effort cleanup. The host reclaims everything it owns whether or not

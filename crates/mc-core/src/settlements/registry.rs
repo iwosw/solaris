@@ -1,0 +1,548 @@
+//! Tick-owned records. Membership remains exclusively in villager columns.
+use std::collections::{BTreeMap, BTreeSet};
+
+use serde::{Deserialize, Serialize};
+
+use crate::boundary::EntityId;
+
+pub(crate) const MAX_RADIUS: u32 = 256;
+
+/// Global, monotonically allocated identity; names may change, IDs never do.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct SettlementId(pub u64);
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SettlementRecord {
+    pub id: SettlementId,
+    pub name: String,
+    pub owner: String,
+    pub anchor: [i32; 3],
+    pub radius: u32,
+    pub revision: u64,
+    #[serde(default)]
+    pub household_sequence: u64,
+    #[serde(default)]
+    pub households: BTreeMap<String, super::households::Household>,
+    #[serde(default)]
+    pub district: Option<super::districts::DistrictPlan>,
+    #[serde(default)]
+    pub(crate) economy: super::economy::State,
+}
+
+/// One absolute post-image or tombstone, not an aggregate registry blob.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RecordImage {
+    pub id: SettlementId,
+    pub value: Option<SettlementRecord>,
+}
+
+#[derive(Debug, Default)]
+pub struct Registry {
+    records: BTreeMap<SettlementId, SettlementRecord>,
+    touched: BTreeSet<SettlementId>,
+    high_water: u64,
+    /// Derived and rebuilt after hydration; never serialized or journaled.
+    counts: BTreeMap<SettlementId, usize>,
+    /// Derived occupancy index: last counted settlement per entity.
+    /// Hydrated by `rebuild_counts` alongside `counts`; never serialized.
+    resident_settlement: BTreeMap<EntityId, SettlementId>,
+    household_counts: BTreeMap<SettlementId, BTreeMap<String, usize>>,
+    resident_household: BTreeMap<EntityId, (SettlementId, String)>,
+    /// Global living population for locally owned households; rebuilt from
+    /// every dimension's native columns, never saved in settlement rows.
+    household_sizes: BTreeMap<String, usize>,
+    /// Global-tail reconciliation for explicit household membership mutations.
+    /// Runtime work only: never a second persisted roster.
+    household_changes: BTreeSet<String>,
+    /// Derived work queue: no idle-town or terminal-receipt tick scan.
+    economic_active: BTreeSet<SettlementId>,
+}
+
+impl SettlementRecord {
+    /// Cheap overestimate of the heap this record owns, for the journal
+    /// queue's byte budget: map element counts times element size, string
+    /// capacities and item-stack heaps; fixed-size endpoint/fence records get
+    /// a flat allowance. Never serializes.
+    pub(crate) fn heap_estimate(&self) -> usize {
+        use crate::journal_budget::{
+            NESTED_STATE_ALLOWANCE as FIXED, stacks_heap, tree_root, tree_slot,
+        };
+        use mc_script::ScriptSettlementBuildingRef as Building;
+        use std::mem::size_of;
+        // Inline key+value bytes of a tree element, with node slack priced in.
+        let key =
+            |key: &String, value: usize| key.capacity() + tree_slot(size_of::<String>() + value);
+        let opt = |text: &Option<String>| text.as_ref().map_or(0, String::capacity);
+        let building = |building: &Building| {
+            size_of::<Building>()
+                + building.kind.capacity()
+                + building.id.capacity()
+                + building.purpose.capacity()
+        };
+        let households = self
+            .households
+            .iter()
+            .map(|(id, household)| {
+                key(id, size_of::<super::households::Household>())
+                    + household.id.capacity()
+                    + opt(&household.needs)
+                    + opt(&household.policy)
+            })
+            .sum::<usize>();
+        let district = self.district.as_ref().map_or(0, |plan| {
+            plan.owner.capacity()
+                + plan.branch.capacity()
+                + plan.buildings.capacity() * size_of::<Building>()
+                + plan.buildings.iter().map(building).sum::<usize>()
+        });
+        let jobs = self
+            .economy
+            .production
+            .jobs
+            .iter()
+            .map(|(id, job)| {
+                key(id, size_of::<super::production::Job>())
+                    + job.id.capacity()
+                    + job.owner.capacity()
+                    + job.recipe.capacity()
+                    + job.recipe_revision.capacity()
+                    + job.dimension.capacity()
+                    + opt(&job.paused)
+                    + building(&job.building)
+                    + job.receipts.capacity() * size_of::<super::production::Receipt>()
+                    + job
+                        .receipts
+                        .iter()
+                        .map(|receipt| {
+                            receipt.job.capacity()
+                                + receipt.recipe.capacity()
+                                + receipt.recipe_revision.capacity()
+                                + stacks_heap(&receipt.inputs)
+                                + stacks_heap(&receipt.outputs)
+                                + receipt.tool_wear.capacity()
+                                    * size_of::<super::production::ToolWear>()
+                                + receipt
+                                    .tool_wear
+                                    .iter()
+                                    .map(|wear| wear.item.capacity())
+                                    .sum::<usize>()
+                        })
+                        .sum::<usize>()
+            })
+            .sum::<usize>();
+        let commerce = &self.economy.commerce;
+        let contracts = commerce
+            .employments
+            .keys()
+            .map(|id| key(id, size_of::<super::commerce::Employment>()) + FIXED)
+            .sum::<usize>()
+            + commerce
+                .quotes
+                .iter()
+                .map(|(id, quote)| {
+                    key(id, size_of::<super::commerce::Quote>())
+                        + crate::journal_budget::item_heap(&quote.goods)
+                        + FIXED
+                })
+                .sum::<usize>()
+            + commerce
+                .mandates
+                .iter()
+                .map(|(id, mandate)| {
+                    key(id, size_of::<super::commerce::EscrowMandate>())
+                        + mandate.shipment.capacity()
+                        + FIXED
+                })
+                .sum::<usize>();
+        let shipments = self
+            .economy
+            .caravan
+            .shipments
+            .iter()
+            .map(|(id, shipment)| {
+                key(id, size_of::<super::caravan::Shipment>())
+                    + shipment.id.capacity()
+                    + shipment.owner.capacity()
+                    + opt(&shipment.paid_mandate)
+                    + opt(&shipment.blocked)
+                    + crate::journal_budget::item_heap(&shipment.manifest)
+                    + shipment.waypoints.capacity() * size_of::<[i32; 3]>()
+                    + shipment.carry.capacity() * size_of::<super::caravan::CarryLot>()
+                    // Two container refs, three inventory fences, three receipts.
+                    + 4 * FIXED
+            })
+            .sum::<usize>();
+        let root = |len: usize, value: usize| tree_root(len, size_of::<String>() + value);
+        let roots = root(
+            self.households.len(),
+            size_of::<super::households::Household>(),
+        ) + root(
+            self.economy.production.jobs.len(),
+            size_of::<super::production::Job>(),
+        ) + root(
+            commerce.employments.len(),
+            size_of::<super::commerce::Employment>(),
+        ) + root(commerce.quotes.len(), size_of::<super::commerce::Quote>())
+            + root(
+                commerce.mandates.len(),
+                size_of::<super::commerce::EscrowMandate>(),
+            )
+            + root(
+                self.economy.caravan.shipments.len(),
+                size_of::<super::caravan::Shipment>(),
+            );
+        self.name.capacity()
+            + self.owner.capacity()
+            + roots
+            + households
+            + district
+            + jobs
+            + contracts
+            + shipments
+    }
+}
+
+pub fn valid_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 64
+        && name
+            .bytes()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, b'_' | b'-'))
+}
+
+pub fn validate_record(record: &SettlementRecord) -> Result<(), &'static str> {
+    if record.id.0 == 0 || record.revision == 0 {
+        return Err("invalid settlement identity or revision");
+    }
+    if !valid_name(&record.name) || record.owner.is_empty() || record.owner.len() > 128 {
+        return Err("invalid settlement name or owner");
+    }
+    if !(1..=MAX_RADIUS).contains(&record.radius) {
+        return Err("settlement radius must be in 1..=256");
+    }
+    super::households::validate_record(record)?;
+    if let Some(district) = &record.district {
+        super::districts::validate(district)?;
+    }
+    super::economy::validate(&record.economy)?;
+    Ok(())
+}
+
+impl Registry {
+    pub fn records(&self) -> impl Iterator<Item = &SettlementRecord> {
+        self.records.values()
+    }
+
+    pub fn get(&self, id: SettlementId) -> Option<&SettlementRecord> {
+        self.records.get(&id)
+    }
+
+    /// Mutation custody records a touched-only settlement post-image.
+    pub(crate) fn get_mut(&mut self, id: SettlementId) -> Option<&mut SettlementRecord> {
+        if !self.records.contains_key(&id) {
+            return None;
+        }
+        self.touched.insert(id);
+        self.records.get_mut(&id)
+    }
+
+    /// Temporary domain extraction is restored before finishing the mutation.
+    /// Do not mark touched on reads, pauses, or idempotent command replays.
+    pub(super) fn economy_for_tick(&mut self, id: SettlementId) -> &mut super::economy::State {
+        &mut self
+            .records
+            .get_mut(&id)
+            .expect("native economic settlement")
+            .economy
+    }
+
+    pub(super) fn finish_economy(&mut self, id: SettlementId, revision: u64, changed: bool) {
+        if !changed {
+            return;
+        }
+        let record = self
+            .records
+            .get_mut(&id)
+            .expect("native economic settlement");
+        record.economy.refresh_routes();
+        record.revision = revision;
+        self.touched.insert(id);
+        if super::economy::active(&record.economy) {
+            self.economic_active.insert(id);
+        } else {
+            self.economic_active.remove(&id);
+        }
+    }
+
+    pub(super) fn next_economy(&self, after: Option<SettlementId>) -> Option<SettlementId> {
+        use std::ops::Bound::{Excluded, Unbounded};
+        self.economic_active
+            .range((after.map_or(Unbounded, Excluded), Unbounded))
+            .next()
+            .copied()
+    }
+
+    pub(super) fn queue_household_change(&mut self, household: String) {
+        self.household_changes.insert(household);
+    }
+
+    pub(super) fn take_household_changes(&mut self) -> BTreeSet<String> {
+        std::mem::take(&mut self.household_changes)
+    }
+
+    pub fn find(&self, name: &str) -> Option<&SettlementRecord> {
+        self.records.values().find(|record| record.name == name)
+    }
+
+    pub fn high_water(&self) -> u64 {
+        self.high_water
+    }
+
+    pub fn set_high_water(&mut self, value: u64) {
+        self.high_water = self.high_water.max(value);
+    }
+
+    pub fn create(
+        &mut self,
+        sequence: &mut u64,
+        name: String,
+        owner: String,
+        anchor: [i32; 3],
+        radius: u32,
+    ) -> Result<SettlementId, &'static str> {
+        if self.find(&name).is_some() {
+            return Err("settlement name already exists");
+        }
+        let id = SettlementId(
+            (*sequence)
+                .max(self.high_water)
+                .checked_add(1)
+                .ok_or("settlement identity exhausted")?,
+        );
+        let record = SettlementRecord {
+            id,
+            name,
+            owner,
+            anchor,
+            radius,
+            revision: 1,
+            household_sequence: 0,
+            households: BTreeMap::new(),
+            district: None,
+            economy: super::economy::State::default(),
+        };
+        validate_record(&record)?;
+        self.records.insert(id, record);
+        self.touched.insert(id);
+        self.high_water = id.0;
+        *sequence = id.0;
+        Ok(id)
+    }
+
+    pub fn rename(&mut self, id: SettlementId, name: String) -> Result<(), &'static str> {
+        if !valid_name(&name) {
+            return Err("invalid settlement name");
+        }
+        if self.find(&name).is_some_and(|record| record.id != id) {
+            return Err("settlement name already exists");
+        }
+        let record = self.records.get_mut(&id).ok_or("settlement not found")?;
+        if record.name == name {
+            return Ok(());
+        }
+        let revision = record
+            .revision
+            .checked_add(1)
+            .ok_or("settlement revision exhausted")?;
+        record.name = name;
+        record.revision = revision;
+        self.touched.insert(id);
+        Ok(())
+    }
+
+    pub fn remove(&mut self, id: SettlementId) -> bool {
+        let Some(record) = self.records.remove(&id) else {
+            return false;
+        };
+        for household in record.households.keys() {
+            self.household_sizes.remove(household);
+        }
+        self.counts.remove(&id);
+        self.economic_active.remove(&id);
+        self.resident_settlement.retain(|_, sid| *sid != id);
+        self.household_counts.remove(&id);
+        self.resident_household.retain(|_, (sid, _)| *sid != id);
+        self.touched.insert(id);
+        true
+    }
+
+    pub fn take_images(&mut self) -> Vec<RecordImage> {
+        std::mem::take(&mut self.touched)
+            .into_iter()
+            .map(|id| RecordImage {
+                id,
+                value: self.records.get(&id).cloned(),
+            })
+            .collect()
+    }
+
+    pub fn images(&self) -> Vec<RecordImage> {
+        self.records
+            .values()
+            .map(|record| RecordImage {
+                id: record.id,
+                value: Some(record.clone()),
+            })
+            .collect()
+    }
+
+    pub(super) fn removed_ids(&self) -> impl Iterator<Item = SettlementId> + '_ {
+        self.touched
+            .iter()
+            .copied()
+            .filter(|id| !self.records.contains_key(id))
+    }
+
+    /// The persistence boundary validates the row before applying it.
+    pub fn apply_image(&mut self, image: RecordImage) {
+        self.high_water = self.high_water.max(image.id.0);
+        if let Some(mut record) = image.value {
+            record.economy.refresh_routes();
+            if super::economy::active(&record.economy) {
+                self.economic_active.insert(image.id);
+            } else {
+                self.economic_active.remove(&image.id);
+            }
+            self.records.insert(image.id, record);
+        } else {
+            self.economic_active.remove(&image.id);
+            if let Some(record) = self.records.remove(&image.id) {
+                for household in record.households.keys() {
+                    self.household_sizes.remove(household);
+                }
+            }
+            self.counts.remove(&image.id);
+            self.resident_settlement.retain(|_, sid| *sid != image.id);
+            self.household_counts.remove(&image.id);
+            self.resident_household
+                .retain(|_, (sid, _)| *sid != image.id);
+        }
+    }
+    pub fn member_count(&self, id: SettlementId) -> usize {
+        self.counts.get(&id).copied().unwrap_or(0)
+    }
+
+    pub(super) fn clear_counts(&mut self) {
+        for count in self.counts.values_mut() {
+            *count = 0;
+        }
+        self.resident_settlement.clear();
+        self.household_counts.clear();
+        self.resident_household.clear();
+    }
+
+    pub(super) fn count_member(&mut self, id: SettlementId) {
+        *self.counts.entry(id).or_default() += 1;
+    }
+
+    /// Change the occupancy projection only when this entity's share changes.
+    pub(super) fn update_resident(&mut self, entity: EntityId, new: Option<SettlementId>) {
+        let old = self.resident_settlement.get(&entity).copied();
+        if old == new {
+            return;
+        }
+        if let Some(id) = old {
+            self.resident_settlement.remove(&entity);
+            if let Some(count) = self.counts.get_mut(&id) {
+                *count -= 1;
+            }
+        }
+        if let Some(id) = new {
+            self.count_member(id);
+            self.resident_settlement.insert(entity, id);
+        }
+    }
+
+    pub(crate) fn household_count(&self, settlement: SettlementId, household: &str) -> usize {
+        self.household_counts
+            .get(&settlement)
+            .and_then(|counts| counts.get(household))
+            .copied()
+            .unwrap_or(0)
+    }
+
+    pub(crate) fn household_size(&self, household: &str) -> usize {
+        self.household_sizes.get(household).copied().unwrap_or(0)
+    }
+
+    pub(super) fn set_household_size(&mut self, household: &str, size: usize) {
+        if size == 0 {
+            self.household_sizes.remove(household);
+        } else if let Some(current) = self.household_sizes.get_mut(household) {
+            *current = size;
+        } else {
+            self.household_sizes.insert(household.to_owned(), size);
+        }
+    }
+
+    pub(super) fn rebuild_household_sizes(&mut self, sizes: &BTreeMap<String, usize>) {
+        self.household_sizes.clear();
+        for record in self.records.values() {
+            for household in record.households.keys() {
+                if let Some(&size) = sizes.get(household)
+                    && size > 0
+                {
+                    self.household_sizes.insert(household.clone(), size);
+                }
+            }
+        }
+    }
+
+    pub(super) fn update_household(
+        &mut self,
+        entity: EntityId,
+        new: Option<(SettlementId, &str)>,
+        notify: bool,
+    ) {
+        if self
+            .resident_household
+            .get(&entity)
+            .map(|(id, family)| (*id, family.as_str()))
+            == new
+        {
+            return;
+        }
+        if let Some((settlement, household)) = self.resident_household.remove(&entity) {
+            if let Some(count) = self
+                .household_counts
+                .get_mut(&settlement)
+                .and_then(|counts| counts.get_mut(&household))
+            {
+                *count -= 1;
+            }
+            if notify {
+                self.household_changes.insert(household);
+            }
+        }
+        if let Some((settlement, household)) = new {
+            *self
+                .household_counts
+                .entry(settlement)
+                .or_default()
+                .entry(household.to_owned())
+                .or_default() += 1;
+            self.resident_household
+                .insert(entity, (settlement, household.to_owned()));
+            if notify && !self.household_changes.contains(household) {
+                self.household_changes.insert(household.to_owned());
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+#[path = "registry_tests.rs"]
+mod tests;

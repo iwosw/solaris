@@ -1,5 +1,12 @@
 # M100 Validation Ledger
 
+**Runtime-era notice (ADR 0014 Phase 5):** this ledger preserves the M77–M100
+v1 evidence and frozen denominator. Runtime names, test commands and quality
+labels below apply to their recorded trees, not the current `mc-edge` /
+`mc-core` server. Deleted v1 commands are historical receipts, not recipes.
+No ledger row is automatically revalidated by the cutover; current maturity
+remains `draft` until the required native-runtime gates are exercised.
+
 **Status:** M77 frozen denominator. Quality label: `stabilization`.
 
 This is the canonical scope and evidence ledger for the M100 core MVP. It
@@ -1460,7 +1467,7 @@ changes status.
 | I1 | Player inventory, cursor state, held item use, crafting table, and recipe execution | In scope | `partial` | M22-M24 and M68-M69 focused inventory/crafting/container tests. The 2026-06-22 `m94-03a-inventory-oak-log-to-planks` real-client run sent the vanilla place-recipe packet for inventory container `0`, consumed one oak log, and observed four added oak planks in `.analysis/real-client-runs/20260622T161221Z-m94-regression-pack`. The 2026-06-22 `m94-03b-two-client-shared-chest` run `.analysis/real-client-runs/20260622T221125Z-m94-regression-pack` moved selected dirt into chest slot `0` through the real client's vanilla menu-click path and had a second real client observe that slot. The 2026-07-04 malformed inventory click slice adds one window-0 valid-wire fail-closed route: a matching-state-id `Pickup` with lying `changed_slots` and impossible carried-item prediction first advanced the resync state id `2 -> 3`, then passed after rejected inventory-click resyncs preserved the authoritative state id while keeping slot `36` and cursor state unchanged. | Recipe-book discovery/window sync, cursor recovery, crafting-table UI, broad containers/stations, broad malformed click fail-closed, exact vanilla click semantics beyond these focused routes, and broad recipe execution remain incomplete. | M80, M87, M89, M94, M95 |
 | I2 | Recipe book and recipe data: shaped, shapeless, furnace, blasting, smoking, campfire | In scope | `partial` | Readiness records recipe loading for furnace-family and campfire variants. The 2026-06-22 `m94-03a-inventory-oak-log-to-planks` real-client run covers one shapeless recipe through the actual client/server place-recipe packet path using configured vanilla sidecar recipe display id `697`, with `mc-server` logging `recipe registry loaded entries=1146 source="vanilla_sidecar"`. | Broader recipe execution, unsupported features, recipe-book discovery/window sync, furnace-family client runs, and campfire recipe client runs need classification and tests. | M80, M87, M94, M95 |
 | K1 | Containers: chest, barrel, furnace, smoker, blast furnace, clicks, viewers, block-entity ids | In scope | `partial` | M69-M71 harness and unit coverage for specialized furnace menus and barrel/furnace ids. M81 adds docs-only comparator debt classification; no runtime automation code landed. The 2026-06-22 `m94-03b` route passed a focused two-client real-client chest-slot deposit/observe path in `.analysis/real-client-runs/20260622T221125Z-m94-regression-pack`: primary chest placement/open/slot transfer/slot convergence/close and secondary same-chest open/slot `0` observation both passed with screenshots. The 2026-06-23 `m94-03c` route passed a focused two-client real-client live chest-slot update path in `.analysis/real-client-runs/20260622T232643Z-m94-regression-pack`: primary deposited dirt and kept the screen open, secondary quick-moved the slot out, and primary observed the still-open slot become empty. The 2026-06-23 shared-chest stale-click slice adds `stale_chest_click_after_peer_mutation_resyncs_without_mutating_storage`, which first proved an old peer-window click could pick up a just-mutated chest stack, then passed after chest windows checked a shared `SessionRegistry` chest state id before mutation. The 2026-06-23 shared-furnace stale-click slice adds `stale_furnace_click_after_peer_mutation_resyncs_without_mutating_storage` and `furnace_slot_dispatches_claim_expected_state_exactly_once`, covering old furnace-window clicks after peer slot mutation and a single compare-and-advance state-id `FurnaceSlots` claim. The 2026-07-04 `two_clients_stale_chest_click_after_peer_update_resyncs` and `two_clients_stale_furnace_click_after_peer_update_resyncs` harnesses cover live TCP/session versions for one chest slot update and one furnace input-slot update followed by stale observer clicks. The 2026-07-04 `unsupported_chest_click_modes_resync_without_trusting_client_slots` and `malformed_furnace_clicks_resync_without_trusting_client_slots` harnesses cover valid-wire unsupported chest/furnace click modes (`QuickCraft`, `Clone`, `PickupAll`) plus one malformed furnace pickup that lies about the carried item; post-click carried-item rollback rejects the conflicting non-empty client prediction and resyncs without mutating storage. The 2026-07-05 hopper foundation slice adds typed hopper storage/persistence and server-origin source/target open-chest slot updates after scheduled hopper transfer; the follow-up recurring tick slice reschedules successful hopper transfers with an 8-tick delay derived from the local 26.1.2 `HopperBlockEntity.MOVE_ITEM_SPEED` decompile oracle, the furnace feed follow-up proves a top hopper inserts a valid smelting ingredient into furnace input slot `0`, the side-fuel follow-up proves a side hopper inserts coal into furnace fuel slot `1`, and the output-extraction follow-up proves a hopper below a furnace extracts output slot `2` into its facing chest; the furnace hopper paths dispatch server-origin source chest/furnace and target chest/furnace slot updates to open viewers, focused edge coverage guards empty furnace output, stack merge, and no-room preservation, and double-chest hopper coverage pulls from and inserts into the second half while dispatching canonical 54-slot chest updates for open double-chest viewers. A later 2026-07-05 cooldown-pipeline slice stores exact `TransferCooldown` NBT with non-default Anvil and flush/reopen round-trips, changes loaded hopper scheduling to per-tick cooldown countdown, and proves source container/furnace output first enters the hopper inventory before a later cooldown-ready ejection mutates target chests, furnaces, campfires, and double chests. A follow-up live TCP harness opens source and target chests with separate protocol clients, schedules the server-origin hopper tick only after both windows are open, and observes the source slot become empty before the target slot receives the item after cooldown. A later focused comparator slice schedules adjacent facing comparators after hopper-driven chest/furnace updates and powers the comparator block state from observed container fullness using the 26.1.2 `AbstractContainerMenu.getRedstoneSignalFromContainer` formula; the TCP harness `server_origin_hopper_tick_updates_open_chests_and_comparator_over_tcp` observes the powered comparator `BlockUpdate` after cooldown ejection. The 2026-07-11 Prompt 02 container slice adds atomic compare-and-advance claims for chest/furnace client clicks, a handler-level exact cursor/storage conservation regression, a deterministic furnace tick-vs-click lost-update regression, and a two-protocol-client simultaneous same-state chest gate; hopper/furnace server publications now happen while world mutation ordering is still locked. | Barrel animation/sounds/events, furnace lit-state, hopper menu/viewer UI, hopper-chain same-tick skip ordering, typed comparator `OutputSignal` persistence, exact broad state machine, swap/throw edge cases, item max-stack metadata integration, save/restart beyond focused hopper/chest/furnace storage, real-client concurrent-click coverage, broad shared-container convergence, broad malformed-click coverage, concurrent save/restart, and contention breadth beyond the focused same-state chest/tick races need evidence. | M81, M87, M88, M94, M95 |
-| K2 | Common survival stations beyond crafting/furnace family | In scope | `partial` | M87 adds a safe-rejection runtime path for unsupported common stations: brewing stand, anvil variants, enchanting table, smithing table, grindstone, stonecutter, loom, cartography table, composter, cauldron variants, lectern, fletching table, beacon, and crafter. `mc-net` unit coverage guards an independently declared expected block-id/name table for the policy, with a dedicated cauldron-family regression test; `mc-test-harness` covers stonecutter use over the real `UseItemOn` path and asserts no unimplemented screen opens and no adjacent held-block placement occurs. | Brewing, anvil repair/rename, enchanting, smithing transformations, grindstone repair/disenchant, stonecutting recipes, loom banners, cartography recipes/maps, composter fill/output, cauldron fill/drain/content interactions, lectern book interactions, fletching behavior, beacon effects/payments, and crafter automation remain deferred M101+ gameplay debt unless M95/M100 evidence reopens one as a blocker. No vanilla oracle or real-client evidence exists for M87. | M87, M94, M95, M100 |
+| K2 | Common survival stations beyond crafting/furnace family | In scope | `partial` | Native smithing21/loom18/anvil8/grindstone15/brewing11 layouts, output debits, rename/XP and stale replay have TCP functional coverage in `native_station_wire_open_click_debits_and_stale_replay_smoke`. `brewing_menu_close_keeps_background_batch_and_native_reload_resumes_it` proves background brewing through a disk save/restart and TCP menu reopen. Scoped simulation/production tests cover input conservation, template refunds, curses, XP and batch fuel/ingredient debits; world tests cover NBT/CAS, atomic five-slot removal and anvil facing/light invalidation. | Native windowed UI/visual captures remain a NativeClient7 gate; no graphical validation is claimed. Other stations, broad sounds/particles/automation and full vanilla parity remain unproved. | M87, M94, M95, M100 |
 | A1 | Automation and redstone-lite: hoppers, comparators, buttons, levers, plates, powered doors | In scope | `partial` | M81 draft MVP decision is docs-only after removing an unused comparator draft helper; current docs identify hopper/comparator debt for campfires, furnaces, barrels, and chests. The 2026-07-05 M100 scheduled powered-control slice adds a loaded-chunk-only scheduled block tick pass to the entity ticker, button release scheduling from the shared simulation tick, release handling for powered buttons, adjacent door/trapdoor target edits, and runtime metrics for block tick drained/applied/budget counts. Focused `mc-net` regressions cover a button scheduling a release tick, edge-adjacent power scanning without generating an unloaded neighbor chunk, repeat interaction with an already-powered button consuming the click without duplicating its release tick, a powered button releasing on its scheduled tick, ticketed-but-not-loaded chunks staying undrained until `mark_loaded`, an adjacent two-half iron door opening while the button is powered then closing on release, and release of one button leaving that door powered/open when another adjacent powered control still supplies it. A later 2026-07-05 hopper foundation slice adds a typed five-slot hopper block entity with Anvil `Items` round-trip, flush/reopen persistence, replacement pruning, and a loaded-chunk scheduled transfer path that moves one item from an above chest/barrel through an empty hopper into its facing chest/barrel without generating unloaded neighbors; the focused `mc-net` unit-session regression also verifies server-origin `ChestSlots` dispatches update open source and target chest viewers, and follow-ups prove successful transfers reschedule another loaded hopper tick 8 ticks later, direct hopper placement schedules the first loaded hopper tick from the shared simulation tick, the scheduled block pass backfills a missing first tick for an already-loaded typed hopper without duplicating an existing persisted hopper tick, a top hopper inserts a valid smelting ingredient into the furnace input slot below it, a side hopper inserts coal into that furnace's fuel slot, a hopper below a furnace extracts output slot `2` into its facing chest, output extraction handles empty, merge, and no-room edges without fake transfers, a hopper feeding a valid campfire recipe item into a lit campfire registers campfire cooking state, persists campfire block-entity NBT, dispatches a campfire block-entity update, and reaches the server campfire ticker, and focused double-chest routing covers second-half source extraction plus second-half target insertion with a canonical 54-slot update. A later 2026-07-05 cooldown-pipeline slice stores exact `TransferCooldown` NBT with non-default Anvil and flush/reopen round-trips, changes loaded hopper scheduling to per-tick cooldown countdown, and proves source container/furnace output first enters the hopper inventory before a later cooldown-ready ejection mutates target chests, furnaces, campfires, and double chests. A follow-up live TCP harness opens source and target chests with separate protocol clients, schedules the server-origin hopper tick only after both windows are open, and observes the source slot become empty before the target slot receives the item after cooldown. A later focused comparator slice schedules adjacent facing comparators after hopper-driven chest/furnace updates and powers the comparator block state from observed container fullness using the 26.1.2 `AbstractContainerMenu.getRedstoneSignalFromContainer` formula and 2-tick comparator delay; the TCP harness `server_origin_hopper_tick_updates_open_chests_and_comparator_over_tcp` observes the powered comparator `BlockUpdate` after cooldown ejection. | Hopper-chain same-tick skip rules, broader campfire hopper automation, hopper minecarts, comparator placement, typed comparator `OutputSignal` persistence, pressure plates, redstone wire propagation, exact update order, broad lever/door/trapdoor variants, broader protocol-harness/client-visible redstone state, broader hopper client visibility, real-client evidence, performance evidence, and soak evidence remain open. The hopper 8-tick cooldown and `TransferCooldown` key are backed by the local 26.1.2 decompile oracle, not by a side-by-side runtime oracle. The button delay is a local fixed `20`-tick rule and is not claimed as oracle-backed vanilla timing. Complex redstone ordering, pistons, observers, and quasi-connectivity remain non-goal or post-MVP. | M81, M82, M91, M95, M100 |
 | E1 | Signs: regular, hanging, waxed, styled/filtered/clickable text | In scope | `partial` | M74 harness covers regular sign editor open, plain four-line text, mismatch rejection, and block-entity update. The 2026-06-22 `m94-04a-regular-sign-place-text` real-client run placed an oak sign through the real-client item-use path, observed the held stack decrement, observed the real sign editor, sent plain four-line text from inside the client process, and observed the client-side sign block entity converge in `.analysis/real-client-runs/20260622T153556Z-m94-regression-pack`. The follow-up `survival_sign_text_survives_flush_and_reopen` harness drives sign placement and text update through the packet path against disk-backed `WorldStorage`, flushes dirty chunks, reopens the world, and asserts the persisted sign NBT plus client block-entity wire record. | Hanging signs, waxed semantics, styled/filtered/clickable text, after-close visual assertion, sounds/statistics/events, broad real-client visual parity, and real-client restart evidence are not claimed. | M82, M94, M95 |
 | E2 | Campfires: cooking, visual metadata, persistence, automation, effects | In scope | `partial` | M55/M75 harness covers held-input cooking, `Items` updates, cooked item entity, pickup, and completion clear. The 2026-07-04 disk-persistence slice now flushes and reopens a disk-backed world after inserting porkchop into a campfire and verifies an opaque campfire block entity persists the input stack plus cook timers. The follow-up restart hydration slice reopens the same disk world with a fresh server, loads the chunk, restores the in-flight cooking state into `SessionRegistry`, observes the cooked item output/clear-update path, and proves persistent timer arrays are stripped from client-facing chunk block-entity NBT. The zero-client server-tick slice disconnects the only protocol client after insertion, waits longer than the recipe time, reconnects a fresh protocol client, and observes the cooked item entity after server-ticker-driven progression. The restart pre-client slice scans existing disk chunks during bind, hydrates persisted campfire cooking before any client loads the chunk, waits longer than the recipe time with no clients, and observes the cooked item entity after reconnect. The vanilla timer-NBT slice uses the 26.1.2 decompile oracle for `CookingTimes`/`CookingTotalTimes`, writes new campfire timers with vanilla spent-progress semantics, and keeps legacy Solaris timer-array readback. The lit-state slice uses the 26.1.2 `CampfireBlock.getTicker` oracle to prove an in-flight input on a `lit=false` campfire does not finish while the server ticker runs. The 2026-07-05 hopper-campfire slice adds focused scheduled-hopper insertion of one valid campfire recipe item into campfire cooking state, persistent campfire NBT, loaded-client block-entity update dispatch, and server campfire ticker progression. | Full vanilla campfire item-stack/data-component NBT parity, full unlit cooldown/relight resume semantics, broader hopper/comparator automation, smoke/sound/particle, ejection vector/timing, real-client/manual evidence, performance/soak, and broad block-state parity remain open. | M81, M82, M88, M94, M95 |
@@ -1556,7 +1563,7 @@ the required oracle/client evidence:
 - Q1 systematic vanilla oracle scenario suite.
 - B4 water/swim feel and frozen-world/manual regression retest.
 - P3 online/offline auth and public-safety scope.
-- K2 common survival stations gameplay beyond M87 safe rejection: station menus/recipes/effects are explicitly deferred and lack oracle/client evidence.
+- K2 common survival stations: five native menus and brewing save/restart have focused TCP functional proof, but broad station gameplay and native windowed UI/visual evidence remain incomplete.
 - V1 vehicles remain draft debt: M83 landed only `mc-entity` domain support and explicit deferrals; client-visible spawn/mount/move/persistence/visibility evidence is still missing.
 - O1-O3 performance, concurrency, and autoscale evidence, including generated-world join/chunk-stream debt: the 2026-06-22 baked-light/warm-cache and runtime-light persistence probes reduced the 289-chunk stream to sub-400ms and kept the immediate restart at `baked=0`/`flushed=0`; the 2026-07-04 disk-backed startup gate brought one fresh binary startup/stream/restart path under the 10s listener budget, and the 2026-07-05 startup dirty checkpoint follow-up keeps fresh generated and existing-world rebaked chunks out of stream pressure while flushing them before `/stop`. Historical lock/shutdown issues and broad profile evidence are still non-green.
 - M92 adds draft O3 autoscale decision primitives and config visibility; the
@@ -1597,3 +1604,119 @@ draft-debt, accepted-divergence, and non-goal rows do not count.
 Status breakdown: 30 `partial`, 4 `blocked`, 3 `unknown`, 7 `draft debt`, 2
 `accepted divergence`, and 0 `ready`. The M95 section above carries the
 snapshot and the counting rule.
+
+## 2026-10-11 Generated Survival Fixture Surface Selection
+
+The raw-TCP generated survival/crafting fixture selected a cave floor rather
+than the terrain beside its tree. Causal runs found spruce logs at
+`(-62,96..98,-7)`, but selected standing column `(-63,-7)` at surface `y=11`.
+That column actually had snow block at `y=95`, air at `y=96`, and spruce
+leaves at `y=97..99`. The old selector rejected the canopied surface, then
+continued downward until it found two air cells above the cave floor.
+Login correctly chose `(-63.5,97,-5.5)`; the fixture then requested
+`(-62.5,13,-6.5)` and received correction teleport 2 to the login pose.
+The 84-block vertical request also exceeds the old server's 10-block
+survival movement admission limit.
+
+The fixture now derives an exact sturdy support within one standing-height
+step of the generated trunk base, before using its existing eight-cell
+standing-column clearance. It then refreshes the standing column's opaque
+height cache used by login: setup-time block edits refresh ordinary
+heightmaps, but leave this separate cache at the pre-clear canopy height.
+It cannot select an unrelated cave or cliff.
+A regression covers canopy-over-surface-over-cave selection and missing
+local support. The survival test additionally requires the cleared column
+to be the exact login spawn. Existing no-correction, mining, inventory,
+crafting-table placement, tool crafting, disk persistence, and rejoin
+assertions remain unchanged.
+
+This is a fixture correction, not a relaxation of movement/collision rules
+or world-contract admission. The fixture uses a direct seed-0
+`TerrainGenerator` and temporary Anvil storage, not the server binary's
+world-contract admission path. No worldgen, physics, or server production
+code changed for this fix; the causal runs used current revision-26 code
+and do not establish a revision-25/revision-26 terrain delta.
+
+Validation on the integrated tree (4 GiB memory cap, two Cargo jobs, CPUs
+4–7, dev/test debug info disabled):
+
+- Focused generated survival/crafting/persistence test: **1 passed**,
+  37.18 s test time (`bg_294`).
+- `cargo test -p mc-test-harness --test block_edit -- --test-threads=2`:
+  **43 passed, 0 failed, 69 ignored**, 110.32 s test time (`bg_295`).
+  This includes the new canopy/cave regression and the generated survival
+  scenario. Existing sidecar/performance gates remained explicitly ignored.
+- No real client, vanilla oracle, formatter, or clippy run was performed
+  for this fixture correction.
+
+## 2026-10-11 W1 Projectile And Respawn Failure Roots
+
+Static correction pass against
+`.analysis/codex-logs/parity-w1-gate/tests-first.log`; no tests, cargo,
+clippy, formatter, or real-client gates were run by this worker.
+
+- Respawn projection: `plan_viewer` now finishes its credit-bounded forget
+  pass before weather reconciliation. Reset weather previously emitted
+  snapshot packets while old chunks were still awaiting forget credit.
+  `respawn_forget_pass_waits_for_credit` keeps all existing assertions.
+- Projectile metadata fixture: the obsolete `potion` entity name is now
+  `splash_potion`; the complete non-living accessor assertions remain.
+  Local 26.1.2 `javap -p -c` evidence from
+  `/home/kaiserroman/.gradle/caches/fabric-loom/26.1.2/minecraft-merged.jar`,
+  `net.minecraft.world.entity.EntityType`, registers `splash_potion`
+  (initializer bytecode 5012) as `SPLASH_POTION` (5050), separately from
+  `lingering_potion` (5053).
+- Punch fixture: the cow's movement speed is zeroed before the full tick,
+  isolating the horizontal projectile impulse from unrelated AI wander.
+  Health, forward momentum, lateral-motion, and projectile-removal
+  assertions are unchanged. In the same vanilla jar,
+  `LivingEntity.knockback(double,double,double)` divides existing X and Z
+  motion by two (bytecode 124–127 and 171–174), rather than discarding it.
+- Pearl identity fixture: owner replacement uses real leave/rejoin with
+  the retained UUID instead of changing `row.uuid` behind the UUID index.
+  Teleport, fall-distance reset, extinguishing, fall damage, and correction
+  packet assertions are unchanged; an additional assertion checks the
+  current UUID-index slot.
+- Fishing failures both report absent durability (`None` versus `Some(1)`
+  or `Some(5)`). The reel path already selects those wear amounts and
+  removes the retained hook; shared canonical item-fact repair owns these
+  durability failures. No fishing or weapon durability rules changed here.
+
+Matrix gaps exposed: tests must use current entity registry names, indexed
+native lifecycle identity changes, and stationary targets when asserting
+pure impulse direction. Credit-exhausted respawn must cover weather
+reconciliation as well as chunks. These corrections do not establish
+vanilla-client behavior or move any coverage row to `ready`; the integrated
+W1 gate remains the verification owner.
+
+## 2026-10-11 Parity Wave 1 Integrated Native Gate
+
+Shared dirty-tree debug verification after the source-only parity wave and
+review fixes. No commit/reset/stash, real client or performance gate was used.
+This closes the previously failed test-only L2 leg, not every vanilla parity
+row and not a newly rerun full `correctness` profile.
+
+| Gate | Result | Evidence |
+|---|---|---|
+| Affected all-target compilation | Passed | `.analysis/codex-logs/parity-w1-gate/review-check-final3.log`; final source also compiled by scoped Clippy. |
+| Affected debug suites | Passed | `review-tests-all-final2.log`: core 743/0/0, data 354/0/24, edge 163/0/0, entity 722/0/7, world 377/0/15, harness 266/0/128 (passed/failed/ignored); total 2,625/0/174. |
+| Affected all-target Clippy | Passed | `review-clippy-final2.log`, `-D warnings`; reusable wire-pass state, no lint suppression. |
+| Harness memory policy | Passed | Eight unit regressions in `harness-test-memory-profile-cap-12g-final.log`: four default threads, explicit overrides, profile forwarding, admission/scope cap consistency and live cgroup counters. |
+| Canonical workspace test | Passed | [Final receipt](../.analysis/validation/20261011T150707-test-9x2pjg9v/result.json): `cargo test --workspace --lib --bins --tests --examples`, 101 result rows, **6,727 passed, 0 failed, 191 existing ignored**. |
+| Full-run resources | Passed | Exclusive `mem-run -x -m 12G`, all CPUs, six Cargo jobs, debug information disabled, four libtest threads; peak 5,505,695,744 bytes / limit 12,884,901,888; max/oom/oom_kill and swap peak all zero. Direct full test/correctness default 12 GiB; focused/per-crate guard 8 GiB. |
+| Earlier 8 GiB full run | Pressure, superseded | [Receipt](../.analysis/validation/20261011T143857-test-874dl6gp/result.json) passed but hit its cap with 3,964 max events and 1 GiB swap; not the normal full-run budget. |
+| Evidence limits | Partial | No real-client rendering, ignored sidecar/oracle/performance gates, release validation or scale certification. The old-vs-v2 matrix is a pre-wave source snapshot, not an updated gate denominator. |
+
+Fix roots and failed attempts are retained in
+`.analysis/codex-logs/parity-w1-gate/failures.md`. Review coverage includes
+shared spawning census/local collision, daylight head wear, age-anchor replay
+without per-age WAL churn, nonplayer protection persistence, fail-closed
+entity diagnostics with unchanged region bytes, checkpoint-ACK queue coverage,
+native note events, current-pass sensor queries, hanging-sign placement/text/
+loot, bucket previous-cell waterlogging, brewing deduplication, merchant
+filtered-index/offhand custody, canonical component setters, projectile
+preflight/PvP/orphan/death-rule custody and same-identity type-change fanout.
+Villager defense/POI scaling remains the explicitly authorized ADR performance
+follow-up; taming/mount/vehicle and other separately documented capabilities
+are not certified by the baseline species registration or this green suite.
+

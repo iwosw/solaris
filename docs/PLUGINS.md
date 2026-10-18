@@ -31,51 +31,90 @@ or precommit declarations. `plugin.wasm` is a WebAssembly **component** for
 optional opaque package configuration: the host passes its text to the guest,
 which defines and validates its own settings.
 
-Configure an exact production deployment with strict discovery, the full
-package roster, and a grant for every capability each package requests:
+### Native server
+
+`solaris-v2` uses the production component host with a directory-only deployment:
 
 ```toml
 [plugins]
 directory = "plugins"
-strict = true
-expected = ["my-plugin"]
-
-[plugins.grants.my-plugin]
-capabilities = ["storage"]
 ```
-
-The grants are an operator authorization decision, not a suggestion to the
-guest. In strict mode a missing, extra, malformed, duplicate, or ungranted
-capability request refuses the package; it is never started with reduced
-rights. Strict discovery also refuses stray entries, malformed packages,
-duplicate ids or command roots, and a deployed set that differs from
-`expected`. Use permissive discovery only for local iteration where skipping an
-ordinary broken package is intentional.
-
-Product packages are owned and built in their own repositories. A deployment
-copies each selected package's `plugin.toml`, `plugin.wasm`, and optional
-`config.toml` into its plugin root; the core and SDK do not carry product
-sources or manifests.
-
-Validate the exact deployment before serving:
 
 ```sh
-solaris --check --config server.toml
-solaris --config server.toml
+solaris-v2 --config server.toml
 ```
 
-`--check` performs discovery, grant validation, component compilation, and the
-same startup phases the server would use. It does not create a world, write
-plugin storage, bind a listener, apply commands, or start timers. A successful
-component check prints the checked package ids:
+Every entry must be a valid package directory; malformed manifests or WASM,
+duplicate identities/command roots, failed startup, and unsupported startup
+declarations refuse startup rather than skip a package. Selecting this directory
+authorizes its manifest-declared ordinary capabilities. The retired deployment
+strict/expected/grants/reload and explicit hook-roster settings are not supported;
+unknown configuration keys warn and are ignored. Every manifest-declared
+`before-build` hook registers automatically in deterministic package-id order
+with fail-closed (`deny`) policy. Unsupported hooks, including `before-damage`,
+fail startup before component compilation or native world admission. There is
+no server `--check`: startup performs real validation before serving.
 
-```text
-component plugins checked: my-plugin
-```
+The v2 edge obtains a native read-only build plan, asks the production component
+host outside the tick, then submits a single-use frozen authorization. One
+queue-inclusive 100 ms deadline covers preview and the host handler chain,
+ending when the host answers. A timely answer may wait for the next native
+merge without expiring; consumption still rechecks roster/source validity,
+single-use, native state and plugin-KV versions. Click-time orientation and ray
+origin stay frozen; current reach, occupancy and support still validate.
+A native-input FIFO fence prevents previews from overtaking
+earlier movement or hotbar changes. An idle native owner can retire metadata
+fences and answer ready read-only previews on an explicit wake without creating
+an extra tick or renewing the deadline.
+Denial, timeout, unavailable/retired handlers and stale native or
+plugin-KV guards repair client block predictions and inventory without creating
+a world edit or block-WAL record; the tick never waits for a guest.
 
-Treat any check failure as a refused deployment, not a partial success. Inspect
-the package path and reported manifest, artifact, capability, startup, or
-roster error; do not remove strictness to make a production deployment start.
+The covered native operations match the old build-hook call sites: player block
+breaks and placements (including paired/construction cells), bone-meal growth,
+successful composter fills, clicked/raycast bucket edits, and server-owned block
+edits (`SetWorldBlock`, plugin/NPC physical structure portions, and NPC harvest,
+tree-cut, mine and replant work). Ordinary interactions, tools such as hoes or
+ignition, environmental simulation and damage are not newly made build hooks.
+Hook-free deployment keeps the direct native path.
+
+Registered commands are advertised in the actual client Commands tree and
+dispatch to the loaded component. A manifest-owned root takes precedence over
+an otherwise available native root, including its manifest permission in the
+tree, help and completions. Its immutable deployment reservation survives guest
+retirement: unavailable admission returns an error, never native-command fallback.
+Native aliases not claimed by a manifest retain their native behavior.
+Plugin KV and native effects share v2's native checkpoint and tick WAL; there are
+no separate plugin state files. The journal worker maintains the committed plugin
+image and serializes it for checkpoints outside the tick. Operation callbacks and
+command replies follow successful journal append completion, not fsync, and an
+unflushed crash tail can consistently roll back an acknowledged effect.
+
+Operation-id receipts remain durable for the world's lifetime. A recorded id
+cannot execute again: retries return its original outcome and conflicting reuse
+is refused, including after native checkpoint/WAL recovery. There is no age/count
+eviction or id-reuse horizon. Receipt memory and checkpoint size can therefore
+grow with cumulative operation ids; serialization is off the tick, but retention
+remains intentionally unbounded rather than weakening exactly-once effects.
+
+Inventory reservations retain at most 4096 active or structure-bound references,
+plus the latest 256 unbound terminal references. Committed structure-bound
+references remain pinned while their structure needs them; capacity exhaustion
+refuses new admission with `Busy`. Unbound terminal references leave a bounded
+FIFO and cease to resolve after eviction. Custody checks use native source
+indexes, and mutations journal individual reservation records rather than a
+whole historical ledger.
+
+Observations have a separate 256-event queue per registered plugin. A full queue
+drops the newest observation and increments
+`ScriptBoundary::observation_events_dropped(plugin_id)`; round-robin dispatch
+prevents one observer from owning the whole observation backlog. Durable native
+completion callbacks and command replies are not shed: exhaustion of their
+retained capacity fails closed. Timers advance only from acknowledged native
+ticks. Optional Loader bundles use the existing configuration
+manifest/artifact/ACK protocol; sound requires that session's actual Loader
+readiness and the bundle's sound permission.
+
 
 ## Package manifest
 
@@ -96,9 +135,9 @@ declarations. Unknown fields and invalid or duplicate values refuse the
 package before guest code is compiled.
 
 `required_features` describes authored data core must load. It does not grant
-access. Feature capabilities declared by a package must also appear in
-`required_features`; capabilities themselves must be both declared by the
-package and explicitly granted by the operator.
+access. Feature capabilities must also appear in `required_features`. Packages
+declare ordinary capabilities in their manifests; selecting the deployment
+directory is the operator authorization decision.
 
 Packages without `[client]` bundles are `server_only` and support ordinary
 vanilla clients. Any package that declares client bundles makes the relevant
@@ -134,6 +173,11 @@ Authors implement `solaris_plugin_sdk::Plugin` (or bindings for the same WIT
 world) and use the WIT and SDK definitions as the API reference. Do not copy
 internal host types into a guest or rely on a host implementation detail.
 
+WIT record layout changes require regenerating both host and guest bindings.
+Rebuild every guest that uses `client-presentation` after the optional marker
+position extension; an older component's record layout is not a compatible
+fallback, even when its package version is still `solaris:plugin@0.7.0`.
+
 ## Lifecycle and configuration
 
 A component has two startup phases in distinct stores:
@@ -154,18 +198,10 @@ startup.
 
 `shutdown` is best effort. The host reclaims its own resources whether or not
 it runs, and a trap can skip it, so no durable correctness decision may depend
-on cleanup. Plugin storage remains keyed by the plugin identity; a component
-reload begins with fresh runtime-local state rather than migrating a guest
-instance.
-
-On Unix, `SIGHUP` may reload an active strict deployment. The candidate is
-rediscovered, compiled, configured, and initialized before it replaces the
-active generation. Its ordered package catalog, grants, command and payload
-ownership, precommit registrations, client surface, and startup contribution
-must be unchanged; otherwise restart is required. World-generation or startup
-plan changes additionally require a fresh world directory. A rejected candidate
-leaves the active generation in place. There is no filesystem watcher or
-polling reload loop.
+on cleanup. Plugin storage remains keyed by plugin identity in the native tick
+WAL/checkpoint. Restart creates fresh component-local state; it is not a guest
+instance migration. The current server does not support SIGHUP deployment reload.
+Retain the same startup/world identity when restarting an existing world.
 
 ## Events, commands, and capability boundaries
 
@@ -183,27 +219,33 @@ permissions and they do not make a request authoritative. Every native owner
 still checks the live player session, ownership, revisions, input bounds,
 capacity, and its domain invariants before committing work.
 
+`client-presentation.view-marker.position` is optional, display-only geometry:
+a resource-identifier dimension plus finite coordinates within the native
+`types.position` bounds. The host validates those bounds and counts dimension
+text against the same command staging budget as other model strings. Geometry
+does not query world state, replace selection fields or their context token,
+grant an action, or authorize a physical route or world mutation.
+
 Use stable request and operation identifiers where the WIT operation requires
 them. A successful submission is not confirmation of client rendering or a
 future mutation; inspect the typed completion or refusal event. For durable
 operations, reuse an operation id only for the same intent and payload.
 
-Precommit hooks are a separate bounded decision path. A package can declare
-`before-build` and/or `before-damage`; an operator must separately register a
-declared hook in `[[plugins.hooks]]`. Hooks receive immutable contexts and
-answer a decision rather than queuing commands. They cannot perform I/O,
-submit asynchronous work, or mutate the world. The host applies the configured
-failure policy when a hook cannot answer in time or is retired.
+Precommit hooks are a separate bounded decision path. Directory-only deployment
+automatically registers manifest `before-build` declarations and rejects
+unsupported kinds, including `before-damage`. Hooks receive immutable contexts
+and answer decisions, not command batches. They cannot perform I/O, submit
+asynchronous work or mutate the world. Missing, expired or retired handlers
+follow the fail-closed policy described above.
 
 ## Diagnosing a deployment
 
-Use `--check` after changing any package artifact, manifest, capability grant,
-client bundle, hook registration, or expected roster. It catches malformed
-components and manifests, unknown API/capability/event names, duplicate ids or
-command roots, missing client artifacts, grant failures, invalid startup
-answers, and expected-set drift before serve would touch a world or listener.
+Startup validates manifests, components, API/capability/event names, duplicate
+identities and command roots, client artifacts and startup answers. There is
+no separate deployment `--check`; `content verify` checks only the vanilla cache.
+Do not confuse it with plugin or gameplay validation.
 
-At runtime, log and act on package traps, budget failures, admission refusals,
-and reload reports. A failed component is not a successful degraded deployment:
-its owned command roots are retired and the package must be repaired or
-intentionally removed through a validated deployment change.
+At runtime, act on traps, budget failures and admission refusals. A failed
+component is not a successful degraded deployment: owned command roots remain
+reserved and unavailable, never native-command fallbacks. Repair or explicitly
+remove the package and restart with a valid deployment.

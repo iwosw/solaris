@@ -1,6 +1,6 @@
 //! Mob-effect registry identities from the local vanilla 26.1.2 registry report.
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[repr(u32)]
 pub enum MobEffect {
     Speed = 0,
@@ -46,51 +46,73 @@ pub enum MobEffect {
 }
 
 impl MobEffect {
+    pub const ALL: [Self; 40] = [
+        Self::Speed,
+        Self::Slowness,
+        Self::Haste,
+        Self::MiningFatigue,
+        Self::Strength,
+        Self::InstantHealth,
+        Self::InstantDamage,
+        Self::JumpBoost,
+        Self::Nausea,
+        Self::Regeneration,
+        Self::Resistance,
+        Self::FireResistance,
+        Self::WaterBreathing,
+        Self::Invisibility,
+        Self::Blindness,
+        Self::NightVision,
+        Self::Hunger,
+        Self::Weakness,
+        Self::Poison,
+        Self::Wither,
+        Self::HealthBoost,
+        Self::Absorption,
+        Self::Saturation,
+        Self::Glowing,
+        Self::Levitation,
+        Self::Luck,
+        Self::Unluck,
+        Self::SlowFalling,
+        Self::ConduitPower,
+        Self::DolphinsGrace,
+        Self::BadOmen,
+        Self::HeroOfTheVillage,
+        Self::Darkness,
+        Self::TrialOmen,
+        Self::RaidOmen,
+        Self::WindCharged,
+        Self::Weaving,
+        Self::Oozing,
+        Self::Infested,
+        Self::BreathOfTheNautilus,
+    ];
+    pub fn color(self) -> i32 {
+        const COLORS: [i32; 40] = [
+            3402751, 9154528, 14270531, 4866583, 16762624, 16262179, 11101546, 16646020, 5578058,
+            13458603, 9520880, 16750848, 10017472, 16185078, 2039587, 12779366, 5797459, 4738376,
+            8889187, 7561558, 16284963, 2445989, 16262179, 9740385, 13565951, 5882118, 12624973,
+            15978425, 1950417, 8954814, 745784, 4521796, 2696993, 1484454, 14565464, 12438015,
+            7891290, 10092451, 9214860, 65518,
+        ];
+        COLORS[self as usize]
+    }
+    pub fn instant(self) -> bool {
+        matches!(
+            self,
+            Self::InstantHealth | Self::InstantDamage | Self::Saturation
+        )
+    }
     #[must_use]
     pub fn from_name(name: &str) -> Option<Self> {
-        Some(match name {
-            "minecraft:speed" => Self::Speed,
-            "minecraft:slowness" => Self::Slowness,
-            "minecraft:haste" => Self::Haste,
-            "minecraft:mining_fatigue" => Self::MiningFatigue,
-            "minecraft:strength" => Self::Strength,
-            "minecraft:instant_health" => Self::InstantHealth,
-            "minecraft:instant_damage" => Self::InstantDamage,
-            "minecraft:jump_boost" => Self::JumpBoost,
-            "minecraft:nausea" => Self::Nausea,
-            "minecraft:regeneration" => Self::Regeneration,
-            "minecraft:resistance" => Self::Resistance,
-            "minecraft:fire_resistance" => Self::FireResistance,
-            "minecraft:water_breathing" => Self::WaterBreathing,
-            "minecraft:invisibility" => Self::Invisibility,
-            "minecraft:blindness" => Self::Blindness,
-            "minecraft:night_vision" => Self::NightVision,
-            "minecraft:hunger" => Self::Hunger,
-            "minecraft:weakness" => Self::Weakness,
-            "minecraft:poison" => Self::Poison,
-            "minecraft:wither" => Self::Wither,
-            "minecraft:health_boost" => Self::HealthBoost,
-            "minecraft:absorption" => Self::Absorption,
-            "minecraft:saturation" => Self::Saturation,
-            "minecraft:glowing" => Self::Glowing,
-            "minecraft:levitation" => Self::Levitation,
-            "minecraft:luck" => Self::Luck,
-            "minecraft:unluck" => Self::Unluck,
-            "minecraft:slow_falling" => Self::SlowFalling,
-            "minecraft:conduit_power" => Self::ConduitPower,
-            "minecraft:dolphins_grace" => Self::DolphinsGrace,
-            "minecraft:bad_omen" => Self::BadOmen,
-            "minecraft:hero_of_the_village" => Self::HeroOfTheVillage,
-            "minecraft:darkness" => Self::Darkness,
-            "minecraft:trial_omen" => Self::TrialOmen,
-            "minecraft:raid_omen" => Self::RaidOmen,
-            "minecraft:wind_charged" => Self::WindCharged,
-            "minecraft:weaving" => Self::Weaving,
-            "minecraft:oozing" => Self::Oozing,
-            "minecraft:infested" => Self::Infested,
-            "minecraft:breath_of_the_nautilus" => Self::BreathOfTheNautilus,
-            _ => return None,
-        })
+        let name = name.strip_prefix("minecraft:").unwrap_or(name);
+        Self::ALL.into_iter().find(|id| id.name() == name)
+    }
+    pub fn name(self) -> &'static str {
+        name_for_id(self as u32)
+            .expect("registered effect")
+            .trim_start_matches("minecraft:")
     }
 }
 

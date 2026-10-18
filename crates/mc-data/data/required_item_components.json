@@ -1,121 +1,371 @@
 {
-  "minecraft:wooden_sword": {
-    "max_damage": 59,
-    "weapon": true,
-    "weapon_damage_per_attack": 1,
-    "attack_damage_modifier": 3.0
+  "minecraft:allay_spawn_egg": {
+    "max_stack_size": 64,
+    "spawn_entity": "minecraft:allay"
   },
-  "minecraft:wooden_shovel": {
-    "max_damage": 59,
-    "attack_damage_modifier": 1.5
+  "minecraft:ancient_debris": {
+    "fire_resistant": true
   },
-  "minecraft:wooden_pickaxe": {
-    "max_damage": 59,
-    "attack_damage_modifier": 1.0
+  "minecraft:armadillo_spawn_egg": {
+    "max_stack_size": 64,
+    "spawn_entity": "minecraft:armadillo"
   },
-  "minecraft:wooden_axe": {
-    "max_damage": 59,
-    "attack_damage_modifier": 6.0,
-    "weapon_disable_blocking_seconds": 5.0
+  "minecraft:axolotl_spawn_egg": {
+    "max_stack_size": 64,
+    "spawn_entity": "minecraft:axolotl"
   },
-  "minecraft:wooden_hoe": {
-    "max_damage": 59,
-    "weapon": true,
-    "weapon_damage_per_attack": 2,
-    "attack_damage_modifier": 0.0,
-    "attack_speed_modifier": -3.0
+  "minecraft:bat_spawn_egg": {
+    "max_stack_size": 64,
+    "spawn_entity": "minecraft:bat"
   },
-  "minecraft:stone_sword": {
-    "max_damage": 131,
-    "weapon": true,
-    "weapon_damage_per_attack": 1,
-    "attack_damage_modifier": 4.0
+  "minecraft:bee_spawn_egg": {
+    "max_stack_size": 64,
+    "spawn_entity": "minecraft:bee"
   },
-  "minecraft:stone_shovel": {
-    "max_damage": 131,
-    "attack_damage_modifier": 2.5
+  "minecraft:blaze_spawn_egg": {
+    "max_stack_size": 64,
+    "spawn_entity": "minecraft:blaze"
   },
-  "minecraft:stone_pickaxe": {
-    "max_damage": 131,
-    "attack_damage_modifier": 2.0
+  "minecraft:bogged_spawn_egg": {
+    "max_stack_size": 64,
+    "spawn_entity": "minecraft:bogged"
   },
-  "minecraft:stone_axe": {
-    "max_damage": 131,
-    "attack_damage_modifier": 8.0,
-    "weapon_disable_blocking_seconds": 5.0
+  "minecraft:breeze_spawn_egg": {
+    "max_stack_size": 64,
+    "spawn_entity": "minecraft:breeze"
   },
-  "minecraft:stone_hoe": {
-    "max_damage": 131,
-    "weapon": true,
-    "weapon_damage_per_attack": 2,
-    "attack_damage_modifier": 0.0,
-    "attack_speed_modifier": -2.0
+  "minecraft:camel_husk_spawn_egg": {
+    "max_stack_size": 64,
+    "spawn_entity": "minecraft:camel_husk"
   },
-  "minecraft:beef": {
-    "food": {
-      "food": 3,
-      "saturation": 1.8000001
-    },
-    "use_duration_ticks": 32,
-    "use_action": "eat",
+  "minecraft:camel_spawn_egg": {
+    "max_stack_size": 64,
+    "spawn_entity": "minecraft:camel"
+  },
+  "minecraft:cat_spawn_egg": {
+    "max_stack_size": 64,
+    "spawn_entity": "minecraft:cat"
+  },
+  "minecraft:cave_spider_spawn_egg": {
+    "max_stack_size": 64,
+    "spawn_entity": "minecraft:cave_spider"
+  },
+  "minecraft:chicken_spawn_egg": {
+    "max_stack_size": 64,
+    "spawn_entity": "minecraft:chicken"
+  },
+  "minecraft:cod_spawn_egg": {
+    "max_stack_size": 64,
+    "spawn_entity": "minecraft:cod"
+  },
+  "minecraft:copper_golem_spawn_egg": {
+    "max_stack_size": 64,
+    "spawn_entity": "minecraft:copper_golem"
+  },
+  "minecraft:cow_spawn_egg": {
+    "max_stack_size": 64,
+    "spawn_entity": "minecraft:cow"
+  },
+  "minecraft:creaking_spawn_egg": {
+    "max_stack_size": 64,
+    "spawn_entity": "minecraft:creaking"
+  },
+  "minecraft:creeper_spawn_egg": {
+    "max_stack_size": 64,
+    "spawn_entity": "minecraft:creeper"
+  },
+  "minecraft:dolphin_spawn_egg": {
+    "max_stack_size": 64,
+    "spawn_entity": "minecraft:dolphin"
+  },
+  "minecraft:donkey_spawn_egg": {
+    "max_stack_size": 64,
+    "spawn_entity": "minecraft:donkey"
+  },
+  "minecraft:drowned_spawn_egg": {
+    "max_stack_size": 64,
+    "spawn_entity": "minecraft:drowned"
+  },
+  "minecraft:elder_guardian_spawn_egg": {
+    "max_stack_size": 64,
+    "spawn_entity": "minecraft:elder_guardian"
+  },
+  "minecraft:ender_dragon_spawn_egg": {
+    "max_stack_size": 64,
+    "spawn_entity": "minecraft:ender_dragon"
+  },
+  "minecraft:enderman_spawn_egg": {
+    "max_stack_size": 64,
+    "spawn_entity": "minecraft:enderman"
+  },
+  "minecraft:endermite_spawn_egg": {
+    "max_stack_size": 64,
+    "spawn_entity": "minecraft:endermite"
+  },
+  "minecraft:evoker_spawn_egg": {
+    "max_stack_size": 64,
+    "spawn_entity": "minecraft:evoker"
+  },
+  "minecraft:fox_spawn_egg": {
+    "max_stack_size": 64,
+    "spawn_entity": "minecraft:fox"
+  },
+  "minecraft:frog_spawn_egg": {
+    "max_stack_size": 64,
+    "spawn_entity": "minecraft:frog"
+  },
+  "minecraft:ghast_spawn_egg": {
+    "max_stack_size": 64,
+    "spawn_entity": "minecraft:ghast"
+  },
+  "minecraft:glow_squid_spawn_egg": {
+    "max_stack_size": 64,
+    "spawn_entity": "minecraft:glow_squid"
+  },
+  "minecraft:goat_spawn_egg": {
+    "max_stack_size": 64,
+    "spawn_entity": "minecraft:goat"
+  },
+  "minecraft:guardian_spawn_egg": {
+    "max_stack_size": 64,
+    "spawn_entity": "minecraft:guardian"
+  },
+  "minecraft:happy_ghast_spawn_egg": {
+    "max_stack_size": 64,
+    "spawn_entity": "minecraft:happy_ghast"
+  },
+  "minecraft:hoglin_spawn_egg": {
+    "max_stack_size": 64,
+    "spawn_entity": "minecraft:hoglin"
+  },
+  "minecraft:horse_spawn_egg": {
+    "max_stack_size": 64,
+    "spawn_entity": "minecraft:horse"
+  },
+  "minecraft:husk_spawn_egg": {
+    "max_stack_size": 64,
+    "spawn_entity": "minecraft:husk"
+  },
+  "minecraft:iron_golem_spawn_egg": {
+    "max_stack_size": 64,
+    "spawn_entity": "minecraft:iron_golem"
+  },
+  "minecraft:llama_spawn_egg": {
+    "max_stack_size": 64,
+    "spawn_entity": "minecraft:llama"
+  },
+  "minecraft:magma_cube_spawn_egg": {
+    "max_stack_size": 64,
+    "spawn_entity": "minecraft:magma_cube"
+  },
+  "minecraft:mooshroom_spawn_egg": {
+    "max_stack_size": 64,
+    "spawn_entity": "minecraft:mooshroom"
+  },
+  "minecraft:mule_spawn_egg": {
+    "max_stack_size": 64,
+    "spawn_entity": "minecraft:mule"
+  },
+  "minecraft:nautilus_spawn_egg": {
+    "max_stack_size": 64,
+    "spawn_entity": "minecraft:nautilus"
+  },
+  "minecraft:ocelot_spawn_egg": {
+    "max_stack_size": 64,
+    "spawn_entity": "minecraft:ocelot"
+  },
+  "minecraft:panda_spawn_egg": {
+    "max_stack_size": 64,
+    "spawn_entity": "minecraft:panda"
+  },
+  "minecraft:parched_spawn_egg": {
+    "max_stack_size": 64,
+    "spawn_entity": "minecraft:parched"
+  },
+  "minecraft:parrot_spawn_egg": {
+    "max_stack_size": 64,
+    "spawn_entity": "minecraft:parrot"
+  },
+  "minecraft:phantom_spawn_egg": {
+    "max_stack_size": 64,
+    "spawn_entity": "minecraft:phantom"
+  },
+  "minecraft:pig_spawn_egg": {
+    "max_stack_size": 64,
+    "spawn_entity": "minecraft:pig"
+  },
+  "minecraft:piglin_brute_spawn_egg": {
+    "max_stack_size": 64,
+    "spawn_entity": "minecraft:piglin_brute"
+  },
+  "minecraft:piglin_spawn_egg": {
+    "max_stack_size": 64,
+    "spawn_entity": "minecraft:piglin"
+  },
+  "minecraft:pillager_spawn_egg": {
+    "max_stack_size": 64,
+    "spawn_entity": "minecraft:pillager"
+  },
+  "minecraft:polar_bear_spawn_egg": {
+    "max_stack_size": 64,
+    "spawn_entity": "minecraft:polar_bear"
+  },
+  "minecraft:pufferfish_spawn_egg": {
+    "max_stack_size": 64,
+    "spawn_entity": "minecraft:pufferfish"
+  },
+  "minecraft:rabbit_spawn_egg": {
+    "max_stack_size": 64,
+    "spawn_entity": "minecraft:rabbit"
+  },
+  "minecraft:ravager_spawn_egg": {
+    "max_stack_size": 64,
+    "spawn_entity": "minecraft:ravager"
+  },
+  "minecraft:salmon_spawn_egg": {
+    "max_stack_size": 64,
+    "spawn_entity": "minecraft:salmon"
+  },
+  "minecraft:sheep_spawn_egg": {
+    "max_stack_size": 64,
+    "spawn_entity": "minecraft:sheep"
+  },
+  "minecraft:shulker_spawn_egg": {
+    "max_stack_size": 64,
+    "spawn_entity": "minecraft:shulker"
+  },
+  "minecraft:silverfish_spawn_egg": {
+    "max_stack_size": 64,
+    "spawn_entity": "minecraft:silverfish"
+  },
+  "minecraft:skeleton_horse_spawn_egg": {
+    "max_stack_size": 64,
+    "spawn_entity": "minecraft:skeleton_horse"
+  },
+  "minecraft:skeleton_spawn_egg": {
+    "max_stack_size": 64,
+    "spawn_entity": "minecraft:skeleton"
+  },
+  "minecraft:slime_spawn_egg": {
+    "max_stack_size": 64,
+    "spawn_entity": "minecraft:slime"
+  },
+  "minecraft:sniffer_spawn_egg": {
+    "max_stack_size": 64,
+    "spawn_entity": "minecraft:sniffer"
+  },
+  "minecraft:snow_golem_spawn_egg": {
+    "max_stack_size": 64,
+    "spawn_entity": "minecraft:snow_golem"
+  },
+  "minecraft:spider_spawn_egg": {
+    "max_stack_size": 64,
+    "spawn_entity": "minecraft:spider"
+  },
+  "minecraft:squid_spawn_egg": {
+    "max_stack_size": 64,
+    "spawn_entity": "minecraft:squid"
+  },
+  "minecraft:stray_spawn_egg": {
+    "max_stack_size": 64,
+    "spawn_entity": "minecraft:stray"
+  },
+  "minecraft:strider_spawn_egg": {
+    "max_stack_size": 64,
+    "spawn_entity": "minecraft:strider"
+  },
+  "minecraft:tadpole_spawn_egg": {
+    "max_stack_size": 64,
+    "spawn_entity": "minecraft:tadpole"
+  },
+  "minecraft:trader_llama_spawn_egg": {
+    "max_stack_size": 64,
+    "spawn_entity": "minecraft:trader_llama"
+  },
+  "minecraft:tropical_fish_spawn_egg": {
+    "max_stack_size": 64,
+    "spawn_entity": "minecraft:tropical_fish"
+  },
+  "minecraft:turtle_spawn_egg": {
+    "max_stack_size": 64,
+    "spawn_entity": "minecraft:turtle"
+  },
+  "minecraft:vex_spawn_egg": {
+    "max_stack_size": 64,
+    "spawn_entity": "minecraft:vex"
+  },
+  "minecraft:villager_spawn_egg": {
+    "max_stack_size": 64,
+    "spawn_entity": "minecraft:villager"
+  },
+  "minecraft:vindicator_spawn_egg": {
+    "max_stack_size": 64,
+    "spawn_entity": "minecraft:vindicator"
+  },
+  "minecraft:wandering_trader_spawn_egg": {
+    "max_stack_size": 64,
+    "spawn_entity": "minecraft:wandering_trader"
+  },
+  "minecraft:warden_spawn_egg": {
+    "max_stack_size": 64,
+    "spawn_entity": "minecraft:warden"
+  },
+  "minecraft:witch_spawn_egg": {
+    "max_stack_size": 64,
+    "spawn_entity": "minecraft:witch"
+  },
+  "minecraft:wither_skeleton_spawn_egg": {
+    "max_stack_size": 64,
+    "spawn_entity": "minecraft:wither_skeleton"
+  },
+  "minecraft:wither_spawn_egg": {
+    "max_stack_size": 64,
+    "spawn_entity": "minecraft:wither"
+  },
+  "minecraft:wolf_spawn_egg": {
+    "max_stack_size": 64,
+    "spawn_entity": "minecraft:wolf"
+  },
+  "minecraft:zoglin_spawn_egg": {
+    "max_stack_size": 64,
+    "spawn_entity": "minecraft:zoglin"
+  },
+  "minecraft:zombie_horse_spawn_egg": {
+    "max_stack_size": 64,
+    "spawn_entity": "minecraft:zombie_horse"
+  },
+  "minecraft:zombie_nautilus_spawn_egg": {
+    "max_stack_size": 64,
+    "spawn_entity": "minecraft:zombie_nautilus"
+  },
+  "minecraft:zombie_spawn_egg": {
+    "max_stack_size": 64,
+    "spawn_entity": "minecraft:zombie"
+  },
+  "minecraft:zombie_villager_spawn_egg": {
+    "max_stack_size": 64,
+    "spawn_entity": "minecraft:zombie_villager"
+  },
+  "minecraft:zombified_piglin_spawn_egg": {
+    "max_stack_size": 64,
+    "spawn_entity": "minecraft:zombified_piglin"
+  },
+  "minecraft:trial_key": {
     "max_stack_size": 64
   },
-  "minecraft:cooked_beef": {
-    "food": {
-      "food": 8,
-      "saturation": 12.8
-    },
-    "use_duration_ticks": 32,
-    "use_action": "eat",
+  "minecraft:ominous_trial_key": {
     "max_stack_size": 64
   },
-  "minecraft:porkchop": {
-    "food": {
-      "food": 3,
-      "saturation": 1.8000001
-    },
-    "use_duration_ticks": 32,
-    "use_action": "eat",
+  "minecraft:wind_charge": {
     "max_stack_size": 64
   },
-  "minecraft:cooked_porkchop": {
-    "food": {
-      "food": 8,
-      "saturation": 12.8
-    },
-    "use_duration_ticks": 32,
-    "use_action": "eat",
+  "minecraft:breeze_rod": {
     "max_stack_size": 64
   },
-  "minecraft:chicken": {
-    "consume_effects": [
-      {
-        "type": "minecraft:apply_effects",
-        "effects": [{ "id": "minecraft:hunger", "duration": 600, "show_icon": true }],
-        "probability": 0.3
-      }
-    ],
+  "minecraft:apple": {
     "food": {
-      "food": 2,
-      "saturation": 1.2
-    },
-    "use_duration_ticks": 32,
-    "use_action": "eat",
-    "max_stack_size": 64
-  },
-  "minecraft:cooked_chicken": {
-    "food": {
-      "food": 6,
-      "saturation": 7.2000003
-    },
-    "use_duration_ticks": 32,
-    "use_action": "eat",
-    "max_stack_size": 64
-  },
-  "minecraft:potato": {
-    "food": {
-      "food": 1,
-      "saturation": 0.6
+      "food": 4,
+      "saturation": 2.4
     },
     "use_duration_ticks": 32,
     "use_action": "eat",
@@ -130,226 +380,18 @@
     "use_action": "eat",
     "max_stack_size": 64
   },
-  "minecraft:shears": {
-    "max_damage": 238,
-    "max_stack_size": 1
+  "minecraft:beef": {
+    "food": {
+      "food": 3,
+      "saturation": 1.8000001
+    },
+    "use_duration_ticks": 32,
+    "use_action": "eat",
+    "max_stack_size": 64
   },
-  "minecraft:wooden_spear": {
-    "attack_range": {
-      "min_reach": 2.0,
-      "max_reach": 4.5,
-      "min_creative_reach": 2.0,
-      "max_creative_reach": 6.5,
-      "hitbox_margin": 0.125,
-      "mob_factor": 0.5
-    }
-  },
-  "minecraft:stone_spear": {
-    "attack_range": {
-      "min_reach": 2.0,
-      "max_reach": 4.5,
-      "min_creative_reach": 2.0,
-      "max_creative_reach": 6.5,
-      "hitbox_margin": 0.125,
-      "mob_factor": 0.5
-    }
-  },
-  "minecraft:copper_spear": {
-    "attack_range": {
-      "min_reach": 2.0,
-      "max_reach": 4.5,
-      "min_creative_reach": 2.0,
-      "max_creative_reach": 6.5,
-      "hitbox_margin": 0.125,
-      "mob_factor": 0.5
-    }
-  },
-  "minecraft:iron_spear": {
-    "attack_range": {
-      "min_reach": 2.0,
-      "max_reach": 4.5,
-      "min_creative_reach": 2.0,
-      "max_creative_reach": 6.5,
-      "hitbox_margin": 0.125,
-      "mob_factor": 0.5
-    }
-  },
-  "minecraft:golden_spear": {
-    "attack_range": {
-      "min_reach": 2.0,
-      "max_reach": 4.5,
-      "min_creative_reach": 2.0,
-      "max_creative_reach": 6.5,
-      "hitbox_margin": 0.125,
-      "mob_factor": 0.5
-    }
-  },
-  "minecraft:diamond_spear": {
-    "attack_range": {
-      "min_reach": 2.0,
-      "max_reach": 4.5,
-      "min_creative_reach": 2.0,
-      "max_creative_reach": 6.5,
-      "hitbox_margin": 0.125,
-      "mob_factor": 0.5
-    }
-  },
-  "minecraft:netherite_spear": {
-    "attack_range": {
-      "min_reach": 2.0,
-      "max_reach": 4.5,
-      "min_creative_reach": 2.0,
-      "max_creative_reach": 6.5,
-      "hitbox_margin": 0.125,
-      "mob_factor": 0.5
-    }
-  },
-  "minecraft:shield": {
-    "max_stack_size": 1,
-    "max_damage": 336,
-    "blocks_attacks_disable_cooldown_scale": 1.0
-  },
-  "minecraft:pufferfish": {
-    "consume_effects": [
-      {
-        "type": "minecraft:apply_effects",
-        "effects": [
-          { "id": "minecraft:poison", "amplifier": 1, "duration": 1200, "show_icon": true },
-          { "id": "minecraft:hunger", "amplifier": 2, "duration": 300, "show_icon": true },
-          { "id": "minecraft:nausea", "duration": 300, "show_icon": true }
-        ]
-      }
-    ],
+  "minecraft:beetroot": {
     "food": {
       "food": 1,
-      "saturation": 0.2
-    },
-    "use_duration_ticks": 32,
-    "use_action": "eat",
-    "max_stack_size": 64
-  },
-  "minecraft:golden_carrot": {
-    "food": {
-      "food": 6,
-      "saturation": 14.400001
-    },
-    "use_duration_ticks": 32,
-    "use_action": "eat",
-    "max_stack_size": 64
-  },
-  "minecraft:sweet_berries": {
-    "food": {
-      "food": 2,
-      "saturation": 0.4
-    },
-    "use_duration_ticks": 32,
-    "use_action": "eat",
-    "max_stack_size": 64
-  },
-  "minecraft:enchanted_golden_apple": {
-    "consume_effects": [
-      {
-        "type": "minecraft:apply_effects",
-        "effects": [
-          { "id": "minecraft:regeneration", "amplifier": 1, "duration": 400, "show_icon": true },
-          { "id": "minecraft:resistance", "duration": 6000, "show_icon": true },
-          { "id": "minecraft:fire_resistance", "duration": 6000, "show_icon": true },
-          { "id": "minecraft:absorption", "amplifier": 3, "duration": 2400, "show_icon": true }
-        ]
-      }
-    ],
-    "food": {
-      "food": 4,
-      "saturation": 9.6,
-      "can_always_eat": true
-    },
-    "use_duration_ticks": 32,
-    "use_action": "eat",
-    "max_stack_size": 64
-  },
-  "minecraft:rabbit_stew": {
-    "food": {
-      "food": 10,
-      "saturation": 12.0
-    },
-    "use_duration_ticks": 32,
-    "use_action": "eat",
-    "max_stack_size": 1,
-    "use_remainder": "minecraft:bowl"
-  },
-  "minecraft:chorus_fruit": {
-    "consume_effects": [{ "type": "minecraft:teleport_randomly" }],
-    "food": {
-      "food": 4,
-      "saturation": 2.4,
-      "can_always_eat": true
-    },
-    "use_duration_ticks": 32,
-    "use_action": "eat",
-    "max_stack_size": 64
-  },
-  "minecraft:rotten_flesh": {
-    "consume_effects": [
-      {
-        "type": "minecraft:apply_effects",
-        "effects": [{ "id": "minecraft:hunger", "duration": 600, "show_icon": true }],
-        "probability": 0.8
-      }
-    ],
-    "food": {
-      "food": 4,
-      "saturation": 0.8
-    },
-    "use_duration_ticks": 32,
-    "use_action": "eat",
-    "max_stack_size": 64
-  },
-  "minecraft:tropical_fish": {
-    "food": {
-      "food": 1,
-      "saturation": 0.2
-    },
-    "use_duration_ticks": 32,
-    "use_action": "eat",
-    "max_stack_size": 64
-  },
-  "minecraft:poisonous_potato": {
-    "consume_effects": [
-      {
-        "type": "minecraft:apply_effects",
-        "effects": [{ "id": "minecraft:poison", "duration": 100, "show_icon": true }],
-        "probability": 0.6
-      }
-    ],
-    "food": {
-      "food": 2,
-      "saturation": 1.2
-    },
-    "use_duration_ticks": 32,
-    "use_action": "eat",
-    "max_stack_size": 64
-  },
-  "minecraft:cooked_mutton": {
-    "food": {
-      "food": 6,
-      "saturation": 9.6
-    },
-    "use_duration_ticks": 32,
-    "use_action": "eat",
-    "max_stack_size": 64
-  },
-  "minecraft:dried_kelp": {
-    "food": {
-      "food": 1,
-      "saturation": 0.6
-    },
-    "use_duration_ticks": 16,
-    "use_action": "eat",
-    "max_stack_size": 64
-  },
-  "minecraft:melon_slice": {
-    "food": {
-      "food": 2,
       "saturation": 1.2
     },
     "use_duration_ticks": 32,
@@ -366,14 +408,16 @@
     "max_stack_size": 1,
     "use_remainder": "minecraft:bowl"
   },
-  "minecraft:glow_berries": {
-    "food": {
-      "food": 2,
-      "saturation": 0.4
-    },
-    "use_duration_ticks": 32,
-    "use_action": "eat",
-    "max_stack_size": 64
+  "minecraft:black_banner": {
+    "max_stack_size": 16
+  },
+  "minecraft:blue_banner": {
+    "max_stack_size": 16
+  },
+  "minecraft:bow": {
+    "max_stack_size": 1,
+    "max_damage": 384,
+    "attribute_modifiers": []
   },
   "minecraft:bread": {
     "food": {
@@ -384,102 +428,125 @@
     "use_action": "eat",
     "max_stack_size": 64
   },
-  "minecraft:salmon": {
+  "minecraft:brown_banner": {
+    "max_stack_size": 16
+  },
+  "minecraft:bucket": {
+    "max_stack_size": 16,
+    "attribute_modifiers": []
+  },
+  "minecraft:carrot": {
     "food": {
-      "food": 2,
-      "saturation": 0.4
+      "food": 3,
+      "saturation": 3.6000001
     },
     "use_duration_ticks": 32,
     "use_action": "eat",
     "max_stack_size": 64
   },
-  "minecraft:suspicious_stew": {
-    "food": {
-      "food": 6,
-      "saturation": 7.2000003,
-      "can_always_eat": true
-    },
-    "use_duration_ticks": 32,
-    "use_action": "eat",
+  "minecraft:carrot_on_a_stick": {
     "max_stack_size": 1,
-    "use_remainder": "minecraft:bowl"
+    "max_damage": 25,
+    "attribute_modifiers": []
   },
-  "minecraft:honey_bottle": {
-    "consume_effects": [
-      { "type": "minecraft:remove_effects", "effects": "minecraft:poison" }
-    ],
-    "food": {
-      "food": 6,
-      "saturation": 1.2,
-      "can_always_eat": true
-    },
-    "use_duration_ticks": 40,
-    "use_action": "drink",
-    "max_stack_size": 16,
-    "use_remainder": "minecraft:glass_bottle"
-  },
-  "minecraft:spider_eye": {
-    "consume_effects": [
+  "minecraft:chainmail_boots": {
+    "max_stack_size": 1,
+    "max_damage": 195,
+    "attribute_modifiers": [
       {
-        "type": "minecraft:apply_effects",
-        "effects": [{ "id": "minecraft:poison", "duration": 100, "show_icon": true }]
+        "type": "minecraft:armor",
+        "amount": 1.0,
+        "id": "minecraft:armor.boots",
+        "operation": "add_value",
+        "slot": "feet"
+      },
+      {
+        "type": "minecraft:armor_toughness",
+        "amount": 0.0,
+        "id": "minecraft:armor.boots",
+        "operation": "add_value",
+        "slot": "feet"
       }
     ],
-    "food": {
-      "food": 2,
-      "saturation": 3.2
-    },
-    "use_duration_ticks": 32,
-    "use_action": "eat",
-    "max_stack_size": 64
+    "equippable_slot": "feet"
   },
-  "minecraft:golden_apple": {
+  "minecraft:chainmail_chestplate": {
+    "max_stack_size": 1,
+    "max_damage": 240,
+    "attribute_modifiers": [
+      {
+        "type": "minecraft:armor",
+        "amount": 5.0,
+        "id": "minecraft:armor.chestplate",
+        "operation": "add_value",
+        "slot": "chest"
+      },
+      {
+        "type": "minecraft:armor_toughness",
+        "amount": 0.0,
+        "id": "minecraft:armor.chestplate",
+        "operation": "add_value",
+        "slot": "chest"
+      }
+    ],
+    "equippable_slot": "chest"
+  },
+  "minecraft:chainmail_helmet": {
+    "max_stack_size": 1,
+    "max_damage": 165,
+    "attribute_modifiers": [
+      {
+        "type": "minecraft:armor",
+        "amount": 2.0,
+        "id": "minecraft:armor.helmet",
+        "operation": "add_value",
+        "slot": "head"
+      },
+      {
+        "type": "minecraft:armor_toughness",
+        "amount": 0.0,
+        "id": "minecraft:armor.helmet",
+        "operation": "add_value",
+        "slot": "head"
+      }
+    ],
+    "equippable_slot": "head"
+  },
+  "minecraft:chainmail_leggings": {
+    "max_stack_size": 1,
+    "max_damage": 225,
+    "attribute_modifiers": [
+      {
+        "type": "minecraft:armor",
+        "amount": 4.0,
+        "id": "minecraft:armor.leggings",
+        "operation": "add_value",
+        "slot": "legs"
+      },
+      {
+        "type": "minecraft:armor_toughness",
+        "amount": 0.0,
+        "id": "minecraft:armor.leggings",
+        "operation": "add_value",
+        "slot": "legs"
+      }
+    ],
+    "equippable_slot": "legs"
+  },
+  "minecraft:chicken": {
     "consume_effects": [
       {
         "type": "minecraft:apply_effects",
         "effects": [
-          { "id": "minecraft:regeneration", "amplifier": 1, "duration": 100, "show_icon": true },
-          { "id": "minecraft:absorption", "duration": 2400, "show_icon": true }
-        ]
+          {
+            "id": "minecraft:hunger",
+            "duration": 600,
+            "show_icon": true
+          }
+        ],
+        "probability": 0.3
       }
     ],
-    "food": {
-      "food": 4,
-      "saturation": 9.6,
-      "can_always_eat": true
-    },
-    "use_duration_ticks": 32,
-    "use_action": "eat",
-    "max_stack_size": 64
-  },
-  "minecraft:cooked_salmon": {
-    "food": {
-      "food": 6,
-      "saturation": 9.6
-    },
-    "use_duration_ticks": 32,
-    "use_action": "eat",
-    "max_stack_size": 64
-  },
-  "minecraft:cooked_cod": {
-    "food": {
-      "food": 5,
-      "saturation": 6.0
-    },
-    "use_duration_ticks": 32,
-    "use_action": "eat",
-    "max_stack_size": 64
-  },
-  "minecraft:pumpkin_pie": {
-    "food": {
-      "food": 8,
-      "saturation": 4.8
-    },
-    "use_duration_ticks": 32,
-    "use_action": "eat",
-    "max_stack_size": 64
-  },
-  "minecraft:mutton": {
     "food": {
       "food": 2,
       "saturation": 1.2
@@ -488,10 +555,16 @@
     "use_action": "eat",
     "max_stack_size": 64
   },
-  "minecraft:cooked_rabbit": {
+  "minecraft:chorus_fruit": {
+    "consume_effects": [
+      {
+        "type": "minecraft:teleport_randomly"
+      }
+    ],
     "food": {
-      "food": 5,
-      "saturation": 6.0
+      "food": 4,
+      "saturation": 2.4,
+      "can_always_eat": true
     },
     "use_duration_ticks": 32,
     "use_action": "eat",
@@ -506,6 +579,69 @@
     "use_action": "eat",
     "max_stack_size": 64
   },
+  "minecraft:cooked_beef": {
+    "food": {
+      "food": 8,
+      "saturation": 12.8
+    },
+    "use_duration_ticks": 32,
+    "use_action": "eat",
+    "max_stack_size": 64
+  },
+  "minecraft:cooked_chicken": {
+    "food": {
+      "food": 6,
+      "saturation": 7.2000003
+    },
+    "use_duration_ticks": 32,
+    "use_action": "eat",
+    "max_stack_size": 64
+  },
+  "minecraft:cooked_cod": {
+    "food": {
+      "food": 5,
+      "saturation": 6.0
+    },
+    "use_duration_ticks": 32,
+    "use_action": "eat",
+    "max_stack_size": 64
+  },
+  "minecraft:cooked_mutton": {
+    "food": {
+      "food": 6,
+      "saturation": 9.6
+    },
+    "use_duration_ticks": 32,
+    "use_action": "eat",
+    "max_stack_size": 64
+  },
+  "minecraft:cooked_porkchop": {
+    "food": {
+      "food": 8,
+      "saturation": 12.8
+    },
+    "use_duration_ticks": 32,
+    "use_action": "eat",
+    "max_stack_size": 64
+  },
+  "minecraft:cooked_rabbit": {
+    "food": {
+      "food": 5,
+      "saturation": 6.0
+    },
+    "use_duration_ticks": 32,
+    "use_action": "eat",
+    "max_stack_size": 64
+  },
+  "minecraft:cooked_salmon": {
+    "food": {
+      "food": 6,
+      "saturation": 9.6
+    },
+    "use_duration_ticks": 32,
+    "use_action": "eat",
+    "max_stack_size": 64
+  },
   "minecraft:cookie": {
     "food": {
       "food": 2,
@@ -514,6 +650,1523 @@
     "use_duration_ticks": 32,
     "use_action": "eat",
     "max_stack_size": 64
+  },
+  "minecraft:copper_axe": {
+    "max_stack_size": 1,
+    "max_damage": 190,
+    "tool": {
+      "rules": [
+        {
+          "blocks": "#minecraft:incorrect_for_copper_tool",
+          "correct_for_drops": false
+        },
+        {
+          "blocks": "#minecraft:mineable/axe",
+          "correct_for_drops": true,
+          "speed": 5.0
+        }
+      ]
+    },
+    "attribute_modifiers": [
+      {
+        "type": "minecraft:attack_damage",
+        "amount": 8.0,
+        "id": "minecraft:base_attack_damage",
+        "operation": "add_value",
+        "slot": "mainhand"
+      },
+      {
+        "type": "minecraft:attack_speed",
+        "amount": -3.200000047683716,
+        "id": "minecraft:base_attack_speed",
+        "operation": "add_value",
+        "slot": "mainhand"
+      }
+    ],
+    "attack_damage_modifier": 8.0,
+    "attack_speed_modifier": -3.200000047683716,
+    "weapon": true,
+    "weapon_damage_per_attack": 2,
+    "weapon_disable_blocking_seconds": 5.0
+  },
+  "minecraft:copper_boots": {
+    "max_stack_size": 1,
+    "max_damage": 143,
+    "attribute_modifiers": [
+      {
+        "type": "minecraft:armor",
+        "amount": 1.0,
+        "id": "minecraft:armor.boots",
+        "operation": "add_value",
+        "slot": "feet"
+      },
+      {
+        "type": "minecraft:armor_toughness",
+        "amount": 0.0,
+        "id": "minecraft:armor.boots",
+        "operation": "add_value",
+        "slot": "feet"
+      }
+    ],
+    "equippable_slot": "feet"
+  },
+  "minecraft:copper_chestplate": {
+    "max_stack_size": 1,
+    "max_damage": 176,
+    "attribute_modifiers": [
+      {
+        "type": "minecraft:armor",
+        "amount": 4.0,
+        "id": "minecraft:armor.chestplate",
+        "operation": "add_value",
+        "slot": "chest"
+      },
+      {
+        "type": "minecraft:armor_toughness",
+        "amount": 0.0,
+        "id": "minecraft:armor.chestplate",
+        "operation": "add_value",
+        "slot": "chest"
+      }
+    ],
+    "equippable_slot": "chest"
+  },
+  "minecraft:copper_helmet": {
+    "max_stack_size": 1,
+    "max_damage": 121,
+    "attribute_modifiers": [
+      {
+        "type": "minecraft:armor",
+        "amount": 2.0,
+        "id": "minecraft:armor.helmet",
+        "operation": "add_value",
+        "slot": "head"
+      },
+      {
+        "type": "minecraft:armor_toughness",
+        "amount": 0.0,
+        "id": "minecraft:armor.helmet",
+        "operation": "add_value",
+        "slot": "head"
+      }
+    ],
+    "equippable_slot": "head"
+  },
+  "minecraft:copper_hoe": {
+    "max_stack_size": 1,
+    "max_damage": 190,
+    "tool": {
+      "rules": [
+        {
+          "blocks": "#minecraft:incorrect_for_copper_tool",
+          "correct_for_drops": false
+        },
+        {
+          "blocks": "#minecraft:mineable/hoe",
+          "correct_for_drops": true,
+          "speed": 5.0
+        }
+      ]
+    },
+    "attribute_modifiers": [
+      {
+        "type": "minecraft:attack_damage",
+        "amount": 0.0,
+        "id": "minecraft:base_attack_damage",
+        "operation": "add_value",
+        "slot": "mainhand"
+      },
+      {
+        "type": "minecraft:attack_speed",
+        "amount": -2.0,
+        "id": "minecraft:base_attack_speed",
+        "operation": "add_value",
+        "slot": "mainhand"
+      }
+    ],
+    "attack_damage_modifier": 0.0,
+    "attack_speed_modifier": -2.0,
+    "weapon": true,
+    "weapon_damage_per_attack": 2
+  },
+  "minecraft:copper_leggings": {
+    "max_stack_size": 1,
+    "max_damage": 165,
+    "attribute_modifiers": [
+      {
+        "type": "minecraft:armor",
+        "amount": 3.0,
+        "id": "minecraft:armor.leggings",
+        "operation": "add_value",
+        "slot": "legs"
+      },
+      {
+        "type": "minecraft:armor_toughness",
+        "amount": 0.0,
+        "id": "minecraft:armor.leggings",
+        "operation": "add_value",
+        "slot": "legs"
+      }
+    ],
+    "equippable_slot": "legs"
+  },
+  "minecraft:copper_pickaxe": {
+    "max_stack_size": 1,
+    "max_damage": 190,
+    "tool": {
+      "rules": [
+        {
+          "blocks": "#minecraft:incorrect_for_copper_tool",
+          "correct_for_drops": false
+        },
+        {
+          "blocks": "#minecraft:mineable/pickaxe",
+          "correct_for_drops": true,
+          "speed": 5.0
+        }
+      ]
+    },
+    "attribute_modifiers": [
+      {
+        "type": "minecraft:attack_damage",
+        "amount": 2.0,
+        "id": "minecraft:base_attack_damage",
+        "operation": "add_value",
+        "slot": "mainhand"
+      },
+      {
+        "type": "minecraft:attack_speed",
+        "amount": -2.799999952316284,
+        "id": "minecraft:base_attack_speed",
+        "operation": "add_value",
+        "slot": "mainhand"
+      }
+    ],
+    "attack_damage_modifier": 2.0,
+    "attack_speed_modifier": -2.799999952316284,
+    "weapon": true,
+    "weapon_damage_per_attack": 2
+  },
+  "minecraft:copper_shovel": {
+    "max_stack_size": 1,
+    "max_damage": 190,
+    "tool": {
+      "rules": [
+        {
+          "blocks": "#minecraft:incorrect_for_copper_tool",
+          "correct_for_drops": false
+        },
+        {
+          "blocks": "#minecraft:mineable/shovel",
+          "correct_for_drops": true,
+          "speed": 5.0
+        }
+      ]
+    },
+    "attribute_modifiers": [
+      {
+        "type": "minecraft:attack_damage",
+        "amount": 2.5,
+        "id": "minecraft:base_attack_damage",
+        "operation": "add_value",
+        "slot": "mainhand"
+      },
+      {
+        "type": "minecraft:attack_speed",
+        "amount": -3.0,
+        "id": "minecraft:base_attack_speed",
+        "operation": "add_value",
+        "slot": "mainhand"
+      }
+    ],
+    "attack_damage_modifier": 2.5,
+    "attack_speed_modifier": -3.0,
+    "weapon": true,
+    "weapon_damage_per_attack": 2
+  },
+  "minecraft:copper_spear": {
+    "attack_range": {
+      "hitbox_margin": 0.125,
+      "max_creative_reach": 6.5,
+      "max_reach": 4.5,
+      "min_creative_reach": 2.0,
+      "min_reach": 2.0,
+      "mob_factor": 0.5
+    },
+    "max_stack_size": 1,
+    "max_damage": 190,
+    "attribute_modifiers": [
+      {
+        "type": "minecraft:attack_damage",
+        "amount": 1.0,
+        "id": "minecraft:base_attack_damage",
+        "operation": "add_value",
+        "slot": "mainhand"
+      },
+      {
+        "type": "minecraft:attack_speed",
+        "amount": -2.8235294818878174,
+        "id": "minecraft:base_attack_speed",
+        "operation": "add_value",
+        "slot": "mainhand"
+      }
+    ],
+    "attack_damage_modifier": 1.0,
+    "attack_speed_modifier": -2.8235294818878174,
+    "weapon": true
+  },
+  "minecraft:copper_sword": {
+    "max_stack_size": 1,
+    "max_damage": 190,
+    "tool": {
+      "can_destroy_blocks_in_creative": false,
+      "damage_per_block": 2,
+      "rules": [
+        {
+          "blocks": "minecraft:cobweb",
+          "correct_for_drops": true,
+          "speed": 15.0
+        },
+        {
+          "blocks": "#minecraft:sword_instantly_mines",
+          "speed": 3.4028235e+38
+        },
+        {
+          "blocks": "#minecraft:sword_efficient",
+          "speed": 1.5
+        }
+      ]
+    },
+    "attribute_modifiers": [
+      {
+        "type": "minecraft:attack_damage",
+        "amount": 4.0,
+        "id": "minecraft:base_attack_damage",
+        "operation": "add_value",
+        "slot": "mainhand"
+      },
+      {
+        "type": "minecraft:attack_speed",
+        "amount": -2.4000000953674316,
+        "id": "minecraft:base_attack_speed",
+        "operation": "add_value",
+        "slot": "mainhand"
+      }
+    ],
+    "attack_damage_modifier": 4.0,
+    "attack_speed_modifier": -2.4000000953674316,
+    "weapon": true
+  },
+  "minecraft:crossbow": {
+    "max_stack_size": 1,
+    "max_damage": 465,
+    "attribute_modifiers": []
+  },
+  "minecraft:cyan_banner": {
+    "max_stack_size": 16
+  },
+  "minecraft:diamond_axe": {
+    "weapon_disable_blocking_seconds": 5.0,
+    "max_stack_size": 1,
+    "max_damage": 1561,
+    "tool": {
+      "rules": [
+        {
+          "blocks": "#minecraft:incorrect_for_diamond_tool",
+          "correct_for_drops": false
+        },
+        {
+          "blocks": "#minecraft:mineable/axe",
+          "correct_for_drops": true,
+          "speed": 8.0
+        }
+      ]
+    },
+    "attribute_modifiers": [
+      {
+        "type": "minecraft:attack_damage",
+        "amount": 8.0,
+        "id": "minecraft:base_attack_damage",
+        "operation": "add_value",
+        "slot": "mainhand"
+      },
+      {
+        "type": "minecraft:attack_speed",
+        "amount": -3.0,
+        "id": "minecraft:base_attack_speed",
+        "operation": "add_value",
+        "slot": "mainhand"
+      }
+    ],
+    "attack_damage_modifier": 8.0,
+    "attack_speed_modifier": -3.0,
+    "weapon": true,
+    "weapon_damage_per_attack": 2
+  },
+  "minecraft:diamond_boots": {
+    "max_stack_size": 1,
+    "max_damage": 429,
+    "attribute_modifiers": [
+      {
+        "type": "minecraft:armor",
+        "amount": 3.0,
+        "id": "minecraft:armor.boots",
+        "operation": "add_value",
+        "slot": "feet"
+      },
+      {
+        "type": "minecraft:armor_toughness",
+        "amount": 2.0,
+        "id": "minecraft:armor.boots",
+        "operation": "add_value",
+        "slot": "feet"
+      }
+    ],
+    "equippable_slot": "feet"
+  },
+  "minecraft:diamond_chestplate": {
+    "max_stack_size": 1,
+    "max_damage": 528,
+    "attribute_modifiers": [
+      {
+        "type": "minecraft:armor",
+        "amount": 8.0,
+        "id": "minecraft:armor.chestplate",
+        "operation": "add_value",
+        "slot": "chest"
+      },
+      {
+        "type": "minecraft:armor_toughness",
+        "amount": 2.0,
+        "id": "minecraft:armor.chestplate",
+        "operation": "add_value",
+        "slot": "chest"
+      }
+    ],
+    "equippable_slot": "chest"
+  },
+  "minecraft:diamond_helmet": {
+    "max_stack_size": 1,
+    "max_damage": 363,
+    "attribute_modifiers": [
+      {
+        "type": "minecraft:armor",
+        "amount": 3.0,
+        "id": "minecraft:armor.helmet",
+        "operation": "add_value",
+        "slot": "head"
+      },
+      {
+        "type": "minecraft:armor_toughness",
+        "amount": 2.0,
+        "id": "minecraft:armor.helmet",
+        "operation": "add_value",
+        "slot": "head"
+      }
+    ],
+    "equippable_slot": "head"
+  },
+  "minecraft:diamond_hoe": {
+    "max_stack_size": 1,
+    "max_damage": 1561,
+    "tool": {
+      "rules": [
+        {
+          "blocks": "#minecraft:incorrect_for_diamond_tool",
+          "correct_for_drops": false
+        },
+        {
+          "blocks": "#minecraft:mineable/hoe",
+          "correct_for_drops": true,
+          "speed": 8.0
+        }
+      ]
+    },
+    "attribute_modifiers": [
+      {
+        "type": "minecraft:attack_damage",
+        "amount": 0.0,
+        "id": "minecraft:base_attack_damage",
+        "operation": "add_value",
+        "slot": "mainhand"
+      },
+      {
+        "type": "minecraft:attack_speed",
+        "amount": 0.0,
+        "id": "minecraft:base_attack_speed",
+        "operation": "add_value",
+        "slot": "mainhand"
+      }
+    ],
+    "attack_damage_modifier": 0.0,
+    "attack_speed_modifier": 0.0,
+    "weapon": true,
+    "weapon_damage_per_attack": 2
+  },
+  "minecraft:diamond_leggings": {
+    "max_stack_size": 1,
+    "max_damage": 495,
+    "attribute_modifiers": [
+      {
+        "type": "minecraft:armor",
+        "amount": 6.0,
+        "id": "minecraft:armor.leggings",
+        "operation": "add_value",
+        "slot": "legs"
+      },
+      {
+        "type": "minecraft:armor_toughness",
+        "amount": 2.0,
+        "id": "minecraft:armor.leggings",
+        "operation": "add_value",
+        "slot": "legs"
+      }
+    ],
+    "equippable_slot": "legs"
+  },
+  "minecraft:diamond_pickaxe": {
+    "max_stack_size": 1,
+    "max_damage": 1561,
+    "tool": {
+      "rules": [
+        {
+          "blocks": "#minecraft:incorrect_for_diamond_tool",
+          "correct_for_drops": false
+        },
+        {
+          "blocks": "#minecraft:mineable/pickaxe",
+          "correct_for_drops": true,
+          "speed": 8.0
+        }
+      ]
+    },
+    "attribute_modifiers": [
+      {
+        "type": "minecraft:attack_damage",
+        "amount": 4.0,
+        "id": "minecraft:base_attack_damage",
+        "operation": "add_value",
+        "slot": "mainhand"
+      },
+      {
+        "type": "minecraft:attack_speed",
+        "amount": -2.799999952316284,
+        "id": "minecraft:base_attack_speed",
+        "operation": "add_value",
+        "slot": "mainhand"
+      }
+    ],
+    "attack_damage_modifier": 4.0,
+    "attack_speed_modifier": -2.799999952316284,
+    "weapon": true,
+    "weapon_damage_per_attack": 2
+  },
+  "minecraft:diamond_shovel": {
+    "max_stack_size": 1,
+    "max_damage": 1561,
+    "tool": {
+      "rules": [
+        {
+          "blocks": "#minecraft:incorrect_for_diamond_tool",
+          "correct_for_drops": false
+        },
+        {
+          "blocks": "#minecraft:mineable/shovel",
+          "correct_for_drops": true,
+          "speed": 8.0
+        }
+      ]
+    },
+    "attribute_modifiers": [
+      {
+        "type": "minecraft:attack_damage",
+        "amount": 4.5,
+        "id": "minecraft:base_attack_damage",
+        "operation": "add_value",
+        "slot": "mainhand"
+      },
+      {
+        "type": "minecraft:attack_speed",
+        "amount": -3.0,
+        "id": "minecraft:base_attack_speed",
+        "operation": "add_value",
+        "slot": "mainhand"
+      }
+    ],
+    "attack_damage_modifier": 4.5,
+    "attack_speed_modifier": -3.0,
+    "weapon": true,
+    "weapon_damage_per_attack": 2
+  },
+  "minecraft:diamond_spear": {
+    "attack_range": {
+      "hitbox_margin": 0.125,
+      "max_creative_reach": 6.5,
+      "max_reach": 4.5,
+      "min_creative_reach": 2.0,
+      "min_reach": 2.0,
+      "mob_factor": 0.5
+    },
+    "max_stack_size": 1,
+    "max_damage": 1561,
+    "attribute_modifiers": [
+      {
+        "type": "minecraft:attack_damage",
+        "amount": 3.0,
+        "id": "minecraft:base_attack_damage",
+        "operation": "add_value",
+        "slot": "mainhand"
+      },
+      {
+        "type": "minecraft:attack_speed",
+        "amount": -3.0476189851760864,
+        "id": "minecraft:base_attack_speed",
+        "operation": "add_value",
+        "slot": "mainhand"
+      }
+    ],
+    "attack_damage_modifier": 3.0,
+    "attack_speed_modifier": -3.0476189851760864,
+    "weapon": true
+  },
+  "minecraft:diamond_sword": {
+    "max_stack_size": 1,
+    "max_damage": 1561,
+    "tool": {
+      "can_destroy_blocks_in_creative": false,
+      "damage_per_block": 2,
+      "rules": [
+        {
+          "blocks": "minecraft:cobweb",
+          "correct_for_drops": true,
+          "speed": 15.0
+        },
+        {
+          "blocks": "#minecraft:sword_instantly_mines",
+          "speed": 3.4028235e+38
+        },
+        {
+          "blocks": "#minecraft:sword_efficient",
+          "speed": 1.5
+        }
+      ]
+    },
+    "attribute_modifiers": [
+      {
+        "type": "minecraft:attack_damage",
+        "amount": 6.0,
+        "id": "minecraft:base_attack_damage",
+        "operation": "add_value",
+        "slot": "mainhand"
+      },
+      {
+        "type": "minecraft:attack_speed",
+        "amount": -2.4000000953674316,
+        "id": "minecraft:base_attack_speed",
+        "operation": "add_value",
+        "slot": "mainhand"
+      }
+    ],
+    "attack_damage_modifier": 6.0,
+    "attack_speed_modifier": -2.4000000953674316,
+    "weapon": true
+  },
+  "minecraft:dried_kelp": {
+    "food": {
+      "food": 1,
+      "saturation": 0.6
+    },
+    "use_duration_ticks": 16,
+    "use_action": "eat",
+    "max_stack_size": 64
+  },
+  "minecraft:elytra": {
+    "max_stack_size": 1,
+    "max_damage": 432,
+    "attribute_modifiers": [],
+    "equippable_slot": "chest"
+  },
+  "minecraft:enchanted_golden_apple": {
+    "consume_effects": [
+      {
+        "type": "minecraft:apply_effects",
+        "effects": [
+          {
+            "id": "minecraft:regeneration",
+            "amplifier": 1,
+            "duration": 400,
+            "show_icon": true
+          },
+          {
+            "id": "minecraft:resistance",
+            "duration": 6000,
+            "show_icon": true
+          },
+          {
+            "id": "minecraft:fire_resistance",
+            "duration": 6000,
+            "show_icon": true
+          },
+          {
+            "id": "minecraft:absorption",
+            "amplifier": 3,
+            "duration": 2400,
+            "show_icon": true
+          }
+        ]
+      }
+    ],
+    "food": {
+      "food": 4,
+      "saturation": 9.6,
+      "can_always_eat": true
+    },
+    "use_duration_ticks": 32,
+    "use_action": "eat",
+    "max_stack_size": 64
+  },
+  "minecraft:fishing_rod": {
+    "max_stack_size": 1,
+    "max_damage": 64,
+    "attribute_modifiers": []
+  },
+  "minecraft:flint_and_steel": {
+    "max_stack_size": 1,
+    "max_damage": 64,
+    "attribute_modifiers": []
+  },
+  "minecraft:glass_bottle": {
+    "max_stack_size": 64,
+    "attribute_modifiers": []
+  },
+  "minecraft:glow_berries": {
+    "food": {
+      "food": 2,
+      "saturation": 0.4
+    },
+    "use_duration_ticks": 32,
+    "use_action": "eat",
+    "max_stack_size": 64
+  },
+  "minecraft:golden_apple": {
+    "consume_effects": [
+      {
+        "type": "minecraft:apply_effects",
+        "effects": [
+          {
+            "id": "minecraft:regeneration",
+            "amplifier": 1,
+            "duration": 100,
+            "show_icon": true
+          },
+          {
+            "id": "minecraft:absorption",
+            "duration": 2400,
+            "show_icon": true
+          }
+        ]
+      }
+    ],
+    "food": {
+      "food": 4,
+      "saturation": 9.6,
+      "can_always_eat": true
+    },
+    "use_duration_ticks": 32,
+    "use_action": "eat",
+    "max_stack_size": 64
+  },
+  "minecraft:golden_axe": {
+    "weapon_disable_blocking_seconds": 5.0,
+    "max_stack_size": 1,
+    "max_damage": 32,
+    "tool": {
+      "rules": [
+        {
+          "blocks": "#minecraft:incorrect_for_gold_tool",
+          "correct_for_drops": false
+        },
+        {
+          "blocks": "#minecraft:mineable/axe",
+          "correct_for_drops": true,
+          "speed": 12.0
+        }
+      ]
+    },
+    "attribute_modifiers": [
+      {
+        "type": "minecraft:attack_damage",
+        "amount": 6.0,
+        "id": "minecraft:base_attack_damage",
+        "operation": "add_value",
+        "slot": "mainhand"
+      },
+      {
+        "type": "minecraft:attack_speed",
+        "amount": -3.0,
+        "id": "minecraft:base_attack_speed",
+        "operation": "add_value",
+        "slot": "mainhand"
+      }
+    ],
+    "attack_damage_modifier": 6.0,
+    "attack_speed_modifier": -3.0,
+    "weapon": true,
+    "weapon_damage_per_attack": 2
+  },
+  "minecraft:golden_boots": {
+    "max_stack_size": 1,
+    "max_damage": 91,
+    "attribute_modifiers": [
+      {
+        "type": "minecraft:armor",
+        "amount": 1.0,
+        "id": "minecraft:armor.boots",
+        "operation": "add_value",
+        "slot": "feet"
+      },
+      {
+        "type": "minecraft:armor_toughness",
+        "amount": 0.0,
+        "id": "minecraft:armor.boots",
+        "operation": "add_value",
+        "slot": "feet"
+      }
+    ],
+    "equippable_slot": "feet"
+  },
+  "minecraft:golden_carrot": {
+    "food": {
+      "food": 6,
+      "saturation": 14.400001
+    },
+    "use_duration_ticks": 32,
+    "use_action": "eat",
+    "max_stack_size": 64
+  },
+  "minecraft:golden_chestplate": {
+    "max_stack_size": 1,
+    "max_damage": 112,
+    "attribute_modifiers": [
+      {
+        "type": "minecraft:armor",
+        "amount": 5.0,
+        "id": "minecraft:armor.chestplate",
+        "operation": "add_value",
+        "slot": "chest"
+      },
+      {
+        "type": "minecraft:armor_toughness",
+        "amount": 0.0,
+        "id": "minecraft:armor.chestplate",
+        "operation": "add_value",
+        "slot": "chest"
+      }
+    ],
+    "equippable_slot": "chest"
+  },
+  "minecraft:golden_helmet": {
+    "max_stack_size": 1,
+    "max_damage": 77,
+    "attribute_modifiers": [
+      {
+        "type": "minecraft:armor",
+        "amount": 2.0,
+        "id": "minecraft:armor.helmet",
+        "operation": "add_value",
+        "slot": "head"
+      },
+      {
+        "type": "minecraft:armor_toughness",
+        "amount": 0.0,
+        "id": "minecraft:armor.helmet",
+        "operation": "add_value",
+        "slot": "head"
+      }
+    ],
+    "equippable_slot": "head"
+  },
+  "minecraft:golden_hoe": {
+    "max_stack_size": 1,
+    "max_damage": 32,
+    "tool": {
+      "rules": [
+        {
+          "blocks": "#minecraft:incorrect_for_gold_tool",
+          "correct_for_drops": false
+        },
+        {
+          "blocks": "#minecraft:mineable/hoe",
+          "correct_for_drops": true,
+          "speed": 12.0
+        }
+      ]
+    },
+    "attribute_modifiers": [
+      {
+        "type": "minecraft:attack_damage",
+        "amount": 0.0,
+        "id": "minecraft:base_attack_damage",
+        "operation": "add_value",
+        "slot": "mainhand"
+      },
+      {
+        "type": "minecraft:attack_speed",
+        "amount": -3.0,
+        "id": "minecraft:base_attack_speed",
+        "operation": "add_value",
+        "slot": "mainhand"
+      }
+    ],
+    "attack_damage_modifier": 0.0,
+    "attack_speed_modifier": -3.0,
+    "weapon": true,
+    "weapon_damage_per_attack": 2
+  },
+  "minecraft:golden_leggings": {
+    "max_stack_size": 1,
+    "max_damage": 105,
+    "attribute_modifiers": [
+      {
+        "type": "minecraft:armor",
+        "amount": 3.0,
+        "id": "minecraft:armor.leggings",
+        "operation": "add_value",
+        "slot": "legs"
+      },
+      {
+        "type": "minecraft:armor_toughness",
+        "amount": 0.0,
+        "id": "minecraft:armor.leggings",
+        "operation": "add_value",
+        "slot": "legs"
+      }
+    ],
+    "equippable_slot": "legs"
+  },
+  "minecraft:golden_pickaxe": {
+    "max_stack_size": 1,
+    "max_damage": 32,
+    "tool": {
+      "rules": [
+        {
+          "blocks": "#minecraft:incorrect_for_gold_tool",
+          "correct_for_drops": false
+        },
+        {
+          "blocks": "#minecraft:mineable/pickaxe",
+          "correct_for_drops": true,
+          "speed": 12.0
+        }
+      ]
+    },
+    "attribute_modifiers": [
+      {
+        "type": "minecraft:attack_damage",
+        "amount": 1.0,
+        "id": "minecraft:base_attack_damage",
+        "operation": "add_value",
+        "slot": "mainhand"
+      },
+      {
+        "type": "minecraft:attack_speed",
+        "amount": -2.799999952316284,
+        "id": "minecraft:base_attack_speed",
+        "operation": "add_value",
+        "slot": "mainhand"
+      }
+    ],
+    "attack_damage_modifier": 1.0,
+    "attack_speed_modifier": -2.799999952316284,
+    "weapon": true,
+    "weapon_damage_per_attack": 2
+  },
+  "minecraft:golden_shovel": {
+    "max_stack_size": 1,
+    "max_damage": 32,
+    "tool": {
+      "rules": [
+        {
+          "blocks": "#minecraft:incorrect_for_gold_tool",
+          "correct_for_drops": false
+        },
+        {
+          "blocks": "#minecraft:mineable/shovel",
+          "correct_for_drops": true,
+          "speed": 12.0
+        }
+      ]
+    },
+    "attribute_modifiers": [
+      {
+        "type": "minecraft:attack_damage",
+        "amount": 1.5,
+        "id": "minecraft:base_attack_damage",
+        "operation": "add_value",
+        "slot": "mainhand"
+      },
+      {
+        "type": "minecraft:attack_speed",
+        "amount": -3.0,
+        "id": "minecraft:base_attack_speed",
+        "operation": "add_value",
+        "slot": "mainhand"
+      }
+    ],
+    "attack_damage_modifier": 1.5,
+    "attack_speed_modifier": -3.0,
+    "weapon": true,
+    "weapon_damage_per_attack": 2
+  },
+  "minecraft:golden_spear": {
+    "attack_range": {
+      "hitbox_margin": 0.125,
+      "max_creative_reach": 6.5,
+      "max_reach": 4.5,
+      "min_creative_reach": 2.0,
+      "min_reach": 2.0,
+      "mob_factor": 0.5
+    },
+    "max_stack_size": 1,
+    "max_damage": 32,
+    "attribute_modifiers": [
+      {
+        "type": "minecraft:attack_damage",
+        "amount": 0.0,
+        "id": "minecraft:base_attack_damage",
+        "operation": "add_value",
+        "slot": "mainhand"
+      },
+      {
+        "type": "minecraft:attack_speed",
+        "amount": -2.9473683834075928,
+        "id": "minecraft:base_attack_speed",
+        "operation": "add_value",
+        "slot": "mainhand"
+      }
+    ],
+    "attack_damage_modifier": 0.0,
+    "attack_speed_modifier": -2.9473683834075928,
+    "weapon": true
+  },
+  "minecraft:golden_sword": {
+    "max_stack_size": 1,
+    "max_damage": 32,
+    "tool": {
+      "can_destroy_blocks_in_creative": false,
+      "damage_per_block": 2,
+      "rules": [
+        {
+          "blocks": "minecraft:cobweb",
+          "correct_for_drops": true,
+          "speed": 15.0
+        },
+        {
+          "blocks": "#minecraft:sword_instantly_mines",
+          "speed": 3.4028235e+38
+        },
+        {
+          "blocks": "#minecraft:sword_efficient",
+          "speed": 1.5
+        }
+      ]
+    },
+    "attribute_modifiers": [
+      {
+        "type": "minecraft:attack_damage",
+        "amount": 3.0,
+        "id": "minecraft:base_attack_damage",
+        "operation": "add_value",
+        "slot": "mainhand"
+      },
+      {
+        "type": "minecraft:attack_speed",
+        "amount": -2.4000000953674316,
+        "id": "minecraft:base_attack_speed",
+        "operation": "add_value",
+        "slot": "mainhand"
+      }
+    ],
+    "attack_damage_modifier": 3.0,
+    "attack_speed_modifier": -2.4000000953674316,
+    "weapon": true
+  },
+  "minecraft:gray_banner": {
+    "max_stack_size": 16
+  },
+  "minecraft:green_banner": {
+    "max_stack_size": 16
+  },
+  "minecraft:honey_bottle": {
+    "consume_effects": [
+      {
+        "type": "minecraft:remove_effects",
+        "effects": "minecraft:poison"
+      }
+    ],
+    "food": {
+      "food": 6,
+      "saturation": 1.2,
+      "can_always_eat": true
+    },
+    "use_duration_ticks": 40,
+    "use_action": "drink",
+    "max_stack_size": 16,
+    "use_remainder": "minecraft:glass_bottle"
+  },
+  "minecraft:iron_axe": {
+    "weapon_disable_blocking_seconds": 5.0,
+    "max_stack_size": 1,
+    "max_damage": 250,
+    "tool": {
+      "rules": [
+        {
+          "blocks": "#minecraft:incorrect_for_iron_tool",
+          "correct_for_drops": false
+        },
+        {
+          "blocks": "#minecraft:mineable/axe",
+          "correct_for_drops": true,
+          "speed": 6.0
+        }
+      ]
+    },
+    "attribute_modifiers": [
+      {
+        "type": "minecraft:attack_damage",
+        "amount": 8.0,
+        "id": "minecraft:base_attack_damage",
+        "operation": "add_value",
+        "slot": "mainhand"
+      },
+      {
+        "type": "minecraft:attack_speed",
+        "amount": -3.0999999046325684,
+        "id": "minecraft:base_attack_speed",
+        "operation": "add_value",
+        "slot": "mainhand"
+      }
+    ],
+    "attack_damage_modifier": 8.0,
+    "attack_speed_modifier": -3.0999999046325684,
+    "weapon": true,
+    "weapon_damage_per_attack": 2
+  },
+  "minecraft:iron_boots": {
+    "max_stack_size": 1,
+    "max_damage": 195,
+    "attribute_modifiers": [
+      {
+        "type": "minecraft:armor",
+        "amount": 2.0,
+        "id": "minecraft:armor.boots",
+        "operation": "add_value",
+        "slot": "feet"
+      },
+      {
+        "type": "minecraft:armor_toughness",
+        "amount": 0.0,
+        "id": "minecraft:armor.boots",
+        "operation": "add_value",
+        "slot": "feet"
+      }
+    ],
+    "equippable_slot": "feet"
+  },
+  "minecraft:iron_chestplate": {
+    "max_stack_size": 1,
+    "max_damage": 240,
+    "attribute_modifiers": [
+      {
+        "type": "minecraft:armor",
+        "amount": 6.0,
+        "id": "minecraft:armor.chestplate",
+        "operation": "add_value",
+        "slot": "chest"
+      },
+      {
+        "type": "minecraft:armor_toughness",
+        "amount": 0.0,
+        "id": "minecraft:armor.chestplate",
+        "operation": "add_value",
+        "slot": "chest"
+      }
+    ],
+    "equippable_slot": "chest"
+  },
+  "minecraft:iron_helmet": {
+    "max_stack_size": 1,
+    "max_damage": 165,
+    "attribute_modifiers": [
+      {
+        "type": "minecraft:armor",
+        "amount": 2.0,
+        "id": "minecraft:armor.helmet",
+        "operation": "add_value",
+        "slot": "head"
+      },
+      {
+        "type": "minecraft:armor_toughness",
+        "amount": 0.0,
+        "id": "minecraft:armor.helmet",
+        "operation": "add_value",
+        "slot": "head"
+      }
+    ],
+    "equippable_slot": "head"
+  },
+  "minecraft:iron_hoe": {
+    "max_stack_size": 1,
+    "max_damage": 250,
+    "tool": {
+      "rules": [
+        {
+          "blocks": "#minecraft:incorrect_for_iron_tool",
+          "correct_for_drops": false
+        },
+        {
+          "blocks": "#minecraft:mineable/hoe",
+          "correct_for_drops": true,
+          "speed": 6.0
+        }
+      ]
+    },
+    "attribute_modifiers": [
+      {
+        "type": "minecraft:attack_damage",
+        "amount": 0.0,
+        "id": "minecraft:base_attack_damage",
+        "operation": "add_value",
+        "slot": "mainhand"
+      },
+      {
+        "type": "minecraft:attack_speed",
+        "amount": -1.0,
+        "id": "minecraft:base_attack_speed",
+        "operation": "add_value",
+        "slot": "mainhand"
+      }
+    ],
+    "attack_damage_modifier": 0.0,
+    "attack_speed_modifier": -1.0,
+    "weapon": true,
+    "weapon_damage_per_attack": 2
+  },
+  "minecraft:iron_leggings": {
+    "max_stack_size": 1,
+    "max_damage": 225,
+    "attribute_modifiers": [
+      {
+        "type": "minecraft:armor",
+        "amount": 5.0,
+        "id": "minecraft:armor.leggings",
+        "operation": "add_value",
+        "slot": "legs"
+      },
+      {
+        "type": "minecraft:armor_toughness",
+        "amount": 0.0,
+        "id": "minecraft:armor.leggings",
+        "operation": "add_value",
+        "slot": "legs"
+      }
+    ],
+    "equippable_slot": "legs"
+  },
+  "minecraft:iron_pickaxe": {
+    "max_stack_size": 1,
+    "max_damage": 250,
+    "tool": {
+      "rules": [
+        {
+          "blocks": "#minecraft:incorrect_for_iron_tool",
+          "correct_for_drops": false
+        },
+        {
+          "blocks": "#minecraft:mineable/pickaxe",
+          "correct_for_drops": true,
+          "speed": 6.0
+        }
+      ]
+    },
+    "attribute_modifiers": [
+      {
+        "type": "minecraft:attack_damage",
+        "amount": 3.0,
+        "id": "minecraft:base_attack_damage",
+        "operation": "add_value",
+        "slot": "mainhand"
+      },
+      {
+        "type": "minecraft:attack_speed",
+        "amount": -2.799999952316284,
+        "id": "minecraft:base_attack_speed",
+        "operation": "add_value",
+        "slot": "mainhand"
+      }
+    ],
+    "attack_damage_modifier": 3.0,
+    "attack_speed_modifier": -2.799999952316284,
+    "weapon": true,
+    "weapon_damage_per_attack": 2
+  },
+  "minecraft:iron_shovel": {
+    "max_stack_size": 1,
+    "max_damage": 250,
+    "tool": {
+      "rules": [
+        {
+          "blocks": "#minecraft:incorrect_for_iron_tool",
+          "correct_for_drops": false
+        },
+        {
+          "blocks": "#minecraft:mineable/shovel",
+          "correct_for_drops": true,
+          "speed": 6.0
+        }
+      ]
+    },
+    "attribute_modifiers": [
+      {
+        "type": "minecraft:attack_damage",
+        "amount": 3.5,
+        "id": "minecraft:base_attack_damage",
+        "operation": "add_value",
+        "slot": "mainhand"
+      },
+      {
+        "type": "minecraft:attack_speed",
+        "amount": -3.0,
+        "id": "minecraft:base_attack_speed",
+        "operation": "add_value",
+        "slot": "mainhand"
+      }
+    ],
+    "attack_damage_modifier": 3.5,
+    "attack_speed_modifier": -3.0,
+    "weapon": true,
+    "weapon_damage_per_attack": 2
+  },
+  "minecraft:iron_spear": {
+    "attack_range": {
+      "hitbox_margin": 0.125,
+      "max_creative_reach": 6.5,
+      "max_reach": 4.5,
+      "min_creative_reach": 2.0,
+      "min_reach": 2.0,
+      "mob_factor": 0.5
+    },
+    "max_stack_size": 1,
+    "max_damage": 250,
+    "attribute_modifiers": [
+      {
+        "type": "minecraft:attack_damage",
+        "amount": 2.0,
+        "id": "minecraft:base_attack_damage",
+        "operation": "add_value",
+        "slot": "mainhand"
+      },
+      {
+        "type": "minecraft:attack_speed",
+        "amount": -2.9473683834075928,
+        "id": "minecraft:base_attack_speed",
+        "operation": "add_value",
+        "slot": "mainhand"
+      }
+    ],
+    "attack_damage_modifier": 2.0,
+    "attack_speed_modifier": -2.9473683834075928,
+    "weapon": true
+  },
+  "minecraft:iron_sword": {
+    "max_stack_size": 1,
+    "max_damage": 250,
+    "tool": {
+      "can_destroy_blocks_in_creative": false,
+      "damage_per_block": 2,
+      "rules": [
+        {
+          "blocks": "minecraft:cobweb",
+          "correct_for_drops": true,
+          "speed": 15.0
+        },
+        {
+          "blocks": "#minecraft:sword_instantly_mines",
+          "speed": 3.4028235e+38
+        },
+        {
+          "blocks": "#minecraft:sword_efficient",
+          "speed": 1.5
+        }
+      ]
+    },
+    "attribute_modifiers": [
+      {
+        "type": "minecraft:attack_damage",
+        "amount": 5.0,
+        "id": "minecraft:base_attack_damage",
+        "operation": "add_value",
+        "slot": "mainhand"
+      },
+      {
+        "type": "minecraft:attack_speed",
+        "amount": -2.4000000953674316,
+        "id": "minecraft:base_attack_speed",
+        "operation": "add_value",
+        "slot": "mainhand"
+      }
+    ],
+    "attack_damage_modifier": 5.0,
+    "attack_speed_modifier": -2.4000000953674316,
+    "weapon": true
+  },
+  "minecraft:leather_boots": {
+    "max_stack_size": 1,
+    "max_damage": 65,
+    "attribute_modifiers": [
+      {
+        "type": "minecraft:armor",
+        "amount": 1.0,
+        "id": "minecraft:armor.boots",
+        "operation": "add_value",
+        "slot": "feet"
+      },
+      {
+        "type": "minecraft:armor_toughness",
+        "amount": 0.0,
+        "id": "minecraft:armor.boots",
+        "operation": "add_value",
+        "slot": "feet"
+      }
+    ],
+    "equippable_slot": "feet"
+  },
+  "minecraft:leather_chestplate": {
+    "max_stack_size": 1,
+    "max_damage": 80,
+    "attribute_modifiers": [
+      {
+        "type": "minecraft:armor",
+        "amount": 3.0,
+        "id": "minecraft:armor.chestplate",
+        "operation": "add_value",
+        "slot": "chest"
+      },
+      {
+        "type": "minecraft:armor_toughness",
+        "amount": 0.0,
+        "id": "minecraft:armor.chestplate",
+        "operation": "add_value",
+        "slot": "chest"
+      }
+    ],
+    "equippable_slot": "chest"
+  },
+  "minecraft:leather_helmet": {
+    "max_stack_size": 1,
+    "max_damage": 55,
+    "attribute_modifiers": [
+      {
+        "type": "minecraft:armor",
+        "amount": 1.0,
+        "id": "minecraft:armor.helmet",
+        "operation": "add_value",
+        "slot": "head"
+      },
+      {
+        "type": "minecraft:armor_toughness",
+        "amount": 0.0,
+        "id": "minecraft:armor.helmet",
+        "operation": "add_value",
+        "slot": "head"
+      }
+    ],
+    "equippable_slot": "head"
+  },
+  "minecraft:leather_leggings": {
+    "max_stack_size": 1,
+    "max_damage": 75,
+    "attribute_modifiers": [
+      {
+        "type": "minecraft:armor",
+        "amount": 2.0,
+        "id": "minecraft:armor.leggings",
+        "operation": "add_value",
+        "slot": "legs"
+      },
+      {
+        "type": "minecraft:armor_toughness",
+        "amount": 0.0,
+        "id": "minecraft:armor.leggings",
+        "operation": "add_value",
+        "slot": "legs"
+      }
+    ],
+    "equippable_slot": "legs"
+  },
+  "minecraft:light_blue_banner": {
+    "max_stack_size": 16
+  },
+  "minecraft:light_gray_banner": {
+    "max_stack_size": 16
+  },
+  "minecraft:lime_banner": {
+    "max_stack_size": 16
+  },
+  "minecraft:lingering_potion": {
+    "max_stack_size": 1,
+    "attribute_modifiers": []
+  },
+  "minecraft:mace": {
+    "max_stack_size": 1,
+    "max_damage": 500,
+    "tool": {
+      "can_destroy_blocks_in_creative": false,
+      "damage_per_block": 2,
+      "rules": []
+    },
+    "attribute_modifiers": [
+      {
+        "type": "minecraft:attack_damage",
+        "amount": 5.0,
+        "id": "minecraft:base_attack_damage",
+        "operation": "add_value",
+        "slot": "mainhand"
+      },
+      {
+        "type": "minecraft:attack_speed",
+        "amount": -3.4000000953674316,
+        "id": "minecraft:base_attack_speed",
+        "operation": "add_value",
+        "slot": "mainhand"
+      }
+    ],
+    "attack_damage_modifier": 5.0,
+    "attack_speed_modifier": -3.4000000953674316,
+    "weapon": true
+  },
+  "minecraft:magenta_banner": {
+    "max_stack_size": 16
+  },
+  "minecraft:melon_slice": {
+    "food": {
+      "food": 2,
+      "saturation": 1.2
+    },
+    "use_duration_ticks": 32,
+    "use_action": "eat",
+    "max_stack_size": 64
+  },
+  "minecraft:milk_bucket": {
+    "use_duration_ticks": 32,
+    "use_action": "drink",
+    "max_stack_size": 1,
+    "use_remainder": "minecraft:bucket",
+    "consume_effects": [
+      {
+        "type": "minecraft:clear_all_effects"
+      }
+    ]
   },
   "minecraft:mushroom_stew": {
     "food": {
@@ -525,32 +2178,476 @@
     "max_stack_size": 1,
     "use_remainder": "minecraft:bowl"
   },
-  "minecraft:beetroot": {
+  "minecraft:mutton": {
     "food": {
-      "food": 1,
+      "food": 2,
       "saturation": 1.2
     },
     "use_duration_ticks": 32,
     "use_action": "eat",
     "max_stack_size": 64
   },
-  "minecraft:apple": {
+  "minecraft:netherite_axe": {
+    "fire_resistant": true,
+    "weapon_disable_blocking_seconds": 5.0,
+    "max_stack_size": 1,
+    "max_damage": 2031,
+    "tool": {
+      "rules": [
+        {
+          "blocks": "#minecraft:incorrect_for_netherite_tool",
+          "correct_for_drops": false
+        },
+        {
+          "blocks": "#minecraft:mineable/axe",
+          "correct_for_drops": true,
+          "speed": 9.0
+        }
+      ]
+    },
+    "attribute_modifiers": [
+      {
+        "type": "minecraft:attack_damage",
+        "amount": 9.0,
+        "id": "minecraft:base_attack_damage",
+        "operation": "add_value",
+        "slot": "mainhand"
+      },
+      {
+        "type": "minecraft:attack_speed",
+        "amount": -3.0,
+        "id": "minecraft:base_attack_speed",
+        "operation": "add_value",
+        "slot": "mainhand"
+      }
+    ],
+    "attack_damage_modifier": 9.0,
+    "attack_speed_modifier": -3.0,
+    "weapon": true,
+    "weapon_damage_per_attack": 2
+  },
+  "minecraft:netherite_block": {
+    "fire_resistant": true
+  },
+  "minecraft:netherite_boots": {
+    "fire_resistant": true,
+    "max_stack_size": 1,
+    "max_damage": 481,
+    "attribute_modifiers": [
+      {
+        "type": "minecraft:armor",
+        "amount": 3.0,
+        "id": "minecraft:armor.boots",
+        "operation": "add_value",
+        "slot": "feet"
+      },
+      {
+        "type": "minecraft:armor_toughness",
+        "amount": 3.0,
+        "id": "minecraft:armor.boots",
+        "operation": "add_value",
+        "slot": "feet"
+      },
+      {
+        "type": "minecraft:knockback_resistance",
+        "amount": 0.10000000149011612,
+        "id": "minecraft:armor.boots",
+        "operation": "add_value",
+        "slot": "feet"
+      }
+    ],
+    "equippable_slot": "feet"
+  },
+  "minecraft:netherite_chestplate": {
+    "fire_resistant": true,
+    "max_stack_size": 1,
+    "max_damage": 592,
+    "attribute_modifiers": [
+      {
+        "type": "minecraft:armor",
+        "amount": 8.0,
+        "id": "minecraft:armor.chestplate",
+        "operation": "add_value",
+        "slot": "chest"
+      },
+      {
+        "type": "minecraft:armor_toughness",
+        "amount": 3.0,
+        "id": "minecraft:armor.chestplate",
+        "operation": "add_value",
+        "slot": "chest"
+      },
+      {
+        "type": "minecraft:knockback_resistance",
+        "amount": 0.10000000149011612,
+        "id": "minecraft:armor.chestplate",
+        "operation": "add_value",
+        "slot": "chest"
+      }
+    ],
+    "equippable_slot": "chest"
+  },
+  "minecraft:netherite_helmet": {
+    "fire_resistant": true,
+    "max_stack_size": 1,
+    "max_damage": 407,
+    "attribute_modifiers": [
+      {
+        "type": "minecraft:armor",
+        "amount": 3.0,
+        "id": "minecraft:armor.helmet",
+        "operation": "add_value",
+        "slot": "head"
+      },
+      {
+        "type": "minecraft:armor_toughness",
+        "amount": 3.0,
+        "id": "minecraft:armor.helmet",
+        "operation": "add_value",
+        "slot": "head"
+      },
+      {
+        "type": "minecraft:knockback_resistance",
+        "amount": 0.10000000149011612,
+        "id": "minecraft:armor.helmet",
+        "operation": "add_value",
+        "slot": "head"
+      }
+    ],
+    "equippable_slot": "head"
+  },
+  "minecraft:netherite_hoe": {
+    "fire_resistant": true,
+    "max_stack_size": 1,
+    "max_damage": 2031,
+    "tool": {
+      "rules": [
+        {
+          "blocks": "#minecraft:incorrect_for_netherite_tool",
+          "correct_for_drops": false
+        },
+        {
+          "blocks": "#minecraft:mineable/hoe",
+          "correct_for_drops": true,
+          "speed": 9.0
+        }
+      ]
+    },
+    "attribute_modifiers": [
+      {
+        "type": "minecraft:attack_damage",
+        "amount": 0.0,
+        "id": "minecraft:base_attack_damage",
+        "operation": "add_value",
+        "slot": "mainhand"
+      },
+      {
+        "type": "minecraft:attack_speed",
+        "amount": 0.0,
+        "id": "minecraft:base_attack_speed",
+        "operation": "add_value",
+        "slot": "mainhand"
+      }
+    ],
+    "attack_damage_modifier": 0.0,
+    "attack_speed_modifier": 0.0,
+    "weapon": true,
+    "weapon_damage_per_attack": 2
+  },
+  "minecraft:netherite_horse_armor": {
+    "fire_resistant": true
+  },
+  "minecraft:netherite_ingot": {
+    "fire_resistant": true
+  },
+  "minecraft:netherite_leggings": {
+    "fire_resistant": true,
+    "max_stack_size": 1,
+    "max_damage": 555,
+    "attribute_modifiers": [
+      {
+        "type": "minecraft:armor",
+        "amount": 6.0,
+        "id": "minecraft:armor.leggings",
+        "operation": "add_value",
+        "slot": "legs"
+      },
+      {
+        "type": "minecraft:armor_toughness",
+        "amount": 3.0,
+        "id": "minecraft:armor.leggings",
+        "operation": "add_value",
+        "slot": "legs"
+      },
+      {
+        "type": "minecraft:knockback_resistance",
+        "amount": 0.10000000149011612,
+        "id": "minecraft:armor.leggings",
+        "operation": "add_value",
+        "slot": "legs"
+      }
+    ],
+    "equippable_slot": "legs"
+  },
+  "minecraft:netherite_nautilus_armor": {
+    "fire_resistant": true
+  },
+  "minecraft:netherite_pickaxe": {
+    "fire_resistant": true,
+    "max_stack_size": 1,
+    "max_damage": 2031,
+    "tool": {
+      "rules": [
+        {
+          "blocks": "#minecraft:incorrect_for_netherite_tool",
+          "correct_for_drops": false
+        },
+        {
+          "blocks": "#minecraft:mineable/pickaxe",
+          "correct_for_drops": true,
+          "speed": 9.0
+        }
+      ]
+    },
+    "attribute_modifiers": [
+      {
+        "type": "minecraft:attack_damage",
+        "amount": 5.0,
+        "id": "minecraft:base_attack_damage",
+        "operation": "add_value",
+        "slot": "mainhand"
+      },
+      {
+        "type": "minecraft:attack_speed",
+        "amount": -2.799999952316284,
+        "id": "minecraft:base_attack_speed",
+        "operation": "add_value",
+        "slot": "mainhand"
+      }
+    ],
+    "attack_damage_modifier": 5.0,
+    "attack_speed_modifier": -2.799999952316284,
+    "weapon": true,
+    "weapon_damage_per_attack": 2
+  },
+  "minecraft:netherite_scrap": {
+    "fire_resistant": true
+  },
+  "minecraft:netherite_shovel": {
+    "fire_resistant": true,
+    "max_stack_size": 1,
+    "max_damage": 2031,
+    "tool": {
+      "rules": [
+        {
+          "blocks": "#minecraft:incorrect_for_netherite_tool",
+          "correct_for_drops": false
+        },
+        {
+          "blocks": "#minecraft:mineable/shovel",
+          "correct_for_drops": true,
+          "speed": 9.0
+        }
+      ]
+    },
+    "attribute_modifiers": [
+      {
+        "type": "minecraft:attack_damage",
+        "amount": 5.5,
+        "id": "minecraft:base_attack_damage",
+        "operation": "add_value",
+        "slot": "mainhand"
+      },
+      {
+        "type": "minecraft:attack_speed",
+        "amount": -3.0,
+        "id": "minecraft:base_attack_speed",
+        "operation": "add_value",
+        "slot": "mainhand"
+      }
+    ],
+    "attack_damage_modifier": 5.5,
+    "attack_speed_modifier": -3.0,
+    "weapon": true,
+    "weapon_damage_per_attack": 2
+  },
+  "minecraft:netherite_spear": {
+    "fire_resistant": true,
+    "attack_range": {
+      "hitbox_margin": 0.125,
+      "max_creative_reach": 6.5,
+      "max_reach": 4.5,
+      "min_creative_reach": 2.0,
+      "min_reach": 2.0,
+      "mob_factor": 0.5
+    },
+    "max_stack_size": 1,
+    "max_damage": 2031,
+    "attribute_modifiers": [
+      {
+        "type": "minecraft:attack_damage",
+        "amount": 4.0,
+        "id": "minecraft:base_attack_damage",
+        "operation": "add_value",
+        "slot": "mainhand"
+      },
+      {
+        "type": "minecraft:attack_speed",
+        "amount": -3.13043475151062,
+        "id": "minecraft:base_attack_speed",
+        "operation": "add_value",
+        "slot": "mainhand"
+      }
+    ],
+    "attack_damage_modifier": 4.0,
+    "attack_speed_modifier": -3.13043475151062,
+    "weapon": true
+  },
+  "minecraft:netherite_sword": {
+    "fire_resistant": true,
+    "max_stack_size": 1,
+    "max_damage": 2031,
+    "tool": {
+      "can_destroy_blocks_in_creative": false,
+      "damage_per_block": 2,
+      "rules": [
+        {
+          "blocks": "minecraft:cobweb",
+          "correct_for_drops": true,
+          "speed": 15.0
+        },
+        {
+          "blocks": "#minecraft:sword_instantly_mines",
+          "speed": 3.4028235e+38
+        },
+        {
+          "blocks": "#minecraft:sword_efficient",
+          "speed": 1.5
+        }
+      ]
+    },
+    "attribute_modifiers": [
+      {
+        "type": "minecraft:attack_damage",
+        "amount": 7.0,
+        "id": "minecraft:base_attack_damage",
+        "operation": "add_value",
+        "slot": "mainhand"
+      },
+      {
+        "type": "minecraft:attack_speed",
+        "amount": -2.4000000953674316,
+        "id": "minecraft:base_attack_speed",
+        "operation": "add_value",
+        "slot": "mainhand"
+      }
+    ],
+    "attack_damage_modifier": 7.0,
+    "attack_speed_modifier": -2.4000000953674316,
+    "weapon": true
+  },
+  "minecraft:ominous_bottle": {
+    "max_stack_size": 64,
+    "attribute_modifiers": [],
+    "use_duration_ticks": 32,
+    "use_action": "drink"
+  },
+  "minecraft:orange_banner": {
+    "max_stack_size": 16
+  },
+  "minecraft:pink_banner": {
+    "max_stack_size": 16
+  },
+  "minecraft:poisonous_potato": {
+    "consume_effects": [
+      {
+        "type": "minecraft:apply_effects",
+        "effects": [
+          {
+            "id": "minecraft:poison",
+            "duration": 100,
+            "show_icon": true
+          }
+        ],
+        "probability": 0.6
+      }
+    ],
     "food": {
-      "food": 4,
-      "saturation": 2.4
+      "food": 2,
+      "saturation": 1.2
     },
     "use_duration_ticks": 32,
     "use_action": "eat",
     "max_stack_size": 64
   },
-  "minecraft:carrot": {
+  "minecraft:porkchop": {
     "food": {
       "food": 3,
-      "saturation": 3.6000001
+      "saturation": 1.8000001
     },
     "use_duration_ticks": 32,
     "use_action": "eat",
     "max_stack_size": 64
+  },
+  "minecraft:potato": {
+    "food": {
+      "food": 1,
+      "saturation": 0.6
+    },
+    "use_duration_ticks": 32,
+    "use_action": "eat",
+    "max_stack_size": 64
+  },
+  "minecraft:potion": {
+    "max_stack_size": 1,
+    "attribute_modifiers": [],
+    "use_duration_ticks": 32,
+    "use_action": "drink"
+  },
+  "minecraft:pufferfish": {
+    "consume_effects": [
+      {
+        "type": "minecraft:apply_effects",
+        "effects": [
+          {
+            "id": "minecraft:poison",
+            "amplifier": 1,
+            "duration": 1200,
+            "show_icon": true
+          },
+          {
+            "id": "minecraft:hunger",
+            "amplifier": 2,
+            "duration": 300,
+            "show_icon": true
+          },
+          {
+            "id": "minecraft:nausea",
+            "duration": 300,
+            "show_icon": true
+          }
+        ]
+      }
+    ],
+    "food": {
+      "food": 1,
+      "saturation": 0.2
+    },
+    "use_duration_ticks": 32,
+    "use_action": "eat",
+    "max_stack_size": 64
+  },
+  "minecraft:pumpkin_pie": {
+    "food": {
+      "food": 8,
+      "saturation": 4.8
+    },
+    "use_duration_ticks": 32,
+    "use_action": "eat",
+    "max_stack_size": 64
+  },
+  "minecraft:purple_banner": {
+    "max_stack_size": 16
   },
   "minecraft:rabbit": {
     "food": {
@@ -561,11 +2658,617 @@
     "use_action": "eat",
     "max_stack_size": 64
   },
-  "minecraft:milk_bucket": {
+  "minecraft:rabbit_stew": {
+    "food": {
+      "food": 10,
+      "saturation": 12.0
+    },
     "use_duration_ticks": 32,
-    "use_action": "drink",
+    "use_action": "eat",
     "max_stack_size": 1,
-    "use_remainder": "minecraft:bucket",
-    "consume_effects": [{ "type": "minecraft:clear_all_effects" }]
+    "use_remainder": "minecraft:bowl"
+  },
+  "minecraft:red_banner": {
+    "max_stack_size": 16
+  },
+  "minecraft:rotten_flesh": {
+    "consume_effects": [
+      {
+        "type": "minecraft:apply_effects",
+        "effects": [
+          {
+            "id": "minecraft:hunger",
+            "duration": 600,
+            "show_icon": true
+          }
+        ],
+        "probability": 0.8
+      }
+    ],
+    "food": {
+      "food": 4,
+      "saturation": 0.8
+    },
+    "use_duration_ticks": 32,
+    "use_action": "eat",
+    "max_stack_size": 64
+  },
+  "minecraft:salmon": {
+    "food": {
+      "food": 2,
+      "saturation": 0.4
+    },
+    "use_duration_ticks": 32,
+    "use_action": "eat",
+    "max_stack_size": 64
+  },
+  "minecraft:shears": {
+    "max_damage": 238,
+    "max_stack_size": 1
+  },
+  "minecraft:shield": {
+    "max_stack_size": 1,
+    "max_damage": 336,
+    "blocks_attacks_disable_cooldown_scale": 1.0
+  },
+  "minecraft:spider_eye": {
+    "consume_effects": [
+      {
+        "type": "minecraft:apply_effects",
+        "effects": [
+          {
+            "id": "minecraft:poison",
+            "duration": 100,
+            "show_icon": true
+          }
+        ]
+      }
+    ],
+    "food": {
+      "food": 2,
+      "saturation": 3.2
+    },
+    "use_duration_ticks": 32,
+    "use_action": "eat",
+    "max_stack_size": 64
+  },
+  "minecraft:splash_potion": {
+    "max_stack_size": 1,
+    "attribute_modifiers": []
+  },
+  "minecraft:stone_axe": {
+    "max_damage": 131,
+    "attack_damage_modifier": 8.0,
+    "attack_speed_modifier": -3.200000047683716,
+    "weapon_disable_blocking_seconds": 5.0,
+    "max_stack_size": 1,
+    "tool": {
+      "rules": [
+        {
+          "blocks": "#minecraft:incorrect_for_stone_tool",
+          "correct_for_drops": false
+        },
+        {
+          "blocks": "#minecraft:mineable/axe",
+          "correct_for_drops": true,
+          "speed": 4.0
+        }
+      ]
+    },
+    "attribute_modifiers": [
+      {
+        "type": "minecraft:attack_damage",
+        "amount": 8.0,
+        "id": "minecraft:base_attack_damage",
+        "operation": "add_value",
+        "slot": "mainhand"
+      },
+      {
+        "type": "minecraft:attack_speed",
+        "amount": -3.200000047683716,
+        "id": "minecraft:base_attack_speed",
+        "operation": "add_value",
+        "slot": "mainhand"
+      }
+    ],
+    "weapon": true,
+    "weapon_damage_per_attack": 2
+  },
+  "minecraft:stone_hoe": {
+    "max_damage": 131,
+    "weapon": true,
+    "weapon_damage_per_attack": 2,
+    "attack_damage_modifier": 0.0,
+    "attack_speed_modifier": -2.0,
+    "max_stack_size": 1,
+    "tool": {
+      "rules": [
+        {
+          "blocks": "#minecraft:incorrect_for_stone_tool",
+          "correct_for_drops": false
+        },
+        {
+          "blocks": "#minecraft:mineable/hoe",
+          "correct_for_drops": true,
+          "speed": 4.0
+        }
+      ]
+    },
+    "attribute_modifiers": [
+      {
+        "type": "minecraft:attack_damage",
+        "amount": 0.0,
+        "id": "minecraft:base_attack_damage",
+        "operation": "add_value",
+        "slot": "mainhand"
+      },
+      {
+        "type": "minecraft:attack_speed",
+        "amount": -2.0,
+        "id": "minecraft:base_attack_speed",
+        "operation": "add_value",
+        "slot": "mainhand"
+      }
+    ]
+  },
+  "minecraft:stone_pickaxe": {
+    "max_damage": 131,
+    "attack_damage_modifier": 2.0,
+    "attack_speed_modifier": -2.799999952316284,
+    "max_stack_size": 1,
+    "tool": {
+      "rules": [
+        {
+          "blocks": "#minecraft:incorrect_for_stone_tool",
+          "correct_for_drops": false
+        },
+        {
+          "blocks": "#minecraft:mineable/pickaxe",
+          "correct_for_drops": true,
+          "speed": 4.0
+        }
+      ]
+    },
+    "attribute_modifiers": [
+      {
+        "type": "minecraft:attack_damage",
+        "amount": 2.0,
+        "id": "minecraft:base_attack_damage",
+        "operation": "add_value",
+        "slot": "mainhand"
+      },
+      {
+        "type": "minecraft:attack_speed",
+        "amount": -2.799999952316284,
+        "id": "minecraft:base_attack_speed",
+        "operation": "add_value",
+        "slot": "mainhand"
+      }
+    ],
+    "weapon": true,
+    "weapon_damage_per_attack": 2
+  },
+  "minecraft:stone_shovel": {
+    "max_damage": 131,
+    "attack_damage_modifier": 2.5,
+    "attack_speed_modifier": -3.0,
+    "max_stack_size": 1,
+    "tool": {
+      "rules": [
+        {
+          "blocks": "#minecraft:incorrect_for_stone_tool",
+          "correct_for_drops": false
+        },
+        {
+          "blocks": "#minecraft:mineable/shovel",
+          "correct_for_drops": true,
+          "speed": 4.0
+        }
+      ]
+    },
+    "attribute_modifiers": [
+      {
+        "type": "minecraft:attack_damage",
+        "amount": 2.5,
+        "id": "minecraft:base_attack_damage",
+        "operation": "add_value",
+        "slot": "mainhand"
+      },
+      {
+        "type": "minecraft:attack_speed",
+        "amount": -3.0,
+        "id": "minecraft:base_attack_speed",
+        "operation": "add_value",
+        "slot": "mainhand"
+      }
+    ],
+    "weapon": true,
+    "weapon_damage_per_attack": 2
+  },
+  "minecraft:stone_spear": {
+    "attack_range": {
+      "hitbox_margin": 0.125,
+      "max_creative_reach": 6.5,
+      "max_reach": 4.5,
+      "min_creative_reach": 2.0,
+      "min_reach": 2.0,
+      "mob_factor": 0.5
+    },
+    "max_stack_size": 1,
+    "max_damage": 131,
+    "attribute_modifiers": [
+      {
+        "type": "minecraft:attack_damage",
+        "amount": 1.0,
+        "id": "minecraft:base_attack_damage",
+        "operation": "add_value",
+        "slot": "mainhand"
+      },
+      {
+        "type": "minecraft:attack_speed",
+        "amount": -2.666666626930237,
+        "id": "minecraft:base_attack_speed",
+        "operation": "add_value",
+        "slot": "mainhand"
+      }
+    ],
+    "attack_damage_modifier": 1.0,
+    "attack_speed_modifier": -2.666666626930237,
+    "weapon": true
+  },
+  "minecraft:stone_sword": {
+    "max_damage": 131,
+    "weapon": true,
+    "weapon_damage_per_attack": 1,
+    "attack_damage_modifier": 4.0,
+    "attack_speed_modifier": -2.4000000953674316,
+    "max_stack_size": 1,
+    "tool": {
+      "can_destroy_blocks_in_creative": false,
+      "damage_per_block": 2,
+      "rules": [
+        {
+          "blocks": "minecraft:cobweb",
+          "correct_for_drops": true,
+          "speed": 15.0
+        },
+        {
+          "blocks": "#minecraft:sword_instantly_mines",
+          "speed": 3.4028235e+38
+        },
+        {
+          "blocks": "#minecraft:sword_efficient",
+          "speed": 1.5
+        }
+      ]
+    },
+    "attribute_modifiers": [
+      {
+        "type": "minecraft:attack_damage",
+        "amount": 4.0,
+        "id": "minecraft:base_attack_damage",
+        "operation": "add_value",
+        "slot": "mainhand"
+      },
+      {
+        "type": "minecraft:attack_speed",
+        "amount": -2.4000000953674316,
+        "id": "minecraft:base_attack_speed",
+        "operation": "add_value",
+        "slot": "mainhand"
+      }
+    ]
+  },
+  "minecraft:suspicious_stew": {
+    "food": {
+      "food": 6,
+      "saturation": 7.2000003,
+      "can_always_eat": true
+    },
+    "use_duration_ticks": 32,
+    "use_action": "eat",
+    "max_stack_size": 1,
+    "use_remainder": "minecraft:bowl"
+  },
+  "minecraft:sweet_berries": {
+    "food": {
+      "food": 2,
+      "saturation": 0.4
+    },
+    "use_duration_ticks": 32,
+    "use_action": "eat",
+    "max_stack_size": 64
+  },
+  "minecraft:trident": {
+    "max_stack_size": 1,
+    "max_damage": 250,
+    "tool": {
+      "can_destroy_blocks_in_creative": false,
+      "damage_per_block": 2,
+      "rules": []
+    },
+    "attribute_modifiers": [
+      {
+        "type": "minecraft:attack_damage",
+        "amount": 8.0,
+        "id": "minecraft:base_attack_damage",
+        "operation": "add_value",
+        "slot": "mainhand"
+      },
+      {
+        "type": "minecraft:attack_speed",
+        "amount": -2.9000000953674316,
+        "id": "minecraft:base_attack_speed",
+        "operation": "add_value",
+        "slot": "mainhand"
+      }
+    ],
+    "attack_damage_modifier": 8.0,
+    "attack_speed_modifier": -2.9000000953674316,
+    "weapon": true
+  },
+  "minecraft:tropical_fish": {
+    "food": {
+      "food": 1,
+      "saturation": 0.2
+    },
+    "use_duration_ticks": 32,
+    "use_action": "eat",
+    "max_stack_size": 64
+  },
+  "minecraft:turtle_helmet": {
+    "max_stack_size": 1,
+    "max_damage": 275,
+    "attribute_modifiers": [
+      {
+        "type": "minecraft:armor",
+        "amount": 2.0,
+        "id": "minecraft:armor.helmet",
+        "operation": "add_value",
+        "slot": "head"
+      },
+      {
+        "type": "minecraft:armor_toughness",
+        "amount": 0.0,
+        "id": "minecraft:armor.helmet",
+        "operation": "add_value",
+        "slot": "head"
+      }
+    ],
+    "equippable_slot": "head"
+  },
+  "minecraft:warped_fungus_on_a_stick": {
+    "max_stack_size": 1,
+    "max_damage": 100,
+    "attribute_modifiers": []
+  },
+  "minecraft:white_banner": {
+    "max_stack_size": 16
+  },
+  "minecraft:wooden_axe": {
+    "max_damage": 59,
+    "attack_damage_modifier": 6.0,
+    "attack_speed_modifier": -3.200000047683716,
+    "weapon_disable_blocking_seconds": 5.0,
+    "max_stack_size": 1,
+    "tool": {
+      "rules": [
+        {
+          "blocks": "#minecraft:incorrect_for_wooden_tool",
+          "correct_for_drops": false
+        },
+        {
+          "blocks": "#minecraft:mineable/axe",
+          "correct_for_drops": true,
+          "speed": 2.0
+        }
+      ]
+    },
+    "attribute_modifiers": [
+      {
+        "type": "minecraft:attack_damage",
+        "amount": 6.0,
+        "id": "minecraft:base_attack_damage",
+        "operation": "add_value",
+        "slot": "mainhand"
+      },
+      {
+        "type": "minecraft:attack_speed",
+        "amount": -3.200000047683716,
+        "id": "minecraft:base_attack_speed",
+        "operation": "add_value",
+        "slot": "mainhand"
+      }
+    ],
+    "weapon": true,
+    "weapon_damage_per_attack": 2
+  },
+  "minecraft:wooden_hoe": {
+    "max_damage": 59,
+    "weapon": true,
+    "weapon_damage_per_attack": 2,
+    "attack_damage_modifier": 0.0,
+    "attack_speed_modifier": -3.0,
+    "max_stack_size": 1,
+    "tool": {
+      "rules": [
+        {
+          "blocks": "#minecraft:incorrect_for_wooden_tool",
+          "correct_for_drops": false
+        },
+        {
+          "blocks": "#minecraft:mineable/hoe",
+          "correct_for_drops": true,
+          "speed": 2.0
+        }
+      ]
+    },
+    "attribute_modifiers": [
+      {
+        "type": "minecraft:attack_damage",
+        "amount": 0.0,
+        "id": "minecraft:base_attack_damage",
+        "operation": "add_value",
+        "slot": "mainhand"
+      },
+      {
+        "type": "minecraft:attack_speed",
+        "amount": -3.0,
+        "id": "minecraft:base_attack_speed",
+        "operation": "add_value",
+        "slot": "mainhand"
+      }
+    ]
+  },
+  "minecraft:wooden_pickaxe": {
+    "max_damage": 59,
+    "attack_damage_modifier": 1.0,
+    "attack_speed_modifier": -2.799999952316284,
+    "max_stack_size": 1,
+    "tool": {
+      "rules": [
+        {
+          "blocks": "#minecraft:incorrect_for_wooden_tool",
+          "correct_for_drops": false
+        },
+        {
+          "blocks": "#minecraft:mineable/pickaxe",
+          "correct_for_drops": true,
+          "speed": 2.0
+        }
+      ]
+    },
+    "attribute_modifiers": [
+      {
+        "type": "minecraft:attack_damage",
+        "amount": 1.0,
+        "id": "minecraft:base_attack_damage",
+        "operation": "add_value",
+        "slot": "mainhand"
+      },
+      {
+        "type": "minecraft:attack_speed",
+        "amount": -2.799999952316284,
+        "id": "minecraft:base_attack_speed",
+        "operation": "add_value",
+        "slot": "mainhand"
+      }
+    ],
+    "weapon": true,
+    "weapon_damage_per_attack": 2
+  },
+  "minecraft:wooden_shovel": {
+    "max_damage": 59,
+    "attack_damage_modifier": 1.5,
+    "attack_speed_modifier": -3.0,
+    "max_stack_size": 1,
+    "tool": {
+      "rules": [
+        {
+          "blocks": "#minecraft:incorrect_for_wooden_tool",
+          "correct_for_drops": false
+        },
+        {
+          "blocks": "#minecraft:mineable/shovel",
+          "correct_for_drops": true,
+          "speed": 2.0
+        }
+      ]
+    },
+    "attribute_modifiers": [
+      {
+        "type": "minecraft:attack_damage",
+        "amount": 1.5,
+        "id": "minecraft:base_attack_damage",
+        "operation": "add_value",
+        "slot": "mainhand"
+      },
+      {
+        "type": "minecraft:attack_speed",
+        "amount": -3.0,
+        "id": "minecraft:base_attack_speed",
+        "operation": "add_value",
+        "slot": "mainhand"
+      }
+    ],
+    "weapon": true,
+    "weapon_damage_per_attack": 2
+  },
+  "minecraft:wooden_spear": {
+    "attack_range": {
+      "hitbox_margin": 0.125,
+      "max_creative_reach": 6.5,
+      "max_reach": 4.5,
+      "min_creative_reach": 2.0,
+      "min_reach": 2.0,
+      "mob_factor": 0.5
+    },
+    "max_stack_size": 1,
+    "max_damage": 59,
+    "attribute_modifiers": [
+      {
+        "type": "minecraft:attack_damage",
+        "amount": 0.0,
+        "id": "minecraft:base_attack_damage",
+        "operation": "add_value",
+        "slot": "mainhand"
+      },
+      {
+        "type": "minecraft:attack_speed",
+        "amount": -2.4615384340286255,
+        "id": "minecraft:base_attack_speed",
+        "operation": "add_value",
+        "slot": "mainhand"
+      }
+    ],
+    "attack_damage_modifier": 0.0,
+    "attack_speed_modifier": -2.4615384340286255,
+    "weapon": true
+  },
+  "minecraft:wooden_sword": {
+    "max_damage": 59,
+    "weapon": true,
+    "weapon_damage_per_attack": 1,
+    "attack_damage_modifier": 3.0,
+    "attack_speed_modifier": -2.4000000953674316,
+    "max_stack_size": 1,
+    "tool": {
+      "can_destroy_blocks_in_creative": false,
+      "damage_per_block": 2,
+      "rules": [
+        {
+          "blocks": "minecraft:cobweb",
+          "correct_for_drops": true,
+          "speed": 15.0
+        },
+        {
+          "blocks": "#minecraft:sword_instantly_mines",
+          "speed": 3.4028235e+38
+        },
+        {
+          "blocks": "#minecraft:sword_efficient",
+          "speed": 1.5
+        }
+      ]
+    },
+    "attribute_modifiers": [
+      {
+        "type": "minecraft:attack_damage",
+        "amount": 3.0,
+        "id": "minecraft:base_attack_damage",
+        "operation": "add_value",
+        "slot": "mainhand"
+      },
+      {
+        "type": "minecraft:attack_speed",
+        "amount": -2.4000000953674316,
+        "id": "minecraft:base_attack_speed",
+        "operation": "add_value",
+        "slot": "mainhand"
+      }
+    ]
+  },
+  "minecraft:yellow_banner": {
+    "max_stack_size": 16
   }
 }

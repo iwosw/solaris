@@ -1,9 +1,9 @@
 mod results;
 
 pub use results::{
-    ScriptInventoryEnchantment, ScriptInventoryItem, ScriptInventoryReservationQuantity,
-    ScriptInventoryReservationSnapshot, ScriptInventorySlot, ScriptOwnedInventoryResult,
-    ScriptOwnedInventorySnapshot,
+    ScriptInventoryEnchantment, ScriptInventoryItem, ScriptInventoryPlacementSlot,
+    ScriptInventoryReservationQuantity, ScriptInventoryReservationSnapshot, ScriptInventorySlot,
+    ScriptInventoryStewEffect, ScriptOwnedInventoryResult, ScriptOwnedInventorySnapshot,
 };
 
 use std::collections::BTreeSet;
@@ -20,41 +20,53 @@ pub const MAX_INVENTORY_WORK_PORTIONS: usize = 512;
 pub const MAX_OWNED_INVENTORY_SLOTS: usize = 54;
 /// Total items one transfer request may move across all of its transfers.
 pub const MAX_OWNED_INVENTORY_ITEM_BUDGET: u32 = 4096;
-pub const MAX_WAREHOUSE_HANDLE_BYTES: usize = 128;
-/// Canonical carry slots of one durable resident.
-pub const MAX_RESIDENT_CARRY_SLOTS: u8 = 8;
-/// Canonical equipment slots of one durable resident (hands + armor).
-pub const MAX_RESIDENT_EQUIPMENT_SLOTS: u8 = 6;
+/// Canonical carry slots of one durable npc.
+pub const MAX_NPC_CARRY_SLOTS: u8 = 8;
+/// Canonical equipment slots of one durable npc (hands + armor).
+pub const MAX_NPC_EQUIPMENT_SLOTS: u8 = 6;
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 #[non_exhaustive]
 pub enum ScriptInventoryEndpoint {
-    PlayerInventory { player_id: u64 },
-    Warehouse { handle: String },
-    ResidentEquipment { handle: String },
-    ResidentCarry { handle: String },
+    PlayerInventory {
+        player_id: u64,
+    },
+    Container {
+        dimension: String,
+        position: crate::ScriptBlockPosition,
+    },
+    NpcEquipment {
+        handle: String,
+    },
+    NpcCarry {
+        handle: String,
+    },
 }
 
 impl ScriptInventoryEndpoint {
     pub fn validate(&self) -> Result<(), ScriptDtoError> {
         match self {
             Self::PlayerInventory { player_id } => validate_player(*player_id),
-            Self::Warehouse { handle } => {
-                validate_bounded_nonempty("warehouse handle", handle, MAX_WAREHOUSE_HANDLE_BYTES)
+            Self::Container {
+                dimension,
+                position,
+            } => {
+                check_contract_resource_id(dimension)?;
+                position.validate()
             }
-            Self::ResidentEquipment { handle } | Self::ResidentCarry { handle } => {
-                crate::validate_resident_handle(handle)
+            Self::NpcEquipment { handle } | Self::NpcCarry { handle } => {
+                crate::validate_npc_handle(handle)
             }
         }
     }
 
-    /// The durable resident handle this endpoint addresses, when it is one.
+    /// The durable npc handle this endpoint addresses, when it is one.
     #[must_use]
-    pub fn resident_handle(&self) -> Option<&str> {
+    pub fn npc_handle(&self) -> Option<&str> {
         match self {
-            Self::ResidentEquipment { handle } | Self::ResidentCarry { handle } => Some(handle),
-            Self::PlayerInventory { .. } | Self::Warehouse { .. } => None,
+            Self::NpcEquipment { handle } | Self::NpcCarry { handle } => Some(handle),
+            Self::PlayerInventory { .. } | Self::Container { .. } => None,
         }
     }
 }
@@ -241,6 +253,20 @@ pub enum ScriptOwnedInventoryOperation {
     Transfer {
         operation_id: String,
         actor_id: u64,
+        execution_permit: Option<crate::ScriptNpcExecutionPermit>,
+        transfers: Vec<ScriptOwnedItemTransfer>,
+        expected_revisions: Vec<ScriptInventoryExpectedRevision>,
+    },
+    /// Transfer exactly the next admitted material portion without releasing
+    /// its reservation. The original plan is verified against its durable hash.
+    ConsumeReservation {
+        operation_id: String,
+        actor_id: u64,
+        execution_permit: Option<crate::ScriptNpcExecutionPermit>,
+        reservation_ref: String,
+        expected_reservation_revision: u64,
+        portion: u64,
+        resource_plan: ScriptInventoryResourcePlan,
         transfers: Vec<ScriptOwnedItemTransfer>,
         expected_revisions: Vec<ScriptInventoryExpectedRevision>,
     },
@@ -258,15 +284,24 @@ pub enum ScriptOwnedInventoryOperation {
         reservation_ref: String,
         expected_revision: u64,
     },
+    /// Read exact native placement capacity for an actual fenced source stack.
+    PlacementRoom {
+        source: ScriptInventoryExpectedRevision,
+        source_slot: u8,
+        destination: ScriptInventoryExpectedRevision,
+    },
 }
 
 impl ScriptOwnedInventoryOperation {
     pub fn operation_id(&self) -> Option<&str> {
         match self {
             Self::Transfer { operation_id, .. }
+            | Self::ConsumeReservation { operation_id, .. }
             | Self::Reserve { operation_id, .. }
             | Self::Release { operation_id, .. } => Some(operation_id),
-            Self::Query { .. } | Self::ReservationStatus { .. } => None,
+            Self::Query { .. } | Self::ReservationStatus { .. } | Self::PlacementRoom { .. } => {
+                None
+            }
         }
     }
 
@@ -274,9 +309,15 @@ impl ScriptOwnedInventoryOperation {
         match self {
             Self::Transfer {
                 expected_revisions, ..
+            }
+            | Self::ConsumeReservation {
+                expected_revisions, ..
             } => {
                 expected_revisions
                     .sort_unstable_by(|left, right| left.endpoint.cmp(&right.endpoint));
+                if let Self::ConsumeReservation { resource_plan, .. } = self {
+                    resource_plan.canonicalize();
+                }
             }
             Self::Reserve { resource_plan, .. } => resource_plan.canonicalize(),
             _ => {}
@@ -287,7 +328,50 @@ impl ScriptOwnedInventoryOperation {
         if let Some(operation_id) = self.operation_id() {
             crate::validate_script_id_value(operation_id)?;
         }
+        if let Self::Transfer {
+            execution_permit: Some(permit),
+            ..
+        }
+        | Self::ConsumeReservation {
+            execution_permit: Some(permit),
+            ..
+        } = self
+        {
+            permit.validate()?;
+        }
+        if let Self::ConsumeReservation {
+            reservation_ref,
+            expected_reservation_revision,
+            portion,
+            resource_plan,
+            ..
+        } = self
+        {
+            validate_reservation_ref(reservation_ref)?;
+            resource_plan.validate()?;
+            if *expected_reservation_revision > MAX_SCRIPT_WORLD_TIME
+                || *portion == 0
+                || usize::try_from(*portion)
+                    .ok()
+                    .is_none_or(|portion| portion > resource_plan.portions.len())
+            {
+                return Err(ScriptDtoError::InvalidBounds);
+            }
+        }
         match self {
+            Self::PlacementRoom {
+                source,
+                source_slot,
+                destination,
+            } => {
+                source.endpoint.validate()?;
+                destination.endpoint.validate()?;
+                source.fence.validate()?;
+                destination.fence.validate()?;
+                if !valid_slot(&source.endpoint, *source_slot) {
+                    return Err(ScriptDtoError::InvalidBounds);
+                }
+            }
             Self::Query {
                 endpoint,
                 expected_revision,
@@ -298,6 +382,12 @@ impl ScriptOwnedInventoryOperation {
                 }
             }
             Self::Transfer {
+                actor_id,
+                transfers,
+                expected_revisions,
+                ..
+            }
+            | Self::ConsumeReservation {
                 actor_id,
                 transfers,
                 expected_revisions,
@@ -331,18 +421,18 @@ impl ScriptOwnedInventoryOperation {
                     endpoints.insert(&transfer.destination);
                 }
                 if *actor_id == 0 {
-                    let warehouse = endpoints.iter().any(|endpoint| {
-                        matches!(endpoint, ScriptInventoryEndpoint::Warehouse { .. })
+                    let container = endpoints.iter().any(|endpoint| {
+                        matches!(endpoint, ScriptInventoryEndpoint::Container { .. })
                     });
-                    let resident = endpoints.iter().any(|endpoint| {
+                    let npc = endpoints.iter().any(|endpoint| {
                         matches!(
                             endpoint,
-                            ScriptInventoryEndpoint::ResidentEquipment { .. }
-                                | ScriptInventoryEndpoint::ResidentCarry { .. }
+                            ScriptInventoryEndpoint::NpcEquipment { .. }
+                                | ScriptInventoryEndpoint::NpcCarry { .. }
                         )
                     });
-                    if !warehouse
-                        || !resident
+                    if !container
+                        || !npc
                         || endpoints.iter().any(|endpoint| {
                             matches!(endpoint, ScriptInventoryEndpoint::PlayerInventory { .. })
                         })
@@ -400,9 +490,9 @@ fn validate_player(player_id: u64) -> Result<(), ScriptDtoError> {
 fn valid_slot(endpoint: &ScriptInventoryEndpoint, slot: u8) -> bool {
     match endpoint {
         ScriptInventoryEndpoint::PlayerInventory { .. } => (9..=44).contains(&slot),
-        ScriptInventoryEndpoint::Warehouse { .. } => usize::from(slot) < MAX_OWNED_INVENTORY_SLOTS,
-        ScriptInventoryEndpoint::ResidentEquipment { .. } => slot < MAX_RESIDENT_EQUIPMENT_SLOTS,
-        ScriptInventoryEndpoint::ResidentCarry { .. } => slot < MAX_RESIDENT_CARRY_SLOTS,
+        ScriptInventoryEndpoint::Container { .. } => usize::from(slot) < MAX_OWNED_INVENTORY_SLOTS,
+        ScriptInventoryEndpoint::NpcEquipment { .. } => slot < MAX_NPC_EQUIPMENT_SLOTS,
+        ScriptInventoryEndpoint::NpcCarry { .. } => slot < MAX_NPC_CARRY_SLOTS,
     }
 }
 

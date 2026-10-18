@@ -30,8 +30,9 @@ public final class CollisionShapeExtractor {
     private record StateShape(int stateId, int shapeIndex, long fingerprint) {}
 
     public static void main(String[] args) throws IOException {
-        if (args.length != 1) {
-            System.err.println("usage: java CollisionShapeExtractor <output.bin>");
+        boolean outline = args.length == 2 && args[0].equals("--outline");
+        if (args.length != 1 && !outline) {
+            System.err.println("usage: java CollisionShapeExtractor [--outline] <output.bin>");
             System.exit(2);
         }
 
@@ -49,13 +50,38 @@ public final class CollisionShapeExtractor {
         List<StateShape> entries = new ArrayList<>();
 
         for (Block block : BuiltInRegistries.BLOCK) {
+            boolean reportedOffset = false;
             for (BlockState state : block.getStateDefinition().getPossibleStates()) {
                 int stateId = Block.BLOCK_STATE_REGISTRY.getId(state);
-                VoxelShape shape = state.getCollisionShape(
-                    EmptyBlockGetter.INSTANCE,
-                    BlockPos.ZERO
-                );
-                List<int[]> boxes = quantizedBoxes(stateId, shape);
+                VoxelShape shape;
+                if (outline) {
+                    shape = state.getShape(EmptyBlockGetter.INSTANCE, BlockPos.ZERO);
+                    var offset = state.getOffset(BlockPos.ZERO);
+                    var samplePos = new BlockPos(17, 0, 29);
+                    var sample = state.getShape(EmptyBlockGetter.INSTANCE, samplePos);
+                    // Model offsets are not necessarily selection offsets: e.g.
+                    // TallGrassBlock returns its static shape in 26.1.2.
+                    if (!offset.equals(net.minecraft.world.phys.Vec3.ZERO)
+                        && !shape.toAabbs().equals(sample.toAabbs())) {
+                        shape = shape.move(-offset.x, -offset.y, -offset.z);
+                        var sampleOffset = state.getOffset(samplePos);
+                        sample = sample.move(-sampleOffset.x, -sampleOffset.y, -sampleOffset.z);
+                        if (!shapeKey(quantizedBoxes(stateId, shape, true)).equals(
+                            shapeKey(quantizedBoxes(stateId, sample, true))
+                        )) {
+                            throw new IllegalStateException("unsupported position-dependent outline " + state);
+                        }
+                        if (!reportedOffset) {
+                            System.err.printf("outline-offset %s %s %s%n",
+                                BuiltInRegistries.BLOCK.getKey(block),
+                                Math.abs(offset.x), Math.abs(offset.y));
+                            reportedOffset = true;
+                        }
+                    }
+                } else {
+                    shape = state.getCollisionShape(EmptyBlockGetter.INSTANCE, BlockPos.ZERO);
+                }
+                List<int[]> boxes = quantizedBoxes(stateId, shape, outline);
                 String key = shapeKey(boxes);
                 Integer shapeIndex = shapeIndexes.get(key);
                 if (shapeIndex == null) {
@@ -93,7 +119,7 @@ public final class CollisionShapeExtractor {
         }
 
         try (DataOutputStream writer = new DataOutputStream(
-            new BufferedOutputStream(new FileOutputStream(args[0]))
+            new BufferedOutputStream(new FileOutputStream(args[outline ? 1 : 0]))
         )) {
             writer.write(MAGIC);
             writer.writeShort(UNITS_PER_BLOCK);
@@ -127,16 +153,16 @@ public final class CollisionShapeExtractor {
         );
     }
 
-    private static List<int[]> quantizedBoxes(int stateId, VoxelShape shape) {
+    private static List<int[]> quantizedBoxes(int stateId, VoxelShape shape, boolean outline) {
         List<int[]> boxes = new ArrayList<>();
         for (AABB box : shape.toAabbs()) {
             int[] coordinates = {
-                quantize(stateId, box.minX),
-                quantize(stateId, box.minY),
-                quantize(stateId, box.minZ),
-                quantize(stateId, box.maxX),
-                quantize(stateId, box.maxY),
-                quantize(stateId, box.maxZ),
+                quantize(stateId, box.minX, outline),
+                quantize(stateId, box.minY, outline),
+                quantize(stateId, box.minZ, outline),
+                quantize(stateId, box.maxX, outline),
+                quantize(stateId, box.maxY, outline),
+                quantize(stateId, box.maxZ, outline),
             };
             if (coordinates[0] >= coordinates[3]
                 || coordinates[1] >= coordinates[4]
@@ -149,10 +175,12 @@ public final class CollisionShapeExtractor {
         return boxes;
     }
 
-    private static int quantize(int stateId, double coordinate) {
+    private static int quantize(int stateId, double coordinate, boolean outline) {
         double scaled = coordinate * UNITS_PER_BLOCK;
         int rounded = (int)Math.round(scaled);
-        if (Math.abs(scaled - rounded) > 1.0e-7
+        // Selection-only shapes (lectern books) also contain non-lattice bounds.
+        // Preserve the collision format; outline error is at most 1/8192 block.
+        if ((!outline && Math.abs(scaled - rounded) > 1.0e-7)
             || rounded < Short.MIN_VALUE
             || rounded > Short.MAX_VALUE) {
             throw new IllegalStateException(

@@ -2,69 +2,11 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use mc_data::Identifier;
 use mc_data::biomes::BiomeWorldgenData;
-use mc_world::ChunkGenerator;
 
 use crate::terrain::tests::tiny_registry;
 use crate::terrain::{SEA_LEVEL, TerrainGenerator};
 
 use super::BiomeRules;
-
-#[test]
-fn inland_river_bank_retains_a_grass_surface() {
-    let g = TerrainGenerator::with_worldgen_mode(
-        712_816,
-        tiny_registry(),
-        super::super::WorldgenMode::TellusLike(Default::default()),
-    );
-    // Locate an exposed inland shoulder instead of pinning a column that can
-    // become part of the water channel when its width or depth changes.
-    let (x, z) = (-288..=-224)
-        .flat_map(|x| (24..=88).map(move |z| (x, z)))
-        .find(|&(x, z)| {
-            let sample = g.density_router().sample(x, z);
-            sample.surface_y == SEA_LEVEL + 2
-                && sample.continentalness > 0.025
-                && sample.river < 0.10
-        })
-        .expect("the sampled reach must have an exposed inland bank");
-    let chunk = g.generate(mc_world::ChunkPos {
-        x: x.div_euclid(16),
-        z: z.div_euclid(16),
-    });
-    assert_eq!(
-        chunk.get_block(
-            x.rem_euclid(16) as u8,
-            g.surface_height(x, z),
-            z.rem_euclid(16) as u8,
-        ),
-        Some(g.grass_block),
-        "an exposed inland river bank became a beach",
-    );
-}
-
-#[test]
-fn raised_coastal_land_stays_grass_while_rocky_shore_keeps_gravel() {
-    let g = TerrainGenerator::with_worldgen_mode(
-        -17_711,
-        tiny_registry(),
-        super::super::WorldgenMode::TellusLike(Default::default()),
-    );
-    for (x, z, expected) in [(-195_i32, 781_i32, g.grass_block), (-187, 811, g.gravel)] {
-        let chunk = g.generate(mc_world::ChunkPos {
-            x: x.div_euclid(16),
-            z: z.div_euclid(16),
-        });
-        assert_eq!(
-            chunk.get_block(
-                x.rem_euclid(16) as u8,
-                g.surface_height(x, z),
-                z.rem_euclid(16) as u8,
-            ),
-            Some(expected),
-            "coastal surface at ({x}, {z})",
-        );
-    }
-}
 
 #[test]
 fn every_overworld_biome_is_reachable_by_selector() {

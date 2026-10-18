@@ -1,14 +1,8 @@
-// Owned inventories: the four endpoints a plugin may address, and the three
-// operations the used settlement flows need against them.
+// Physical owned inventories and their atomic transfer/reservation lifecycle.
 //
-// An endpoint names a container the server already owns - a player's canonical
-// inventory, a bound warehouse container, or one durable resident's equipment or
-// carry - and never a live ECS handle: the opaque warehouse and resident handles
-// are the same strings the settlement and resident operations minted, so a plugin
-// cannot invent one and the server's own owners resolve it. A player endpoint
-// carries the runtime player id, exactly as the native command DTO does, because
-// the endpoint addresses one live connection's inventory rather than a stable
-// identity.
+// An endpoint names physical inventory: a player's canonical inventory, a
+// container's dimension and block position, or a durable npc's equipment
+// and carry. Product names and their binding to containers live in plugin storage.
 //
 // Every operation is a request: the host converts the record into the server's
 // own `mc_script` DTO, that DTO's validator re-checks every bound, and the effect
@@ -16,27 +10,30 @@
 // this contract. The answer arrives later as `events.operation-answered`, carrying
 // the family result this interface names.
 //
-// Only the three operations with current callers exist here. A reservation is
-// still observable after it was minted - `inventory-result.reservation` carries
-// its whole state - but releasing one back is not a call any current consumer
-// makes, so no member is declared for it before its operation does.
 interface inventories {
+    use types.{block-position, npc-execution-permit, position};
+
+    record container-endpoint {
+        dimension: string,
+        position: block-position,
+    }
+
     /// One endpoint of an owned inventory.
     ///
     /// `player-inventory` carries the runtime player id (nonzero, at most
     /// `mc_script::MAX_SCRIPT_WORLD_TIME`), the same id an event's session names,
     /// so a player endpoint is refused for a connection that has ended rather than
-    /// reaching whoever holds that id now. `warehouse` carries a bound container
-    /// handle, 1..`mc_script::MAX_WAREHOUSE_HANDLE_BYTES` (128) bytes.
-    /// `resident-equipment` and `resident-carry` carry one durable resident handle,
-    /// 1..`mc_script::MAX_RESIDENT_HANDLE_BYTES` (64) bytes, and stay opaque: the
-    /// resident owner resolves them, and a foreign, absent or released handle is a
+    /// reaching whoever holds that id now. `container` addresses a real native
+    /// block inventory; native ownership, protection and image fences apply.
+    /// `npc-equipment` and `npc-carry` carry one durable npc handle,
+    /// 1..`mc_script::MAX_NPC_HANDLE_BYTES` (64) bytes, and stay opaque: the
+    /// npc owner resolves them, and a foreign, absent or released handle is a
     /// typed refusal rather than an empty inventory.
     variant inventory-endpoint {
         player-inventory(u64),
-        warehouse(string),
-        resident-equipment(string),
-        resident-carry(string),
+        container(container-endpoint),
+        npc-equipment(string),
+        npc-carry(string),
     }
 
     /// The durable revision of one endpoint plus a derived canonical before-image
@@ -62,10 +59,10 @@ interface inventories {
     /// `count` is 1..`i32::MAX`, and at most
     /// `mc_script::MAX_OWNED_INVENTORY_ITEM_BUDGET` (4096) items may move across
     /// all transfers of one request. A slot is the endpoint's own canonical index:
-    /// a player slot is 9..=44, a warehouse slot is below
-    /// `mc_script::MAX_OWNED_INVENTORY_SLOTS` (54), a resident equipment slot is
-    /// below `mc_script::MAX_RESIDENT_EQUIPMENT_SLOTS` (6), and a resident carry
-    /// slot is below `mc_script::MAX_RESIDENT_CARRY_SLOTS` (8).
+    /// a player slot is 9..=44, a container slot is below
+    /// `mc_script::MAX_OWNED_INVENTORY_SLOTS` (54), a npc equipment slot is
+    /// below `mc_script::MAX_NPC_EQUIPMENT_SLOTS` (6), and a npc carry
+    /// slot is below `mc_script::MAX_NPC_CARRY_SLOTS` (8).
     record owned-item-transfer {
         source: inventory-endpoint,
         source-slot: u8,
@@ -111,12 +108,22 @@ interface inventories {
         expected-revision: option<u64>,
     }
 
+    /// Read-only exact room for the ACTUAL positive source component stack.
+    /// Both full fences and native access rights are checked live. No permit,
+    /// reservation or mutation is granted by this answer; later transfers still
+    /// require their current execution permit and all full native fences.
+    record inventory-placement-query {
+        source: inventory-expected-revision,
+        source-slot: u8,
+        destination: inventory-expected-revision,
+    }
+
     /// One move of items between owned endpoints, under one durable operation id.
     ///
     /// A player endpoint requires the exact participating runtime player id;
     /// any other player's inventory is refused `forbidden`. `actor-id` is zero
-    /// only for a server-owned warehouse-to-resident move with no player endpoint:
-    /// the warehouse binding and resident handle must both belong to this plugin.
+    /// only for a server-owned container-to-npc move with no player endpoint:
+    /// native container access and npc ownership are checked freshly.
     /// Up to `mc_script::MAX_OWNED_INVENTORY_TRANSFERS` (16) transfers and twice
     /// that many expected revisions name exactly the participating endpoints,
     /// sorted by endpoint. `operation-id` is the durable name the server records
@@ -127,6 +134,7 @@ interface inventories {
         /// digits, `_` and `-`.
         operation-id: string,
         actor-id: u64,
+        execution-permit: option<npc-execution-permit>,
         transfers: list<owned-item-transfer>,
         expected-revisions: list<inventory-expected-revision>,
     }
@@ -136,8 +144,8 @@ interface inventories {
     /// The fence is the endpoint's own `inventory-fence`; a reservation whose
     /// expected revision has moved is refused rather than reserved against the
     /// wrong image. The plan is the server's own validated plan, and a
-    /// reservation against a warehouse endpoint is refused: a server-owned
-    /// container composite is not a reservation target.
+    /// reservation against a container endpoint fences its real canonical image
+    /// and protects the reserved quantity from competing physical transfers.
     record inventory-reserve {
         /// 1..`mc_script::MAX_SCRIPT_ID_BYTES` (64) bytes, as in
         /// `inventory-transfer`.
@@ -147,11 +155,39 @@ interface inventories {
         expected-revision: inventory-fence,
     }
 
+    record inventory-reservation-status {
+        reservation-ref: string,
+    }
+
+    record inventory-release {
+        operation-id: string,
+        reservation-ref: string,
+        expected-revision: u64,
+    }
+
+    record inventory-consume-reservation {
+        operation-id: string,
+        actor-id: u64,
+        reservation-ref: string,
+        execution-permit: option<npc-execution-permit>,
+        expected-reservation-revision: u64,
+        /// One-based original plan index of the next material-bearing portion.
+        /// Material-free work stages grant no execution or progress here.
+        portion: u64,
+        resource-plan: inventory-resource-plan,
+        transfers: list<owned-item-transfer>,
+        expected-revisions: list<inventory-expected-revision>,
+    }
+
     /// One owned-inventory operation.
     variant inventory-operation {
         query(inventory-query),
         transfer(inventory-transfer),
+        consume-reservation(inventory-consume-reservation),
         reserve(inventory-reserve),
+        reservation-status(inventory-reservation-status),
+        release(inventory-release),
+        placement-room(inventory-placement-query),
     }
 
     /// One enchantment of one item stack.
@@ -159,6 +195,8 @@ interface inventories {
         resource-id: string,
         level: s32,
     }
+
+    record inventory-stew-effect { id: string, duration: s32 }
 
     /// One item stack, components included.
     ///
@@ -173,6 +211,32 @@ interface inventories {
         enchantments: list<inventory-enchantment>,
         custom-name: option<string>,
         item-model: option<string>,
+        max-damage: option<u32>,
+        custom-data: option<list<u8>>,
+        stew-effects: list<inventory-stew-effect>,
+    }
+
+    enum npc-death-inventory { carry, equipment }
+    record npc-death-loot {
+        inventory: npc-death-inventory,
+        slot: u16,
+        entity-uuid: string,
+        item: inventory-item,
+    }
+    /// Exact native physical loot after a canonical cargo death decision.
+    record npc-death-cargo-receipt {
+        receipt-ref: string,
+        handle: string,
+        entity-uuid: string,
+        dimension: string,
+        position: position,
+        yaw: f32,
+        pitch: f32,
+        death-tick: u64,
+        source-inventory-revision: u64,
+        executor-epoch: option<u64>,
+        world-decision-id: u64,
+        loot: list<npc-death-loot>,
     }
 
     /// One occupied or empty slot of a snapshot. An absent `item` is an empty
@@ -213,9 +277,9 @@ interface inventories {
     /// lowercase hexadecimal bytes; `quantities` holds at most
     /// `mc_script::MAX_INVENTORY_RESOURCE_TYPES` (16) entries, sorted by resource
     /// id; `bound-to` is the opaque binding the reservation was made for, when it
-    /// has one; and `receipt-watermark` is the durable watermark the reservation
-    /// was minted at. The state round-trips on a later read, so a plugin reads a
-    /// reservation it made long ago rather than re-deriving one.
+    /// has one; and `receipt-watermark` is the last original material-bearing
+    /// plan portion consumed by a reserved transfer (zero before consumption).
+    /// The state round-trips on a later read rather than being re-derived.
     record inventory-reservation-snapshot {
         reservation-ref: string,
         endpoint: inventory-endpoint,
@@ -224,6 +288,27 @@ interface inventories {
         bound-to: option<string>,
         released: bool,
         receipt-watermark: u64,
+    }
+
+    record inventory-reserved-transfer {
+        reservation: inventory-reservation-snapshot,
+        inventories: list<owned-inventory-snapshot>,
+    }
+
+    record inventory-placement-slot {
+        slot: u8,
+        /// Exact native slot capacity, independent of the source count.
+        room: u32,
+    }
+
+    /// Every actual destination slot, including zero-room slots, bounded by
+    /// MAX_OWNED_INVENTORY_SLOTS (54). Components/native item facts and the
+    /// existing native placement window decide room, never guest-supplied limits.
+    record inventory-placement-room {
+        source: inventory-expected-revision,
+        source-slot: u8,
+        destination: inventory-expected-revision,
+        slots: list<inventory-placement-slot>,
     }
 
     /// The typed answer to one owned-inventory operation.
@@ -236,5 +321,7 @@ interface inventories {
         snapshot(owned-inventory-snapshot),
         transfer(list<inventory-expected-revision>),
         reservation(inventory-reservation-snapshot),
+        reserved-transfer(inventory-reserved-transfer),
+        placement-room(inventory-placement-room),
     }
 }

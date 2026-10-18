@@ -1,8 +1,10 @@
 # ADR 0005 - Regional simulation ownership
 
 **Date:** 2026-07-16  
-**Status:** Accepted; production authority for moving entities  
-**Supersedes:** ADR 0004's single entity writer
+**Status:** Superseded by [ADR 0013](0013-core-model-v2.md) and
+[ADR 0014](0014-v1-core-retirement.md), Phase 5 (2026-10-15).
+The regional-owner design and implementation details below describe deleted
+v1 code, not the current data-parallel native runtime.
 
 ## Decision
 
@@ -75,6 +77,13 @@ full current snapshots and conditional removal still fence entity changes.
 Chunk unload updates references for every actually removed chunk, then scans
 and publishes visibility once against the complete removed-chunk set. It does
 not delete authoritative entities or bypass ordered outbound backpressure.
+
+Ordinary goal/physics selection must not acquire the session mutex, including
+when animals are mounted. `SimulationInputPublication` publishes mounted IDs;
+the movement-recipient publication supplies rider identity, shared authoritative
+player-state handles, and immutable item data. Selection still checks the current
+animal snapshot and rider state (including held control rods), rather than
+caching whether a mount is client-controlled.
 
 ## Current execution path
 
@@ -209,7 +218,25 @@ serialize and replace the accumulated world journal.
 
 Full saves wait for the accepted queue prefix. Every dirty chunk flush plan
 also carries the journal barrier, including background and pressure flushes;
-this prevents a region file from overtaking its WAL. Clean shutdown drains the
+this prevents a region file from overtaking its WAL. When the flush itself
+succeeds, the save truncates through the PROVEN durable bound only: the
+journal watermark captured with the save snapshot (every decision at or
+below the cutoff was appended before the barrier froze the flush plan).
+Decisions committed after the snapshot stay beyond the cutoff;
+`checkpoint_through` additionally stops at the first unprojected inventory
+decision. The 2026-10-08 exp3 100-client run filled
+`world-chunk-journal.bin` to its 256 MiB cap because truncation required a
+fully-clean flush that never came under load; now a push-only
+writer-thread high-water at 64 MiB
+(`JOURNAL_CHECKPOINT_HIGH_WATER_BYTES`) requests a full checkpoint through
+the existing periodic save coordinator, and each successful save truncates
+through its snapshot watermark. A FAILED flush (write/install/sync error)
+never truncates: the journal holds the sole durable copy
+(`failed_world_flush_keeps_world_chunk_journal_pending`). If the cap is
+still reached (disk stall), appends refuse with an explicit
+`JournalTooLarge`/writer-failed error, the failure observer requests a
+controlled shutdown, and subsequent mutations fail closed — never a
+poisoned-owner cascade. Clean shutdown drains the
 writer, and its lease lasts until all journal owners release it. Any writer
 failure wakes the runtime failure observer and append-order waiters; subsequent
 mutations and save barriers fail closed. A failure affects both logs because

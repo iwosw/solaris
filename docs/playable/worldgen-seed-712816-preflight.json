@@ -6,7 +6,7 @@
   "client_requirement": "A real Minecraft Java 26.1.2 client must connect through the repo-native Gradle runClient adapter to a fresh world generated from playable.toml with seed 712816.",
   "forbidden_client_evidence": [
     "wire-probe",
-    "mc_test_harness::client::Client",
+    "mc_vanilla::wire_client::Client",
     "protocol-only bot",
     "debug commands",
     "headless mock client"

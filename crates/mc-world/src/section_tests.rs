@@ -46,6 +46,77 @@ fn packed_rebit_preserves_values() {
     }
 }
 
+#[test]
+fn packed_all_widths_preserve_values_padding_and_codec_words() {
+    for bits in 1..=32u8 {
+        let epw = 64 / usize::from(bits);
+        let mask = (1u64 << bits) - 1;
+        for len in [0usize, 1, epw - 1, epw, epw + 1, 4095, 4096, 4097] {
+            let mut words = vec![u64::MAX; len.div_ceil(epw)];
+            let mut packed = PackedBitArray::from_words(bits, len, words.clone());
+            let mut values = vec![0u32; len];
+            for pass in 0..3u32 {
+                for (idx, value) in values.iter_mut().enumerate() {
+                    assert_eq!(
+                        u64::from(packed.get(idx)),
+                        (words[idx / epw] >> ((idx % epw) * usize::from(bits))) & mask
+                    );
+                    *value = ((idx as u32).wrapping_mul(0x846c_a2f7) ^ pass) & mask as u32;
+                    packed.set(idx, *value);
+                    let shift = (idx % epw) * usize::from(bits);
+                    words[idx / epw] =
+                        (words[idx / epw] & !(mask << shift)) | (u64::from(*value) << shift);
+                }
+                assert_eq!(packed.words(), words);
+                for (idx, &value) in values.iter().enumerate() {
+                    assert_eq!(packed.get(idx), value);
+                }
+            }
+            for target in bits..=32 {
+                let target_epw = 64 / usize::from(target);
+                let mut expected = vec![0u64; len.div_ceil(target_epw)];
+                for (idx, &value) in values.iter().enumerate() {
+                    expected[idx / target_epw] |=
+                        u64::from(value) << ((idx % target_epw) * usize::from(target));
+                }
+                let mut widened = packed.clone();
+                widened.rebit(target);
+                // Matching widths preserve imported padding; widening clears it.
+                let expected = if target == bits { &words } else { &expected };
+                assert_eq!(widened.words(), expected);
+                assert_eq!(packed.words_at_bits(target).collect::<Vec<_>>(), *expected);
+                for (idx, &value) in values.iter().enumerate() {
+                    assert_eq!(widened.get(idx), value);
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn codec_repacking_preserves_values_across_source_and_target_boundaries() {
+    for (source_bits, target_bits) in [(1, 4), (2, 4), (3, 4), (5, 7), (9, 4), (32, 4)] {
+        for len in [0usize, 1, 17, 63, 64, 65, 4096] {
+            let source_words = len.div_ceil(entries_per_word(source_bits));
+            // Nonzero unused bits must not leak into the widened codec words.
+            let mut source =
+                PackedBitArray::from_words(source_bits, len, vec![u64::MAX; source_words]);
+            let mut expected = PackedBitArray::zeroed(target_bits, len);
+            let mask = (1u32 << source_bits.min(target_bits)) - 1;
+            for index in 0..len {
+                let value = ((index as u32).wrapping_mul(13) ^ 7) & mask;
+                source.set(index, value);
+                expected.set(index, value);
+            }
+            assert_eq!(
+                source.words_at_bits(target_bits).collect::<Vec<_>>(),
+                expected.words(),
+                "source={source_bits} target={target_bits} len={len}"
+            );
+        }
+    }
+}
+
 // ----- ChunkSection -----
 
 #[test]
@@ -143,7 +214,6 @@ fn admitted_disk_indices_compact_without_changing_cells() {
         );
         if palette_len == 1 {
             assert!(section.palette().is_none());
-            assert_eq!(section.estimated_heap_bytes(), 0);
         }
         let expected_non_air = (0..SECTION_VOLUME)
             .filter(|&cell| !(cell as u32).is_multiple_of(palette_len))

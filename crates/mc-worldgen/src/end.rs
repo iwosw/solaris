@@ -6,8 +6,8 @@
 //! independent of chunk generation order.
 //!
 //! Single-biome (`minecraft:the_end`) for now, chorus-free: no chorus plants,
-//! end cities, or gateway portals. No portals, travel, or respawn: the server
-//! is still single-dimension (see the dimensions scout in `docs/MEMORY.md`).
+//! end cities, or gateway portals. The v2 core owns the independent End world,
+//! command travel and dimension-specific respawn rules.
 
 use mc_data::Identifier;
 use mc_world::{BlockRegistry, BlockStateId, Chunk, ChunkGenerator, ChunkGeometry, ChunkPos};

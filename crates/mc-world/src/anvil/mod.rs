@@ -13,16 +13,24 @@
 //! reuse it).
 
 pub mod chunk_nbt;
+mod copper_chest_nbt;
+pub mod entity_regions;
 pub mod region;
+pub mod upgrade;
 
 pub use chunk_nbt::{
-    ChunkNbtError, chunk_from_nbt, chunk_from_nbt_with_items,
-    chunk_from_nbt_with_items_at_position, chunk_from_payload_with_items_at_position, chunk_to_nbt,
-    chunk_to_payload, chunk_to_payload_with_items, chunk_to_payload_with_items_at_tick,
+    ChunkNbtError, TARGET_DATA_VERSION, chunk_from_nbt, chunk_from_nbt_with_items,
+    chunk_from_nbt_with_items_at_position_at_tick,
+    chunk_from_payload_with_items_at_position_at_tick, chunk_to_nbt, chunk_to_payload,
+    chunk_to_payload_with_items, chunk_to_payload_with_items_at_tick,
     chunk_to_payload_with_items_at_tick_for_position, repair_chunk_nbt_position,
+};
+pub use entity_regions::{
+    EntityChunk, EntityRegionError, entity_chunk_from_nbt, entity_region_file_name,
+    read_entity_regions, validate_shared_fields, write_entity_regions,
 };
 pub use region::{
     CHUNKS_PER_REGION_AXIS, ChunkPayload, CompressionType, RawChunkRecord, RegionChunkOutput,
-    RegionError, read_region, read_region_raw, visit_region, write_region, write_region_create_new,
-    write_region_create_new_mixed,
+    RegionError, read_chunk, read_region, read_region_raw, visit_region, write_region,
+    write_region_create_new, write_region_create_new_mixed,
 };

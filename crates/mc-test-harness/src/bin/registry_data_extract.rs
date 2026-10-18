@@ -1,4 +1,4 @@
-//! Thin CLI over [`mc_test_harness::registry_capture`].
+//! Thin CLI over [`mc_vanilla::registry_capture`].
 //!
 //! The capture step itself lives in the library so the packaged server importer
 //! can run it without a repository checkout; this binary keeps the developer
@@ -10,7 +10,7 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use clap::Parser;
 use mc_protocol::{PROTOCOL_VERSION, TARGET_RELEASE};
-use mc_test_harness::registry_capture::capture_registry_payloads_from_jar;
+use mc_vanilla::registry_capture::capture_registry_payloads_from_jar;
 
 #[derive(Debug, Parser)]
 #[command(

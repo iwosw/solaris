@@ -18,6 +18,16 @@ interface types {
 
     type session-id = u64;
 
+    /// An exact physical block coordinate, validated by the native owner.
+    record block-position { x: s32, y: s32, z: s32 }
+
+    /// Native owner fence for an actor with exclusive physical route authority.
+    record npc-execution-permit { route-ref: string, executor-epoch: u64 }
+
+    /// Exact positive CAS version of a full key in the authenticated package's
+    /// namespace. Missing keys refuse; deletion/recreation invalidates old guards.
+    record plugin-storage-version-guard { key: string, version: u64 }
+
     /// One absolute position inside one dimension.
     ///
     /// The server's own position validator is what defines it: every coordinate

@@ -25,6 +25,7 @@ def acquire(display: str, pid: int, timeout: float) -> dict:
         "XFree": (c.c_int, [pointer]),
         "XPending": (c.c_int, [pointer]),
         "XNextEvent": (c.c_int, [pointer, pointer]),
+        "XRaiseWindow": (c.c_int, [pointer, window]),
         "XSetInputFocus": (c.c_int, [pointer, window, c.c_int, window]),
         "XGetInputFocus": (c.c_int, [pointer, c.POINTER(window), c.POINTER(c.c_int)]),
         "XSync": (c.c_int, [pointer, c.c_int]),
@@ -121,13 +122,14 @@ def acquire(display: str, pid: int, timeout: float) -> dict:
                 event = c.create_string_buffer(24 * c.sizeof(c.c_long))
                 while x.XPending(connection):
                     x.XNextEvent(connection, event)
+        x.XRaiseWindow(connection, target)
         x.XSetInputFocus(connection, target, 2, 0)  # RevertToParent, CurrentTime
         sync()
         focused, revert = window(), c.c_int()
         x.XGetInputFocus(connection, c.byref(focused), c.byref(revert))
         if focused.value != target:
             raise RuntimeError("X server did not grant the native window input focus")
-        return {"mechanism": "XSetInputFocus", "display": display, "pid": pid,
+        return {"mechanism": "XRaiseWindow+XSetInputFocus", "display": display, "pid": pid,
                 "window_id": target, "x_server_focus_verified": True}
     finally:
         x.XCloseDisplay(connection)

@@ -1,21 +1,6 @@
-//! Compiled `minecraft:chest` loot tables with deterministic paste-time rolls.
-//!
-//! Structure chests (the seed-zero Solaris ruin, village toolsmith houses)
-//! roll real vanilla chest tables at paste time instead of embedding fixed
-//! contents. Only the JSON surface those tables use is compiled:
-//!
-//! - pool `rolls`: a constant or `minecraft:uniform` `{min, max}` range
-//!   (`bonus_rolls` is ignored: worldgen rolls with no luck modifier);
-//! - entries: `minecraft:item` (with an optional `minecraft:set_count`
-//!   constant/uniform count function) or `minecraft:empty`;
-//! - `minecraft:enchant_randomly` is a known cosmetic drop: paste-time rolls
-//!   keep the plain item because enchantment synthesis needs a live player
-//!   context the generator does not have.
-//!
-//! Anything else (pool/entry `conditions`, pool `functions`, nested
-//! `minecraft:loot_table` references, unknown item functions, non-uniform
-//! count/roll providers) fails closed at compile time so a future vanilla
-//! table that outgrows this surface can never silently roll wrong loot.
+//! Compiled `minecraft:chest` and `minecraft:advancement_reward` loot tables.
+//! Supported tables preserve random enchantments as canonical item components.
+//! Unsupported functions and contexts fail explicitly rather than losing data.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -23,8 +8,8 @@ use std::path::{Path, PathBuf};
 use serde_json::Value;
 use thiserror::Error;
 
-use super::{LootCount, LootDrop};
-use crate::Identifier;
+use crate::items::ItemRegistry;
+use crate::{Identifier, ItemEnchantment, ItemStack};
 
 /// Rejects chest-table sources larger than this before JSON parsing.
 pub const MAX_CHEST_TABLE_BYTES: usize = 65_536;
@@ -108,12 +93,15 @@ impl ChestRng {
 pub enum ChestLootEntry {
     Empty {
         weight: u64,
+        quality: i32,
     },
     Item {
         weight: u64,
+        quality: i32,
         item: Identifier,
         count_min: u32,
         count_max: u32,
+        enchantments: Vec<(Identifier, i32)>,
     },
 }
 
@@ -121,20 +109,30 @@ impl ChestLootEntry {
     #[must_use]
     pub fn weight(&self) -> u64 {
         match self {
-            Self::Empty { weight } | Self::Item { weight, .. } => *weight,
+            Self::Empty { weight, .. } | Self::Item { weight, .. } => *weight,
         }
+    }
+
+    fn effective_weight(&self, luck: f32) -> u64 {
+        let quality = match self {
+            Self::Empty { quality, .. } | Self::Item { quality, .. } => *quality,
+        };
+        (self.weight() as f32 + quality as f32 * luck)
+            .floor()
+            .max(0.0) as u64
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ChestLootPool {
     pub rolls_min: u32,
     pub rolls_max: u32,
     pub entries: Vec<ChestLootEntry>,
     pub total_weight: u64,
+    pub bonus_rolls: f32,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ChestLootTable {
     id: Identifier,
     pools: Vec<ChestLootPool>,
@@ -159,6 +157,20 @@ impl ChestLootTable {
     /// Returns [`ChestLootError::Unsupported`] when the source is not a
     /// supported chest table.
     pub fn compile(id: Identifier, raw: &str) -> Result<Self, ChestLootError> {
+        Self::compile_with_type(id, raw, "minecraft:chest")
+    }
+
+    /// Compile reward loot using the same bounded pools and stack evaluator as
+    /// chest loot, without accepting reward contexts through [`Self::compile`].
+    pub fn compile_advancement_reward(id: Identifier, raw: &str) -> Result<Self, ChestLootError> {
+        Self::compile_with_type(id, raw, "minecraft:advancement_reward")
+    }
+
+    fn compile_with_type(
+        id: Identifier,
+        raw: &str,
+        expected_type: &'static str,
+    ) -> Result<Self, ChestLootError> {
         let unsupported = |reason: String| ChestLootError::Unsupported {
             id: id.clone(),
             reason,
@@ -181,9 +193,9 @@ impl ChestLootTable {
             .get("type")
             .and_then(Value::as_str)
             .ok_or_else(|| unsupported("chest table is missing $.type".to_string()))?;
-        if table_type != "minecraft:chest" {
+        if table_type != expected_type {
             return Err(unsupported(format!(
-                "expected $.type \"minecraft:chest\", found {table_type:?}"
+                "expected $.type {expected_type:?}, found {table_type:?}"
             )));
         }
         let pools = root
@@ -207,18 +219,60 @@ impl ChestLootTable {
         })
     }
 
-    /// Roll the table once, returning one stack per successful pick.
-    /// Deterministic in the RNG stream: the same seed yields the same drops.
-    #[must_use]
-    pub fn roll(&self, rng: &mut ChestRng) -> Vec<LootDrop> {
-        let mut out = Vec::new();
+    /// Roll with the opening player's luck (zero for structure generation).
+    /// The same seed and context produce identical canonical stacks.
+    pub fn roll(
+        &self,
+        rng: &mut ChestRng,
+        items: &ItemRegistry,
+        luck: f32,
+    ) -> Result<Vec<ItemStack>, ChestLootError> {
+        if !luck.is_finite() {
+            return Err(ChestLootError::Unsupported {
+                id: self.id.clone(),
+                reason: "non-finite chest luck".into(),
+            });
+        }
+        // Reserve once for the bounded maximum output; luck never allocates
+        // candidates or grows the output buffer inside a roll.
+        let capacity = self
+            .pools
+            .iter()
+            .map(|pool| {
+                (f64::from(pool.rolls_max) + f64::from((pool.bonus_rolls * luck).floor()))
+                    .clamp(0.0, f64::from(MAX_CHEST_ROLLS)) as usize
+            })
+            .sum();
+        let mut out = Vec::with_capacity(capacity);
         for pool in &self.pools {
-            let rolls = rng.next_range_inclusive(pool.rolls_min, pool.rolls_max);
-            for _ in 0..rolls {
-                let mut pick = rng.next_bounded(pool.total_weight);
+            let bonus = f64::from((pool.bonus_rolls * luck).floor());
+            let rolls = (f64::from(rng.next_range_inclusive(pool.rolls_min, pool.rolls_max))
+                + bonus)
+                .max(0.0);
+            if rolls > f64::from(MAX_CHEST_ROLLS) {
+                return Err(ChestLootError::Unsupported {
+                    id: self.id.clone(),
+                    reason: "chest luck exceeds roll budget".into(),
+                });
+            }
+            let mut weights = [0_u64; MAX_CHEST_ENTRIES];
+            let mut total_weight = 0_u64;
+            for (entry, weight) in pool.entries.iter().zip(&mut weights) {
+                *weight = entry.effective_weight(luck);
+                total_weight = total_weight.checked_add(*weight).ok_or_else(|| {
+                    ChestLootError::Unsupported {
+                        id: self.id.clone(),
+                        reason: "chest luck exceeds weight budget".into(),
+                    }
+                })?;
+            }
+            if total_weight == 0 {
+                continue;
+            }
+            for _ in 0..rolls as u32 {
+                let mut pick = rng.next_bounded(total_weight);
                 let mut chosen: Option<&ChestLootEntry> = None;
-                for entry in &pool.entries {
-                    let weight = entry.weight();
+                for (entry, &weight) in pool.entries.iter().zip(&weights) {
                     if pick < weight {
                         chosen = Some(entry);
                         break;
@@ -232,20 +286,54 @@ impl ChestLootTable {
                     item,
                     count_min,
                     count_max,
+                    enchantments,
                     ..
                 } = entry
                 {
                     let count = rng.next_range_inclusive(*count_min, *count_max);
                     if count > 0 {
-                        out.push(LootDrop {
-                            item: item.clone(),
-                            count: LootCount::Fixed(count),
-                        });
+                        let item_id =
+                            items
+                                .id_of(item)
+                                .ok_or_else(|| ChestLootError::Unsupported {
+                                    id: self.id.clone(),
+                                    reason: format!("unregistered loot item {item}"),
+                                })?;
+                        let mut stack = ItemStack::new(item_id, count as i32);
+                        if !enchantments.is_empty() {
+                            let (enchantment, max_level) =
+                                &enchantments[rng.next_bounded(enchantments.len() as u64) as usize];
+                            let level = rng.next_range_inclusive(1, *max_level as u32) as i32;
+                            if item.path() == "book" {
+                                stack.item_id = items
+                                    .id_of(
+                                        &Identifier::parse("minecraft:enchanted_book")
+                                            .expect("vanilla identifier"),
+                                    )
+                                    .ok_or_else(|| ChestLootError::Unsupported {
+                                        id: self.id.clone(),
+                                        reason: "unregistered enchanted book".into(),
+                                    })?;
+                                stack
+                                    .extended_mut()
+                                    .stored_enchantments
+                                    .push(ItemEnchantment {
+                                        id: enchantment.clone(),
+                                        level,
+                                    });
+                            } else {
+                                stack.enchantments.push(ItemEnchantment {
+                                    id: enchantment.clone(),
+                                    level,
+                                });
+                            }
+                        }
+                        out.push(stack);
                     }
                 }
             }
         }
-        out
+        Ok(out)
     }
 }
 
@@ -281,6 +369,15 @@ fn compile_pool(
             "chest table pool {pool_index} has invalid rolls: {detail}"
         ))
     })?;
+    let bonus_rolls = root
+        .get("bonus_rolls")
+        .map_or(Some(0.0), Value::as_f64)
+        .filter(|value| value.is_finite() && *value >= 0.0 && *value <= f64::from(MAX_CHEST_ROLLS))
+        .ok_or_else(|| {
+            unsupported(format!(
+                "chest table pool {pool_index} has unsupported bonus_rolls"
+            ))
+        })?;
     let entries = root
         .get("entries")
         .and_then(Value::as_array)
@@ -316,6 +413,7 @@ fn compile_pool(
         rolls_max,
         entries: compiled,
         total_weight,
+        bonus_rolls: bonus_rolls as f32,
     })
 }
 
@@ -352,8 +450,17 @@ fn compile_entry(
             ))
         })?,
     };
+    let quality = root
+        .get("quality")
+        .map_or(Some(0), Value::as_i64)
+        .and_then(|value| i32::try_from(value).ok())
+        .ok_or_else(|| {
+            unsupported(format!(
+                "chest table pool {pool_index} entry {entry_index} has invalid quality"
+            ))
+        })?;
     match entry_type {
-        "minecraft:empty" => Ok(ChestLootEntry::Empty { weight }),
+        "minecraft:empty" => Ok(ChestLootEntry::Empty { weight, quality }),
         "minecraft:item" => {
             let name = root.get("name").and_then(Value::as_str).ok_or_else(|| {
                 unsupported(format!(
@@ -365,13 +472,18 @@ fn compile_entry(
                     "chest table pool {pool_index} entry {entry_index} has invalid name {name:?}"
                 ))
             })?;
-            let (count_min, count_max) =
-                compile_functions(root.get("functions"), pool_index, entry_index, id)?;
+            let ChestEntryFunctions {
+                count_min,
+                count_max,
+                enchantments,
+            } = compile_functions(root.get("functions"), pool_index, entry_index, id, &item)?;
             Ok(ChestLootEntry::Item {
                 weight,
+                quality,
                 item,
                 count_min,
                 count_max,
+                enchantments,
             })
         }
         other => Err(unsupported(format!(
@@ -380,21 +492,30 @@ fn compile_entry(
     }
 }
 
-/// Resolve the effective stack-size range from an entry's `functions` list.
-/// `minecraft:set_count` sets the range; `minecraft:enchant_randomly` is a
-/// known cosmetic drop (plain item kept); anything else fails closed.
+struct ChestEntryFunctions {
+    count_min: u32,
+    count_max: u32,
+    enchantments: Vec<(Identifier, i32)>,
+}
+
+/// Compile count and random-enchantment functions without discarding components.
 fn compile_functions(
     functions: Option<&Value>,
     pool_index: usize,
     entry_index: usize,
     id: &Identifier,
-) -> Result<(u32, u32), ChestLootError> {
+    item: &Identifier,
+) -> Result<ChestEntryFunctions, ChestLootError> {
     let unsupported = |reason: String| ChestLootError::Unsupported {
         id: id.clone(),
         reason,
     };
     let Some(functions) = functions else {
-        return Ok((1, 1));
+        return Ok(ChestEntryFunctions {
+            count_min: 1,
+            count_max: 1,
+            enchantments: Vec::new(),
+        });
     };
     let functions = functions.as_array().ok_or_else(|| {
         unsupported(format!(
@@ -402,17 +523,26 @@ fn compile_functions(
         ))
     })?;
     let mut count = (1_u32, 1_u32);
+    let mut enchantments = Vec::new();
     for function in functions {
         let root = function.as_object().ok_or_else(|| {
             unsupported(format!(
                 "chest table pool {pool_index} entry {entry_index} has malformed functions"
             ))
         })?;
-        let name = root.get("function").and_then(Value::as_str).ok_or_else(|| {
-            unsupported(format!(
+        if root.contains_key("conditions") {
+            return Err(unsupported(format!(
+                "chest table pool {pool_index} entry {entry_index} has unsupported function conditions"
+            )));
+        }
+        let name = root
+            .get("function")
+            .and_then(Value::as_str)
+            .ok_or_else(|| {
+                unsupported(format!(
                 "chest table pool {pool_index} entry {entry_index} has a function without a name"
             ))
-        })?;
+            })?;
         match name {
             "minecraft:set_count" => {
                 let add = root.get("add").and_then(Value::as_bool).unwrap_or(false);
@@ -432,9 +562,30 @@ fn compile_functions(
                     ))
                 })?;
             }
-            // Paste-time rolls have no player context to synthesize
-            // enchantments with; the unenchanted item is kept instead.
-            "minecraft:enchant_randomly" => {}
+            "minecraft:enchant_randomly" => {
+                let options = root
+                    .get("options")
+                    .map(|options| {
+                        let name = options
+                            .as_str()
+                            .and_then(|name| name.strip_prefix('#'))
+                            .ok_or_else(|| {
+                                unsupported(
+                                    "random enchantment options must be a canonical tag".into(),
+                                )
+                            })?;
+                        Identifier::parse(name)
+                            .map_err(|_| unsupported(format!("invalid enchantment tag {name}")))
+                    })
+                    .transpose()?;
+                enchantments =
+                    crate::stations::random_loot_enchantment_candidates(item, options.as_ref());
+                if enchantments.is_empty() {
+                    return Err(unsupported(format!(
+                        "no compatible random enchantments for {item}"
+                    )));
+                }
+            }
             other => {
                 return Err(unsupported(format!(
                     "chest table pool {pool_index} entry {entry_index} has unsupported function {other:?}"
@@ -442,7 +593,11 @@ fn compile_functions(
             }
         }
     }
-    Ok(count)
+    Ok(ChestEntryFunctions {
+        count_min: count.0,
+        count_max: count.1,
+        enchantments,
+    })
 }
 
 /// Compile a constant (`3.0`) or `minecraft:uniform` `{min, max}` range into
@@ -507,6 +662,41 @@ fn integer_in_range(number: f64, min: u32, max: u32) -> Option<u32> {
 #[derive(Debug, Clone, Default)]
 pub struct ChestLootCatalog {
     tables: BTreeMap<Identifier, ChestLootTable>,
+}
+
+/// Load the tables used by production Solaris structures, saved vanilla chests
+/// and saved container vehicles from the startup-selected content root.
+/// Unknown saved tables are rejected explicitly by the materialization boundary.
+///
+/// # Errors
+///
+/// Returns the exact missing, unreadable or invalid table file.
+pub fn load_vanilla(root: &Path) -> Result<ChestLootCatalog, String> {
+    let mut catalog = ChestLootCatalog::new();
+    for (name, relative) in [
+        (
+            "minecraft:chests/simple_dungeon",
+            "data/minecraft/loot_table/chests/simple_dungeon.json",
+        ),
+        (
+            "minecraft:chests/village/village_toolsmith",
+            "data/minecraft/loot_table/chests/village/village_toolsmith.json",
+        ),
+        (
+            "minecraft:chests/abandoned_mineshaft",
+            "data/minecraft/loot_table/chests/abandoned_mineshaft.json",
+        ),
+    ] {
+        let source = crate::runtime_resources::read_json(root, relative)?;
+        let id = Identifier::parse(name).map_err(|error| format!("chest loot {name}: {error}"))?;
+        catalog.insert(ChestLootTable::compile(id, &source).map_err(|error| {
+            format!(
+                "compiling chest loot {}: {error}",
+                root.join(relative).display()
+            )
+        })?);
+    }
+    Ok(catalog)
 }
 
 impl ChestLootCatalog {
@@ -592,137 +782,5 @@ impl ChestLootCatalog {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use std::path::PathBuf;
-
-    fn id(value: &str) -> Identifier {
-        Identifier::parse(value).unwrap()
-    }
-
-    fn workspace_path(rel: &str) -> PathBuf {
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .and_then(Path::parent)
-            .unwrap()
-            .join(rel)
-    }
-
-    const SIMPLE_TABLE: &str = r#"{
-        "type": "minecraft:chest",
-        "pools": [
-            {"rolls": 2.0, "entries": [
-                {"type": "minecraft:item", "name": "minecraft:bread"},
-                {"type": "minecraft:empty"}
-            ]}
-        ]
-    }"#;
-
-    #[test]
-    fn rejects_non_chest_tables() {
-        let error = ChestLootTable::compile(
-            id("minecraft:chests/test"),
-            r#"{"type":"minecraft:entity","pools":[]}"#,
-        )
-        .expect_err("entity tables must not compile as chest tables");
-        assert!(matches!(error, ChestLootError::Unsupported { .. }));
-    }
-
-    #[test]
-    fn rejects_unsupported_entry_types_conditions_and_functions() {
-        for raw in [
-            r#"{"type":"minecraft:chest","pools":[{"rolls":1.0,"entries":[{"type":"minecraft:loot_table","value":"minecraft:chests/other"}]}]}"#,
-            r#"{"type":"minecraft:chest","pools":[{"rolls":1.0,"conditions":[{"condition":"minecraft:random_chance"}],"entries":[{"type":"minecraft:item","name":"minecraft:bread"}]}]}"#,
-            r#"{"type":"minecraft:chest","pools":[{"rolls":1.0,"entries":[{"type":"minecraft:item","name":"minecraft:bread","conditions":[{"condition":"minecraft:random_chance"}]}]}]}"#,
-            r#"{"type":"minecraft:chest","pools":[{"rolls":1.0,"entries":[{"type":"minecraft:item","name":"minecraft:bread","functions":[{"function":"minecraft:set_contents"}]}]}]}"#,
-        ] {
-            let error = ChestLootTable::compile(id("minecraft:chests/test"), raw)
-                .expect_err("unsupported constructs must fail closed");
-            assert!(matches!(error, ChestLootError::Unsupported { .. }), "{raw}");
-        }
-    }
-
-    #[test]
-    fn keeps_plain_item_for_enchant_randomly_and_applies_set_count() {
-        let table = ChestLootTable::compile(
-            id("minecraft:chests/test"),
-            r#"{"type":"minecraft:chest","pools":[
-                {"rolls":1.0,"entries":[
-                    {"type":"minecraft:item","name":"minecraft:book","functions":[{"function":"minecraft:enchant_randomly"}]},
-                    {"type":"minecraft:item","name":"minecraft:coal","weight":3,"functions":[{"add":false,"count":{"type":"minecraft:uniform","min":2.0,"max":4.0},"function":"minecraft:set_count"}]}
-                ]}
-            ]}"#,
-        )
-        .expect("enchant_randomly and set_count must compile");
-        assert_eq!(table.pools.len(), 1);
-        assert_eq!(table.pools[0].total_weight, 4);
-        let mut book_count = None;
-        let mut coal_range = None;
-        for entry in &table.pools[0].entries {
-            if let ChestLootEntry::Item {
-                item,
-                count_min,
-                count_max,
-                ..
-            } = entry
-            {
-                if item.as_str() == "minecraft:book" {
-                    book_count = Some((*count_min, *count_max));
-                } else {
-                    coal_range = Some((*count_min, *count_max));
-                }
-            }
-        }
-        assert_eq!(book_count, Some((1, 1)));
-        assert_eq!(coal_range, Some((2, 4)));
-    }
-
-    #[test]
-    fn rolls_are_deterministic_per_seed() {
-        let table = ChestLootTable::compile(id("minecraft:chests/test"), SIMPLE_TABLE)
-            .expect("simple table");
-        let first = table.roll(&mut ChestRng::new(7));
-        let second = table.roll(&mut ChestRng::new(7));
-        assert_eq!(first, second);
-        let third = table.roll(&mut ChestRng::new(8));
-        assert_ne!(first, third);
-    }
-
-    #[test]
-    fn all_empty_pool_rolls_nothing() {
-        let table = ChestLootTable::compile(
-            id("minecraft:chests/test"),
-            r#"{"type":"minecraft:chest","pools":[{"rolls":4.0,"entries":[{"type":"minecraft:empty"}]}]}"#,
-        )
-        .expect("empty pool compiles");
-        assert!(table.roll(&mut ChestRng::new(1)).is_empty());
-    }
-
-    #[test]
-    fn loads_real_vanilla_chest_tables_when_present() {
-        let root = workspace_path("data/vanilla/data");
-        if !root.join("minecraft/loot_table/chests").is_dir() {
-            return;
-        }
-        for table in [
-            "minecraft:chests/village/village_toolsmith",
-            "minecraft:chests/simple_dungeon",
-        ] {
-            let catalog = ChestLootCatalog::load_vanilla_tables(&root, &[id(table)])
-                .expect("real table loads");
-            let compiled = catalog.get(&id(table)).expect("catalog holds the table");
-            assert!(!compiled.pools().is_empty());
-            let drops = compiled.roll(&mut ChestRng::new(0));
-            assert!(!drops.is_empty(), "{table} seed-0 roll must yield loot");
-        }
-    }
-
-    #[test]
-    fn missing_table_file_fails_closed() {
-        let missing = id("minecraft:chests/no_such_table");
-        let error =
-            ChestLootCatalog::load_vanilla_tables(workspace_path("data/vanilla/data"), &[missing])
-                .expect_err("missing tables must not fall back silently");
-        assert!(matches!(error, ChestLootError::MissingTable { .. }));
-    }
-}
+#[path = "chest_26_1_2_tests.rs"]
+mod tests;

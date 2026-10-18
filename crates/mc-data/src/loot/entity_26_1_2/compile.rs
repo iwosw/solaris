@@ -26,18 +26,6 @@ impl Default for JsonBudgetLimits {
     }
 }
 
-impl JsonBudgetLimits {
-    #[cfg(test)]
-    pub(super) fn unbounded() -> Self {
-        Self {
-            nodes: usize::MAX,
-            collection_elements: usize::MAX,
-            string_bytes: usize::MAX,
-            array_length: usize::MAX,
-        }
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) struct JsonBudgetViolation {
     pub(super) limit: EntityLootLimit,

@@ -251,13 +251,11 @@ support.
 
 Generation remains stateless and coordinate-derived. Parallel generation of the
 same chunk or neighbouring chunks in any order produces identical output. Every
-new Solaris world persists `solaris/world.json` with schema, worldgen revision,
-seed, mode, ore profile, settlement profile, geometry, and selected spawn block
-coordinates. A mismatched contract is rejected before Anvil open.
-An existing unversioned Anvil world is treated as a vanilla import and opens
-without Solaris fallback generation, so missing chunks cannot mix both terrain
-authorities. Existing worlds are never rewritten. The local playable profile
-uses `.analysis/test-world-v10`.
+new native world validates its generation identity before recovery/generation.
+Serving uses native storage and one tick WAL (ADR 0013), never live Anvil fallback.
+Anvil import/export is explicit offline conversion. Earlier `solaris/world.json`,
+unversioned read-only Anvil startup and v1 fixture-path descriptions are retired
+under ADR 0014; their recorded receipts are not relabelled as native evidence.
 
 Anvil root metadata belongs to the chunk serialization boundary, not a concrete
 terrain generator. The encoder emits one `DataVersion`, `LastUpdate`, and
@@ -273,14 +271,44 @@ before the final save. This preserves vanilla elapsed-tick semantics without
 republishing hundreds of chunks on every tick.
 
 The hot path reuses each planned surface column's biome for vertical biome cells
-and biome-restricted ore anchors. Ore admission reads the existing chunk-local
-`OreColumnCache`; it does not rerun height and climate routing for each Y anchor.
-The cache halo covers the same neighbouring anchors as vein placement, so
-chunk-order independence and the ore biome/height fences are unchanged.
+and analogue ore anchors. With native vanilla climate, restricted ore anchors
+instead sample their 3D biome (including dripstone copper), without recomputing
+the surface height. Ore cell replacement and air-exposure checks read the shared
+`OreColumnCache`, whose halo keeps chunk-order-independent veins and height fences.
 Cave noise exits after its region mask or first tunnel field rejects the cell.
 The 2026-09-05 debug comparison preserves serialized fingerprints across 48
 chunks, three seeds, and both modes; it is not a release throughput claim and
 does not change the generator revision.
+
+Revision 26 mirrors all 19 vanilla 26.1.2 overworld ore passes' counts, raw height
+anchors/distributions, configured sizes, biome gates and air-exposure discard
+probabilities (checked against local placed/configured features). The added
+`ore_copper_large` replaces ordinary copper in dripstone caves, not an extra
+ordinary-biome pass. Veins use overlapping ellipsoids, matching `OreFeature`
+from the local 26.1.2 source jar: `spreadXY=size/8`, endpoint Y offsets -2..0,
+and radius `((sin(pi*step)+1)*random*size/16+1)/2`, tested at block centers.
+Configured `size` is geometry, not a guaranteed ore block count. The old
+connected growth filled the requested size, producing about 122 iron blocks per
+chunk in the fixed-seed 64-chunk sample; the corrected full-height sample is
+about 83, so a guessed 10–40 iron/chunk band would not describe these vanilla
+features. Coordinate-derived anchors, full-precision sine and the bounded halo
+remain analogues, not bit-exact decoration; oversized custom features retain
+the four-block radius and 64-block output caps. Ore-family average, geometry,
+border/order and air-discard regressions cover this boundary. Existing worlds
+are not rewritten; `mc-core` startup uses the shared
+`mc_worldgen::world_contract` admission to reject incompatible generation rather
+than regenerate only missing chunks.
+Core admission runs before registry recovery or generation.
+
+Coal increases in the same sample, from 82.89 to 113.88 blocks/chunk, because
+vanilla size-17 ellipsoid unions average 22.15 blocks per solid-stone attempt,
+where old connected growth could emit at most 17. The old rejected-parent
+filter also removed descendants rather than independently filtering ore cells.
+The unchanged upper pass is 30 attempts at Y=136..319, uniform, discard=0;
+the lower pass is 20 attempts at Y=0..192, trapezoid, discard=0.5; both size=17.
+The 114 figure is the source-derived geometry applied to this Solaris lowland
+sample and its replacement/exposure filters, not a universal vanilla-world
+average. The 64-chunk regression measures the resulting blocks directly.
 
 ## Staged boundary
 

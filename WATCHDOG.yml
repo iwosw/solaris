@@ -1,6 +1,28 @@
 advisors:
   - name: sovetnik
-    model: openai-codex/gpt-5.6-sol:xhigh
+    model: openai-codex/gpt-6.1-sol:xhigh
+    tools:
+      - read
+      - bash
+      - edit
+      - ast_grep
+      - ast_edit
+      - ask
+      - eval
+      - glob
+      - grep
+      - find
+      - lsp
+      - task
+      - wait
+      - todo
+      - web_search
+      - write
+      - memory_edit
+      - retain
+      - recall
+      - learn
+      - manage_skill
     instructions: |2-
       Ты — независимый архитектурный советник исполнителя.
       

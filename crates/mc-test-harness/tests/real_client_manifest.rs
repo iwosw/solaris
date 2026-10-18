@@ -162,16 +162,13 @@ fn real_client_prepare_denies_operators_when_scenario_policy_is_unknown() {
         String::from_utf8_lossy(&output.stderr)
     );
     let run_dir_text = String::from_utf8(output.stdout).expect("run dir stdout is utf-8");
-    let effective_config =
-        std::fs::read_to_string(Path::new(run_dir_text.trim()).join("server.toml"))
-            .expect("prepared server config exists");
-    let effective_config: toml::Value =
-        toml::from_str(&effective_config).expect("prepared server config parses");
-    assert_eq!(
-        effective_config["admin"]["operators"]
-            .as_array()
-            .map(Vec::len),
-        Some(0),
+    let operators: Vec<Value> = serde_json::from_slice(
+        &std::fs::read(Path::new(run_dir_text.trim()).join("ops.json"))
+            .expect("prepared operator list exists"),
+    )
+    .expect("prepared operator list parses");
+    assert!(
+        operators.is_empty(),
         "unknown scenario policy must not grant operator privileges"
     );
 }
@@ -315,25 +312,13 @@ fn playable_real_client_prepare_uses_playable_manifest_config_and_scenario() {
         automation_driver.contains("client_agent_scenario=playable-04-twenty-minute-survival-loop"),
         "prepared playable gate must default to the full loop scenario\n{automation_driver}"
     );
-    let effective_server_config = std::fs::read_to_string(run_dir.join("server.toml"))
-        .expect("prepared playable gate writes its effective server config");
-    let effective_server_config: toml::Value = toml::from_str(&effective_server_config)
-        .expect("prepared playable server config parses as TOML");
-    assert_eq!(
-        effective_server_config["simulation"]["friendly_spawn_interval_ticks"].as_integer(),
-        Some(400),
-        "the twenty-minute acceptance gate must preserve playable.toml natural passive spawning"
-    );
-    assert_eq!(
-        effective_server_config["simulation"]["hostile_spawn_interval_ticks"].as_integer(),
-        Some(20),
-        "the twenty-minute acceptance gate must preserve playable.toml natural hostile spawning"
-    );
+    let operators: Vec<Value> = serde_json::from_slice(
+        &std::fs::read(run_dir.join("ops.json")).expect("read prepared operator list"),
+    )
+    .expect("parse prepared operator list");
     assert!(
-        effective_server_config["admin"]["operators"]
-            .as_array()
-            .is_some_and(|operators| operators.is_empty()),
-        "the twenty-minute natural-spawn acceptance gate must remain no-operator"
+        operators.is_empty(),
+        "the twenty-minute acceptance gate must remain no-operator"
     );
     assert!(
         automation_driver
@@ -353,44 +338,6 @@ fn playable_real_client_prepare_uses_playable_manifest_config_and_scenario() {
     .expect("parse prepared playable manifest");
     assert_eq!(manifest["pack_id"], "playable-real-client-loop");
     assert_eq!(manifest["quality_label"], "playable-spike");
-}
-
-#[test]
-fn playable_combat_prepare_keeps_natural_monsters_enabled() {
-    let repo_root = repo_root();
-    let run_root = tempfile::tempdir().expect("create playable combat run root");
-
-    let output = Command::new("python3")
-        .arg("-m")
-        .arg("tools.harness")
-        .arg("run")
-        .arg("playable")
-        .arg("--prepare")
-        .current_dir(&repo_root)
-        .env("SOLARIS_REAL_CLIENT_RUN_ROOT", run_root.path())
-        .env(
-            "SOLARIS_REAL_CLIENT_AGENT_SCENARIO",
-            "playable-21-earned-tool-zombie-combat",
-        )
-        .output()
-        .expect("prepare playable combat gate");
-
-    assert!(
-        output.status.success(),
-        "playable combat prepare failed\nstdout:\n{}\nstderr:\n{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let run_dir = prepared_run_dir(run_root.path());
-    let effective_server_config = std::fs::read_to_string(run_dir.join("server.toml"))
-        .expect("prepared combat gate writes its effective server config");
-    let effective_server_config: toml::Value = toml::from_str(&effective_server_config)
-        .expect("prepared combat server config parses as TOML");
-    assert_eq!(
-        effective_server_config["simulation"]["hostile_spawn_interval_ticks"].as_integer(),
-        Some(20),
-        "combat scenarios must retain natural hostile spawning"
-    );
 }
 
 #[test]
@@ -602,7 +549,7 @@ fn m94_real_client_manifest_covers_required_regression_rows() {
     let forbidden = manifest["forbidden_client_evidence"]
         .as_array()
         .expect("forbidden client evidence");
-    for evidence in ["wire-probe", "mc_test_harness::client::Client"] {
+    for evidence in ["wire-probe", "mc_vanilla::wire_client::Client"] {
         assert!(
             forbidden.iter().any(|entry| entry == evidence),
             "{evidence} must not count as real-client evidence"
@@ -1584,6 +1531,7 @@ client_agent_phase_exit_status_playable-03-save-restart-after=0\n",
                         "result": "passed",
                         "observations": [
                             natural_spawn_observation,
+                            "survival combat acceptance: passed",
                             "20-minute survival soak: passed ticks=24000"
                         ]
                     }
@@ -2277,11 +2225,11 @@ fn validate_run_rejects_playable_server_log_degradation_warnings() {
     std::fs::write(
         run_dir.path().join("server.log"),
         [
-            r#"WARN mc_net::server: runtime tick exceeded performance budget tick_us=51000"#,
-            r#"WARN mc_net::lock_metrics: lock wait exceeded M39 budget lock="chunk_prepare" operation="chunk prepare neighbour commit" wait_us=20000"#,
-            r#"WARN mc_net::play::chunk_stream: chunk preparation deferred by dirty chunk cache pressure"#,
-            r#"INFO mc_net::play::chunk_stream: view-distance window flushed degraded_delivery=true"#,
-            r#"WARN mc_net::play: teleport confirmation id mismatch expected=10 received=9"#,
+            r#"WARN mc_core::runtime: runtime tick exceeded performance budget tick_us=51000"#,
+            r#"WARN mc_core::runtime: lock wait exceeded M39 budget lock="chunk_prepare" operation="chunk prepare neighbour commit" wait_us=20000"#,
+            r#"WARN mc_edge: chunk preparation deferred by dirty chunk cache pressure"#,
+            r#"INFO mc_edge: view-distance window flushed degraded_delivery=true"#,
+            r#"WARN mc_edge: teleport confirmation id mismatch expected=10 received=9"#,
         ]
         .join("\n"),
     )
@@ -2330,7 +2278,7 @@ fn validate_run_accepts_subsecond_tick_budget_warnings() {
     .expect("write valid screenshot");
     std::fs::write(
         run_dir.path().join("server.log"),
-        "WARN mc_net::server: runtime tick exceeded performance budget tick_us=412302\n",
+        "WARN mc_core::runtime: runtime tick exceeded performance budget tick_us=412302\n",
     )
     .expect("write subsecond tick warning");
 
@@ -2371,7 +2319,7 @@ fn validate_run_rejects_half_second_tick_stall() {
     .expect("write valid screenshot");
     std::fs::write(
         run_dir.path().join("server.log"),
-        "WARN mc_net::server: runtime tick exceeded performance budget tick_us=500000\n",
+        "WARN mc_core::runtime: runtime tick exceeded performance budget tick_us=500000\n",
     )
     .expect("write catastrophic tick warning");
 
@@ -2436,8 +2384,8 @@ fn validate_run_rejects_p42_slow_chunk_crossing_windows() {
     std::fs::write(
         run_dir.path().join("server.log"),
         [
-            r#"INFO mc_net::play::chunk_stream: view-distance window flushed center_cx=0 center_cz=-2 degraded_delivery=false fetch_ms=1758 light_compute_ms=1124 slow_fetch_chunks=9 slow_light_compute_chunks=9"#,
-            r#"INFO mc_net::play::chunk_stream: view-distance window flushed center_cx=0 center_cz=1 degraded_delivery=false fetch_ms=0 light_compute_ms=0 slow_fetch_chunks=0 slow_light_compute_chunks=0"#,
+            r#"INFO mc_edge: view-distance window flushed center_cx=0 center_cz=-2 degraded_delivery=false fetch_ms=1758 light_compute_ms=1124 slow_fetch_chunks=9 slow_light_compute_chunks=9"#,
+            r#"INFO mc_edge: view-distance window flushed center_cx=0 center_cz=1 degraded_delivery=false fetch_ms=0 light_compute_ms=0 slow_fetch_chunks=0 slow_light_compute_chunks=0"#,
         ]
         .join("\n"),
     )
@@ -2641,22 +2589,3 @@ fn adler32(data: &[u8]) -> u32 {
     }
     (b << 16) | a
 }
-
-#[allow(dead_code)]
-const VALID_PNG_320X180: &[u8] = &[
-    0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
-    0x00, 0x00, 0x01, 0x40, 0x00, 0x00, 0x00, 0xb4, 0x08, 0x06, 0x00, 0x00, 0x00, 0xe5, 0xe4, 0xf5,
-    0x11, 0x00, 0x00, 0x00, 0xf6, 0x49, 0x44, 0x41, 0x54, 0x78, 0xda, 0xed, 0xc1, 0x01, 0x0d, 0x00,
-    0x00, 0x00, 0xc2, 0xa0, 0xf7, 0x4f, 0x6d, 0x0e, 0x37, 0xa0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x78, 0x35, 0x84, 0xe1, 0x00, 0x01, 0xed, 0xc7, 0x86, 0x25, 0x00, 0x00, 0x00, 0x00, 0x49,
-    0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82,
-];

@@ -63,3 +63,8 @@ logs/
 # local build artifacts and omp session dumps never enter git
 dist/
 omp-session-*.html
+
+# Mojang server jar bootstrap output (never redistributed) and perf captures.
+/versions/
+/libraries/
+perf.data*

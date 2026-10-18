@@ -2,7 +2,7 @@
 //!
 //! These facts belong to the deployment rather than to one package: the catalog
 //! core reads through the boundary, the client bundles the Loader stages, and the
-//! one ore profile and settlement plan a world opens against. The host settles
+//! one generic ore profile a world opens against. The host settles
 //! them before the first guest runs; a duplicate worldgen profile is refused
 //! because the world has no second slot for it.
 
@@ -13,10 +13,7 @@ use mc_plugin_host::{
     CheckError, DeploymentConfig, DiscoveryMode, HostQueues, HostStartError, NoSessions,
     PluginLimits, PluginReloadContractField, PluginReloadError, check_deployment, start_deployment,
 };
-use mc_script::{
-    PluginWorldgenOreProfile, PluginWorldgenSettlementProfile, ScriptCommand, ScriptEvent,
-    ScriptPlayerContext, ScriptPlayerId,
-};
+use mc_script::{ScriptCommand, ScriptEvent, ScriptPlayerContext, ScriptPlayerId};
 use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::Arc;
@@ -160,7 +157,6 @@ fn a_started_deployment_publishes_its_catalog_and_client_bundles() {
 
     // A package that declares no worldgen profile contributes none.
     assert_eq!(host.worldgen_ore_profile(), None);
-    assert!(host.worldgen_settlement_plan().is_none());
     host.stop();
 
     // The check settles the same deployment-level declarations, so a caller can
@@ -367,96 +363,47 @@ async fn restart_only_reload_contract_keeps_the_running_generation_active() {
 }
 
 #[test]
-fn a_deployment_exposes_the_worldgen_profiles_its_packages_declare() {
-    let root = tempfile::tempdir().expect("deployment root");
-    write_package(
-        root.path(),
-        "ore",
-        "\n[worldgen]\nore_profile = \"realistic_deposits\"\n",
-    );
-    write_package(
-        root.path(),
-        "village",
-        "\n[worldgen]\nsettlement_profile = \"plains_village_prototype\"\n",
-    );
-    let host = start(root.path(), &["ore", "village"]);
-
-    assert_eq!(
-        host.worldgen_ore_profile(),
-        Some(PluginWorldgenOreProfile::RealisticDeposits),
-        "the profile the package declared"
-    );
-    let plan = host
-        .worldgen_settlement_plan()
-        .expect("the village package declared a settlement profile");
-    assert_eq!(
-        plan.owner_plugin_id(),
-        "village",
-        "the plan's owner is the package that declared it"
-    );
-    assert_eq!(
-        plan.profile(),
-        PluginWorldgenSettlementProfile::PlainsVillagePrototype
-    );
-    assert!(
-        host.client_bundles().is_empty(),
-        "neither package ships a client bundle"
-    );
-    host.stop();
-}
-
-#[test]
 fn a_deployment_refuses_a_second_declaration_of_one_worldgen_profile() {
-    for (kind, declaration) in [
-        (
-            "ore",
-            "\n[worldgen]\nore_profile = \"realistic_deposits\"\n",
-        ),
-        (
-            "settlement",
-            "\n[worldgen]\nsettlement_profile = \"plains_village_prototype\"\n",
-        ),
-    ] {
-        let root = tempfile::tempdir().expect("deployment root");
-        // The *same* declaration twice: a duplicate has no second slot either, so
-        // keeping the later one would be a silent overwrite of a world's profile.
-        write_package(root.path(), "first", declaration);
-        write_package(root.path(), "second", declaration);
-        let limits = PluginLimits::default();
-        let configuration = deployment(root.path(), &["first", "second"]);
-        let packages = mc_plugin_host::discover(&configuration, &limits)
-            .expect("deployment")
-            .into_packages();
-        let Err(error) = start_deployment(
-            packages,
-            limits,
-            HostQueues::default(),
-            Arc::new(NoSessions),
-        ) else {
-            panic!("two owners of one worldgen profile must not both start");
-        };
-        let HostStartError::WorldgenConflict {
-            kind: refused,
-            first,
-            second,
-        } = error
-        else {
-            panic!("expected a worldgen conflict, saw {error:?}");
-        };
-        assert_eq!(refused, kind);
-        assert_eq!(first, "first");
-        assert_eq!(second, "second");
+    let kind = "ore";
+    let declaration = "\n[worldgen]\nore_profile = \"realistic_deposits\"\n";
+    let root = tempfile::tempdir().expect("deployment root");
+    // The *same* declaration twice: a duplicate has no second slot either, so
+    // keeping the later one would be a silent overwrite of a world's profile.
+    write_package(root.path(), "first", declaration);
+    write_package(root.path(), "second", declaration);
+    let limits = PluginLimits::default();
+    let configuration = deployment(root.path(), &["first", "second"]);
+    let packages = mc_plugin_host::discover(&configuration, &limits)
+        .expect("deployment")
+        .into_packages();
+    let Err(error) = start_deployment(
+        packages,
+        limits,
+        HostQueues::default(),
+        Arc::new(NoSessions),
+    ) else {
+        panic!("two owners of one worldgen profile must not both start");
+    };
+    let HostStartError::WorldgenConflict {
+        kind: refused,
+        first,
+        second,
+    } = error
+    else {
+        panic!("expected a worldgen conflict, saw {error:?}");
+    };
+    assert_eq!(refused, kind);
+    assert_eq!(first, "first");
+    assert_eq!(second, "second");
 
-        // The check refuses it too, through the same aggregation: a deployment
-        // that cannot start must not pass a check.
-        let error = check_deployment(&configuration, &limits)
-            .expect_err("a duplicate worldgen declaration fails the check as well");
-        let CheckError::Package { id, message } = error else {
-            panic!("the check reports a package refusal, saw {error:?}");
-        };
-        assert_eq!(id, "second");
-        assert!(message.contains(kind), "{message}");
-    }
+    // The check refuses it too, through the same aggregation: a deployment
+    // that cannot start must not pass a check.
+    let error = check_deployment(&configuration, &limits)
+        .expect_err("a duplicate worldgen declaration fails the check as well");
+    let CheckError::Package { id, .. } = error else {
+        panic!("the check reports a package refusal, saw {error:?}");
+    };
+    assert_eq!(id, "second");
 }
 
 #[test]

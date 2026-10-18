@@ -61,6 +61,7 @@ fn custom_material_crafts_into_equippable_blade_without_matching_its_paper_carri
             };
             Recipe {
                 id: result.clone(),
+                show_notification: true,
                 kind: RecipeKind::Shapeless(ShapelessRecipe {
                     ingredients: vec![Ingredient {
                         alternatives: vec![IngredientAlternative::Item(ingredient)],

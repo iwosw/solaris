@@ -3,12 +3,12 @@
   "pack_id": "core-replay-seed-81-real-client",
   "quality_label": "stabilization",
   "minecraft_version": "26.1.2",
-  "server_command": "cargo run --bin mc-server -- --config example.toml",
+  "server_command": "cargo run -p mc-edge --bin solaris-v2 -- --config example.toml",
   "core_replay_manifest": "tools/core-replay-scenarios/core-actions-seed-81.json",
   "client_requirement": "A real vanilla 26.1.2 client must execute the copied checked replay manifest through the fixed repo-native Gradle runClient adapter.",
   "forbidden_client_evidence": [
     "wire-probe",
-    "mc_test_harness::client::Client",
+    "mc_vanilla::wire_client::Client",
     "protocol-only bot",
     "headless mock client"
   ],

@@ -15,7 +15,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
-use mc_script::precommit::{HookKind, HookRegistration};
+use mc_script::precommit::{HookFailurePolicy, HookKind, HookRegistration};
 
 use crate::PluginLimits;
 use crate::package::{LoadedPackage, PackageError, load_package};
@@ -139,12 +139,69 @@ pub enum DiscoveryError {
     /// One package is registered twice for one hook.
     #[error("plugin {id:?} is registered twice for {kind}")]
     DuplicateHook { id: String, kind: HookKind },
+    /// A directory-selected package declares a hook the runtime cannot serve.
+    #[error("plugin {id:?} declares {kind}, which this runtime does not support")]
+    UnsupportedHook { id: String, kind: HookKind },
 }
 
 /// Read the deployment directory and answer the packages it will run.
 pub fn discover(
     config: &DeploymentConfig,
     limits: &PluginLimits,
+) -> Result<DiscoveredDeployment, DiscoveryError> {
+    discover_impl(config, limits, true)
+}
+
+/// Validate an entire configured directory without an operator-selected id set.
+///
+/// Every directory entry must load successfully; none is skipped. This is the
+/// v2 directory-only deployment contract, not permissive discovery or a change
+/// to the existing strict operator allow-list.
+///
+/// The runtime supplies the hook kinds it supports. Every declared hook must be
+/// supported, or discovery refuses the deployment before component compilation.
+/// Supported declarations are registered with [`HookFailurePolicy::Deny`] at
+/// order zero; the canonical roster breaks ties by plugin id. An empty supported
+/// set admits only hook-free packages.
+pub fn discover_directory(
+    root: PathBuf,
+    limits: &PluginLimits,
+    supported_hooks: &[HookKind],
+) -> Result<DiscoveredDeployment, DiscoveryError> {
+    let mut config = DeploymentConfig {
+        root,
+        mode: DiscoveryMode::Strict,
+        expected: Vec::new(),
+        grants: BTreeMap::new(),
+        require_grants: false,
+        precommit_hooks: Vec::new(),
+    };
+    let mut deployment = discover_impl(&config, limits, false)?;
+    for package in deployment.packages() {
+        for &kind in package.declared_hooks() {
+            let id = package.manifest().plugin_id();
+            if !supported_hooks.contains(&kind) {
+                return Err(DiscoveryError::UnsupportedHook {
+                    id: id.to_owned(),
+                    kind,
+                });
+            }
+            config.precommit_hooks.push(HookRegistration::new(
+                id,
+                kind,
+                0,
+                HookFailurePolicy::Deny,
+            ));
+        }
+    }
+    attach_precommit_hooks(&config, &mut deployment.packages)?;
+    Ok(deployment)
+}
+
+fn discover_impl(
+    config: &DeploymentConfig,
+    limits: &PluginLimits,
+    check_expected: bool,
 ) -> Result<DiscoveredDeployment, DiscoveryError> {
     let mut directories = Vec::new();
     let entries = std::fs::read_dir(&config.root).map_err(|error| DiscoveryError::Io {
@@ -194,7 +251,7 @@ pub fn discover(
             return Err(DiscoveryError::DuplicateId { id });
         }
     }
-    if config.mode == DiscoveryMode::Strict {
+    if config.mode == DiscoveryMode::Strict && check_expected {
         let mut expected = BTreeSet::new();
         for id in &config.expected {
             if id.is_empty() {

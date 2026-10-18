@@ -3,20 +3,9 @@ use mc_world::chunk::OVERWORLD_GEOMETRY;
 use std::collections::VecDeque;
 
 #[test]
-fn tellus_temperature_uses_latitude_and_surface_altitude() {
-    let settings = TellusWorldgenSettings::default();
-    let router = OverworldRouter::new(77, OVERWORLD_GEOMETRY, WorldgenMode::TellusLike(settings));
-    let equator = router.temperature(0.0, 72.0, 0.0, Some(settings));
-    let arctic = router.temperature(0.0, 72.0, -10_000_000.0, Some(settings));
-    let summit = router.temperature(0.0, 180.0, 0.0, Some(settings));
-    assert!(equator > arctic);
-    assert!(equator > summit);
-}
-
-#[test]
 fn terrain_is_deterministic_bounded_and_continuous() {
     for seed in -16..16 {
-        let router = OverworldRouter::new(seed, OVERWORLD_GEOMETRY, WorldgenMode::VanillaLike);
+        let router = OverworldRouter::new(seed, OVERWORLD_GEOMETRY);
         for z in (-2_048..=2_048).step_by(97) {
             for x in (-2_048..=2_048).step_by(31) {
                 let current_sample = router.sample(x, z);
@@ -38,7 +27,7 @@ fn terrain_is_deterministic_bounded_and_continuous() {
 #[test]
 fn chunk_borders_have_the_same_slope_budget_as_interior_columns() {
     for seed in [-9, 0, 27] {
-        let router = OverworldRouter::new(seed, OVERWORLD_GEOMETRY, WorldgenMode::VanillaLike);
+        let router = OverworldRouter::new(seed, OVERWORLD_GEOMETRY);
         for chunk_x in -24..=24 {
             for chunk_z in -24..=24 {
                 let x = chunk_x * 16 + 15;
@@ -58,7 +47,7 @@ fn rolling_terrain_changes_over_regions_not_single_chunks() {
     let mut comparisons = 0u64;
 
     for seed in [-11, 0, 23] {
-        let router = OverworldRouter::new(seed, OVERWORLD_GEOMETRY, WorldgenMode::VanillaLike);
+        let router = OverworldRouter::new(seed, OVERWORLD_GEOMETRY);
         for z in (-2_048..=2_048).step_by(137) {
             for x in (-2_048..=2_048).step_by(131) {
                 let center = landforms::rolling_hills(router, f64::from(x), f64::from(z), 1.0);
@@ -96,15 +85,8 @@ fn rolling_terrain_changes_over_regions_not_single_chunks() {
 
 #[test]
 fn landforms_do_not_create_isolated_craters() {
-    for (seed, mode) in [
-        (-11, WorldgenMode::VanillaLike),
-        (23, WorldgenMode::VanillaLike),
-        (
-            91,
-            WorldgenMode::TellusLike(TellusWorldgenSettings::default()),
-        ),
-    ] {
-        let router = OverworldRouter::new(seed, OVERWORLD_GEOMETRY, mode);
+    for seed in [-11, 23] {
+        let router = OverworldRouter::new(seed, OVERWORLD_GEOMETRY);
         for z in (-1_024..=1_024).step_by(31) {
             for x in (-1_024..=1_024).step_by(29) {
                 let center = router.sample(x, z).surface_y;
@@ -135,7 +117,7 @@ fn landforms_do_not_create_isolated_craters() {
 fn origin_terrain_is_not_normalized_across_seeds() {
     let heights = (-16..16)
         .map(|seed| {
-            OverworldRouter::new(seed, OVERWORLD_GEOMETRY, WorldgenMode::VanillaLike)
+            OverworldRouter::new(seed, OVERWORLD_GEOMETRY)
                 .sample(0, 0)
                 .surface_y
         })
@@ -147,85 +129,9 @@ fn origin_terrain_is_not_normalized_across_seeds() {
 }
 
 #[test]
-fn accumulated_drainage_paths_stay_downhill_and_reach_coast() {
-    let seeds = [0, 712_816, -1, 34, 91, 233];
-    let cell_blocks = drainage::configured_cell_blocks(1.0);
-    let mut starts = 0usize;
-    let mut coast_connections = 0usize;
-    let mut persistent_connections = 0usize;
-
-    for seed in seeds {
-        let router = OverworldRouter::new(
-            seed,
-            OVERWORLD_GEOMETRY,
-            WorldgenMode::TellusLike(TellusWorldgenSettings::default()),
-        );
-        let mut seed_starts = 0usize;
-        'cells: for z in -40..=40 {
-            for x in -40..=40 {
-                let start = drainage::DrainageCell { x, z };
-                if !drainage::active_cell(seed, start) {
-                    continue;
-                }
-                let (center_x, center_z) = drainage::cell_center(start, cell_blocks);
-                let terrain = router.sample(center_x as i32, center_z as i32);
-                if terrain.continentalness < 0.12 || terrain.ridges > 0.12 {
-                    continue;
-                }
-
-                starts += 1;
-                seed_starts += 1;
-                let mut current = start;
-                let mut active_steps = 0usize;
-                let mut path_steps = 0usize;
-                let mut reached_coast = false;
-                for _ in 0..128 {
-                    path_steps += 1;
-                    active_steps += usize::from(drainage::active_cell(seed, current));
-                    let (block_x, block_z) = drainage::cell_center(current, cell_blocks);
-                    let terrain = router.sample(block_x as i32, block_z as i32);
-                    if terrain.continentalness <= -0.08 {
-                        reached_coast = true;
-                        break;
-                    }
-                    let next = drainage::downstream(seed, current);
-                    assert!(
-                        drainage::hydraulic_elevation(seed, next)
-                            < drainage::hydraulic_elevation(seed, current),
-                        "seed {seed} drainage climbed at {current:?} -> {next:?}"
-                    );
-                    current = next;
-                }
-                if reached_coast {
-                    coast_connections += 1;
-                    persistent_connections += usize::from(active_steps == path_steps);
-                }
-                if seed_starts >= 4 {
-                    break 'cells;
-                }
-            }
-        }
-        assert!(
-            seed_starts >= 2,
-            "seed {seed} exposed only {seed_starts} active inland drainage starts"
-        );
-    }
-
-    assert!(starts >= seeds.len() * 2);
-    assert!(
-        coast_connections * 4 >= starts * 3,
-        "too few accumulated paths reached coast: {coast_connections}/{starts}"
-    );
-    assert!(
-        persistent_connections * 4 >= coast_connections * 3,
-        "coast paths lost their active channel before reaching water: {persistent_connections}/{coast_connections}"
-    );
-}
-
-#[test]
 fn caves_never_open_the_surface_shell_across_seed_grid() {
     for seed in -16..16 {
-        let router = OverworldRouter::new(seed, OVERWORLD_GEOMETRY, WorldgenMode::VanillaLike);
+        let router = OverworldRouter::new(seed, OVERWORLD_GEOMETRY);
         for z in (-256..=256).step_by(31) {
             for x in (-256..=256).step_by(29) {
                 let surface = router.sample(x, z).surface_y;
@@ -249,7 +155,7 @@ fn caves_are_sparse_connected_tunnels_without_shafts_or_chambers() {
     let mut total_caves = 0usize;
 
     for seed in [-3, 7] {
-        let router = OverworldRouter::new(seed, OVERWORLD_GEOMETRY, WorldgenMode::VanillaLike);
+        let router = OverworldRouter::new(seed, OVERWORLD_GEOMETRY);
         let origin = i32::try_from(seed * 97).unwrap();
         let mut volume = vec![false; SIDE * HEIGHT * SIDE];
         let mut cave_count = 0usize;

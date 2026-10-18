@@ -24,6 +24,21 @@ impl ScriptInventoryEnchantment {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 #[non_exhaustive]
+pub struct ScriptInventoryStewEffect {
+    pub id: String,
+    pub duration: i32,
+}
+
+impl ScriptInventoryStewEffect {
+    #[must_use]
+    pub fn new(id: String, duration: i32) -> Self {
+        Self { id, duration }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+#[non_exhaustive]
 pub struct ScriptInventoryItem {
     pub resource_id: String,
     pub count: u32,
@@ -31,9 +46,25 @@ pub struct ScriptInventoryItem {
     pub enchantments: Vec<ScriptInventoryEnchantment>,
     pub custom_name: Option<String>,
     pub item_model: Option<String>,
+    pub max_damage: Option<u32>,
+    pub custom_data: Option<Vec<u8>>,
+    pub stew_effects: Vec<ScriptInventoryStewEffect>,
 }
 
 impl ScriptInventoryItem {
+    #[must_use]
+    pub fn with_components(
+        mut self,
+        max_damage: Option<u32>,
+        custom_data: Option<Vec<u8>>,
+        stew_effects: Vec<ScriptInventoryStewEffect>,
+    ) -> Self {
+        self.max_damage = max_damage;
+        self.custom_data = custom_data;
+        self.stew_effects = stew_effects;
+        self
+    }
+
     #[must_use]
     pub fn new(
         resource_id: String,
@@ -50,11 +81,27 @@ impl ScriptInventoryItem {
             enchantments,
             custom_name,
             item_model,
+            max_damage: None,
+            custom_data: None,
+            stew_effects: Vec::new(),
         }
     }
 
-    fn validate(&self) -> Result<(), ScriptDtoError> {
+    pub(crate) fn validate(&self) -> Result<(), ScriptDtoError> {
         check_contract_resource_id(&self.resource_id)?;
+        if self
+            .max_damage
+            .is_some_and(|value| value == 0 || value > i32::MAX as u32)
+            || self
+                .custom_data
+                .as_ref()
+                .is_some_and(|value| value.len() > 16384)
+        {
+            return Err(ScriptDtoError::InvalidBounds);
+        }
+        for effect in &self.stew_effects {
+            check_contract_resource_id(&effect.id)?;
+        }
         if self.count == 0 || self.count > i32::MAX as u32 {
             return Err(ScriptDtoError::InvalidBounds);
         }
@@ -227,6 +274,22 @@ impl ScriptInventoryReservationSnapshot {
     }
 }
 
+/// Exact capacity of one destination slot for the queried native component stack.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+#[non_exhaustive]
+pub struct ScriptInventoryPlacementSlot {
+    pub slot: u8,
+    pub room: u32,
+}
+
+impl ScriptInventoryPlacementSlot {
+    #[must_use]
+    pub const fn new(slot: u8, room: u32) -> Self {
+        Self { slot, room }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 #[non_exhaustive]
@@ -240,12 +303,51 @@ pub enum ScriptOwnedInventoryResult {
     Reservation {
         reservation: ScriptInventoryReservationSnapshot,
     },
+    /// Full native after-images and the reservation accounting from the same
+    /// durable transfer decision.
+    ReservedTransfer {
+        reservation: ScriptInventoryReservationSnapshot,
+        inventories: Vec<ScriptOwnedInventorySnapshot>,
+    },
+    PlacementRoom {
+        source: ScriptInventoryExpectedRevision,
+        source_slot: u8,
+        destination: ScriptInventoryExpectedRevision,
+        slots: Vec<ScriptInventoryPlacementSlot>,
+    },
 }
 
 impl ScriptOwnedInventoryResult {
     pub(crate) fn validate(&self) -> Result<(), ScriptDtoError> {
         match self {
             Self::Snapshot { inventory } => inventory.validate(),
+            Self::PlacementRoom {
+                source,
+                source_slot,
+                destination,
+                slots,
+            } => {
+                source.endpoint.validate()?;
+                source.fence.validate()?;
+                destination.endpoint.validate()?;
+                destination.fence.validate()?;
+                if !valid_slot(&source.endpoint, *source_slot)
+                    || slots.len() > MAX_OWNED_INVENTORY_SLOTS
+                {
+                    return Err(ScriptDtoError::InvalidBounds);
+                }
+                let mut previous = None;
+                for slot in slots {
+                    if !valid_slot(&destination.endpoint, slot.slot)
+                        || slot.room > i32::MAX as u32
+                        || previous.is_some_and(|index| index >= slot.slot)
+                    {
+                        return Err(ScriptDtoError::InvalidBounds);
+                    }
+                    previous = Some(slot.slot);
+                }
+                Ok(())
+            }
             Self::Transfer { inventories } => {
                 if inventories.is_empty() || inventories.len() > MAX_OWNED_INVENTORY_TRANSFERS * 2 {
                     return Err(ScriptDtoError::InvalidBounds);
@@ -262,6 +364,29 @@ impl ScriptOwnedInventoryResult {
                 Ok(())
             }
             Self::Reservation { reservation } => reservation.validate(),
+            Self::ReservedTransfer {
+                reservation,
+                inventories,
+            } => {
+                reservation.validate()?;
+                if inventories.len() < 2
+                    || inventories.len() > MAX_OWNED_INVENTORY_TRANSFERS * 2
+                    || !inventories
+                        .iter()
+                        .any(|inventory| inventory.endpoint == reservation.endpoint)
+                {
+                    return Err(ScriptDtoError::InvalidBounds);
+                }
+                let mut previous = None;
+                for inventory in inventories {
+                    inventory.validate()?;
+                    if previous.is_some_and(|endpoint| endpoint >= &inventory.endpoint) {
+                        return Err(ScriptDtoError::InvalidBounds);
+                    }
+                    previous = Some(&inventory.endpoint);
+                }
+                Ok(())
+            }
         }
     }
 }

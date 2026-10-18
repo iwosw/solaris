@@ -1,5 +1,10 @@
 # 40k hostile entities / 60 clients profile
 
+**Historical profile:** ADR 0014 Phase 5 deletes this v1 regional-owner
+benchmark and its runner. The workload, commands and limits below record the
+old campaign only; use `catalog-load` for current native v2 protocol loads.
+No old result or acceptance claim transfers to the new runtime.
+
 This benchmark is an explicit release-only profiling workload. It does not run in the normal test suite.
 
 ## Default workload

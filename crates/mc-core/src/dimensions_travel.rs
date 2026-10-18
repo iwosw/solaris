@@ -1,0 +1,652 @@
+//! Cross-world custody moves occur at the shared commit boundary and WAL batch.
+use super::Dimension;
+use crate::boundary::{ChangeSet, ConnectionId, EntityId, PlayerChange, TickOutput};
+use crate::commands::{Command, CommandError, Destination, Target};
+use crate::entities::EntitySlot;
+use crate::tick::TickState;
+use std::collections::BTreeMap;
+use std::sync::Arc;
+
+pub(crate) struct Request {
+    pub connection: ConnectionId,
+    pub executor: EntityId,
+    pub dimension: Dimension,
+    pub command: Command,
+}
+
+fn word(text: &str) -> (&str, &str) {
+    let text = text.trim_start();
+    text.split_once(char::is_whitespace)
+        .map_or((text, ""), |(word, rest)| (word, rest.trim_start()))
+}
+
+/// This extends the existing command subset with dimension-qualified teleport.
+pub(crate) fn parse_execution(
+    text: &str,
+    operator: bool,
+) -> Option<Result<(Dimension, Command), CommandError>> {
+    let (root, rest) = word(text);
+    if root != "execute" {
+        return None;
+    }
+    Some((|| {
+        if !operator {
+            return Err(CommandError::Unknown);
+        }
+        let (mode, rest) = word(rest);
+        let (name, rest) = word(rest);
+        let (run, command) = word(rest);
+        if mode != "in" || run != "run" {
+            return Err(CommandError::Unknown);
+        }
+        let dimension = Dimension::parse(name).ok_or(CommandError::Unknown)?;
+        let command = crate::commands::parse(command, true)?;
+        if !matches!(command, Command::Teleport { .. }) {
+            return Err(CommandError::Unknown);
+        }
+        Ok((dimension, command))
+    })())
+}
+
+pub(crate) fn world(state: &TickState, dimension: Dimension) -> Option<&TickState> {
+    if state.dimension == dimension {
+        Some(state)
+    } else {
+        state.other_dimensions.get(&dimension).map(|world| &**world)
+    }
+}
+
+pub(crate) fn locate(state: &TickState, id: EntityId) -> Option<(Dimension, EntitySlot)> {
+    if let Some(slot) = state.entities.slot_of_any(id) {
+        return Some((state.dimension, slot));
+    }
+    state
+        .other_dimensions
+        .iter()
+        .find_map(|(&dimension, world)| {
+            world.entities.slot_of_any(id).map(|slot| (dimension, slot))
+        })
+}
+
+pub fn locate_uuid(state: &TickState, uuid: uuid::Uuid) -> Option<(Dimension, EntityId)> {
+    std::iter::once(state)
+        .chain(state.other_dimensions.values().map(|world| &**world))
+        .find_map(|world| {
+            world
+                .entities
+                .slot_of_uuid(uuid)
+                .map(|slot| (world.dimension, world.entities.body(slot).id))
+        })
+}
+
+fn targets(
+    state: &TickState,
+    request: &Request,
+    target: &Target,
+    origin: [f64; 3],
+) -> Vec<EntityId> {
+    if matches!(target, Target::Executor) {
+        return locate(state, request.executor)
+            .map(|_| vec![request.executor])
+            .unwrap_or_default();
+    }
+    if super::commands::global_target(target) {
+        return super::commands::resolve(state, request, target, origin);
+    }
+    let Some(world) = world(state, request.dimension) else {
+        return Vec::new();
+    };
+    let target = match target {
+        Target::Selector(selector) => {
+            let mut selector = selector.clone();
+            for (axis, coordinate) in selector.position.iter_mut().enumerate() {
+                if coordinate.is_none() {
+                    *coordinate = Some(origin[axis]);
+                }
+            }
+            Target::Selector(selector)
+        }
+        other => other.clone(),
+    };
+    crate::command_execution::resolve_target(world, request.executor, &target)
+}
+
+fn move_between(
+    source: &mut TickState,
+    destination: &mut TickState,
+    id: EntityId,
+    position: [f64; 3],
+    rotation: [f32; 2],
+    changes: &mut ChangeSet,
+) {
+    let slot = source
+        .entities
+        .slot_of_any(id)
+        .expect("transfer source exists");
+    let connection = source.connections.entity_connection(id);
+    let alive = source.entities.body(slot).alive;
+    if let Some(villager) = &mut source.entities.row_mut(slot).villager {
+        villager.navigation_target = None;
+        villager.navigation_path.clear();
+        villager.navigation_chunks.clear();
+        villager.navigation_repath_at = 0;
+        villager.sleeping = false;
+    }
+    crate::sleep::wake(source, id);
+    crate::mounts::dismount(source, id);
+    crate::mounts::death(source, slot);
+    crate::leash::detach(source, slot);
+    if let Some(connection) = connection {
+        let rules = source.registry.item_rules();
+        let effects = source
+            .players
+            .get_mut(&id)
+            .map(|player| player.close(&rules))
+            .unwrap_or_default();
+        crate::tick::apply_player_effects(source, connection, id, effects, changes);
+        source.open_containers.remove(&id);
+        source.sign_editors.remove(&connection);
+    }
+    source
+        .entities
+        .transfer_to(slot, &mut destination.entities, position, rotation);
+    if let Some(mut player) = source.players.remove(&id) {
+        player.fall_distance = 0.0;
+        destination.players.insert(id, player);
+    }
+    source.journaled_players.remove(&id);
+    source.journaled_villagers.remove(&id);
+    source.journaled_entity_state.remove(&id);
+    if let Some(connection) = connection {
+        source
+            .connections
+            .transfer_to(connection, &mut destination.connections);
+        if let Some(mut queue) = source.outbox.remove(&connection) {
+            destination
+                .outbox
+                .entry(connection)
+                .or_default()
+                .append(&mut queue);
+        }
+        let game_mode = destination.players[&id].game_mode as u8;
+        let portal_cooldown = destination
+            .entities
+            .row(
+                destination
+                    .entities
+                    .slot_of_any(id)
+                    .expect("transferred entity"),
+            )
+            .entity_life
+            .portal
+            .cooldown;
+        if alive {
+            let teleport_id = destination
+                .players
+                .get_mut(&id)
+                .expect("transferred player")
+                .begin_teleport();
+            destination.push_player(
+                connection,
+                PlayerChange::DimensionChanged {
+                    teleport_id,
+                    dimension: destination.dimension,
+                    position,
+                    yaw: rotation[0],
+                    pitch: rotation[1],
+                    game_mode,
+                    portal_cooldown,
+                },
+            );
+        }
+    }
+    if alive && destination.players.contains_key(&id) {
+        crate::advancements::trigger(
+            destination,
+            id,
+            "minecraft:changed_dimension",
+            serde_json::json!({
+                "from": source.dimension.name(),
+                "to": destination.dimension.name(),
+            }),
+        );
+    }
+    changes.entities_removed.push(id);
+    // Leads held by a departing player also release in this same committed tick.
+    crate::leash::tick(source, changes);
+    crate::entity_life::commit_drops(source, &mut changes.entities_spawned);
+    changes
+        .entities_appearance_changed
+        .append(&mut source.appearance_changed);
+}
+
+/// Portal admission can use this same commit-only primitive once its intents win.
+pub(crate) fn change_dimension(
+    state: &mut TickState,
+    id: EntityId,
+    dimension: Dimension,
+    position: [f64; 3],
+    rotation: [f32; 2],
+    changes: &mut BTreeMap<Dimension, ChangeSet>,
+) -> Result<(), String> {
+    let (source, slot) = locate(state, id).ok_or_else(|| "Entity not found".to_owned())?;
+    if world(state, dimension).is_none() {
+        return Err(format!("Dimension {} unavailable", dimension.name()));
+    }
+    if !position.iter().all(|value| value.is_finite())
+        || !rotation.iter().all(|value| value.is_finite())
+        || position[0].abs() >= 30_000_000.0
+        || position[2].abs() >= 30_000_000.0
+        || position[1].abs() > 20_000_000.0
+    {
+        return Err("Invalid teleport position".to_owned());
+    }
+    if source == dimension {
+        let world = if source == state.dimension {
+            state
+        } else {
+            state
+                .other_dimensions
+                .get_mut(&source)
+                .expect("source world")
+        };
+        crate::mounts::dismount(world, id);
+        crate::sleep::wake(world, id);
+        world.entities.set_pos(slot, position);
+        world.entities.set_rot(slot, rotation[0], rotation[1]);
+        world.entities.set_ground(slot, false);
+        if let Some(player) = world.players.get_mut(&id) {
+            player.fall_distance = 0.0;
+        }
+        if let Some(connection) = world.connections.entity_connection(id) {
+            world.correct_position(connection, position, rotation[0], rotation[1]);
+        }
+        changes
+            .entry(source)
+            .or_default()
+            .entities_appearance_changed
+            .push(id);
+        return Ok(());
+    }
+    if source == state.dimension {
+        let mut target = state
+            .other_dimensions
+            .remove(&dimension)
+            .expect("target world");
+        move_between(
+            state,
+            &mut target,
+            id,
+            position,
+            rotation,
+            changes.entry(source).or_default(),
+        );
+        state.other_dimensions.insert(dimension, target);
+    } else {
+        let mut origin = state
+            .other_dimensions
+            .remove(&source)
+            .expect("source world");
+        if dimension == state.dimension {
+            move_between(
+                &mut origin,
+                state,
+                id,
+                position,
+                rotation,
+                changes.entry(source).or_default(),
+            );
+        } else {
+            let target = state
+                .other_dimensions
+                .get_mut(&dimension)
+                .expect("target world");
+            move_between(
+                &mut origin,
+                target,
+                id,
+                position,
+                rotation,
+                changes.entry(source).or_default(),
+            );
+        }
+        state.other_dimensions.insert(source, origin);
+    }
+    changes
+        .entry(dimension)
+        .or_default()
+        .entities_spawned
+        .push(id);
+    sync_wire_ids(state);
+    Ok(())
+}
+
+pub(super) fn sync_wire_ids(state: &mut TickState) {
+    let high_water = std::iter::once(&*state)
+        .chain(state.other_dimensions.values().map(|world| &**world))
+        .map(|world| world.entities.wire_id_high_water())
+        .max()
+        .unwrap_or(0);
+    state.entities.set_next_wire_id(high_water);
+    for world in state.other_dimensions.values_mut() {
+        world.entities.set_next_wire_id(high_water);
+    }
+}
+
+fn execute(
+    state: &mut TickState,
+    request: Request,
+    changes: &mut BTreeMap<Dimension, ChangeSet>,
+) -> Result<(), String> {
+    if !matches!(request.command, Command::Teleport { .. }) {
+        return super::commands::execute(state, request, changes);
+    }
+    let source_dimension = locate(state, request.executor)
+        .map(|(dimension, _)| dimension)
+        .unwrap_or(state.dimension);
+    let source = world(state, source_dimension).expect("executor world");
+    let (mut origin, rotation) = crate::command_console::pose(source, request.executor)
+        .ok_or_else(|| "argument.entity.notfound.entity".to_owned())?;
+    let scale = source_dimension.coordinate_scale() / request.dimension.coordinate_scale();
+    origin[0] *= scale;
+    origin[2] *= scale;
+    let Command::Teleport {
+        target,
+        destination,
+        rotation: facing,
+    } = &request.command
+    else {
+        return Err("Unsupported dimension command".to_owned());
+    };
+    let selected = targets(state, &request, target, origin);
+    if selected.is_empty() {
+        return Err("argument.entity.notfound.entity".to_owned());
+    }
+    let text =
+        |value: String| mc_nbt::Tag::Compound(vec![("text".into(), mc_nbt::Tag::String(value))]);
+    let label = if selected.len() == 1 {
+        let (dimension, _) = locate(state, selected[0]).expect("selected entity");
+        crate::command_execution::entity_name(
+            world(state, dimension).expect("selected world"),
+            selected[0],
+        )
+    } else {
+        text(selected.len().to_string())
+    };
+    let (dimension, position, destination_rotation, destination_name) = match destination {
+        Destination::Position(coords) => (
+            request.dimension,
+            crate::commands::resolve_coords(*coords, origin, rotation),
+            None,
+            None,
+        ),
+        Destination::Entity(target) => {
+            let ids = targets(state, &request, target, origin);
+            if ids.len() != 1 {
+                return Err(if ids.is_empty() {
+                    "argument.entity.notfound.entity"
+                } else {
+                    "argument.entity.toomany"
+                }
+                .to_owned());
+            }
+            let (dimension, slot) = locate(state, ids[0]).expect("destination entity");
+            let world = world(state, dimension).expect("destination world");
+            let [yaw, pitch, _] = world.entities.rot(slot);
+            (
+                dimension,
+                world.entities.pos(slot),
+                Some([yaw, pitch]),
+                Some(crate::command_execution::entity_name(world, ids[0])),
+            )
+        }
+    };
+    for &entity in &selected {
+        let (dimension_before, slot) = locate(state, entity).expect("selected entity");
+        let rot = world(state, dimension_before)
+            .expect("selected world")
+            .entities
+            .rot(slot);
+        let mut rot = destination_rotation.unwrap_or([rot[0], rot[1]]);
+        if let Some(facing) = facing {
+            rot = [
+                facing[0].resolve(f64::from(rotation[0])) as f32,
+                facing[1].resolve(f64::from(rotation[1])) as f32,
+            ];
+        }
+        let wrap = |angle: f32| (angle + 180.0).rem_euclid(360.0) - 180.0;
+        rot = [wrap(rot[0]), wrap(rot[1]).clamp(-90.0, 90.0)];
+        change_dimension(state, entity, dimension, position, rot, changes)
+            .map_err(|_| "commands.teleport.invalidPosition".to_owned())?;
+    }
+    let suffix = if selected.len() == 1 {
+        "single"
+    } else {
+        "multiple"
+    };
+    let mut args = vec![label];
+    let kind = if let Some(name) = destination_name {
+        args.push(name);
+        "entity"
+    } else {
+        args.extend(position.map(|coordinate| text(coordinate.to_string())));
+        "location"
+    };
+    let (dimension, _) = locate(state, request.executor).expect("executor survived teleport");
+    let world = if dimension == state.dimension {
+        state
+    } else {
+        state
+            .other_dimensions
+            .get_mut(&dimension)
+            .expect("executor world")
+    };
+    crate::command_execution::feedback(
+        world,
+        request.connection,
+        &format!("commands.teleport.success.{kind}.{suffix}"),
+        args,
+    );
+    Ok(())
+}
+
+fn refresh(world: &mut TickState, output: &mut TickOutput, mut changes: ChangeSet) {
+    let phase_start = std::env::var_os("MC_CORE_PHASE_LOG")
+        .is_some()
+        .then(std::time::Instant::now);
+    world.refresh_active_chunks(output.tick);
+    let want = world.desired_chunks();
+    let desired_done = phase_start.map(|start| start.elapsed()).unwrap_or_default();
+    changes.chunks_loaded.extend(world.world.ensure(&want));
+    world.refresh_active_chunks(output.tick);
+    let ensure_done = phase_start.map(|start| start.elapsed()).unwrap_or_default();
+    let snapshot = Arc::get_mut(&mut output.snapshot).expect("unpublished dimensional snapshot");
+    snapshot.chunks = world.world.snapshot();
+    let chunks_done = phase_start.map(|start| start.elapsed()).unwrap_or_default();
+    snapshot.entities = world.entities.views();
+    let views_done = phase_start.map(|start| start.elapsed()).unwrap_or_default();
+    let output_changes =
+        Arc::get_mut(&mut output.changes).expect("unpublished dimensional changes");
+    output_changes.blocks.append(&mut changes.blocks);
+    output_changes
+        .entity_events
+        .append(&mut changes.entity_events);
+    output_changes.explosions.append(&mut changes.explosions);
+    output_changes
+        .chunks_unloaded
+        .append(&mut changes.chunks_unloaded);
+    output_changes
+        .entities_spawned
+        .append(&mut changes.entities_spawned);
+    output_changes
+        .entities_removed
+        .append(&mut changes.entities_removed);
+    output_changes
+        .entities_appearance_changed
+        .append(&mut changes.entities_appearance_changed);
+    output_changes
+        .chunks_loaded
+        .append(&mut changes.chunks_loaded);
+    if let Some(start) = phase_start {
+        let total = start.elapsed();
+        eprintln!(
+            "dimension refresh ms: tick={} dimension={} desired={:.2} ensure={:.2} chunks={:.2} views={:.2} append={:.2} total={:.2} wanted={} loaded={}",
+            world.tick,
+            world.dimension.name(),
+            desired_done.as_secs_f64() * 1000.0,
+            ensure_done.saturating_sub(desired_done).as_secs_f64() * 1000.0,
+            chunks_done.saturating_sub(ensure_done).as_secs_f64() * 1000.0,
+            views_done.saturating_sub(chunks_done).as_secs_f64() * 1000.0,
+            total.saturating_sub(views_done).as_secs_f64() * 1000.0,
+            total.as_secs_f64() * 1000.0,
+            want.len(),
+            output_changes.chunks_loaded.len(),
+        );
+    }
+}
+
+pub(crate) fn finish(
+    state: &mut TickState,
+    output: &mut TickOutput,
+    drains: &mut Vec<(ConnectionId, Vec<PlayerChange>)>,
+) {
+    let phase_start = std::env::var_os("MC_CORE_PHASE_LOG")
+        .is_some()
+        .then(std::time::Instant::now);
+    let mut requests = std::mem::take(&mut state.dimension_requests);
+    let mut respawns = std::mem::take(&mut state.dimension_respawns);
+    for world in state.other_dimensions.values_mut() {
+        requests.append(&mut world.dimension_requests);
+        respawns.append(&mut world.dimension_respawns);
+    }
+    if !requests.is_empty() || !respawns.is_empty() {
+        super::globals::roster(state);
+    }
+    let mut changes = BTreeMap::new();
+    for request in requests.drain(..) {
+        let connection = request.connection;
+        let executor = request.executor;
+        if let Err(message) = execute(state, request, &mut changes)
+            && let Some((dimension, _)) = locate(state, executor)
+        {
+            let world = if dimension == state.dimension {
+                &mut *state
+            } else {
+                state
+                    .other_dimensions
+                    .get_mut(&dimension)
+                    .expect("executor world")
+            };
+            crate::command_execution::feedback(world, connection, &message, Vec::new());
+        }
+    }
+    state.dimension_requests = requests;
+    let requests_done = phase_start.map(|start| start.elapsed()).unwrap_or_default();
+    finish_respawns(state, &mut changes, &mut respawns);
+    state.dimension_respawns = respawns;
+    let respawns_done = phase_start.map(|start| start.elapsed()).unwrap_or_default();
+    crate::portals::travel::finish(state, &mut changes);
+    let portals_done = phase_start.map(|start| start.elapsed()).unwrap_or_default();
+    if let Some(changes) = changes.remove(&state.dimension) {
+        refresh(state, output, changes);
+    }
+    for (dimension, changes) in changes {
+        let world = state
+            .other_dimensions
+            .get_mut(&dimension)
+            .expect("changed world");
+        let snapshot = Arc::get_mut(&mut output.snapshot).expect("unpublished root snapshot");
+        refresh(
+            world,
+            snapshot
+                .dimensions
+                .get_mut(&dimension)
+                .expect("published world"),
+            changes,
+        );
+    }
+    let refresh_done = phase_start.map(|start| start.elapsed()).unwrap_or_default();
+    for (connection, queue) in std::mem::take(&mut state.outbox) {
+        if !queue.is_empty() {
+            drains.push((connection, queue));
+        }
+    }
+    for world in state.other_dimensions.values_mut() {
+        for (connection, queue) in std::mem::take(&mut world.outbox) {
+            if !queue.is_empty() {
+                drains.push((connection, queue));
+            }
+        }
+    }
+    if let Some(start) = phase_start {
+        let total = start.elapsed();
+        eprintln!(
+            "dimension travel ms: tick={} requests={:.2} respawns={:.2} portals={:.2} refresh={:.2} drain={:.2} total={:.2}",
+            state.tick,
+            requests_done.as_secs_f64() * 1000.0,
+            respawns_done.saturating_sub(requests_done).as_secs_f64() * 1000.0,
+            portals_done.saturating_sub(respawns_done).as_secs_f64() * 1000.0,
+            refresh_done.saturating_sub(portals_done).as_secs_f64() * 1000.0,
+            total.saturating_sub(refresh_done).as_secs_f64() * 1000.0,
+            total.as_secs_f64() * 1000.0,
+        );
+    }
+}
+
+fn finish_respawns(
+    state: &mut TickState,
+    changes: &mut BTreeMap<Dimension, ChangeSet>,
+    respawns: &mut Vec<EntityId>,
+) {
+    respawns.sort_unstable_by(|a, b| b.cmp(a));
+    while let Some(id) = respawns.pop() {
+        let Some((source, slot)) = locate(state, id) else {
+            continue;
+        };
+        let origin = world(state, source).expect("respawn source");
+        if origin.entities.body(slot).alive {
+            continue;
+        }
+        let Some(player) = origin.players.get(&id) else {
+            continue;
+        };
+        let connection = player.connection;
+        let destination = if player.respawn_point.is_some() {
+            player.respawn_dimension
+        } else {
+            Dimension::Overworld
+        };
+        let target = world(state, destination).expect("all vanilla dimensions loaded");
+        let cell = player.respawn_point.unwrap_or(target.world.world_spawn());
+        let position = [
+            f64::from(cell[0]) + 0.5,
+            f64::from(cell[1]),
+            f64::from(cell[2]) + 0.5,
+        ];
+        let rotation = [player.respawn_yaw, player.respawn_pitch];
+        if source != destination {
+            change_dimension(state, id, destination, position, rotation, changes)
+                .expect("validated durable respawn dimension and position");
+        }
+        let target = if destination == state.dimension {
+            &mut *state
+        } else {
+            state
+                .other_dimensions
+                .get_mut(&destination)
+                .expect("respawn target")
+        };
+        if !crate::tick::respawn_player(target, connection, changes.entry(destination).or_default())
+        {
+            target
+                .deferred_uses
+                .push(crate::boundary::PlayerInput::Respawn { connection });
+        }
+        changes
+            .entry(destination)
+            .or_default()
+            .entities_appearance_changed
+            .append(&mut target.appearance_changed);
+        respawns.append(&mut target.dimension_respawns);
+    }
+}

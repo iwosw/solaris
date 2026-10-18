@@ -1,5 +1,10 @@
 # Loader Live-Gate Fixture
 
+**Scope after ADR 0014 Phase 5:** retained component/bundle authoring fixture
+and historical two-owner gate contract. The old automatic fixture-server
+lifecycle is deleted. Its recorded interaction/audio expectations below are
+not current native-runtime acceptance receipts or a default `loader-live` path.
+
 **Deployment: Requires Solaris Loader on client.** A client profile without
 Solaris Loader protocol support is rejected during Configuration with the
 supported loader platforms and required bundle identities.
@@ -15,11 +20,9 @@ manifest, their client bundle and the ids they own rather than by a second
 program, and a third plugin id fails its instance instead of being served as one
 of the two.
 
-The deployment selects the component frontend explicitly: `playable.toml` sets
-`[plugins] runtime = "wasm"`, and both owners are API `0.7.0` WebAssembly
-components discovered by the component host. Nothing here falls back to the
-retained Luau frontend - a deployment still configured as `runtime = "luau"`
-refuses these manifests instead of reading them under the other contract.
+The server supports only Wasmtime components over `solaris:plugin@0.7.0`.
+The current config selects `[plugins].directory`; no runtime selector or Luau
+fallback exists. Build artifacts must match the current host/SDK.
 
 ## Contents
 
@@ -42,6 +45,12 @@ tools/build-loader-live-gate-fixture.sh --check
 them byte for byte with the tracked outputs; the default mode regenerates them.
 The bundle index declares both owners' screens, their custom block and item, the
 verified tone asset and the key bindings described below.
+
+Screen ids are opaque, owner-qualified routing keys; the schema has no screen
+`kind`. Showcase screens use the default modal presentation, while HUD and
+input screens declare `"overlay": true`. Native `input_bindings` belong only
+to those overlay screens. After editing the templates, run the builder without
+arguments to refresh both ZIPs and their manifests' artifact hashes and sizes.
 
 Fixture generation requires `ffmpeg` with `libvorbis` for the tones and
 `python3` for the Ogg normalizer:
@@ -69,30 +78,29 @@ SDK guest for `wasm32-unknown-unknown`, encodes it into a component exactly as a
 published package is built, and stages complete deployable packages - manifest,
 component, `config.toml` (`mode = "loader-live"`) and verified client bundle -
 under `.analysis/loader-live-gate/plugins`. Nothing untracked is left in
-`examples/`. Preparation does not run the gate and does not claim a gameplay
-result; it is the step the harness performs before starting the server.
+`examples/`. Preparation does not run a gate or claim gameplay acceptance.
+The current harness never implicitly builds or selects this old fixture.
 
-## Running the gate
+## Running a current Loader gate
 
-Run the automated real-client gate for any supported Loader platform:
+Current Loader scenarios require an immutable native server and matching
+independently staged packages; the harness does not prepare this old fixture:
 
 ```sh
-python3 -m tools.harness run loader-live --platform fabric
-python3 -m tools.harness run loader-live --platform neoforge
-python3 -m tools.harness run loader-live --platform forge
+python3 -m tools.harness run scenario loader-v2-settlements-smoke --platform fabric \
+  --server-bin /absolute/solaris-v2 --plugins-dir /absolute/matched-packages
 ```
 
-Each invocation prepares the deployment, creates an isolated Xvfb display, world,
-game directory, permission/cache directory, server log, client log, and
-`scenario.json` plus the canonical harness `result.json` receipt below
-`.analysis/validation/`. The gate starts the production server, connects to
-`127.0.0.1:25567`, accepts the exact Loader permission prompt through the
-embedded MCP endpoint, runs `/loader_ruby` and `/loader_sapphire`, presses each
-owner's exact button, verifies the corresponding real inventory grants, checks
-both exact bundle cache identities, and requires the client to remain in Play. It
-then presents both owner HUDs, updates Ruby, hides only Ruby, proves ordinary
-jump input still works, and reconnects with the same cache. Loader wire protocol
-3 is required.
+Use the current catalog and `docs/AGENT_TOOLING.md` for scenario scope and
+prerequisites. This named smoke is not a replacement claim for the historical
+two-owner input/audio contract below. Its actual result and visual-review
+limits must come from its own receipt.
+
+## Historical two-owner expectations
+
+The following input, sound and screenshot requirements describe the retired
+automatic fixture gate, not checks implicitly performed by the named smoke.
+Loader wire protocol 3 remains the current shared contract in `mc-loader`.
 
 Native Space also reports Ruby press/release. G reaches both owners; opening the
 armed Ruby modal releases both actions before native key-up. Menu input is
@@ -128,7 +136,7 @@ For manual inspection, prepare the deployment and start the server with:
 
 ```sh
 tools/build-loader-live-gate-fixture.sh --prepare
-cargo run --bin mc-server -- --config examples/loader-live-gate/playable.toml
+cargo run -p mc-edge --bin solaris-v2 -- --config examples/loader-live-gate/playable.toml
 ```
 
 and launch one isolated client with a per-run MCP bearer token:
@@ -235,13 +243,12 @@ so it fails rather than skips when the component or the contract drifts.
 
 ## Compatibility
 
-The complementary no-Loader compatibility gate is:
+Current server-only compatibility probes run through:
 
 ```sh
 python3 -m tools.harness run core-client
 ```
 
-It proves that a server-only `basic-economy` plugin accepts the ordinary
-real-client profile and opens its server-owned `/economy` menu, while the same
-client profile without Solaris Loader is rejected by this client-required
-fixture during Configuration with an explicit Loader-required reason.
+Read that profile's current exact scope and receipt; it no longer launches this
+old required-Loader fixture automatically. `--client native` is a labeled
+subset, not the Java compatibility gate or full two-owner presentation proof.

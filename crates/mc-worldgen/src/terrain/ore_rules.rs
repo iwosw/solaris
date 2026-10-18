@@ -6,9 +6,10 @@ use mc_world::{BlockRegistry, BlockStateId};
 
 use super::{biome_rules::BiomeRules, resolve_block_or};
 
-// Candidate cells preserve the old per-block density without scanning every
-// world voxel. The hard caps fence malformed sidecars and keep work and stack
-// storage bounded per generated chunk.
+// Candidate-cell admission represents attempts, preserving each vanilla pass's
+// height density without scanning every world voxel. Configured size is only
+// the vein geometry parameter; the ellipsoid union may yield fewer blocks.
+// Hard caps fence malformed sidecars and bound chunk work and stack storage.
 pub(super) const ORE_ANCHOR_CELL_EDGE: i32 = 4;
 pub(super) const ORE_ANCHOR_CELL_VOLUME: u64 = 64;
 pub(super) const MAX_ORE_ANCHORS_PER_CELL: usize = 16;
@@ -24,6 +25,8 @@ enum EmbeddedOreScope {
     Any,
     EmeraldBiomes,
     Badlands,
+    Copper,
+    Dripstone,
 }
 
 const EMERALD_ORE_BIOMES: &[&str] = &[
@@ -275,7 +278,7 @@ const VANILLA_OVERWORLD_ORE_PASSES: &[EmbeddedOrePass] = &[
         distribution: EmbeddedOreDistribution::Trapezoid,
         size: 10,
         discard_chance_on_air_exposure: 0.0,
-        scope: EmbeddedOreScope::Any,
+        scope: EmbeddedOreScope::Copper,
     },
     EmbeddedOrePass {
         placed_feature: "minecraft:ore_emerald",
@@ -302,6 +305,19 @@ const VANILLA_OVERWORLD_ORE_PASSES: &[EmbeddedOrePass] = &[
         size: 9,
         discard_chance_on_air_exposure: 0.0,
         scope: EmbeddedOreScope::Badlands,
+    },
+    EmbeddedOrePass {
+        placed_feature: "minecraft:ore_copper_large",
+        normal: "minecraft:copper_ore",
+        deepslate: "minecraft:deepslate_copper_ore",
+        min: HeightAnchor::Absolute(-16),
+        max: HeightAnchor::Absolute(112),
+        attempts_numerator: 16,
+        attempts_denominator: 1,
+        distribution: EmbeddedOreDistribution::Trapezoid,
+        size: 20,
+        discard_chance_on_air_exposure: 0.0,
+        scope: EmbeddedOreScope::Dripstone,
     },
 ];
 
@@ -366,6 +382,12 @@ impl OreRules {
                     }
                     EmbeddedOreScope::Badlands => {
                         BiomeScope::only(embedded_biomes(EXTRA_GOLD_BIOMES))
+                    }
+                    EmbeddedOreScope::Copper => {
+                        BiomeScope::Except(embedded_biomes(&["minecraft:dripstone_caves"]))
+                    }
+                    EmbeddedOreScope::Dripstone => {
+                        BiomeScope::only(embedded_biomes(&["minecraft:dripstone_caves"]))
                     }
                 };
                 Some(OreRule {
@@ -470,6 +492,7 @@ pub struct OreRule {
     pub y: YRange,
     pub spacing: OreSpacing,
     pub biomes: BiomeScope,
+    /// Vanilla OreFeature geometry parameter, not a guaranteed block count.
     pub size: u32,
     pub discard_chance_on_air_exposure: f64,
 }
@@ -564,6 +587,8 @@ impl OreSpacing {
 pub enum BiomeScope {
     Any,
     Only(Vec<Identifier>),
+    /// All biomes except these; ordinary copper excludes dripstone caves.
+    Except(Vec<Identifier>),
 }
 
 impl BiomeScope {
@@ -577,9 +602,14 @@ impl BiomeScope {
     }
 
     pub(super) fn matches(&self, biome: &Identifier) -> bool {
+        self.matches_name(biome.as_str())
+    }
+
+    pub(super) fn matches_name(&self, biome: &str) -> bool {
         match self {
             Self::Any => true,
-            Self::Only(biomes) => biomes.contains(biome),
+            Self::Only(biomes) => biomes.iter().any(|id| id.as_str() == biome),
+            Self::Except(biomes) => !biomes.iter().any(|id| id.as_str() == biome),
         }
     }
 }

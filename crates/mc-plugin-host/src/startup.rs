@@ -22,11 +22,13 @@
 
 use mc_data::Identifier;
 use mc_data::item_components::{CustomItemDefinition, ItemFacts, ItemFactsTable};
-use mc_data::items::solaris_required_items;
+use mc_data::items::{ItemRegistry, solaris_required_items};
+use mc_data::tags::{TagsData, solaris_required_item_tags};
 use std::collections::BTreeMap;
+use std::sync::LazyLock;
 
 use mc_script::{
-    BiomeSpawns, ClayRule, ClientBundle, GameplayRules, GameplayRulesError, PluginSettlementPlan,
+    BiomeSpawns, ClayRule, ClientBundle, GameplayRules, GameplayRulesError,
     PluginWorldgenOreProfile, SpawnEntry, SpawnPlacement, TreeRule,
 };
 
@@ -35,6 +37,10 @@ use crate::bindings::exports::solaris::plugin::lifecycle::{
     TreeRules,
 };
 use crate::package::LoadedPackage;
+
+static REQUIRED_ITEMS: LazyLock<ItemRegistry> = LazyLock::new(solaris_required_items);
+static REQUIRED_ITEM_TAGS: LazyLock<TagsData> =
+    LazyLock::new(|| solaris_required_item_tags(&REQUIRED_ITEMS));
 
 /// A `startup-contribution` value the startup contract's own field cannot hold.
 ///
@@ -52,7 +58,7 @@ pub struct FieldOverflow {
 }
 
 /// The deployment's own declarations: the client bundles the Loader stages and
-/// the two worldgen profiles a world opens against.
+/// the generic ore profile a world opens against.
 ///
 /// They belong to the deployment rather than to one package, so both the check and
 /// the run path settle them with [`aggregate_deployment`] - one function, one
@@ -62,7 +68,6 @@ pub struct FieldOverflow {
 pub struct DeploymentSurface {
     client_bundles: Vec<ClientBundle>,
     ore_profile: Option<(String, PluginWorldgenOreProfile)>,
-    settlement_plan: Option<(String, PluginSettlementPlan)>,
 }
 
 impl DeploymentSurface {
@@ -77,17 +82,11 @@ impl DeploymentSurface {
     pub fn ore_profile(&self) -> Option<PluginWorldgenOreProfile> {
         self.ore_profile.as_ref().map(|(_, profile)| *profile)
     }
-
-    /// The one settlement plan the deployment declared, if any.
-    #[must_use]
-    pub fn settlement_plan(&self) -> Option<&PluginSettlementPlan> {
-        self.settlement_plan.as_ref().map(|(_, plan)| plan)
-    }
 }
 
 /// Two packages that each declared the same worldgen profile.
 ///
-/// A world opens against exactly one ore profile and one settlement plan, so a
+/// A world opens against exactly one ore profile, so a
 /// second declaration has no slot: it is refused rather than settled by keeping
 /// the later one, which would silently change the world a package asked for.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -121,16 +120,6 @@ pub fn aggregate_deployment(
                 });
             }
             surface.ore_profile = Some((id.to_owned(), profile));
-        }
-        if let Some(plan) = package.worldgen_settlement_plan() {
-            if let Some((first, _)) = &surface.settlement_plan {
-                return Err(WorldgenConflict {
-                    kind: "settlement",
-                    first: first.clone(),
-                    second: id.to_owned(),
-                });
-            }
-            surface.settlement_plan = Some((id.to_owned(), plan.clone()));
         }
         surface
             .client_bundles
@@ -168,6 +157,8 @@ pub enum ContributionRefusal {
     Invalid(#[from] GameplayRulesError),
     #[error("item declaration {0}")]
     InvalidItem(String),
+    #[error("work recipe declaration {0}")]
+    InvalidWorkRecipe(String),
 }
 
 /// The distinct native startup domains one configure response contributes.
@@ -175,6 +166,7 @@ pub enum ContributionRefusal {
 pub struct ValidatedStartupContribution {
     rules: Option<GameplayRules>,
     items: Vec<CustomItemDefinition>,
+    work_recipes: Vec<mc_data::recipes::work::WorkRecipe>,
 }
 
 impl ValidatedStartupContribution {
@@ -186,6 +178,14 @@ impl ValidatedStartupContribution {
     #[must_use]
     pub fn items(&self) -> &[CustomItemDefinition] {
         &self.items
+    }
+
+    /// Immutable native definitions decoded from configure's `work-recipes`.
+    /// A provider may author at most 256 strict JSON definitions totaling 1 MiB;
+    /// recipe identities belong to that provider and references must be registered.
+    #[must_use]
+    pub fn work_recipes(&self) -> &[mc_data::recipes::work::WorkRecipe] {
+        &self.work_recipes
     }
 }
 
@@ -249,13 +249,160 @@ pub fn convert_startup_contribution(
         ));
     }
     let items = ItemFactsTable::default()
-        .with_custom_items(items, &solaris_required_items())
+        .with_custom_items(items, &REQUIRED_ITEMS)
         .map_err(|error| ContributionRefusal::InvalidItem(error.to_string()))?;
+    let work_recipes = convert_work_recipes(plugin_id, contribution, &items)?;
     let items = items.into_custom_items();
-    if rules.is_none() && items.is_empty() {
+    if rules.is_none() && items.is_empty() && work_recipes.is_empty() {
         return Err(ContributionRefusal::Invalid(GameplayRulesError::NoCategory));
     }
-    Ok(ValidatedStartupContribution { rules, items })
+    Ok(ValidatedStartupContribution {
+        rules,
+        items,
+        work_recipes,
+    })
+}
+
+/// Convert already-deserialized native work-recipe JSON through the exact
+/// same validation the deployment path applies: parse each definition,
+/// canonicalize `custom_data`, check ownership/duplicates/item and tag
+/// references. Host-owned so the one conversion stays exact; native S1
+/// startup authors its recipe JSON strings and hands them back here rather
+/// than duplicating the validation.
+pub fn convert_native_work_recipes(
+    owner: &str,
+    definitions: &[String],
+    facts: &ItemFactsTable,
+) -> Result<Vec<mc_data::recipes::work::WorkRecipe>, ContributionRefusal> {
+    let invalid = |reason: String| ContributionRefusal::InvalidWorkRecipe(reason);
+    convert_recipe_definitions(owner, definitions, facts, &invalid)
+}
+
+fn convert_work_recipes(
+    plugin_id: &str,
+    contribution: &StartupContribution,
+    facts: &ItemFactsTable,
+) -> Result<Vec<mc_data::recipes::work::WorkRecipe>, ContributionRefusal> {
+    let definitions = contribution.work_recipes.as_deref().unwrap_or_default();
+    let invalid = |reason: String| ContributionRefusal::InvalidWorkRecipe(reason);
+    if definitions.len() > 256
+        || definitions
+            .iter()
+            .try_fold(0usize, |total, value| total.checked_add(value.len()))
+            .is_none_or(|total| total > 1_048_576)
+    {
+        return Err(invalid(
+            "catalog exceeds 256 definitions or 1 MiB".to_owned(),
+        ));
+    }
+    convert_recipe_definitions(plugin_id, definitions, facts, &invalid)
+}
+
+fn convert_recipe_definitions(
+    owner: &str,
+    definitions: &[String],
+    facts: &ItemFactsTable,
+    invalid: &impl Fn(String) -> ContributionRefusal,
+) -> Result<Vec<mc_data::recipes::work::WorkRecipe>, ContributionRefusal> {
+    let items = &*REQUIRED_ITEMS;
+    let tags = &*REQUIRED_ITEM_TAGS;
+    let item_registry = Identifier::parse("minecraft:item").expect("static registry id");
+    let mut recipes = Vec::with_capacity(definitions.len());
+    let mut ids = std::collections::BTreeSet::new();
+    for definition in definitions {
+        let mut recipe: mc_data::recipes::work::WorkRecipe =
+            serde_json::from_str(definition).map_err(|error| invalid(error.to_string()))?;
+        if recipe.id.namespace() != owner {
+            return Err(invalid(format!("{} must be owned by {owner}", recipe.id)));
+        }
+        if !ids.insert(recipe.id.clone()) {
+            return Err(invalid(format!("duplicate recipe {}", recipe.id)));
+        }
+        for components in recipe
+            .inputs
+            .iter_mut()
+            .filter_map(|input| input.components.as_mut())
+            .chain(
+                recipe
+                    .tools
+                    .iter_mut()
+                    .filter_map(|tool| tool.components.as_mut()),
+            )
+            .chain(
+                recipe
+                    .outputs
+                    .iter_mut()
+                    .chain(&mut recipe.remainders)
+                    .map(|stack| &mut stack.components),
+            )
+        {
+            if let Some(bytes) = components.custom_data.as_mut() {
+                *bytes = mc_data::item_stack::canonicalize_custom_data(bytes)
+                    .map_err(|error| invalid(format!("{}: {error}", recipe.id)))?;
+            }
+        }
+        recipe
+            .validate(items, facts)
+            .map_err(|error| invalid(format!("{}: {error}", recipe.id)))?;
+        for id in recipe
+            .inputs
+            .iter()
+            .filter_map(|input| input.item.as_ref())
+            .chain(
+                recipe
+                    .outputs
+                    .iter()
+                    .chain(&recipe.remainders)
+                    .map(|stack| &stack.item),
+            )
+            .chain(recipe.tools.iter().map(|tool| &tool.item))
+            .chain(
+                recipe
+                    .inputs
+                    .iter()
+                    .flat_map(|input| &input.alternatives)
+                    .filter_map(|alternative| match alternative {
+                        mc_data::recipes::work::WorkRecipeAlternative::Item(id) => Some(id),
+                        mc_data::recipes::work::WorkRecipeAlternative::Tag(_) => None,
+                    }),
+            )
+        {
+            if id.namespace() != "minecraft" && id.namespace() != owner {
+                return Err(invalid(format!(
+                    "recipe {} references item {id} not owned by {owner}",
+                    recipe.id
+                )));
+            }
+        }
+        for tag in recipe
+            .inputs
+            .iter()
+            .filter_map(|input| input.tag.as_ref())
+            .chain(
+                recipe
+                    .inputs
+                    .iter()
+                    .flat_map(|input| &input.alternatives)
+                    .filter_map(|alternative| match alternative {
+                        mc_data::recipes::work::WorkRecipeAlternative::Tag(id) => Some(id),
+                        mc_data::recipes::work::WorkRecipeAlternative::Item(_) => None,
+                    }),
+            )
+        {
+            if !tags
+                .registries
+                .get(&item_registry)
+                .is_some_and(|registered| registered.contains_key(tag))
+            {
+                return Err(invalid(format!(
+                    "recipe {} references unregistered item tag {tag}",
+                    recipe.id
+                )));
+            }
+        }
+        recipes.push(recipe);
+    }
+    Ok(recipes)
 }
 
 fn convert_item_definition(
@@ -286,6 +433,20 @@ fn convert_item_definition(
             Ok(id)
         })
         .transpose()?;
+    let physical_profile = item
+        .physical_profile
+        .as_deref()
+        .map(|json| {
+            if json.len() > 65_536 {
+                return Err(ContributionRefusal::InvalidItem(
+                    "physical profile exceeds 64 KiB".to_owned(),
+                ));
+            }
+            serde_json::from_str::<mc_data::item_components::PhysicalItemProfile>(json)
+                .map(Box::new)
+                .map_err(|error| ContributionRefusal::InvalidItem(error.to_string()))
+        })
+        .transpose()?;
     Ok(CustomItemDefinition {
         id,
         carrier,
@@ -298,6 +459,7 @@ fn convert_item_definition(
             attack_damage_modifier: item.attack_damage_modifier,
             attack_speed_modifier: item.attack_speed_modifier,
             equippable_slot: item.equippable_slot.clone(),
+            physical_profile,
             ..ItemFacts::default()
         },
     })
@@ -428,6 +590,14 @@ impl PackageContribution {
         }
     }
 
+    #[must_use]
+    pub fn work_recipes(&self) -> &[mc_data::recipes::work::WorkRecipe] {
+        match &self.outcome {
+            ContributionOutcome::Configured(content) => content.work_recipes(),
+            ContributionOutcome::NoContribution | ContributionOutcome::Refused(_) => &[],
+        }
+    }
+
     /// The refusal, when the package declared a contribution the contract will not
     /// take.
     #[must_use]
@@ -483,6 +653,17 @@ impl DeploymentContribution {
             .flat_map(|package| package.items().iter().map(move |item| (package.id(), item)))
     }
 
+    pub fn work_recipes(
+        &self,
+    ) -> impl Iterator<Item = (&str, &mc_data::recipes::work::WorkRecipe)> {
+        self.packages.iter().flat_map(|package| {
+            package
+                .work_recipes()
+                .iter()
+                .map(move |recipe| (package.id(), recipe))
+        })
+    }
+
     /// Record what one package's `configure` answered.
     ///
     /// Called by the host on the same answer it already has, so the recorded
@@ -501,3 +682,7 @@ impl DeploymentContribution {
         });
     }
 }
+
+#[cfg(test)]
+#[path = "startup_tests.rs"]
+mod tests;

@@ -165,6 +165,68 @@ fn plugin_counters<'a>(
 }
 
 #[tokio::test]
+async fn restored_initial_clock_anchors_init_and_first_callback_timers() {
+    let (lines, _) = drive(
+        &[("hello", "probe", 0)],
+        PluginLimits::default(),
+        HostQueues {
+            defer_initial_timer_clock: true,
+            ..HostQueues::default()
+        },
+        &[
+            Beat::Tick(10_000),
+            Beat::Join(1),
+            Beat::Tick(10_000),
+            Beat::Tick(9_999),
+            Beat::Tick(10_001),
+            Beat::Tick(10_001),
+        ],
+    )
+    .await;
+    assert_eq!(
+        lines,
+        expected(&[
+            ("hello", "probe-init:10001:10001"),
+            ("hello", "probe-join-1:10001:10001"),
+        ])
+    );
+}
+
+#[tokio::test]
+async fn fresh_initial_clock_anchors_once_even_when_its_value_is_zero() {
+    let (lines, _) = drive(
+        &[("hello", "probe", 0)],
+        PluginLimits::default(),
+        HostQueues {
+            defer_initial_timer_clock: true,
+            ..HostQueues::default()
+        },
+        &[Beat::Tick(0), Beat::Join(1), Beat::Tick(0), Beat::Tick(1)],
+    )
+    .await;
+    assert_eq!(
+        lines,
+        expected(&[("hello", "probe-init:1:1"), ("hello", "probe-join-1:1:1"),])
+    );
+}
+
+#[tokio::test]
+async fn overflowing_initial_timer_clock_retires_without_firing() {
+    let (lines, diagnostics) = drive(
+        &[("hello", "probe", 0)],
+        PluginLimits::default(),
+        HostQueues {
+            defer_initial_timer_clock: true,
+            ..HostQueues::default()
+        },
+        &[Beat::Tick(u64::MAX), Beat::Join(1)],
+    )
+    .await;
+    assert!(lines.is_empty());
+    assert_eq!(plugin_counters(&diagnostics, "hello").events_delivered, 0);
+}
+
+#[tokio::test]
 async fn a_timer_fires_on_the_first_pushed_tick_past_its_deadline_and_never_twice() {
     let beats = [
         Beat::Tick(10),
@@ -370,7 +432,9 @@ async fn timer_mutations_count_toward_the_shared_command_budget() {
 async fn due_callbacks_share_fuel_and_exhaustion_discards_the_whole_tick() {
     let beats = [Beat::Tick(90), Beat::Join(1), Beat::Tick(91)];
     let limits = PluginLimits {
-        fuel_per_call: 1_000_000,
+        // The size-optimized guest uses more instructions per loop than the
+        // speed-optimized release guest. Still fit one callback, never eight.
+        fuel_per_call: 2_000_000,
         ..PluginLimits::default()
     };
     let (single, _) = drive(
@@ -437,6 +501,7 @@ async fn a_refused_delivery_keeps_the_guest_live_and_commits_no_timer() {
         HostQueues {
             events: 64,
             commands: 1,
+            ..HostQueues::default()
         },
         &beats,
     )

@@ -94,7 +94,7 @@ scenario_sha256="$(sha256sum "$SCENARIO" | cut -d ' ' -f 1)"
   printf 'git_commit=%s\n' "$git_commit"
   printf 'git_branch=%s\n' "$git_branch"
   printf 'config=%s\n' "$REPO_ROOT/example.toml"
-  printf 'server_command=%s\n' 'cargo run --bin mc-server -- --config example.toml'
+  printf 'server_command=%s\n' 'cargo run -p mc-edge --bin solaris-v2 -- --config example.toml'
   printf 'client_kind=%s\n' 'gradle-runclient'
   printf 'client_adapter_source=%s\n' "$CLIENT_ADAPTER_SOURCE"
   printf 'client_adapter_root=%s\n' "$AGENT_ROOT"
@@ -115,7 +115,7 @@ Client gate: prepared owner-run until a real vanilla 26.1.2 client fills this fi
 
 ## Commands
 
-- Server: \`cargo run --bin mc-server -- --config example.toml\`
+- Server: \`cargo run -p mc-edge --bin solaris-v2 -- --config example.toml\`
 - Client adapter: \`$AGENT_ROOT/gradlew -p '$AGENT_ROOT' --no-configuration-cache :fabric-agent:runClientAgent\`
 
 ## Steps
@@ -137,7 +137,7 @@ cat > "$run_dir/OWNER_STEPS.md" <<EOF
 # Owner-Run M78 Real Client Path
 
 1. Start Solaris from the repo root and tee server output to this run dir:
-   \`cargo run --bin mc-server -- --config example.toml 2>&1 | tee '$run_dir/server.log'\`
+   \`cargo run -p mc-edge --bin solaris-v2 -- --config example.toml 2>&1 | tee '$run_dir/server.log'\`
 2. Check that the repo-native Gradle adapter is available:
    \`bash tools/prepare-real-client-scenario.sh --check\`
 3. Launch the real client through the Gradle adapter:

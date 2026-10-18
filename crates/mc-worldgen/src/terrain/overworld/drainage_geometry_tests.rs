@@ -32,13 +32,12 @@ fn sampling_matches_complete_reaches_at_cell_boundaries() {
                                     ChannelGeometry {
                                         cell_blocks: size,
                                         minimum_bank_width,
-                                        taper_headwaters: false,
                                     },
                                     &mut expected,
                                 );
                             }
                         }
-                        let actual = sample(seed, x, z, scale, minimum_bank_width, false);
+                        let actual = sample(seed, x, z, scale, minimum_bank_width);
                         assert_eq!(
                             (
                                 actual.channel_weight,

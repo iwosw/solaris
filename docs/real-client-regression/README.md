@@ -5,11 +5,18 @@ These manifests are not protocol harnesses and do not count as client evidence
 until the repo-native Gradle `runClient` adapter launches a normal vanilla
 26.1.2 client and the required artifacts are recorded.
 
+Current launches use `mc-edge`'s `solaris-v2` over `mc-core` (ADR 0014).
+Recorded September fixture paths, grants and terrain assumptions in older
+manifest deployment metadata are historical provenance, not current TOML
+settings or native-runtime acceptance. Use [OPERATING.md](../OPERATING.md) and
+[PLUGINS.md](../PLUGINS.md) for a valid current deployment; a manifest is not
+evidence that its scenario passed after the cutover.
+
 Artifacts from a run stay local under `.analysis/real-client-runs/<run_id>/`:
 
 - `manifest.json` copied from the tracked scenario manifest.
 - `client.log` from the real client.
-- `server.log` from `cargo run --bin mc-server -- --config <config>`; `--run`
+- `server.log` from `cargo run -p mc-edge --bin solaris-v2 -- --config <config>`; `--run`
   uses a per-run `server.toml` copied from the selected source config, defaulting
   to `example.toml`.
 - `observations.json` with structured pass/fail notes for each step.
@@ -20,7 +27,7 @@ Artifacts from a run stay local under `.analysis/real-client-runs/<run_id>/`:
 - `automation-driver.txt` with the auto-selected Gradle `runClient` adapter
   metadata and forbidden-client guard outcome.
 
-Protocol bots, `wire-probe`, and `mc_test_harness::client::Client` runs may be
+Protocol bots, `wire-probe`, and `mc_vanilla::wire_client::Client` runs may be
 linked as supporting harness evidence, but they must not be recorded as the
 `client_gate` for these manifests.
 
@@ -39,12 +46,12 @@ bash tools/run-real-client-regression.sh --run
 Set `SOLARIS_REAL_CLIENT_SERVER_CONFIG=<path>` to use an explicit local config,
 for example a copy of `example.toml` with `data.vanilla_data_dir` enabled.
 During `--run`, the runner writes an effective `server.toml` into the artifact
-directory and grants operator access to the Gradle-launched offline usernames
-(`SolarisPrimary` and `SolarisSecondary`) so the local debug scenarios can use
-`/debug give` without changing the tracked example config.
+directory and writes vanilla `ops.json` beside it for the explicitly privileged
+offline scenario identities (`SolarisPrimary`/`SolarisSecondary`). It does not
+change tracked config or grant operators to a no-debug survival scenario.
 
-`--run` starts Solaris, executes the `:fabric-agent:runClientAgent` task under
-`client-mod/solaris-client-agent` with `--no-configuration-cache`, and writes
+`--run` starts Solaris and executes the sibling `../solaris-loader` Gradle
+`:fabric-agent:runClientAgent` task with `--no-configuration-cache`, writing
 the local artifact directory. It does not mark scenarios passed unless the
 in-client agent driver records executed observations. After a real client
 executes the pack, validate the artifact:
@@ -196,17 +203,15 @@ route. It intentionally returns `blocked`, not `passed`, until swim feel, sugar
 cane support/cascade/drop, the owner frozen-world route, and full TPS/lock
 performance evidence have dedicated real-client or manual gates.
 
-Every manifest entry declares `no_debug_commands`. `false` means the scenario's
-own steps legitimately use an operator or debug command, so the runner lists the
-launched Gradle usernames in `[admin].operators`; `true` means the scenario must
-prove itself with no operator privileges at all and the runner writes
-`operators = []`. A missing or non-boolean value fails `--check`/`--run` before
-anything starts.
+Every manifest entry declares `no_debug_commands`. `false` permits only its
+declared operator/debug fixture, so the runner writes the launched usernames
+to vanilla `ops.json` at level four beside its isolated server config. `true`
+requires no operator privileges and writes an empty operator list. Missing or
+non-boolean values fail `--check`/`--run` before launch.
 
-The approved runner grants its own launched profiles debug-command access in
-the per-run config. Manual runs outside the runner still need a local test
-config whose `[admin]` section allows the launched profile, for example by
-listing that profile in `operators`.
+Manual runs need the same explicit vanilla access-list fixture. The retired
+`[admin].operators` setting is ignored by the native server and must not be
+used to grant access.
 
 This path remains non-green until a real client bridge writes
 `observations.json` with `"client_gate": "agent-run-real-client"` and

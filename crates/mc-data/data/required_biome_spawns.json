@@ -1,103 +1,637 @@
 {
   "minecraft:plains": {
     "creature": [
-      { "type": "minecraft:sheep", "minCount": 4, "maxCount": 4, "weight": 12 },
-      { "type": "minecraft:pig", "minCount": 4, "maxCount": 4, "weight": 10 },
-      { "type": "minecraft:chicken", "minCount": 4, "maxCount": 4, "weight": 10 },
-      { "type": "minecraft:cow", "minCount": 4, "maxCount": 4, "weight": 8 }
+      {
+        "type": "minecraft:sheep",
+        "minCount": 4,
+        "maxCount": 4,
+        "weight": 12
+      },
+      {
+        "type": "minecraft:pig",
+        "minCount": 4,
+        "maxCount": 4,
+        "weight": 10
+      },
+      {
+        "type": "minecraft:chicken",
+        "minCount": 4,
+        "maxCount": 4,
+        "weight": 10
+      },
+      {
+        "type": "minecraft:cow",
+        "minCount": 4,
+        "maxCount": 4,
+        "weight": 8
+      }
     ],
     "monster": [
-      { "type": "minecraft:spider", "minCount": 4, "maxCount": 4, "weight": 100 },
-      { "type": "minecraft:zombie", "minCount": 4, "maxCount": 4, "weight": 90 },
-      { "type": "minecraft:skeleton", "minCount": 4, "maxCount": 4, "weight": 100 }
+      {
+        "type": "minecraft:spider",
+        "minCount": 4,
+        "maxCount": 4,
+        "weight": 100
+      },
+      {
+        "type": "minecraft:zombie",
+        "minCount": 4,
+        "maxCount": 4,
+        "weight": 90
+      },
+      {
+        "type": "minecraft:skeleton",
+        "minCount": 4,
+        "maxCount": 4,
+        "weight": 100
+      },
+      {
+        "type": "minecraft:creeper",
+        "minCount": 4,
+        "maxCount": 4,
+        "weight": 100
+      }
     ]
   },
   "minecraft:forest": {
     "creature": [
-      { "type": "minecraft:sheep", "minCount": 4, "maxCount": 4, "weight": 12 },
-      { "type": "minecraft:pig", "minCount": 4, "maxCount": 4, "weight": 10 },
-      { "type": "minecraft:chicken", "minCount": 4, "maxCount": 4, "weight": 10 },
-      { "type": "minecraft:cow", "minCount": 4, "maxCount": 4, "weight": 8 }
+      {
+        "type": "minecraft:sheep",
+        "minCount": 4,
+        "maxCount": 4,
+        "weight": 12
+      },
+      {
+        "type": "minecraft:pig",
+        "minCount": 4,
+        "maxCount": 4,
+        "weight": 10
+      },
+      {
+        "type": "minecraft:chicken",
+        "minCount": 4,
+        "maxCount": 4,
+        "weight": 10
+      },
+      {
+        "type": "minecraft:cow",
+        "minCount": 4,
+        "maxCount": 4,
+        "weight": 8
+      }
     ],
     "monster": [
-      { "type": "minecraft:spider", "minCount": 4, "maxCount": 4, "weight": 100 },
-      { "type": "minecraft:zombie", "minCount": 4, "maxCount": 4, "weight": 95 },
-      { "type": "minecraft:skeleton", "minCount": 4, "maxCount": 4, "weight": 100 }
+      {
+        "type": "minecraft:spider",
+        "minCount": 4,
+        "maxCount": 4,
+        "weight": 100
+      },
+      {
+        "type": "minecraft:zombie",
+        "minCount": 4,
+        "maxCount": 4,
+        "weight": 95
+      },
+      {
+        "type": "minecraft:skeleton",
+        "minCount": 4,
+        "maxCount": 4,
+        "weight": 100
+      },
+      {
+        "type": "minecraft:creeper",
+        "minCount": 4,
+        "maxCount": 4,
+        "weight": 100
+      }
     ]
   },
   "minecraft:taiga": {
     "creature": [
-      { "type": "minecraft:sheep", "minCount": 4, "maxCount": 4, "weight": 12 },
-      { "type": "minecraft:pig", "minCount": 4, "maxCount": 4, "weight": 10 },
-      { "type": "minecraft:chicken", "minCount": 4, "maxCount": 4, "weight": 10 },
-      { "type": "minecraft:cow", "minCount": 4, "maxCount": 4, "weight": 8 }
+      {
+        "type": "minecraft:sheep",
+        "minCount": 4,
+        "maxCount": 4,
+        "weight": 12
+      },
+      {
+        "type": "minecraft:pig",
+        "minCount": 4,
+        "maxCount": 4,
+        "weight": 10
+      },
+      {
+        "type": "minecraft:chicken",
+        "minCount": 4,
+        "maxCount": 4,
+        "weight": 10
+      },
+      {
+        "type": "minecraft:cow",
+        "minCount": 4,
+        "maxCount": 4,
+        "weight": 8
+      }
     ],
     "monster": [
-      { "type": "minecraft:spider", "minCount": 4, "maxCount": 4, "weight": 100 },
-      { "type": "minecraft:zombie", "minCount": 4, "maxCount": 4, "weight": 95 },
-      { "type": "minecraft:skeleton", "minCount": 4, "maxCount": 4, "weight": 100 }
+      {
+        "type": "minecraft:spider",
+        "minCount": 4,
+        "maxCount": 4,
+        "weight": 100
+      },
+      {
+        "type": "minecraft:zombie",
+        "minCount": 4,
+        "maxCount": 4,
+        "weight": 95
+      },
+      {
+        "type": "minecraft:skeleton",
+        "minCount": 4,
+        "maxCount": 4,
+        "weight": 100
+      },
+      {
+        "type": "minecraft:creeper",
+        "minCount": 4,
+        "maxCount": 4,
+        "weight": 100
+      }
     ]
   },
   "minecraft:savanna": {
     "creature": [
-      { "type": "minecraft:sheep", "minCount": 4, "maxCount": 4, "weight": 12 },
-      { "type": "minecraft:pig", "minCount": 4, "maxCount": 4, "weight": 10 },
-      { "type": "minecraft:chicken", "minCount": 4, "maxCount": 4, "weight": 10 },
-      { "type": "minecraft:cow", "minCount": 4, "maxCount": 4, "weight": 8 }
+      {
+        "type": "minecraft:sheep",
+        "minCount": 4,
+        "maxCount": 4,
+        "weight": 12
+      },
+      {
+        "type": "minecraft:pig",
+        "minCount": 4,
+        "maxCount": 4,
+        "weight": 10
+      },
+      {
+        "type": "minecraft:chicken",
+        "minCount": 4,
+        "maxCount": 4,
+        "weight": 10
+      },
+      {
+        "type": "minecraft:cow",
+        "minCount": 4,
+        "maxCount": 4,
+        "weight": 8
+      }
     ],
     "monster": [
-      { "type": "minecraft:spider", "minCount": 4, "maxCount": 4, "weight": 100 },
-      { "type": "minecraft:zombie", "minCount": 4, "maxCount": 4, "weight": 90 },
-      { "type": "minecraft:skeleton", "minCount": 4, "maxCount": 4, "weight": 100 }
+      {
+        "type": "minecraft:spider",
+        "minCount": 4,
+        "maxCount": 4,
+        "weight": 100
+      },
+      {
+        "type": "minecraft:zombie",
+        "minCount": 4,
+        "maxCount": 4,
+        "weight": 90
+      },
+      {
+        "type": "minecraft:skeleton",
+        "minCount": 4,
+        "maxCount": 4,
+        "weight": 100
+      },
+      {
+        "type": "minecraft:creeper",
+        "minCount": 4,
+        "maxCount": 4,
+        "weight": 100
+      }
     ]
   },
   "minecraft:desert": {
     "creature": [],
     "monster": [
-      { "type": "minecraft:spider", "minCount": 4, "maxCount": 4, "weight": 100 },
-      { "type": "minecraft:zombie", "minCount": 4, "maxCount": 4, "weight": 19 },
-      { "type": "minecraft:skeleton", "minCount": 4, "maxCount": 4, "weight": 50 }
+      {
+        "type": "minecraft:spider",
+        "minCount": 4,
+        "maxCount": 4,
+        "weight": 100
+      },
+      {
+        "type": "minecraft:zombie",
+        "minCount": 4,
+        "maxCount": 4,
+        "weight": 19
+      },
+      {
+        "type": "minecraft:skeleton",
+        "minCount": 4,
+        "maxCount": 4,
+        "weight": 50
+      },
+      {
+        "type": "minecraft:creeper",
+        "minCount": 4,
+        "maxCount": 4,
+        "weight": 100
+      }
     ]
   },
   "minecraft:swamp": {
     "creature": [
-      { "type": "minecraft:sheep", "minCount": 4, "maxCount": 4, "weight": 12 },
-      { "type": "minecraft:pig", "minCount": 4, "maxCount": 4, "weight": 10 },
-      { "type": "minecraft:chicken", "minCount": 4, "maxCount": 4, "weight": 10 },
-      { "type": "minecraft:cow", "minCount": 4, "maxCount": 4, "weight": 8 }
+      {
+        "type": "minecraft:sheep",
+        "minCount": 4,
+        "maxCount": 4,
+        "weight": 12
+      },
+      {
+        "type": "minecraft:pig",
+        "minCount": 4,
+        "maxCount": 4,
+        "weight": 10
+      },
+      {
+        "type": "minecraft:chicken",
+        "minCount": 4,
+        "maxCount": 4,
+        "weight": 10
+      },
+      {
+        "type": "minecraft:cow",
+        "minCount": 4,
+        "maxCount": 4,
+        "weight": 8
+      }
     ],
     "monster": [
-      { "type": "minecraft:spider", "minCount": 4, "maxCount": 4, "weight": 100 },
-      { "type": "minecraft:zombie", "minCount": 4, "maxCount": 4, "weight": 95 },
-      { "type": "minecraft:skeleton", "minCount": 4, "maxCount": 4, "weight": 70 }
+      {
+        "type": "minecraft:spider",
+        "minCount": 4,
+        "maxCount": 4,
+        "weight": 100
+      },
+      {
+        "type": "minecraft:zombie",
+        "minCount": 4,
+        "maxCount": 4,
+        "weight": 95
+      },
+      {
+        "type": "minecraft:skeleton",
+        "minCount": 4,
+        "maxCount": 4,
+        "weight": 70
+      },
+      {
+        "type": "minecraft:creeper",
+        "minCount": 4,
+        "maxCount": 4,
+        "weight": 100
+      }
     ]
   },
   "minecraft:river": {
     "creature": [],
     "monster": [
-      { "type": "minecraft:spider", "minCount": 4, "maxCount": 4, "weight": 100 },
-      { "type": "minecraft:zombie", "minCount": 4, "maxCount": 4, "weight": 95 },
-      { "type": "minecraft:skeleton", "minCount": 4, "maxCount": 4, "weight": 100 }
+      {
+        "type": "minecraft:spider",
+        "minCount": 4,
+        "maxCount": 4,
+        "weight": 100
+      },
+      {
+        "type": "minecraft:zombie",
+        "minCount": 4,
+        "maxCount": 4,
+        "weight": 95
+      },
+      {
+        "type": "minecraft:skeleton",
+        "minCount": 4,
+        "maxCount": 4,
+        "weight": 100
+      },
+      {
+        "type": "minecraft:creeper",
+        "minCount": 4,
+        "maxCount": 4,
+        "weight": 100
+      }
     ],
     "water_ambient": [
-      { "type": "minecraft:salmon", "minCount": 1, "maxCount": 5, "weight": 5 }
+      {
+        "type": "minecraft:salmon",
+        "minCount": 1,
+        "maxCount": 5,
+        "weight": 5
+      }
     ],
     "water_creature": [
-      { "type": "minecraft:squid", "minCount": 1, "maxCount": 4, "weight": 2 }
+      {
+        "type": "minecraft:squid",
+        "minCount": 1,
+        "maxCount": 4,
+        "weight": 2
+      }
     ]
   },
   "minecraft:ocean": {
     "creature": [],
     "monster": [
-      { "type": "minecraft:spider", "minCount": 4, "maxCount": 4, "weight": 100 },
-      { "type": "minecraft:zombie", "minCount": 4, "maxCount": 4, "weight": 95 },
-      { "type": "minecraft:skeleton", "minCount": 4, "maxCount": 4, "weight": 100 }
+      {
+        "type": "minecraft:spider",
+        "minCount": 4,
+        "maxCount": 4,
+        "weight": 100
+      },
+      {
+        "type": "minecraft:zombie",
+        "minCount": 4,
+        "maxCount": 4,
+        "weight": 95
+      },
+      {
+        "type": "minecraft:skeleton",
+        "minCount": 4,
+        "maxCount": 4,
+        "weight": 100
+      },
+      {
+        "type": "minecraft:creeper",
+        "minCount": 4,
+        "maxCount": 4,
+        "weight": 100
+      }
     ],
     "water_ambient": [
-      { "type": "minecraft:cod", "minCount": 3, "maxCount": 6, "weight": 10 }
+      {
+        "type": "minecraft:cod",
+        "minCount": 3,
+        "maxCount": 6,
+        "weight": 10
+      }
     ],
     "water_creature": [
-      { "type": "minecraft:squid", "minCount": 1, "maxCount": 4, "weight": 1 }
+      {
+        "type": "minecraft:squid",
+        "minCount": 1,
+        "maxCount": 4,
+        "weight": 1
+      }
     ]
+  },
+  "minecraft:nether_wastes": {
+    "creature": [
+      {
+        "type": "minecraft:strider",
+        "minCount": 1,
+        "maxCount": 2,
+        "weight": 60
+      }
+    ],
+    "monster": [
+      {
+        "type": "minecraft:ghast",
+        "minCount": 4,
+        "maxCount": 4,
+        "weight": 50
+      },
+      {
+        "type": "minecraft:zombified_piglin",
+        "minCount": 4,
+        "maxCount": 4,
+        "weight": 100
+      },
+      {
+        "type": "minecraft:magma_cube",
+        "minCount": 4,
+        "maxCount": 4,
+        "weight": 2
+      },
+      {
+        "type": "minecraft:enderman",
+        "minCount": 4,
+        "maxCount": 4,
+        "weight": 1
+      },
+      {
+        "type": "minecraft:piglin",
+        "minCount": 4,
+        "maxCount": 4,
+        "weight": 15
+      }
+    ]
+  },
+  "minecraft:the_end": {
+    "monster": [
+      {
+        "type": "minecraft:enderman",
+        "minCount": 4,
+        "maxCount": 4,
+        "weight": 10
+      }
+    ]
+  },
+  "minecraft:soul_sand_valley": {
+    "ambient": [],
+    "axolotls": [],
+    "creature": [
+      {
+        "type": "minecraft:strider",
+        "maxCount": 2,
+        "minCount": 1,
+        "weight": 60
+      }
+    ],
+    "misc": [],
+    "monster": [
+      {
+        "type": "minecraft:skeleton",
+        "maxCount": 5,
+        "minCount": 5,
+        "weight": 20
+      },
+      {
+        "type": "minecraft:ghast",
+        "maxCount": 4,
+        "minCount": 4,
+        "weight": 50
+      },
+      {
+        "type": "minecraft:enderman",
+        "maxCount": 4,
+        "minCount": 4,
+        "weight": 1
+      }
+    ],
+    "underground_water_creature": [],
+    "water_ambient": [],
+    "water_creature": []
+  },
+  "minecraft:crimson_forest": {
+    "ambient": [],
+    "axolotls": [],
+    "creature": [
+      {
+        "type": "minecraft:strider",
+        "maxCount": 2,
+        "minCount": 1,
+        "weight": 60
+      }
+    ],
+    "misc": [],
+    "monster": [
+      {
+        "type": "minecraft:zombified_piglin",
+        "maxCount": 4,
+        "minCount": 2,
+        "weight": 1
+      },
+      {
+        "type": "minecraft:hoglin",
+        "maxCount": 4,
+        "minCount": 3,
+        "weight": 9
+      },
+      {
+        "type": "minecraft:piglin",
+        "maxCount": 4,
+        "minCount": 3,
+        "weight": 5
+      }
+    ],
+    "underground_water_creature": [],
+    "water_ambient": [],
+    "water_creature": []
+  },
+  "minecraft:warped_forest": {
+    "ambient": [],
+    "axolotls": [],
+    "creature": [
+      {
+        "type": "minecraft:strider",
+        "maxCount": 2,
+        "minCount": 1,
+        "weight": 60
+      }
+    ],
+    "misc": [],
+    "monster": [
+      {
+        "type": "minecraft:enderman",
+        "maxCount": 4,
+        "minCount": 4,
+        "weight": 1
+      }
+    ],
+    "underground_water_creature": [],
+    "water_ambient": [],
+    "water_creature": []
+  },
+  "minecraft:basalt_deltas": {
+    "ambient": [],
+    "axolotls": [],
+    "creature": [
+      {
+        "type": "minecraft:strider",
+        "maxCount": 2,
+        "minCount": 1,
+        "weight": 60
+      }
+    ],
+    "misc": [],
+    "monster": [
+      {
+        "type": "minecraft:ghast",
+        "maxCount": 1,
+        "minCount": 1,
+        "weight": 40
+      },
+      {
+        "type": "minecraft:magma_cube",
+        "maxCount": 5,
+        "minCount": 2,
+        "weight": 100
+      }
+    ],
+    "underground_water_creature": [],
+    "water_ambient": [],
+    "water_creature": []
+  },
+  "minecraft:end_highlands": {
+    "ambient": [],
+    "axolotls": [],
+    "creature": [],
+    "misc": [],
+    "monster": [
+      {
+        "type": "minecraft:enderman",
+        "maxCount": 4,
+        "minCount": 4,
+        "weight": 10
+      }
+    ],
+    "underground_water_creature": [],
+    "water_ambient": [],
+    "water_creature": []
+  },
+  "minecraft:end_midlands": {
+    "ambient": [],
+    "axolotls": [],
+    "creature": [],
+    "misc": [],
+    "monster": [
+      {
+        "type": "minecraft:enderman",
+        "maxCount": 4,
+        "minCount": 4,
+        "weight": 10
+      }
+    ],
+    "underground_water_creature": [],
+    "water_ambient": [],
+    "water_creature": []
+  },
+  "minecraft:small_end_islands": {
+    "ambient": [],
+    "axolotls": [],
+    "creature": [],
+    "misc": [],
+    "monster": [
+      {
+        "type": "minecraft:enderman",
+        "maxCount": 4,
+        "minCount": 4,
+        "weight": 10
+      }
+    ],
+    "underground_water_creature": [],
+    "water_ambient": [],
+    "water_creature": []
+  },
+  "minecraft:end_barrens": {
+    "ambient": [],
+    "axolotls": [],
+    "creature": [],
+    "misc": [],
+    "monster": [
+      {
+        "type": "minecraft:enderman",
+        "maxCount": 4,
+        "minCount": 4,
+        "weight": 10
+      }
+    ],
+    "underground_water_creature": [],
+    "water_ambient": [],
+    "water_creature": []
   }
 }

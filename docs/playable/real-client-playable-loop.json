@@ -2,11 +2,11 @@
   "schema_version": 1,
   "pack_id": "playable-real-client-loop",
   "quality_label": "playable-spike",
-  "server_command": "cargo run --bin mc-server -- --config playable.toml",
+  "server_command": "cargo run -p mc-edge --bin solaris-v2 -- --config playable.toml",
   "client_requirement": "A vanilla 26.1.2 real client must connect to playable.toml through the repo-native Gradle runClient adapter; protocol harnesses do not satisfy this gate, and prepared artifacts are not passing evidence.",
   "forbidden_client_evidence": [
     "wire-probe",
-    "mc_test_harness::client::Client",
+    "mc_vanilla::wire_client::Client",
     "protocol-only bot",
     "debug commands",
     "headless mock client"
@@ -187,6 +187,8 @@
         "No server crash, client disconnect, catastrophic tick stalls, or unrecovered movement desync during the 20-minute window.",
         "Break/place/drop/pickup/crafting-table actions are visible through the real client.",
         "The report records natural spawn acceptance with both passive_observed=true and hostile_observed=true under playable.toml defaults.",
+        "The report records `survival combat acceptance: passed` with hostiles_neutralized >= 1 and recovered_deaths <= 3 over the whole soak; zero kills or a fourth death fails the gate.",
+        "Every sent hostile attack is attributed in observations as `combat attack:` (tick, target id/type, eye-to-box distance, sent, target health before/after, player health) plus one `combat engagement:` summary per approach/attack with the withheld-swing reasons.",
         "Save/restart/rejoin preserves the edited world and player inventory.",
         "observations.json result is passed only for agent-run-real-client evidence."
       ]
@@ -286,7 +288,7 @@
         "Connect a real vanilla client to playable.toml through the playable runner.",
         "Run the no-debug natural wood -> wooden pickaxe -> furnace placement path.",
         "Collect one extra natural log from the detected generated log family.",
-                "Open the earned furnace, move the extra log into input slot 0, move earned planks into fuel slot 1, then clear leftover fuel from slot 1 after charcoal output appears.",
+        "Open the earned furnace, move the extra log into input slot 0, move earned planks into fuel slot 1, then clear leftover fuel from slot 1 after charcoal output appears.",
         "Wait for charcoal in output slot 2, move it into inventory, and capture a screenshot."
       ],
       "expected_observations": [
@@ -1538,6 +1540,225 @@
         "Accepted placements publish a block-change acknowledgement, the expected block state and orientation, and exactly one inventory debit.",
         "The bottom-slab side rejects wall-torch attachment without consuming the torch.",
         "Matching slabs merge into a double slab while the client remains in Play."
+      ]
+    },
+    {
+      "id": "playable-ui-commands",
+      "status": "manual-pending",
+      "bounded_time_minutes": 3,
+      "screenshots_required": true,
+      "no_debug_commands": false,
+      "steps": [
+        "Connect the vanilla graphical client as an operator; inspect its received Brigadier command roots.",
+        "Open chat with /gam and press Tab; capture suggestions and the completed /gamemode input.",
+        "Run /gamemode creative and /give @s minecraft:diamond 3; observe native game mode and inventory.",
+        "Return to survival and self-deop; require the refreshed command tree to hide gamemode.",
+        "Send gamemode and give as a non-op; capture the vanilla refusal message and unchanged mode/inventory."
+      ],
+      "expected_observations": [
+        "The client's command tree is non-empty and its native chat completion offers gamemode.",
+        "Creative mode and exactly three diamonds are observed in received client state.",
+        "Non-op commands produce Unknown or incomplete command without applying their effects.",
+        "Each assertion has a named screenshot; setup uses vanilla operator commands, never debug commands."
+      ]
+    },
+    {
+      "id": "playable-ui-teams-scoreboard",
+      "status": "manual-pending",
+      "bounded_time_minutes": 3,
+      "screenshots_required": true,
+      "no_debug_commands": false,
+      "steps": [
+        "Run /scoreboard objectives add k dummy and /scoreboard objectives setdisplay sidebar k.",
+        "Run /scoreboard players set @s k 5.",
+        "Run /team add red, /team modify red color red and /team join red @s.",
+        "Capture a screenshot after each command converges in the client's received scoreboard."
+      ],
+      "expected_observations": [
+        "Native client Scoreboard contains objective k, sidebar selects k and self score is five.",
+        "Native client PlayerTeam red is red and contains the local player.",
+        "Sidebar is visible in screenshots; assertions inspect vanilla state, not command success strings."
+      ]
+    },
+    {
+      "id": "playable-ui-effects",
+      "status": "manual-pending",
+      "bounded_time_minutes": 3,
+      "screenshots_required": true,
+      "no_debug_commands": false,
+      "steps": [
+        "Use vanilla /give to provide one golden apple and consume it with the client's native use action.",
+        "Open inventory and capture active absorption/regeneration effect state.",
+        "Give and drink milk; capture the empty active effect collection.",
+        "Run /effect give @s speed 30 1 and capture active Speed II plus movement_speed attribute."
+      ],
+      "expected_observations": [
+        "Native client item consumption and active absorption are observed.",
+        "Milk is consumed and clears active effects.",
+        "The client's movement_speed attribute is baseline times 1.4 with Speed II.",
+        "Screenshots show the inventory effect UI for each stage."
+      ]
+    },
+    {
+      "id": "playable-ui-enchant-anvil-grindstone",
+      "status": "manual-pending",
+      "bounded_time_minutes": 5,
+      "screenshots_required": true,
+      "no_debug_commands": false,
+      "steps": [
+        "Use vanilla operator commands to prepare a loaded stone pad, fifteen bookshelves, tool, lapis and forty XP levels; place each station via native item use.",
+        "Open the enchanting table and insert the diamond pickaxe and three lapis using native container transfers.",
+        "Observe all three positive costs/enchantment clues/levels in EnchantmentMenu; select the first offer and observe enchantments and XP debit.",
+        "Open anvil, enter UI Smoke Pick in its native name field and take the server-confirmed renamed enchanted result.",
+        "Open grindstone, observe an unenchanted result, take it and require newly visible positive-value vanilla ExperienceOrb entities.",
+        "Capture each placed station, menu, offer/result and final received inventory state."
+      ],
+      "expected_observations": [
+        "All three native station screens open from placed world blocks.",
+        "Three real enchanting offers appear, and the taken pickaxe has received enchantments.",
+        "Anvil rename is confirmed by a changed received container state id, then persists in inventory.",
+        "Grindstone removes enchantments, preserves the rename and spawns visible XP orb entities.",
+        "Operator setup is explicitly not evidence of natural material/XP acquisition."
+      ]
+    },
+    {
+      "id": "playable-ui-adversarial",
+      "status": "manual-pending",
+      "bounded_time_minutes": 3,
+      "screenshots_required": true,
+      "no_debug_commands": false,
+      "steps": [
+        "Run one bounded adjacent-behavior pass in a fresh graphical client.",
+        "Reject a zero-count diamond give without inventory credit and retain feedback.",
+        "Add duplicate objective k without replacing/duplicating the native objective.",
+        "Join, leave and remove team red; observe membership and team removal.",
+        "Apply stronger then weaker speed; require no stacked multiplier, then drink milk and observe baseline restoration.",
+        "Capture screenshots for each assertion and retain severity-ranked findings in the QA report."
+      ],
+      "expected_observations": [
+        "Invalid give does not credit inventory; duplicate scoreboard add preserves the original objective.",
+        "Team leave/removal clears the corresponding native client state.",
+        "Weaker speed does not overwrite the stronger active effect or stack its attribute modifier.",
+        "Milk clears the hidden/active effects and restores movement_speed exactly to baseline."
+      ]
+    },
+    {
+      "id": "playable-w1-villager-trade",
+      "status": "manual-pending",
+      "bounded_time_minutes": 5,
+      "screenshots_required": true,
+      "no_debug_commands": false,
+      "steps": [
+        "In an isolated fresh operator-enabled v2 world, use a villager spawn egg and place a workstation natively.",
+        "Wait for the received villager profession, then open MerchantScreen and inspect MerchantOffers.",
+        "Supply the required trade materials, execute exactly one native result take, close and reopen the same merchant."
+      ],
+      "expected_observations": [
+        "Client profession and MerchantOffers are received; no profession or trade outcome is injected.",
+        "Exact input debit and output credit occur once, and remaining uses decrease by one after reopening.",
+        "Every assertion captures a named vanilla-client screenshot; operator materials are not natural-acquisition evidence."
+      ]
+    },
+    {
+      "id": "playable-w1-redstone",
+      "status": "manual-pending",
+      "bounded_time_minutes": 5,
+      "screenshots_required": true,
+      "no_debug_commands": false,
+      "steps": [
+        "Prepare unpowered isolated circuits; natively activate lever, button and hopper input transfer.",
+        "Observe lever-wire-repeater-lamp propagation and button-driven piston extension then retraction.",
+        "Observe an exact hopper-chain chest transfer and the comparator reading the chest."
+      ],
+      "expected_observations": [
+        "Received wire/repeater/lamp and piston states follow native activations.",
+        "Source and intermediate inventories empty, destination counts remain exact with no duplicate credit.",
+        "Comparator output reflects received chest contents; screenshots accompany each step."
+      ]
+    },
+    {
+      "id": "playable-w1-brewing",
+      "status": "manual-pending",
+      "bounded_time_minutes": 3,
+      "screenshots_required": true,
+      "no_debug_commands": false,
+      "steps": [
+        "Place and open a brewing stand natively; insert operator-provided water bottle, nether wart and blaze powder.",
+        "Observe received fuel/progress and wait for brewing completion.",
+        "Take the awkward potion using the native container transfer."
+      ],
+      "expected_observations": [
+        "Water potion becomes an awkward potion in received PotionContents, not merely an unchanged potion item id.",
+        "Ingredient/fuel consumption and exactly one taken result converge in the vanilla inventory.",
+        "Screenshots capture placement, active brewing, completed result and result take."
+      ]
+    },
+    {
+      "id": "playable-w1-ranged",
+      "status": "manual-pending",
+      "bounded_time_minutes": 6,
+      "screenshots_required": true,
+      "no_debug_commands": false,
+      "steps": [
+        "Use operator-provided equipment to shoot a mob natively with a bow and collect an arrow.",
+        "Load and fire a crossbow, throw a loyalty trident and await its return.",
+        "Throw an ender pearl and observe the resulting player teleport."
+      ],
+      "expected_observations": [
+        "The client's mob health decreases after the bow impact and arrow pickup credits exactly once.",
+        "Crossbow charged-projectile component changes and projectile entity appears; thrown trident returns exactly once.",
+        "Pearl debit and received player displacement are observed; screenshots accompany each step."
+      ]
+    },
+    {
+      "id": "playable-w1-fishing",
+      "status": "manual-pending",
+      "bounded_time_minutes": 5,
+      "screenshots_required": true,
+      "no_debug_commands": false,
+      "steps": [
+        "Cast an operator-provided fishing rod natively into a prepared valid water fixture.",
+        "Wait within a bounded fishing timeout for received FishingHook bite state.",
+        "Reel natively and observe received inventory loot."
+      ],
+      "expected_observations": [
+        "A client fishing hook is observed, then its bite state, then removal after reel.",
+        "Exactly one fishing loot credit is observed without operator-generated bite or loot.",
+        "Screenshots capture cast, bite and collected item."
+      ]
+    },
+    {
+      "id": "playable-w1-tnt-fire-light",
+      "status": "manual-pending",
+      "bounded_time_minutes": 5,
+      "screenshots_required": true,
+      "no_debug_commands": false,
+      "steps": [
+        "Capture baseline client block light, place a torch natively and observe nearby light increase.",
+        "Ignite prepared TNT with native flint-and-steel use; observe priming and explosion removal.",
+        "Ignite a flammable fixture natively, observe spread to a previously unlit location, then extinguish."
+      ],
+      "expected_observations": [
+        "Received BLOCK light rises, not just sky light or torch block presence.",
+        "PrimedTnt appears and previously received solid fixture blocks are removed by explosion.",
+        "Received fire spreads and disappears after extinguishing; each stage has a screenshot."
+      ]
+    },
+    {
+      "id": "playable-w1-stations",
+      "status": "manual-pending",
+      "bounded_time_minutes": 5,
+      "screenshots_required": true,
+      "no_debug_commands": false,
+      "steps": [
+        "Place/open stonecutter, smithing table and loom through native block use.",
+        "Execute one stonecutter recipe, netherite smithing upgrade and loom banner pattern with supplied materials.",
+        "Insert a guaranteed-compostable item natively and observe composter level increment."
+      ],
+      "expected_observations": [
+        "Each received recipe result has exact input consumption and one output credit.",
+        "Smithing output is the upgraded item and loom output has the received banner-pattern component.",
+        "Composter LEVEL increments; screenshots accompany station opening, recipes and outputs."
       ]
     }
   ]

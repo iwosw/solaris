@@ -1,8 +1,10 @@
 # ADR 0006 - mc-net module boundaries
 
 **Date:** 2026-07-18  
-**Status:** Accepted; staged extraction remains active  
-**Related:** ADR 0004 and ADR 0005 own mutation ordering
+**Status:** Superseded by [ADR 0013](0013-core-model-v2.md) and
+[ADR 0014](0014-v1-core-retirement.md), Phase 5 (2026-10-15).
+The modular-monolith and extraction boundaries below are historical v1 details;
+their crates were deleted and no longer constrain current module ownership.
 
 ## Decision
 
@@ -27,10 +29,34 @@ commands. An outbound queue or socket never decides whether gameplay committed.
 
 ## Current boundaries
 
+- Moved out by CP-ARCH-020 (ADR 0011): crate `mc-simulation` now owns lock
+  policy/metrics, the pure gameplay kernels (inventory, crafting/quickcraft,
+  recipes, block placement/break, survival, combat, fluids, falling blocks,
+  redstone, toggles, scheduled-tick planning, random ticks, lighting, explosions,
+  buckets, campfire, beds, item blocks, movement rules, breathing, inhabited
+  time), persistence (`mc_simulation::persistence`: world chunk journal, regional
+  decision journal, player/world/entity codecs, dirty-flush coordinator) and the
+  durable services (`mc_simulation::services::{storage,residents,settlement}`:
+  `PluginStorage` and its ledgers). The bullets below describe what remains in
+  `mc-net`: packet decode/projection, `InteractionState`/`PlayerPose`, the player
+  runtime persistence adapter, the storage actor and `InventoryRuntime`, the
+  simulation owner and session registry.
 - `play.rs` decodes packets and coordinates connection-local state. Domain rules
   belong below it.
+- Entity spawn transport encodes each existing reliable turn (at most sixteen
+  entities) into one socket write. Packet compression and each entity's full
+  Add/Data/leash/passenger/equipment/motion/position/head order remain unchanged;
+  FIFO still finishes one entity before starting the next. Live equipment
+  updates retain their separate committed-publication path.
 - `play/simulation.rs` owns the remaining cross-domain simulation command DTOs
   and ordering glue from ADR 0004. It is not the moving-entity authority.
+- Nearby item, arrow, and experience pickup candidates share one simulation
+  owner turn, in that category order. Each candidate still prepares, claims,
+  finalizes, and publishes against fresh authoritative state before the next;
+  batching does not collect optimistic after-images or weaken pickup fences.
+  Inventory and script projections finish for every committed credit even if a
+  socket write fails; the adapter then returns the first transport error.
+  Experience synchronization remains one final packet after successful writes.
 - `play/session/entity_owner.rs` adapts session operations to regional owner
   calls. It may retain bounded read/projection state required by real callers,
   but must not become a second mutable entity store.
@@ -51,12 +77,20 @@ commands. An outbound queue or socket never decides whether gameplay committed.
   snapshots, dirty flush, light and packet building; `publication.rs` owns
   ready-result validation, requeue, socket write and loaded-state accounting.
   This source split adds no cache, worker limit or publication fence.
+  A stream blocked on a chunk (in flight for another stream, or still pending
+  for an earlier session) parks its progress `Notify` on that chunk in the
+  prepared cache, under the same lock that saw the blocker. Only a change to
+  that chunk (claim release, cache insert, invalidation, load by the earlier
+  session, ticket release) wakes it; session removal and memory shed wake all
+  parked streams. There is no global "any prepared chunk changed" broadcast:
+  at 100 players it re-ran every stream's claim under the session lock for
+  each chunk event (5.5M claims per run).
 - Embedded contextual block-drop facts are normalized in `mc-data::loot::embedded`
   and evaluated by the same `BlockLootContext` path as loaded loot. Tool-preserved
   drops and Fortune probability tables belong there, not in packet handlers.
   The manual-break adapter supplies the held tool, enchantments and action seed;
   an empty evaluated drop list is a valid result, not a missing-rule fallback.
-- `play/random_ticks.rs` owns random-tick candidate sampling. It reads one
+- `mc_simulation::random_ticks` owns random-tick candidate sampling. It reads one
   immutable snapshot of the budgeted chunks, skips inert sections before
   generating positions, and retains original chunk/section seed offsets and
   candidate order. `play.rs` still coordinates existing planning and fenced
@@ -86,10 +120,10 @@ commands. An outbound queue or socket never decides whether gameplay committed.
   through `WorldStorage`; the unconditional opaque setter is removed.
   Player inventory, entity/drop effects, journal coordination and propagated
   light publication remain in their existing owners.
-- `play/inventory.rs` owns the pure prepare-then-publish inventory operation.
-  Player actions, script inventory deltas and Loader item grants share it.
-  Session authorization, cursor/menu guards and packet/drop publication remain
-  in their existing adapters; the inventory model stays local to `mc-net`.
+- `mc_simulation::inventory` owns the pure prepare-then-publish inventory
+  operation. Player actions, script inventory deltas and Loader item grants
+  share it. Session authorization, cursor/menu guards and packet/drop
+  publication remain in their `mc-net` adapters.
 - Held-item gameplay reads the selected hotbar slot from the shared authoritative
   player state. `InteractionState` has no selected-slot mirror: mining, attacks,
   item use, shields, arrows and drops consume owner selection. The packet adapter

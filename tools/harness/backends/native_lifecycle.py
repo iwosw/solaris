@@ -53,14 +53,26 @@ def run(client: Any, artifact: Path, timeout: float, address: str,
             "health": 0.001, "timeout_seconds": steps.remaining(),
         })
         steps.report["death_wait"] = dead
-        death_state = steps.wait(lambda state: state["player"]["health"] == 0,
+        # Health 0 and the death screen arrive in separate packets.
+        death_state = steps.wait(lambda state: state["player"]["health"] == 0
+                                 and state["screen"]["open"] is True,
                                  "death_health_received")
         steps.check("death_screen_open", death_state["screen"]["open"] is True)
         respawn = steps.call("minecraft_respawn", {"timeout_seconds": steps.remaining()})
         steps.report["respawn_result"] = respawn
-        alive = steps.wait(lambda state: state["player"]["health"] is not None
-                           and state["player"]["health"] > 0
-                           and state["screen"]["open"] is False, "respawn_alive_screen_closed")
+        # The client reloads its world after Respawn (vanilla: loading screen
+        # until the player's chunk is ready), so play resumes on a later
+        # state; a world that never returns fails at the probe deadline.
+        alive = steps.call("minecraft_observe")
+        while not (alive.get("in_play") is True
+                   and alive["player"]["health"] is not None
+                   and alive["player"]["health"] > 0
+                   and alive["screen"]["open"] is False):
+            steps.call("minecraft_wait_for_state_change", {
+                "observed_version": alive["state_version"], "timeout_seconds": steps.remaining(),
+            })
+            alive = steps.call("minecraft_observe")
+        steps.check("respawn_alive_screen_closed", True)
         steps.check("respawn_preserved_identity", alive["player"]["entity_uuid"] == identity)
         steps.check("respawn_preserved_dimension", alive["dimension"] == dimension)
         # Waiting uses acknowledged native client ticks, never a wall-clock sleep.
@@ -73,7 +85,7 @@ def run(client: Any, artifact: Path, timeout: float, address: str,
             "samples": samples, "long_session_proven": False,
             "warmup_seconds": 60, "rss_growth_budget_kib": 4096,
             "scope": "stationary received-state session, after reconnect and death/respawn; not chunk travel or dimension-transition proof",
-            "dimension_transition": {"status": "unverified", "reason": "Solaris snapshot has no real dimension-transition command or portal path; same-dimension respawn is not substituted."},
+            "dimension_transition": {"status": "unverified", "reason": "This lifecycle scenario exercises same-dimension respawn only; native-v2-dimensions owns explicit cross-dimension command travel/respawn evidence."},
         }
         steps.report["soak"] = soak
         while time.monotonic() - started < soak_seconds:

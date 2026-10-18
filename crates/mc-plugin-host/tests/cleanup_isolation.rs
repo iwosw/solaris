@@ -69,8 +69,8 @@ impl Reencode for TrapCleanup {
 
 fn component_with_trapping_cleanup() -> Vec<u8> {
     let bytes = std::fs::read(
-        fixture::repo_root()
-            .join("sdk/rust/target/wasm32-unknown-unknown/release/solaris_hello_plugin.wasm"),
+        fixture::target_directory(&fixture::repo_root().join("sdk/rust"))
+            .join("wasm32-unknown-unknown/release/solaris_hello_plugin.wasm"),
     )
     .unwrap();
     let mut imports = 0;

@@ -16,11 +16,11 @@ fn default_ore_rules_keep_all_vanilla_overworld_passes() {
     let g = TerrainGenerator::new(42, tiny_registry());
     let rules = g.ores.rules();
 
-    assert_eq!(rules.len(), 18);
+    assert_eq!(rules.len(), 19);
     for (state, expected_passes) in [
         (BlockStateId(8), 2),
         (BlockStateId(9), 3),
-        (BlockStateId(10), 1),
+        (BlockStateId(10), 2),
         (BlockStateId(15), 3),
         (BlockStateId(16), 2),
         (BlockStateId(17), 4),
@@ -32,13 +32,7 @@ fn default_ore_rules_keep_all_vanilla_overworld_passes() {
             expected_passes
         );
     }
-    assert_eq!(
-        rules
-            .iter()
-            .filter(|rule| matches!(rule.biomes, BiomeScope::Only(_)))
-            .count(),
-        2
-    );
+    assert_eq!(rules.iter().filter(|rule| !rule.biomes.is_any()).count(), 4);
     assert!(rules.iter().any(|rule| {
         rule.normal == BlockStateId(17)
             && rule.size == 4
@@ -54,6 +48,32 @@ fn default_ore_rules_keep_all_vanilla_overworld_passes() {
     assert!(rules.iter().any(|rule| {
         rule.normal == BlockStateId(9) && rule.y.min == 80 && rule.y.max == MAX_Y - 1
     }));
+}
+
+#[test]
+fn ordinary_and_dripstone_copper_passes_are_mutually_exclusive() {
+    let g = TerrainGenerator::new(42, tiny_registry());
+    let copper = g
+        .ores
+        .rules()
+        .iter()
+        .filter(|rule| rule.normal == BlockStateId(10))
+        .collect::<Vec<_>>();
+    for biome in &g.biomes.all {
+        let matching = copper
+            .iter()
+            .filter(|rule| rule.biomes.matches(biome))
+            .collect::<Vec<_>>();
+        assert_eq!(matching.len(), 1, "{biome}");
+        assert_eq!(
+            matching[0].size,
+            if biome.as_str() == "minecraft:dripstone_caves" {
+                20
+            } else {
+                10
+            }
+        );
+    }
 }
 
 #[test]
@@ -125,6 +145,7 @@ fn embedded_ore_passes_match_local_vanilla_2612_data_when_available() {
     for (feature, expected) in [
         ("minecraft:ore_emerald", EMERALD_ORE_BIOMES),
         ("minecraft:ore_gold_extra", EXTRA_GOLD_BIOMES),
+        ("minecraft:ore_copper_large", &["minecraft:dripstone_caves"]),
     ] {
         let feature = Identifier::parse(feature).unwrap();
         let actual = biome_data.biomes_for_feature(&feature);
@@ -283,7 +304,7 @@ fn trapezoid_peak_uses_unclipped_vanilla_anchor_midpoint() {
         7,
     );
     let height = feature.placement.height.as_mut().expect("height range");
-    height.kind = mc_data::Identifier::parse("minecraft:trapezoid").unwrap();
+    height.kind = Identifier::parse("minecraft:trapezoid").unwrap();
     height.min = mc_data::worldgen_ores::HeightAnchor::AboveBottom(-80);
     height.max = mc_data::worldgen_ores::HeightAnchor::AboveBottom(80);
     let registry = tiny_registry();
@@ -356,7 +377,7 @@ fn rarity_filter_reduces_ore_density_instead_of_becoming_count_one() {
     );
     common.placement.count = None;
     let mut rare = common.clone();
-    rare.placed_feature = mc_data::Identifier::parse("minecraft:ore_diamond_rare").unwrap();
+    rare.placed_feature = Identifier::parse("minecraft:ore_diamond_rare").unwrap();
     rare.placement.rarity_chance = Some(9);
     let registry = tiny_registry();
     let biomes = BiomeRules::vanilla_overworld();
@@ -446,4 +467,55 @@ fn extreme_relative_height_offsets_are_rejected_without_panicking() {
             .expect("extreme offsets are ignored")
             .is_none()
     );
+}
+
+#[test]
+fn fixed_seed_ore_blocks_per_chunk_stay_vanilla_like() {
+    use mc_world::{ChunkGenerator, ChunkPos};
+
+    let g = TerrainGenerator::new(42, tiny_registry());
+    // Ordinary lowland terrain, not solid-stone/mountain or badlands columns.
+    // Include both stone variants; broad bands allow cave/vein variation but
+    // reject configured-size-as-block-count inflation (iron was 121.7/chunk).
+    // Vanilla 26.1.2 OreFeature's size-9/4 ellipsoid unions yield about 6.5/2
+    // blocks per attempt, so full-height iron is ~80, not the guessed 10..40.
+    let families = [
+        ("coal", [8, 11], 70.0..160.0),
+        ("iron", [9, 12], 60.0..100.0),
+        ("copper", [10, 13], 80.0..115.0),
+        ("gold", [15, 20], 10.0..35.0),
+        ("redstone", [16, 21], 20.0..55.0),
+        ("diamond", [17, 22], 10.0..35.0),
+        ("lapis", [18, 23], 10.0..30.0),
+        ("emerald", [19, 24], 0.0..8.0),
+    ];
+    let mut counts = [0_u64; 8];
+    for z in -4..4 {
+        for x in -4..4 {
+            let chunk = g.generate(ChunkPos { x, z });
+            for y in MIN_Y..MAX_Y {
+                for lz in 0..16 {
+                    for lx in 0..16 {
+                        let state = chunk.get_block(lx, y, lz).expect("in chunk geometry").0;
+                        if let Some(index) = families
+                            .iter()
+                            .position(|(_, states, _)| states.contains(&state))
+                        {
+                            counts[index] += 1;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    let averages = counts.map(|count| count as f64 / 64.0);
+    for ((name, _, _), average) in families.iter().zip(averages) {
+        println!("ore average seed=42 chunks=64 {name}={average:.4}");
+    }
+    for ((name, _, band), average) in families.iter().zip(averages) {
+        assert!(
+            band.contains(&average),
+            "{name}: {average} ore blocks/chunk"
+        );
+    }
 }

@@ -1,16 +1,21 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
 
 use serde::Deserialize;
 use thiserror::Error;
 
 use crate::{Identifier, read_json_file, visit_json_files};
 
+mod block_aliases;
+mod block_components;
+mod block_state_copy;
 pub mod chest_26_1_2;
 mod context;
 mod embedded;
+mod embedded_block_components;
+mod embedded_enchantments;
 pub mod entity_26_1_2;
+pub mod fishing_26_1_2;
 
 pub use context::{
     BlockLootContext, LootContextError, LootContextItem, LootEnchantments, LootExplosion,
@@ -42,15 +47,15 @@ pub enum LootError {
 
 #[derive(Debug, Clone, Default)]
 pub struct LootTables {
-    entity_drops: BTreeMap<Identifier, Vec<LootDrop>>,
     block_drops: BTreeMap<Identifier, Vec<LootDrop>>,
     block_loot: BTreeMap<Identifier, BlockLoot>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct LootDrop {
     pub item: Identifier,
     pub count: LootCount,
+    pub components: Option<Box<mc_nbt::Tag>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -99,6 +104,13 @@ struct BlockStateLootPool {
 struct BlockStateLootEntry {
     predicate: BlockStatePredicate,
     drop: BlockLootDrop,
+    counts: Vec<BlockStateCount>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct BlockStateCount {
+    predicate: BlockStatePredicate,
+    count: LootCount,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -138,6 +150,9 @@ pub struct BlockLootDrop {
     explosion_decay: bool,
     rolls: LootCount,
     bonus_rolls: LootCount,
+    copy_components: Vec<block_components::CopyComponents>,
+    copy_state: Vec<block_state_copy::CopyState>,
+    dynamic_sherds: bool,
 }
 
 impl BlockLootDrop {
@@ -152,6 +167,9 @@ impl BlockLootDrop {
             explosion_decay: false,
             rolls: LootCount::Fixed(1),
             bonus_rolls: LootCount::Fixed(0),
+            copy_components: Vec::new(),
+            copy_state: Vec::new(),
+            dynamic_sherds: false,
         }
     }
 
@@ -159,8 +177,9 @@ impl BlockLootDrop {
         &self,
         explosion_radius: Option<f32>,
         next_float: &mut impl FnMut() -> f32,
+        input_count: LootCount,
     ) -> Option<u32> {
-        let count = self.simple_explosion_input_count(explosion_radius.is_some())?;
+        let count = self.simple_explosion_input_count(explosion_radius.is_some(), input_count)?;
         let Some(explosion_radius) = explosion_radius else {
             return Some(count);
         };
@@ -178,15 +197,23 @@ impl BlockLootDrop {
         Some(count)
     }
 
-    fn simple_explosion_input_count(&self, require_explosion_modifier: bool) -> Option<u32> {
-        if self.fortune_bonus.is_some()
-            || self.random_chance.is_some()
+    fn simple_explosion_input_count(
+        &self,
+        require_explosion_modifier: bool,
+        input_count: LootCount,
+    ) -> Option<u32> {
+        // Explosions have no tool, so ore/uniform Fortune bonuses are identities
+        // at level zero. Binomial bonuses can still roll extra rounds at zero.
+        if matches!(
+            self.fortune_bonus,
+            Some(FortuneBonus::BinomialWithBonusCount { .. })
+        ) || self.random_chance.is_some()
             || !self.fortune_chances.is_empty()
             || (require_explosion_modifier && !self.survives_explosion && !self.explosion_decay)
         {
             return None;
         }
-        match self.drop.count {
+        match input_count {
             LootCount::Fixed(count) => Some(count),
             LootCount::UniformInclusive { .. } => None,
         }
@@ -221,6 +248,8 @@ pub enum BlockLootEvaluationError {
     ExplosionDecayInputLimitExceeded { actual: u64, maximum: u64 },
     #[error("block loot output items exceed the limit: {actual} > {maximum}")]
     OutputItemLimitExceeded { actual: u64, maximum: u64 },
+    #[error("block loot block entity: {reason}")]
+    InvalidBlockEntity { reason: &'static str },
 }
 
 impl FortuneBonus {
@@ -354,6 +383,7 @@ impl LootDrop {
         Self {
             item,
             count: LootCount::Fixed(1),
+            components: None,
         }
     }
 
@@ -362,6 +392,7 @@ impl LootDrop {
         Self {
             item,
             count: LootCount::Fixed(count),
+            components: None,
         }
     }
 
@@ -371,21 +402,15 @@ impl LootDrop {
         Self {
             item,
             count: LootCount::UniformInclusive { min, max },
+            components: None,
         }
     }
 }
 
 impl LootTables {
     #[must_use]
-    pub fn from_maps(
-        entity_drops: BTreeMap<Identifier, Identifier>,
-        block_drops: BTreeMap<Identifier, Identifier>,
-    ) -> Self {
+    pub fn from_maps(block_drops: BTreeMap<Identifier, Identifier>) -> Self {
         Self::from_drop_maps(
-            entity_drops
-                .into_iter()
-                .map(|(source, item)| (source, LootDrop::single(item)))
-                .collect(),
             block_drops
                 .into_iter()
                 .map(|(source, item)| (source, LootDrop::single(item)))
@@ -394,15 +419,8 @@ impl LootTables {
     }
 
     #[must_use]
-    pub fn from_drop_maps(
-        entity_drops: BTreeMap<Identifier, LootDrop>,
-        block_drops: BTreeMap<Identifier, LootDrop>,
-    ) -> Self {
+    pub fn from_drop_maps(block_drops: BTreeMap<Identifier, LootDrop>) -> Self {
         Self::from_drop_lists(
-            entity_drops
-                .into_iter()
-                .map(|(source, drop)| (source, vec![drop]))
-                .collect(),
             block_drops
                 .into_iter()
                 .map(|(source, drop)| (source, vec![drop]))
@@ -411,30 +429,11 @@ impl LootTables {
     }
 
     #[must_use]
-    pub fn from_drop_lists(
-        entity_drops: BTreeMap<Identifier, Vec<LootDrop>>,
-        block_drops: BTreeMap<Identifier, Vec<LootDrop>>,
-    ) -> Self {
+    pub fn from_drop_lists(block_drops: BTreeMap<Identifier, Vec<LootDrop>>) -> Self {
         Self {
-            entity_drops,
             block_drops,
             block_loot: BTreeMap::new(),
         }
-    }
-
-    #[must_use]
-    pub fn entity_drop(&self, entity: &Identifier) -> Option<&Identifier> {
-        self.entity_drop_stack(entity).map(|drop| &drop.item)
-    }
-
-    #[must_use]
-    pub fn entity_drop_stack(&self, entity: &Identifier) -> Option<&LootDrop> {
-        self.entity_drop_stacks(entity)?.first()
-    }
-
-    #[must_use]
-    pub fn entity_drop_stacks(&self, entity: &Identifier) -> Option<&[LootDrop]> {
-        self.entity_drops.get(entity).map(Vec::as_slice)
     }
 
     #[must_use]
@@ -449,17 +448,53 @@ impl LootTables {
 
     #[must_use]
     pub fn block_drop_stacks(&self, block: &Identifier) -> Option<&[LootDrop]> {
-        self.block_drops.get(block).map(Vec::as_slice)
+        self.block_drops
+            .get(block_aliases::canonical(block))
+            .map(Vec::as_slice)
     }
 
     #[must_use]
     pub fn block_loot(&self, block: &Identifier) -> Option<&BlockLoot> {
-        self.block_loot.get(block)
+        self.block_loot.get(block_aliases::canonical(block))
     }
 
     #[must_use]
     pub fn block_random_sequence(&self, block: &Identifier) -> Option<&Identifier> {
         self.block_loot(block).and_then(BlockLoot::random_sequence)
+    }
+
+    #[must_use]
+    pub fn block_needs_entity(&self, block: &Identifier) -> bool {
+        self.block_loot(block).is_some_and(|rule| {
+            rule.regular_drops
+                .iter()
+                .chain(&rule.silk_touch_drops)
+                .chain(
+                    rule.conditional_pools
+                        .iter()
+                        .flat_map(|pool| pool.entries.iter().map(|entry| &entry.drop)),
+                )
+                .any(|drop| !drop.copy_components.is_empty() || drop.dynamic_sherds)
+        })
+    }
+
+    #[must_use]
+    pub fn block_copies_component(&self, block: &Identifier, component: &str) -> bool {
+        self.block_loot(block).is_some_and(|rule| {
+            rule.regular_drops
+                .iter()
+                .chain(&rule.silk_touch_drops)
+                .chain(
+                    rule.conditional_pools
+                        .iter()
+                        .flat_map(|pool| pool.entries.iter().map(|entry| &entry.drop)),
+                )
+                .any(|drop| {
+                    drop.copy_components
+                        .iter()
+                        .any(|function| function.copies(component))
+                })
+        })
     }
 
     pub fn evaluate_block(
@@ -507,9 +542,10 @@ impl LootTables {
             return Ok(Some(sampled));
         };
 
-        let mut drops: Vec<_> = rule
+        let mut drops: Vec<(&BlockLootDrop, &[BlockStateCount])> = rule
             .drops_for_tool(context.tool().silk_touch_level() > 0, context.tool().item())
             .iter()
+            .map(|drop| (drop, &[][..]))
             .collect();
         for pool in &rule.conditional_pools {
             if !pool.predicate.matches_context(context) {
@@ -520,12 +556,12 @@ impl LootTables {
                 .iter()
                 .find(|entry| entry.predicate.matches_context(context))
             {
-                drops.push(&entry.drop);
+                drops.push((&entry.drop, &entry.counts));
             }
         }
         let mut sampled = Vec::new();
         let mut output_items = 0_u64;
-        for drop in drops {
+        for (drop, counts) in drops {
             let roll_count =
                 sample_block_pool_roll_count(&mut random, drop.rolls, drop.bonus_rolls)?;
             for _ in 0..roll_count {
@@ -550,8 +586,29 @@ impl LootTables {
                 {
                     continue;
                 }
+                if drop.dynamic_sherds {
+                    let sherds = block_components::sherds(context, &drop.drop.item)?;
+                    output_items = output_items.checked_add(sherds.len() as u64).ok_or(
+                        BlockLootEvaluationError::ArithmeticOverflow {
+                            operation: "adding dynamic block output items",
+                        },
+                    )?;
+                    if output_items > MAX_BLOCK_OUTPUT_ITEMS {
+                        return Err(BlockLootEvaluationError::OutputItemLimitExceeded {
+                            actual: output_items,
+                            maximum: MAX_BLOCK_OUTPUT_ITEMS,
+                        });
+                    }
+                    sampled.extend(sherds.into_iter().map(LootDrop::single));
+                    continue;
+                }
 
-                let baseline = sample_loot_count(drop.drop.count, &mut random)?;
+                let mut baseline = sample_loot_count(drop.drop.count, &mut random)?;
+                for function in counts {
+                    if function.predicate.matches_context(context) {
+                        baseline = sample_loot_count(function.count, &mut random)?;
+                    }
+                }
                 let mut count = match drop.fortune_bonus {
                     Some(bonus) => {
                         bonus.try_apply(baseline, context.tool().fortune_level(), &mut random)?
@@ -588,7 +645,18 @@ impl LootTables {
                             maximum: MAX_BLOCK_OUTPUT_ITEMS,
                         });
                     }
-                    sampled.push(LootDrop::fixed(drop.drop.item.clone(), count));
+                    let mut sampled_drop = LootDrop::fixed(drop.drop.item.clone(), count);
+                    let mut components = Vec::new();
+                    for function in &drop.copy_components {
+                        function.apply(context, &mut components)?;
+                    }
+                    for function in &drop.copy_state {
+                        function.apply(context, &mut components);
+                    }
+                    if !components.is_empty() {
+                        sampled_drop.components = Some(Box::new(mc_nbt::Tag::Compound(components)));
+                    }
+                    sampled.push(sampled_drop);
                 }
             }
         }
@@ -597,8 +665,9 @@ impl LootTables {
 
     /// Samples the exact simple block-explosion rules used by common fixed-count tables.
     /// `None` models `DESTROY`, where vanilla omits the explosion radius and explosion
-    /// modifiers are identities. `Some(radius)` models `DESTROY_WITH_DECAY`. Complex
-    /// counts, Fortune, and random-chance entries fail closed.
+    /// modifiers are identities. `Some(radius)` models `DESTROY_WITH_DECAY`.
+    /// Complex counts, non-identity Fortune bonuses at level zero, and
+    /// random-chance entries fail closed.
     pub fn block_explosion_drops(
         &self,
         block: &Identifier,
@@ -608,7 +677,11 @@ impl LootTables {
     ) -> Option<Vec<LootDrop>> {
         let common_fallbacks;
         let drops = if let Some(rule) = self.block_loot(block) {
-            let mut selected: Vec<_> = rule.drops_for_tool(false, None).iter().collect();
+            let mut selected: Vec<_> = rule
+                .drops_for_tool(false, None)
+                .iter()
+                .map(|drop| (drop, drop.drop.count))
+                .collect();
             for pool in &rule.conditional_pools {
                 if !pool.predicate.matches(block, properties) {
                     continue;
@@ -618,7 +691,17 @@ impl LootTables {
                     .iter()
                     .find(|entry| entry.predicate.matches(block, properties))
                 {
-                    selected.push(&entry.drop);
+                    let mut count = entry.drop.drop.count;
+                    for function in &entry.counts {
+                        if function.predicate.matches(block, properties) {
+                            // This simple API cannot sample count providers.
+                            if !matches!(function.count, LootCount::Fixed(_)) {
+                                return None;
+                            }
+                            count = function.count;
+                        }
+                    }
+                    selected.push((&entry.drop, count));
                 }
             }
             selected
@@ -641,25 +724,33 @@ impl LootTables {
                     explosion_decay: false,
                     rolls: LootCount::Fixed(1),
                     bonus_rolls: LootCount::Fixed(0),
+                    copy_components: Vec::new(),
+                    copy_state: Vec::new(),
+                    dynamic_sherds: false,
                 })
                 .collect::<Vec<_>>();
-            common_fallbacks.iter().collect()
+            common_fallbacks
+                .iter()
+                .map(|drop| (drop, drop.drop.count))
+                .collect()
         };
 
-        if drops.iter().any(|drop| {
-            drop.simple_explosion_input_count(explosion_radius.is_some())
+        if drops.iter().any(|(drop, count)| {
+            drop.simple_explosion_input_count(explosion_radius.is_some(), *count)
                 .is_none()
         }) {
             return None;
         }
 
         let mut sampled = Vec::new();
-        for drop in drops {
-            let count = drop.sample_simple_explosion_count(explosion_radius, &mut next_float)?;
+        for (drop, input_count) in drops {
+            let count =
+                drop.sample_simple_explosion_count(explosion_radius, &mut next_float, input_count)?;
             if count > 0 {
                 sampled.push(LootDrop {
                     item: drop.drop.item.clone(),
                     count: LootCount::Fixed(count),
+                    components: None,
                 });
             }
         }
@@ -668,33 +759,21 @@ impl LootTables {
 
     #[must_use]
     pub fn total_drops(&self) -> usize {
-        self.entity_drops.values().map(Vec::len).sum::<usize>()
-            + self.block_drops.values().map(Vec::len).sum::<usize>()
+        self.block_drops.values().map(Vec::len).sum()
     }
 
     pub fn fill_missing_from(&mut self, fallback: &Self) {
-        for (source, drop) in &fallback.entity_drops {
-            self.entity_drops
-                .entry(source.clone())
-                .or_insert_with(|| drop.clone());
-        }
         for (source, drops) in &fallback.block_drops {
-            if !self.block_drops.contains_key(source) {
+            if !self.block_drops.contains_key(source) && !self.block_loot.contains_key(source) {
                 self.block_drops.insert(source.clone(), drops.clone());
                 if let Some(rule) = fallback.block_loot.get(source) {
                     self.block_loot.insert(source.clone(), rule.clone());
                 }
             }
         }
-    }
-
-    pub fn fill_missing_entity_items_from(&mut self, fallback: &Self) {
-        for (source, fallback_drops) in &fallback.entity_drops {
-            let drops = self.entity_drops.entry(source.clone()).or_default();
-            for fallback_drop in fallback_drops {
-                if drops.iter().all(|drop| drop.item != fallback_drop.item) {
-                    drops.push(fallback_drop.clone());
-                }
+        for (source, rule) in &fallback.block_loot {
+            if !self.block_drops.contains_key(source) && !self.block_loot.contains_key(source) {
+                self.block_loot.insert(source.clone(), rule.clone());
             }
         }
     }
@@ -722,9 +801,8 @@ fn survives_explosion(explosion: LootExplosion, random: &mut context::LootRandom
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct RawLootTables {
-    #[serde(default)]
-    entities: BTreeMap<String, RawDropList>,
     #[serde(default)]
     blocks: BTreeMap<String, embedded::RawBlockDrops>,
 }
@@ -745,16 +823,26 @@ impl RawDropList {
     }
 }
 
-#[must_use]
-pub fn builtin() -> &'static LootTables {
-    static BUILTIN: OnceLock<LootTables> = OnceLock::new();
-    BUILTIN.get_or_init(|| {
-        from_str(
-            BUILTIN_SURVIVAL_LOOT,
-            Path::new("crates/mc-data/data/survival_loot.json"),
-        )
-        .expect("built-in Solaris survival loot JSON is valid")
-    })
+/// Solaris survival tables with the vanilla mining-enchantment and
+/// block-entity-custody rules compiled explicitly from `root`.
+pub fn load_builtin(root: &Path) -> Result<LootTables, LootError> {
+    let mut tables = from_str(
+        BUILTIN_SURVIVAL_LOOT,
+        Path::new("crates/mc-data/data/survival_loot.json"),
+    )
+    .expect("built-in Solaris survival loot JSON is valid");
+    embedded_enchantments::apply(&mut tables, root)?;
+    embedded_block_components::apply(&mut tables, root)?;
+    Ok(tables)
+}
+
+#[cfg(test)]
+pub(crate) fn builtin() -> LootTables {
+    static BUILTIN: std::sync::LazyLock<LootTables> = std::sync::LazyLock::new(|| {
+        load_builtin(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data/vanilla"))
+            .expect("repo vanilla fixture loads builtin loot")
+    });
+    BUILTIN.clone()
 }
 
 pub fn load(path: impl AsRef<Path>) -> Result<LootTables, LootError> {
@@ -773,9 +861,7 @@ pub fn load_vanilla_subset(root: impl AsRef<Path>) -> Result<LootTables, LootErr
     }
 
     let blocks = load_vanilla_blocks(&root.join("blocks"))?;
-    let entity_drops = load_vanilla_kind(&root.join("entities"), true)?;
     Ok(LootTables {
-        entity_drops,
         block_drops: blocks.drops,
         block_loot: blocks.rules,
     })
@@ -822,40 +908,6 @@ fn load_vanilla_blocks(dir: &Path) -> Result<LoadedBlockLoot, LootError> {
         }
     }
     Ok(LoadedBlockLoot { drops, rules })
-}
-
-fn load_vanilla_kind(
-    dir: &Path,
-    allow_uniform_counts: bool,
-) -> Result<BTreeMap<Identifier, Vec<LootDrop>>, LootError> {
-    if !dir.is_dir() {
-        return Ok(BTreeMap::new());
-    }
-
-    let mut paths = Vec::new();
-    visit_json_files(
-        dir,
-        &mut |path| {
-            paths.push(path);
-            Ok(())
-        },
-        &|path, source| LootError::Io { path, source },
-    )?;
-    paths.sort();
-
-    let mut drops = BTreeMap::new();
-    for path in paths {
-        let source = id_from_file(dir, &path)?;
-        let value: serde_json::Value = read_json_file(
-            &path,
-            &|path, source| LootError::Io { path, source },
-            &|path, source| LootError::Malformed { path, source },
-        )?;
-        if let Some(table_drops) = simple_drops_from_table(&path, &value, allow_uniform_counts)? {
-            drops.insert(source, table_drops);
-        }
-    }
-    Ok(drops)
 }
 
 fn id_from_file(root: &Path, path: &Path) -> Result<Identifier, LootError> {
@@ -929,6 +981,7 @@ fn simple_drop_from_entry(
                 Some(LootDrop {
                     item,
                     count: count.unwrap_or(LootCount::Fixed(1)),
+                    components: None,
                 })
             })
         }
@@ -959,8 +1012,19 @@ fn block_loot_from_table(
         .and_then(serde_json::Value::as_str)
         .map(|sequence| parse_id(path, sequence.to_string()))
         .transpose()?;
-    let Some(pools) = value.get("pools").and_then(serde_json::Value::as_array) else {
-        return Ok(None);
+    let pools: &[serde_json::Value] = match value.get("pools") {
+        Some(pools) => match pools.as_array() {
+            Some(pools) => pools,
+            None => return Ok(None),
+        },
+        // Vanilla represents intentional no-drop tables without `pools`.
+        // Preserve their presence instead of letting survival synthesize an item.
+        None if value.get("type").and_then(serde_json::Value::as_str)
+            == Some("minecraft:block") =>
+        {
+            &[]
+        }
+        None => return Ok(None),
     };
     if pools.iter().any(has_unsupported_pool_rolls) {
         return Ok(None);
@@ -977,6 +1041,34 @@ fn block_loot_from_table(
             if let Some(pool) = block_state_loot_pool(path, pool, pool_rolls, pool_bonus_rolls)? {
                 conditional_pools.push(pool);
             }
+            continue;
+        }
+        // Glass, ice, and similar blocks put their Silk Touch predicate on
+        // the pool rather than on an alternative entry. Keep the empty
+        // non-Silk branch so callers do not fall back to dropping the block.
+        if has_silk_touch_condition(pool) {
+            let Some((pool_rolls, pool_bonus_rolls)) = parse_pool_rolls(pool) else {
+                return Ok(None);
+            };
+            let Some(pool_count) = supported_count_from_functions(pool, true) else {
+                return Ok(None);
+            };
+            let Some(entries) = pool.get("entries").and_then(serde_json::Value::as_array) else {
+                return Ok(None);
+            };
+            let [entry] = entries.as_slice() else {
+                return Ok(None);
+            };
+            let Some(mut drop) =
+                contextual_regular_drop(path, entry, pool_rolls, pool_bonus_rolls)?
+            else {
+                return Ok(None);
+            };
+            if let Some(count) = pool_count {
+                drop.drop.count = count;
+            }
+            drop.explosion_decay |= has_explosion_decay_function(pool);
+            silk_touch_drops.push(drop);
             continue;
         }
         if has_unsupported_conditions(pool) {
@@ -1019,15 +1111,17 @@ fn block_loot_from_table(
         }
     }
 
-    Ok(
-        (!regular_drops.is_empty() || !conditional_pools.is_empty()).then_some(BlockLoot {
-            random_sequence,
-            silk_touch_drops,
-            tool_drops: None,
-            regular_drops,
-            conditional_pools,
-        }),
-    )
+    Ok((!silk_touch_drops.is_empty()
+        || !regular_drops.is_empty()
+        || !conditional_pools.is_empty()
+        || pools.is_empty())
+    .then_some(BlockLoot {
+        random_sequence,
+        silk_touch_drops,
+        tool_drops: None,
+        regular_drops,
+        conditional_pools,
+    }))
 }
 
 fn contains_block_state_condition(value: &serde_json::Value) -> bool {
@@ -1042,12 +1136,14 @@ fn contains_block_state_condition(value: &serde_json::Value) -> bool {
                     == Some("minecraft:block_state_property")
             })
         })
-        || ["entries", "children"].into_iter().any(|field| {
-            value
-                .get(field)
-                .and_then(serde_json::Value::as_array)
-                .is_some_and(|values| values.iter().any(contains_block_state_condition))
-        })
+        || ["entries", "children", "functions"]
+            .into_iter()
+            .any(|field| {
+                value
+                    .get(field)
+                    .and_then(serde_json::Value::as_array)
+                    .is_some_and(|values| values.iter().any(contains_block_state_condition))
+            })
 }
 
 fn block_state_loot_pool(
@@ -1109,7 +1205,17 @@ fn block_state_loot_entry(
     pool_rolls: LootCount,
     pool_bonus_rolls: LootCount,
 ) -> Result<Option<BlockStateLootEntry>, LootError> {
-    if entry.get("type").and_then(serde_json::Value::as_str) != Some("minecraft:item") {
+    let dynamic_sherds = entry.get("type").and_then(serde_json::Value::as_str)
+        == Some("minecraft:dynamic")
+        && entry.get("name").and_then(serde_json::Value::as_str) == Some("minecraft:sherds")
+        && entry.as_object().is_some_and(|fields| {
+            fields
+                .keys()
+                .all(|key| matches!(key.as_str(), "type" | "name" | "conditions"))
+        });
+    if !dynamic_sherds
+        && entry.get("type").and_then(serde_json::Value::as_str) != Some("minecraft:item")
+    {
         return Ok(None);
     }
     let Some(predicate) = block_state_predicate(path, entry, true)? else {
@@ -1123,18 +1229,89 @@ fn block_state_loot_entry(
         .as_object_mut()
         .expect("loot entry is an object")
         .remove("conditions");
-    let Some(mut drop) =
-        contextual_regular_drop(path, &unconditional, pool_rolls, pool_bonus_rolls)?
-    else {
-        return Ok(None);
+    // set_count conditions gate the count function, never the item entry.
+    // Keep all count assignments in order, including unconditional ones.
+    let mut counts = Vec::new();
+    if let Some(functions) = unconditional
+        .get_mut("functions")
+        .and_then(serde_json::Value::as_array_mut)
+    {
+        for function in functions.iter().filter(|function| {
+            function.get("function").and_then(serde_json::Value::as_str)
+                == Some("minecraft:set_count")
+        }) {
+            let Some(fields) = function.as_object() else {
+                return Ok(None);
+            };
+            if fields
+                .keys()
+                .any(|key| !matches!(key.as_str(), "function" | "conditions" | "count" | "add"))
+                || function
+                    .get("add")
+                    .is_some_and(|add| add.as_bool() != Some(false))
+                || function
+                    .get("conditions")
+                    .is_some_and(|conditions| !conditions.is_array())
+                || function
+                    .get("conditions")
+                    .and_then(serde_json::Value::as_array)
+                    .is_some_and(|conditions| {
+                        conditions.iter().any(|condition| {
+                            condition
+                                .get("condition")
+                                .and_then(serde_json::Value::as_str)
+                                != Some("minecraft:block_state_property")
+                        })
+                    })
+            {
+                return Ok(None);
+            }
+            let Some(predicate) = block_state_predicate(path, function, false)? else {
+                return Ok(None);
+            };
+            let Some(count) = function
+                .get("count")
+                .and_then(|count| supported_count_provider(count, true))
+            else {
+                return Ok(None);
+            };
+            counts.push(BlockStateCount { predicate, count });
+        }
+        functions.retain(|function| {
+            function.get("function").and_then(serde_json::Value::as_str)
+                != Some("minecraft:set_count")
+        });
+    }
+    let mut drop = if dynamic_sherds {
+        let mut drop = BlockLootDrop::plain(LootDrop::single(
+            Identifier::parse("minecraft:brick").expect("vanilla brick identifier"),
+        ));
+        drop.rolls = pool_rolls;
+        drop.bonus_rolls = pool_bonus_rolls;
+        drop.dynamic_sherds = true;
+        drop
+    } else {
+        let Some(drop) =
+            contextual_regular_drop(path, &unconditional, pool_rolls, pool_bonus_rolls)?
+        else {
+            return Ok(None);
+        };
+        drop
     };
     if let Some(count) = pool_count {
-        drop.drop.count = count;
+        counts.push(BlockStateCount {
+            predicate: BlockStatePredicate::default(),
+            count,
+        });
     }
     drop.random_chance = random_chance;
     drop.survives_explosion |= has_survives_explosion_condition(entry);
     drop.explosion_decay |= has_explosion_decay_function(entry);
-    Ok(Some(BlockStateLootEntry { predicate, drop }))
+    Ok(Some(BlockStateLootEntry {
+        predicate,
+        drop,
+        counts,
+    }))
 }
 
 fn random_chance_condition(value: &serde_json::Value) -> Option<Option<f32>> {
@@ -1321,6 +1498,12 @@ fn contextual_regular_drop(
     let Some(fortune_bonus) = fortune_bonus_from_functions(entry) else {
         return Ok(None);
     };
+    let Some(copy_components) = block_components::functions(entry) else {
+        return Ok(None);
+    };
+    let Some(copy_state) = block_state_copy::functions(entry) else {
+        return Ok(None);
+    };
     Ok(Some(BlockLootDrop {
         drop,
         fortune_bonus,
@@ -1330,6 +1513,9 @@ fn contextual_regular_drop(
         explosion_decay: has_explosion_decay_function(entry),
         rolls,
         bonus_rolls,
+        copy_components,
+        copy_state,
+        dynamic_sherds: false,
     }))
 }
 
@@ -1557,6 +1743,9 @@ fn supported_count_from_functions(
             Some("minecraft:apply_bonus")
                 if supported_zero_fortune_bonus_function(fields, function) => {}
             Some("minecraft:explosion_decay") if fields.len() == 1 => {}
+            Some("minecraft:copy_components")
+                if block_components::CopyComponents::supported(function) => {}
+            Some("minecraft:copy_state") if block_state_copy::CopyState::supported(function) => {}
             _ => return None,
         }
     }
@@ -1635,27 +1824,9 @@ fn from_str(raw: &str, path: &Path) -> Result<LootTables, LootError> {
     })?;
     let blocks = embedded::parse_blocks(path, raw.blocks)?;
     Ok(LootTables {
-        entity_drops: parse_map(path, raw.entities)?,
         block_drops: blocks.drops,
         block_loot: blocks.rules,
     })
-}
-
-fn parse_map(
-    path: &Path,
-    raw: BTreeMap<String, RawDropList>,
-) -> Result<BTreeMap<Identifier, Vec<LootDrop>>, LootError> {
-    raw.into_iter()
-        .map(|(source, drops)| {
-            let source_id = parse_id(path, source)?;
-            let drops = drops
-                .into_items()
-                .into_iter()
-                .map(|drop| parse_id(path, drop).map(LootDrop::single))
-                .collect::<Result<Vec<_>, _>>()?;
-            Ok((source_id, drops))
-        })
-        .collect()
 }
 
 fn parse_id(path: &Path, value: String) -> Result<Identifier, LootError> {
@@ -1666,1155 +1837,5 @@ fn parse_id(path: &Path, value: String) -> Result<Identifier, LootError> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use std::fs;
-
-    fn block_context<'a>(
-        loot: &LootTables,
-        block: &'a Identifier,
-        properties: &[(String, String)],
-        tool: &'a LootContextItem,
-        seed: u64,
-    ) -> BlockLootContext<'a> {
-        BlockLootContext::try_new(
-            block,
-            properties,
-            tool,
-            LootRandomBinding::new(loot.block_random_sequence(block).cloned(), seed),
-        )
-        .unwrap()
-    }
-
-    #[test]
-    fn builtin_survival_loot_loads_from_repo_json() {
-        let loot = builtin();
-
-        assert_eq!(
-            loot.entity_drop_stacks(&Identifier::parse("minecraft:cow").unwrap()),
-            Some(
-                [
-                    LootDrop::single(Identifier::parse("minecraft:leather").unwrap()),
-                    LootDrop::single(Identifier::parse("minecraft:beef").unwrap()),
-                ]
-                .as_slice()
-            )
-        );
-        assert_eq!(
-            loot.block_drop(&Identifier::parse("minecraft:stone").unwrap()),
-            Some(&Identifier::parse("minecraft:cobblestone").unwrap())
-        );
-        assert_eq!(
-            loot.block_drop(&Identifier::parse("minecraft:podzol").unwrap()),
-            Some(&Identifier::parse("minecraft:dirt").unwrap())
-        );
-        assert_eq!(
-            loot.entity_drop_stack(&Identifier::parse("minecraft:sheep").unwrap()),
-            Some(&LootDrop::single(
-                Identifier::parse("minecraft:white_wool").unwrap()
-            ))
-        );
-        assert_eq!(
-            loot.entity_drop_stacks(&Identifier::parse("minecraft:sheep").unwrap()),
-            Some(
-                [
-                    LootDrop::single(Identifier::parse("minecraft:white_wool").unwrap()),
-                    LootDrop::single(Identifier::parse("minecraft:mutton").unwrap()),
-                ]
-                .as_slice()
-            )
-        );
-        assert_eq!(
-            loot.entity_drop(&Identifier::parse("minecraft:skeleton").unwrap()),
-            Some(&Identifier::parse("minecraft:bone").unwrap())
-        );
-        assert_eq!(
-            loot.entity_drop(&Identifier::parse("minecraft:spider").unwrap()),
-            Some(&Identifier::parse("minecraft:string").unwrap())
-        );
-    }
-
-    #[test]
-    fn builtin_destroy_explosion_uses_all_repo_owned_block_drops() {
-        let loot = builtin();
-        for (block, expected) in [
-            ("minecraft:oak_log", "minecraft:oak_log"),
-            ("minecraft:diamond_ore", "minecraft:diamond"),
-        ] {
-            let drops = loot
-                .block_explosion_drops(&Identifier::parse(block).unwrap(), &[], None, || {
-                    panic!("DESTROY must not consume explosion loot RNG")
-                })
-                .expect("repo-owned block drop is supported for DESTROY");
-            assert_eq!(
-                drops,
-                [LootDrop::single(Identifier::parse(expected).unwrap())],
-                "{block}"
-            );
-        }
-    }
-
-    #[test]
-    fn loads_custom_repo_owned_loot_file() {
-        let tmp = tempfile::tempdir().unwrap();
-        let path = tmp.path().join("loot.json");
-        fs::write(
-            &path,
-            r#"{
-              "entities": { "minecraft:cow": "minecraft:beef" },
-              "blocks": { "minecraft:stone": "minecraft:cobblestone" }
-            }"#,
-        )
-        .unwrap();
-
-        let loot = load(&path).unwrap();
-
-        assert_eq!(
-            loot.entity_drop(&Identifier::parse("minecraft:cow").unwrap()),
-            Some(&Identifier::parse("minecraft:beef").unwrap())
-        );
-        assert_eq!(
-            loot.block_drop(&Identifier::parse("minecraft:stone").unwrap()),
-            Some(&Identifier::parse("minecraft:cobblestone").unwrap())
-        );
-    }
-
-    #[test]
-    fn sidecar_entries_override_only_their_fallback_keys() {
-        let stone = Identifier::parse("minecraft:stone").unwrap();
-        let mut sidecar = LootTables::from_drop_maps(
-            BTreeMap::new(),
-            BTreeMap::from([(
-                stone.clone(),
-                LootDrop::single(Identifier::parse("minecraft:diamond").unwrap()),
-            )]),
-        );
-
-        sidecar.fill_missing_from(builtin());
-
-        assert_eq!(
-            sidecar.block_drop(&stone),
-            Some(&Identifier::parse("minecraft:diamond").unwrap())
-        );
-        assert_eq!(
-            sidecar
-                .entity_drop_stacks(&Identifier::parse("minecraft:cow").unwrap())
-                .map(|drops| drops.iter().map(|drop| &drop.item).collect::<Vec<_>>()),
-            Some(vec![
-                &Identifier::parse("minecraft:leather").unwrap(),
-                &Identifier::parse("minecraft:beef").unwrap(),
-            ])
-        );
-        assert_eq!(sidecar.total_drops(), builtin().total_drops());
-    }
-
-    #[test]
-    fn partial_entity_table_keeps_sidecar_count_and_adds_missing_fallback_item() {
-        let cow = Identifier::parse("minecraft:cow").unwrap();
-        let leather = Identifier::parse("minecraft:leather").unwrap();
-        let mut sidecar = LootTables::from_drop_lists(
-            BTreeMap::from([(cow.clone(), vec![LootDrop::uniform(leather.clone(), 0, 2)])]),
-            BTreeMap::new(),
-        );
-
-        sidecar.fill_missing_entity_items_from(builtin());
-
-        assert_eq!(
-            sidecar.entity_drop_stacks(&cow),
-            Some(
-                [
-                    LootDrop::uniform(leather, 0, 2),
-                    LootDrop::single(Identifier::parse("minecraft:beef").unwrap()),
-                ]
-                .as_slice()
-            )
-        );
-    }
-
-    #[test]
-    fn loads_simple_vanilla_subset_fixture() {
-        let tmp = tempfile::tempdir().unwrap();
-        let blocks = tmp.path().join("blocks");
-        let entities = tmp.path().join("entities");
-        fs::create_dir_all(&blocks).unwrap();
-        fs::create_dir_all(&entities).unwrap();
-        fs::write(
-            blocks.join("stone.json"),
-            r#"{
-              "pools": [{
-                "entries": [{
-                  "type": "minecraft:alternatives",
-                  "children": [
-                    {
-                      "type": "minecraft:item",
-                      "conditions": [{ "condition": "minecraft:match_tool" }],
-                      "name": "minecraft:stone"
-                    },
-                    {
-                      "type": "minecraft:item",
-                      "conditions": [{ "condition": "minecraft:survives_explosion" }],
-                      "name": "minecraft:cobblestone"
-                    }
-                  ]
-                }]
-              }]
-            }"#,
-        )
-        .unwrap();
-        fs::create_dir_all(entities.join("passive")).unwrap();
-        fs::write(
-            entities.join("passive").join("cow.json"),
-            r#"{
-              "pools": [{
-                "entries": [{
-                  "type": "minecraft:item",
-                  "name": "minecraft:beef"
-                }]
-              }]
-            }"#,
-        )
-        .unwrap();
-
-        let loot = load_vanilla_subset(tmp.path()).unwrap();
-
-        assert_eq!(
-            loot.block_drop(&Identifier::parse("minecraft:stone").unwrap()),
-            Some(&Identifier::parse("minecraft:cobblestone").unwrap())
-        );
-        assert_eq!(
-            loot.block_drop_stack(&Identifier::parse("minecraft:stone").unwrap())
-                .map(|drop| drop.count),
-            Some(LootCount::Fixed(1))
-        );
-        assert_eq!(
-            loot.entity_drop(&Identifier::parse("minecraft:passive/cow").unwrap()),
-            Some(&Identifier::parse("minecraft:beef").unwrap())
-        );
-    }
-
-    #[test]
-    fn loads_vanilla_subset_set_count_constant() {
-        let tmp = tempfile::tempdir().unwrap();
-        let entities = tmp.path().join("entities");
-        fs::create_dir_all(&entities).unwrap();
-        fs::write(
-            entities.join("zombie.json"),
-            r#"{
-              "pools": [{
-                "entries": [{
-                  "type": "minecraft:item",
-                  "functions": [{
-                    "function": "minecraft:set_count",
-                    "count": 2
-                  }],
-                  "name": "minecraft:rotten_flesh"
-                }]
-              }]
-            }"#,
-        )
-        .unwrap();
-
-        let loot = load_vanilla_subset(tmp.path()).unwrap();
-
-        assert_eq!(
-            loot.entity_drop_stack(&Identifier::parse("minecraft:zombie").unwrap()),
-            Some(&LootDrop {
-                item: Identifier::parse("minecraft:rotten_flesh").unwrap(),
-                count: LootCount::Fixed(2),
-            })
-        );
-    }
-
-    #[test]
-    fn loads_independent_entity_pools_with_uniform_counts() {
-        let tmp = tempfile::tempdir().unwrap();
-        let entities = tmp.path().join("entities");
-        fs::create_dir_all(&entities).unwrap();
-        fs::write(
-            entities.join("cow.json"),
-            r#"{
-              "pools": [
-                {
-                  "rolls": 1.0,
-                  "bonus_rolls": 0.0,
-                  "entries": [{
-                    "type": "minecraft:item",
-                    "functions": [
-                      {
-                        "function": "minecraft:set_count",
-                        "add": false,
-                        "count": {
-                          "type": "minecraft:uniform",
-                          "min": 0.0,
-                          "max": 2.0
-                        }
-                      },
-                      {
-                        "function": "minecraft:enchanted_count_increase",
-                        "enchantment": "minecraft:looting",
-                        "count": {
-                          "type": "minecraft:uniform",
-                          "min": 0.0,
-                          "max": 1.0
-                        }
-                      }
-                    ],
-                    "name": "minecraft:leather"
-                  }]
-                },
-                {
-                  "rolls": 1.0,
-                  "bonus_rolls": 0.0,
-                  "entries": [{
-                    "type": "minecraft:item",
-                    "functions": [
-                      {
-                        "function": "minecraft:set_count",
-                        "add": false,
-                        "count": {
-                          "type": "minecraft:uniform",
-                          "min": 1.0,
-                          "max": 3.0
-                        }
-                      },
-                      {
-                        "function": "minecraft:furnace_smelt",
-                        "conditions": [{
-                          "condition": "minecraft:entity_properties"
-                        }]
-                      },
-                      {
-                        "function": "minecraft:enchanted_count_increase",
-                        "enchantment": "minecraft:looting",
-                        "count": {
-                          "type": "minecraft:uniform",
-                          "min": 0.0,
-                          "max": 1.0
-                        }
-                      }
-                    ],
-                    "name": "minecraft:beef"
-                  }]
-                }
-              ]
-            }"#,
-        )
-        .unwrap();
-
-        let loot = load_vanilla_subset(tmp.path()).unwrap();
-
-        assert_eq!(
-            loot.entity_drop_stacks(&Identifier::parse("minecraft:cow").unwrap()),
-            Some(
-                [
-                    LootDrop::uniform(Identifier::parse("minecraft:leather").unwrap(), 0, 2,),
-                    LootDrop::uniform(Identifier::parse("minecraft:beef").unwrap(), 1, 3),
-                ]
-                .as_slice()
-            )
-        );
-    }
-
-    #[test]
-    fn loads_block_uniform_count_with_no_fortune_or_explosion_baseline() {
-        let tmp = tempfile::tempdir().unwrap();
-        let blocks = tmp.path().join("blocks");
-        fs::create_dir_all(&blocks).unwrap();
-        fs::write(
-            blocks.join("lapis_ore.json"),
-            r#"{
-              "pools": [{
-                "entries": [{
-                  "type": "minecraft:item",
-                  "functions": [
-                    {
-                      "function": "minecraft:set_count",
-                      "count": {
-                        "type": "minecraft:uniform",
-                        "min": 4.0,
-                        "max": 9.0
-                      }
-                    },
-                    {
-                      "function": "minecraft:apply_bonus",
-                      "enchantment": "minecraft:fortune",
-                      "formula": "minecraft:ore_drops"
-                    },
-                    { "function": "minecraft:explosion_decay" }
-                  ],
-                  "name": "minecraft:lapis_lazuli"
-                }]
-              }]
-            }"#,
-        )
-        .unwrap();
-
-        let loot = load_vanilla_subset(tmp.path()).unwrap();
-
-        assert_eq!(
-            loot.block_drop_stack(&Identifier::parse("minecraft:lapis_ore").unwrap()),
-            Some(&LootDrop::uniform(
-                Identifier::parse("minecraft:lapis_lazuli").unwrap(),
-                4,
-                9,
-            ))
-        );
-    }
-
-    #[test]
-    fn skips_vanilla_tables_with_unsupported_functions() {
-        let tmp = tempfile::tempdir().unwrap();
-        let entities = tmp.path().join("entities");
-        fs::create_dir_all(&entities).unwrap();
-        fs::write(
-            entities.join("zombie.json"),
-            r#"{
-              "pools": [{
-                "entries": [{
-                  "type": "minecraft:item",
-                  "functions": [{ "function": "minecraft:looting_enchant" }],
-                  "name": "minecraft:rotten_flesh"
-                }]
-              }]
-            }"#,
-        )
-        .unwrap();
-
-        let loot = load_vanilla_subset(tmp.path()).unwrap();
-
-        assert_eq!(
-            loot.entity_drop(&Identifier::parse("minecraft:zombie").unwrap()),
-            None
-        );
-    }
-
-    #[test]
-    fn skips_vanilla_tables_with_unsupported_set_count_shape() {
-        let tmp = tempfile::tempdir().unwrap();
-        let entities = tmp.path().join("entities");
-        fs::create_dir_all(&entities).unwrap();
-        fs::write(
-            entities.join("zombie.json"),
-            r#"{
-              "pools": [{
-                "entries": [{
-                  "type": "minecraft:item",
-                  "functions": [{
-                    "function": "minecraft:set_count",
-                    "count": { "min": 0, "max": 2 }
-                  }],
-                  "name": "minecraft:rotten_flesh"
-                }]
-              }]
-            }"#,
-        )
-        .unwrap();
-
-        let loot = load_vanilla_subset(tmp.path()).unwrap();
-
-        assert_eq!(
-            loot.entity_drop_stack(&Identifier::parse("minecraft:zombie").unwrap()),
-            None
-        );
-    }
-
-    #[test]
-    fn loads_pool_level_set_count_constant() {
-        let tmp = tempfile::tempdir().unwrap();
-        let blocks = tmp.path().join("blocks");
-        fs::create_dir_all(&blocks).unwrap();
-        fs::write(
-            blocks.join("oak_leaves.json"),
-            r#"{
-              "pools": [{
-                "functions": [{ "function": "minecraft:set_count", "count": 3 }],
-                "entries": [{
-                  "type": "minecraft:item",
-                  "name": "minecraft:apple"
-                }]
-              }]
-            }"#,
-        )
-        .unwrap();
-
-        let loot = load_vanilla_subset(tmp.path()).unwrap();
-
-        assert_eq!(
-            loot.block_drop_stack(&Identifier::parse("minecraft:oak_leaves").unwrap()),
-            Some(&LootDrop {
-                item: Identifier::parse("minecraft:apple").unwrap(),
-                count: LootCount::Fixed(3),
-            })
-        );
-    }
-
-    #[test]
-    fn unsupported_rolls_or_bonus_rolls_fail_closed_for_whole_table() {
-        let tmp = tempfile::tempdir().unwrap();
-        let blocks = tmp.path().join("blocks");
-        fs::create_dir_all(&blocks).unwrap();
-        fs::write(
-            blocks.join("bad_rolls.json"),
-            r#"{
-              "pools": [
-                {
-                  "rolls": { "type": "minecraft:uniform", "min": 4097, "max": 4097 },
-                  "entries": [{ "type": "minecraft:item", "name": "minecraft:diamond" }]
-                },
-                {
-                  "entries": [{ "type": "minecraft:item", "name": "minecraft:cobblestone" }]
-                }
-              ]
-            }"#,
-        )
-        .unwrap();
-        fs::write(
-            blocks.join("bad_bonus_rolls.json"),
-            r#"{
-              "pools": [
-                {
-                  "bonus_rolls": { "type": "minecraft:uniform", "min": 1, "max": 0 },
-                  "entries": [{ "type": "minecraft:item", "name": "minecraft:diamond" }]
-                },
-                {
-                  "entries": [{ "type": "minecraft:item", "name": "minecraft:dirt" }]
-                }
-              ]
-            }"#,
-        )
-        .unwrap();
-
-        let loot = load_vanilla_subset(tmp.path()).unwrap();
-
-        assert_eq!(
-            loot.block_drop(&Identifier::parse("minecraft:bad_rolls").unwrap()),
-            None
-        );
-        assert_eq!(
-            loot.block_drop(&Identifier::parse("minecraft:bad_bonus_rolls").unwrap()),
-            None
-        );
-    }
-
-    #[test]
-    fn skips_set_count_functions_with_unsupported_fields() {
-        let tmp = tempfile::tempdir().unwrap();
-        let entities = tmp.path().join("entities");
-        fs::create_dir_all(&entities).unwrap();
-        for (name, function) in [
-            (
-                "conditioned",
-                r#"{
-                  "function": "minecraft:set_count",
-                  "conditions": [{ "condition": "minecraft:survives_explosion" }],
-                  "count": 2
-                }"#,
-            ),
-            (
-                "additive",
-                r#"{
-                  "function": "minecraft:set_count",
-                  "add": true,
-                  "count": 2
-                }"#,
-            ),
-            (
-                "extra_field",
-                r#"{
-                  "function": "minecraft:set_count",
-                  "count": 2,
-                  "quality": 1
-                }"#,
-            ),
-        ] {
-            fs::write(
-                entities.join(format!("{name}.json")),
-                format!(
-                    r#"{{
-                      "pools": [{{
-                        "entries": [{{
-                          "type": "minecraft:item",
-                          "functions": [{function}],
-                          "name": "minecraft:rotten_flesh"
-                        }}]
-                      }}]
-                    }}"#
-                ),
-            )
-            .unwrap();
-        }
-
-        let loot = load_vanilla_subset(tmp.path()).unwrap();
-
-        for name in ["conditioned", "additive", "extra_field"] {
-            assert_eq!(
-                loot.entity_drop_stack(&Identifier::parse(format!("minecraft:{name}")).unwrap()),
-                None
-            );
-        }
-    }
-
-    #[test]
-    fn skips_alternatives_wrappers_with_unsupported_conditions_or_features() {
-        let tmp = tempfile::tempdir().unwrap();
-        let blocks = tmp.path().join("blocks");
-        fs::create_dir_all(&blocks).unwrap();
-        fs::write(
-            blocks.join("conditioned_alternatives.json"),
-            r#"{
-              "pools": [{
-                "entries": [
-                  {
-                    "type": "minecraft:alternatives",
-                    "conditions": [{ "condition": "minecraft:match_tool" }],
-                    "children": [{ "type": "minecraft:item", "name": "minecraft:diamond" }]
-                  },
-                  { "type": "minecraft:item", "name": "minecraft:cobblestone" }
-                ]
-              }]
-            }"#,
-        )
-        .unwrap();
-        fs::write(
-            blocks.join("featured_alternatives.json"),
-            r#"{
-              "pools": [{
-                "entries": [
-                  {
-                    "type": "minecraft:alternatives",
-                    "features": ["minecraft:update_1_21"],
-                    "children": [{ "type": "minecraft:item", "name": "minecraft:diamond" }]
-                  },
-                  { "type": "minecraft:item", "name": "minecraft:dirt" }
-                ]
-              }]
-            }"#,
-        )
-        .unwrap();
-
-        let loot = load_vanilla_subset(tmp.path()).unwrap();
-
-        assert_eq!(
-            loot.block_drop(&Identifier::parse("minecraft:conditioned_alternatives").unwrap()),
-            Some(&Identifier::parse("minecraft:cobblestone").unwrap())
-        );
-        assert_eq!(
-            loot.block_drop(&Identifier::parse("minecraft:featured_alternatives").unwrap()),
-            Some(&Identifier::parse("minecraft:dirt").unwrap())
-        );
-    }
-
-    #[test]
-    #[ignore = "requires local 26.1.2 loot table sidecars"]
-    fn loads_real_vanilla_subset_when_present() {
-        let path = workspace_path("data/vanilla/data/minecraft/loot_table");
-        assert!(
-            path.is_dir(),
-            "{} not present; run tools/extract-vanilla-data.sh",
-            path.display()
-        );
-
-        let loot = load_vanilla_subset(path).unwrap();
-
-        assert_eq!(
-            loot.block_drop(&Identifier::parse("minecraft:stone").unwrap()),
-            Some(&Identifier::parse("minecraft:cobblestone").unwrap())
-        );
-        assert_eq!(
-            loot.block_drop(&Identifier::parse("minecraft:grass_block").unwrap()),
-            Some(&Identifier::parse("minecraft:dirt").unwrap())
-        );
-        assert_eq!(
-            loot.block_drop_stack(&Identifier::parse("minecraft:lapis_ore").unwrap()),
-            Some(&LootDrop::uniform(
-                Identifier::parse("minecraft:lapis_lazuli").unwrap(),
-                4,
-                9,
-            ))
-        );
-        assert_eq!(
-            loot.block_drop_stack(&Identifier::parse("minecraft:redstone_ore").unwrap()),
-            Some(&LootDrop::uniform(
-                Identifier::parse("minecraft:redstone").unwrap(),
-                4,
-                5,
-            ))
-        );
-        assert_eq!(
-            loot.block_loot(&Identifier::parse("minecraft:stone").unwrap())
-                .unwrap()
-                .drops_for_tool(true, None),
-            [BlockLootDrop::plain(LootDrop::single(
-                Identifier::parse("minecraft:stone").unwrap()
-            ))]
-        );
-        let diamond = &loot
-            .block_loot(&Identifier::parse("minecraft:diamond_ore").unwrap())
-            .unwrap()
-            .drops_for_tool(false, None)[0];
-        assert_eq!(diamond.fortune_bonus, Some(FortuneBonus::OreDrops));
-        let redstone = &loot
-            .block_loot(&Identifier::parse("minecraft:redstone_ore").unwrap())
-            .unwrap()
-            .drops_for_tool(false, None)[0];
-        assert_eq!(
-            redstone.fortune_bonus,
-            Some(FortuneBonus::UniformBonusCount {
-                bonus_multiplier: 1
-            })
-        );
-        assert_eq!(
-            loot.block_drop_stacks(&Identifier::parse("minecraft:potted_oak_sapling").unwrap()),
-            Some(
-                [
-                    LootDrop::single(Identifier::parse("minecraft:flower_pot").unwrap()),
-                    LootDrop::single(Identifier::parse("minecraft:oak_sapling").unwrap()),
-                ]
-                .as_slice()
-            )
-        );
-        assert_eq!(
-            loot.entity_drop_stacks(&Identifier::parse("minecraft:cow").unwrap()),
-            Some(
-                [
-                    LootDrop::uniform(Identifier::parse("minecraft:leather").unwrap(), 0, 2,),
-                    LootDrop::uniform(Identifier::parse("minecraft:beef").unwrap(), 1, 3),
-                ]
-                .as_slice()
-            )
-        );
-    }
-
-    #[test]
-    fn keeps_silk_touch_alternative_from_vanilla_block_table() {
-        let tmp = tempfile::tempdir().unwrap();
-        let blocks = tmp.path().join("blocks");
-        fs::create_dir_all(&blocks).unwrap();
-        fs::write(
-            blocks.join("stone.json"),
-            r#"{
-              "pools": [{
-                "bonus_rolls": 0.0,
-                "entries": [{
-                  "type": "minecraft:alternatives",
-                  "children": [
-                    {
-                      "type": "minecraft:item",
-                      "conditions": [{
-                        "condition": "minecraft:match_tool",
-                        "predicate": {
-                          "predicates": {
-                            "minecraft:enchantments": [{
-                              "enchantments": "minecraft:silk_touch",
-                              "levels": { "min": 1 }
-                            }]
-                          }
-                        }
-                      }],
-                      "name": "minecraft:stone"
-                    },
-                    {
-                      "type": "minecraft:item",
-                      "conditions": [{ "condition": "minecraft:survives_explosion" }],
-                      "name": "minecraft:cobblestone"
-                    }
-                  ]
-                }],
-                "rolls": 1.0
-              }]
-            }"#,
-        )
-        .unwrap();
-
-        let loot = load_vanilla_subset(tmp.path()).unwrap();
-        let rule = loot
-            .block_loot(&Identifier::parse("minecraft:stone").unwrap())
-            .unwrap();
-
-        assert_eq!(
-            rule.drops_for_tool(true, None),
-            [BlockLootDrop::plain(LootDrop::single(
-                Identifier::parse("minecraft:stone").unwrap()
-            ))]
-        );
-        let regular = &rule.drops_for_tool(false, None)[0];
-        assert_eq!(regular.drop.item.as_str(), "minecraft:cobblestone");
-        assert_eq!(
-            regular.sample_simple_explosion_count(Some(4.0), &mut || 0.25),
-            Some(1)
-        );
-        assert_eq!(
-            regular.sample_simple_explosion_count(Some(4.0), &mut || 0.250_001),
-            Some(0)
-        );
-        assert_eq!(
-            regular.sample_simple_explosion_count(None, &mut || {
-                panic!("DESTROY must not consume explosion loot RNG")
-            }),
-            Some(1)
-        );
-    }
-
-    #[test]
-    fn explosion_decay_rolls_once_per_fixed_count_item() {
-        let tmp = tempfile::tempdir().unwrap();
-        let blocks = tmp.path().join("blocks");
-        fs::create_dir_all(&blocks).unwrap();
-        fs::write(
-            blocks.join("test_ore.json"),
-            r#"{
-              "pools": [{
-                "entries": [{
-                  "type": "minecraft:item",
-                  "functions": [
-                    { "function": "minecraft:set_count", "count": 4 },
-                    { "function": "minecraft:explosion_decay" }
-                  ],
-                  "name": "minecraft:diamond"
-                }]
-              }]
-            }"#,
-        )
-        .unwrap();
-
-        let loot = load_vanilla_subset(tmp.path()).unwrap();
-        let block = Identifier::parse("minecraft:test_ore").unwrap();
-        let mut rolls = [0.1, 0.9, 0.25, 0.5].into_iter();
-        let drops = loot
-            .block_explosion_drops(&block, &[], Some(4.0), || rolls.next().unwrap())
-            .expect("simple fixed-count explosion table is supported");
-
-        assert_eq!(
-            drops,
-            [LootDrop::fixed(
-                Identifier::parse("minecraft:diamond").unwrap(),
-                2
-            )]
-        );
-        assert_eq!(rolls.next(), None, "one roll is consumed per input item");
-    }
-
-    #[test]
-    fn ore_drops_fortune_level_changes_sampled_count() {
-        let tmp = tempfile::tempdir().unwrap();
-        let blocks = tmp.path().join("blocks");
-        fs::create_dir_all(&blocks).unwrap();
-        fs::write(
-            blocks.join("diamond_ore.json"),
-            r#"{
-              "pools": [{
-                "entries": [{
-                  "type": "minecraft:alternatives",
-                  "children": [
-                    {
-                      "type": "minecraft:item",
-                      "conditions": [{
-                        "condition": "minecraft:match_tool",
-                        "predicate": {
-                          "predicates": {
-                            "minecraft:enchantments": [{
-                              "enchantments": "minecraft:silk_touch",
-                              "levels": { "min": 1 }
-                            }]
-                          }
-                        }
-                      }],
-                      "name": "minecraft:diamond_ore"
-                    },
-                    {
-                      "type": "minecraft:item",
-                      "functions": [{
-                        "enchantment": "minecraft:fortune",
-                        "formula": "minecraft:ore_drops",
-                        "function": "minecraft:apply_bonus"
-                      }, {
-                        "function": "minecraft:explosion_decay"
-                      }],
-                      "name": "minecraft:diamond"
-                    }
-                  ]
-                }]
-              }]
-            }"#,
-        )
-        .unwrap();
-
-        let loot = load_vanilla_subset(tmp.path()).unwrap();
-        let drop = &loot
-            .block_loot(&Identifier::parse("minecraft:diamond_ore").unwrap())
-            .unwrap()
-            .drops_for_tool(false, None)[0];
-
-        assert_eq!(drop.fortune_bonus, Some(FortuneBonus::OreDrops));
-    }
-
-    #[test]
-    fn parses_and_samples_binomial_with_bonus_count() {
-        let tmp = tempfile::tempdir().unwrap();
-        let blocks = tmp.path().join("blocks");
-        fs::create_dir_all(&blocks).unwrap();
-        fs::write(
-            blocks.join("test_crop.json"),
-            r#"{
-              "pools": [{
-                "entries": [{
-                  "type": "minecraft:item",
-                  "functions": [{
-                    "enchantment": "minecraft:fortune",
-                    "formula": "minecraft:binomial_with_bonus_count",
-                    "function": "minecraft:apply_bonus",
-                    "parameters": {
-                      "extra": 3,
-                      "probability": 1.0
-                    }
-                  }],
-                  "name": "minecraft:wheat_seeds"
-                }]
-              }]
-            }"#,
-        )
-        .unwrap();
-
-        let loot = load_vanilla_subset(tmp.path()).unwrap();
-        let drop = &loot
-            .block_loot(&Identifier::parse("minecraft:test_crop").unwrap())
-            .unwrap()
-            .drops_for_tool(false, None)[0];
-
-        assert_eq!(
-            drop.fortune_bonus,
-            Some(FortuneBonus::BinomialWithBonusCount {
-                extra_rounds: 3,
-                probability: 1.0,
-            })
-        );
-    }
-
-    #[test]
-    fn block_state_crop_pools_choose_mature_and_fallback_alternatives() {
-        let tmp = tempfile::tempdir().unwrap();
-        let blocks = tmp.path().join("blocks");
-        fs::create_dir_all(&blocks).unwrap();
-        fs::write(
-            blocks.join("wheat.json"),
-            r#"{
-              "pools": [{
-                "entries": [{
-                  "type": "minecraft:alternatives",
-                  "children": [{
-                    "type": "minecraft:item",
-                    "conditions": [{
-                      "block": "minecraft:wheat",
-                      "condition": "minecraft:block_state_property",
-                      "properties": { "age": "7" }
-                    }],
-                    "name": "minecraft:wheat"
-                  }, {
-                    "type": "minecraft:item",
-                    "name": "minecraft:wheat_seeds"
-                  }]
-                }]
-              }, {
-                "conditions": [{
-                  "block": "minecraft:wheat",
-                  "condition": "minecraft:block_state_property",
-                  "properties": { "age": "7" }
-                }],
-                "entries": [{
-                  "type": "minecraft:item",
-                  "functions": [{
-                    "enchantment": "minecraft:fortune",
-                    "formula": "minecraft:binomial_with_bonus_count",
-                    "function": "minecraft:apply_bonus",
-                    "parameters": { "extra": 3, "probability": 1.0 }
-                  }],
-                  "name": "minecraft:wheat_seeds"
-                }]
-              }]
-            }"#,
-        )
-        .unwrap();
-
-        let loot = load_vanilla_subset(tmp.path()).unwrap();
-        let wheat = Identifier::parse("minecraft:wheat").unwrap();
-        let young = vec![("age".to_string(), "6".to_string())];
-        let mature = vec![("age".to_string(), "7".to_string())];
-        let tool = LootContextItem::empty();
-
-        let young_drops = loot
-            .evaluate_block(&block_context(&loot, &wheat, &young, &tool, 0))
-            .unwrap()
-            .unwrap();
-        assert_eq!(young_drops.len(), 1);
-        assert_eq!(young_drops[0].item.as_str(), "minecraft:wheat_seeds");
-
-        let mature_drops = loot
-            .evaluate_block(&block_context(&loot, &wheat, &mature, &tool, 0))
-            .unwrap()
-            .unwrap();
-        assert_eq!(mature_drops.len(), 2);
-        assert_eq!(mature_drops[0].item.as_str(), "minecraft:wheat");
-        assert_eq!(mature_drops[1].item.as_str(), "minecraft:wheat_seeds");
-        assert_eq!(mature_drops[1].count, LootCount::Fixed(4));
-    }
-
-    #[test]
-    #[ignore = "requires local 26.1.2 carrots loot table sidecar"]
-    fn real_binomial_fixture_has_expected_parameters_when_present() {
-        let path = workspace_path("data/vanilla/data/minecraft/loot_table/blocks/carrots.json");
-        assert!(
-            path.is_file(),
-            "{} not present; run tools/extract-vanilla-data.sh",
-            path.display()
-        );
-
-        let carrots: serde_json::Value =
-            serde_json::from_str(&fs::read_to_string(path).unwrap()).unwrap();
-        let entry = carrots.pointer("/pools/1/entries/0").unwrap();
-        let binomial = fortune_bonus_from_functions(entry).unwrap();
-
-        assert_eq!(
-            binomial,
-            Some(FortuneBonus::BinomialWithBonusCount {
-                extra_rounds: 3,
-                probability: 0.571_428_6,
-            })
-        );
-    }
-
-    #[test]
-    #[ignore = "requires local 26.1.2 crop loot table sidecars"]
-    fn real_crop_fixtures_load_state_conditioned_pools_when_present() {
-        let root = workspace_path("data/vanilla/data/minecraft/loot_table");
-        for fixture in [
-            "blocks/wheat.json",
-            "blocks/carrots.json",
-            "blocks/potatoes.json",
-            "blocks/beetroots.json",
-        ] {
-            let path = root.join(fixture);
-            assert!(
-                path.is_file(),
-                "{} not present; run tools/extract-vanilla-data.sh",
-                path.display()
-            );
-        }
-
-        let loot = load_vanilla_subset(&root).unwrap();
-        for (block, young_age, mature_age, young_expected, mature_expected) in [
-            (
-                "minecraft:wheat",
-                "6",
-                "7",
-                &["minecraft:wheat_seeds"][..],
-                &["minecraft:wheat", "minecraft:wheat_seeds"][..],
-            ),
-            (
-                "minecraft:carrots",
-                "6",
-                "7",
-                &["minecraft:carrot"][..],
-                &["minecraft:carrot", "minecraft:carrot"][..],
-            ),
-            (
-                "minecraft:potatoes",
-                "6",
-                "7",
-                &["minecraft:potato"][..],
-                &["minecraft:potato", "minecraft:potato"][..],
-            ),
-            (
-                "minecraft:beetroots",
-                "2",
-                "3",
-                &["minecraft:beetroot_seeds"][..],
-                &["minecraft:beetroot", "minecraft:beetroot_seeds"][..],
-            ),
-        ] {
-            let block = Identifier::parse(block).unwrap();
-            let items = |age: &str| {
-                let properties = [("age".to_string(), age.to_string())];
-                let tool = LootContextItem::empty();
-                loot.evaluate_block(&block_context(&loot, &block, &properties, &tool, 0))
-                    .unwrap()
-                    .unwrap()
-                    .into_iter()
-                    .map(|drop| drop.item.as_str().to_string())
-                    .collect::<Vec<_>>()
-            };
-            assert_eq!(
-                items(young_age)
-                    .iter()
-                    .map(String::as_str)
-                    .collect::<Vec<_>>(),
-                young_expected,
-                "young {block}"
-            );
-            assert_eq!(
-                items(mature_age)
-                    .iter()
-                    .map(String::as_str)
-                    .collect::<Vec<_>>(),
-                mature_expected,
-                "mature {block}"
-            );
-        }
-    }
-
-    #[test]
-    fn fortune_level_zero_preserves_baseline_count_sampling() {
-        let drop = BlockLootDrop {
-            drop: LootDrop::uniform(Identifier::parse("minecraft:lapis_lazuli").unwrap(), 4, 9),
-            fortune_bonus: Some(FortuneBonus::OreDrops),
-            random_chance: None,
-            fortune_chances: Vec::new(),
-            survives_explosion: false,
-            explosion_decay: false,
-            rolls: LootCount::Fixed(1),
-            bonus_rolls: LootCount::Fixed(0),
-        };
-
-        for roll in 0..12 {
-            assert_eq!(
-                drop.drop.count.try_sample(roll).unwrap(),
-                drop.drop.count.try_sample(roll).unwrap()
-            );
-        }
-    }
-
-    #[test]
-    #[ignore = "requires local 26.1.2 sheep loot table sidecars"]
-    fn completes_real_vanilla_sheep_table_when_present() {
-        let path = workspace_path("data/vanilla/data/minecraft/loot_table");
-        let sheep_path = path.join("entities/sheep.json");
-        assert!(
-            sheep_path.is_file(),
-            "{} not present; run tools/extract-vanilla-data.sh",
-            sheep_path.display()
-        );
-        let sheep = Identifier::parse("minecraft:sheep").unwrap();
-        let mut loot = load_vanilla_subset(path).unwrap();
-
-        loot.fill_missing_from(builtin());
-        loot.fill_missing_entity_items_from(builtin());
-
-        assert_eq!(
-            loot.entity_drop_stacks(&sheep),
-            Some(
-                [
-                    LootDrop::uniform(Identifier::parse("minecraft:mutton").unwrap(), 1, 2),
-                    LootDrop::single(Identifier::parse("minecraft:white_wool").unwrap()),
-                ]
-                .as_slice()
-            )
-        );
-    }
-
-    fn workspace_path(rel: &str) -> PathBuf {
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .and_then(Path::parent)
-            .unwrap()
-            .join(rel)
-    }
-}
+#[path = "loot_tests.rs"]
+mod tests;

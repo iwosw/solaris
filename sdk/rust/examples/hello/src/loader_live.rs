@@ -28,7 +28,7 @@
 //!   that, and the revision this module presents against is the one the owner
 //!   answered with, advanced by one per replacement it asked for. Only one open
 //!   is outstanding at a time: a command that arrives before the owner answers it
-//!   - an `update` or an input edge - only rewrites the model the answered
+//!   (an `update` or an input edge) only rewrites the model the answered
 //!   instance is presented with, and a `hide` among them closes that instance, so
 //!   a second instance is never opened for this connection to lose track of.
 //! * `<owner>:input` is the invisible HUD (`widgets: []`) whose client bundle

@@ -177,23 +177,16 @@ connection merely because the Minecraft process stayed open.
 
 ## How operators know Loader is required
 
-Run the server check before deployment:
+Inspect each selected package's validated `[client]` bundle declarations and
+the actual startup/Configuration negotiation. A package without bundles is
+`server_only`; a package with bundles is `server_and_client` and requires the
+matching adapter and player permission approval. The declarations identify
+supported loaders, permissions, artifact identities, paths, sizes and hashes.
 
-```sh
-solaris --check --config server.toml
-```
-
-In `discovered_plugins`:
-
-- `deployment: "server_only"` and empty `client_bundles` means an ordinary
-  vanilla client is accepted by that plugin;
-- `deployment: "server_and_client"` means Solaris Loader is required;
-- `supported_loaders`, `permissions`, and `client_bundles` show exactly which
-  adapters, permission set, identities, paths, sizes, and hashes are required.
-
-Startup logs repeat the derived deployment for each discovered plugin. There is
-no separate manifest switch that an operator can forget to keep synchronized.
-See [Plugin deployment](PLUGINS.md#deployment-server-only-or-loader-required).
+There is no native server `--check` or `discovered_plugins` JSON check report.
+Startup validates the real component/client deployment; `content verify`
+validates only the vanilla content cache. See
+[Plugin deployment](PLUGINS.md#operator-deployment).
 
 ## Troubleshooting
 
@@ -209,8 +202,8 @@ Fabric/NeoForge/Forge. Fabric also needs Fabric API. Check the client log for
 A stored allow/deny decision may already match. Close Minecraft, inspect the
 correct cache directory and `permissions.properties`, and remove only the entry
 for the intended test server if you deliberately want to prompt again. Also
-confirm the server check says `server_and_client`; server-only plugins do not
-start a Loader handshake.
+confirm the selected package actually declares client bundles; server-only
+packages do not start a Loader handshake.
 
 ### The prompt was denied
 
@@ -220,8 +213,8 @@ a disconnect and no download.
 
 ### Bundle verification or activation fails
 
-The operator should rerun `--check` and verify that each configured artifact
-exists and exactly matches `size_bytes` and `sha256`. The client should not edit
+The operator should validate the deployment at startup and verify each artifact
+exists and matches `size_bytes` and `sha256`. The client should not edit
 cached ZIPs. Remove the failing exact cache identity and reconnect only after the
 server artifact is corrected; changing artifact bytes requires a new matching
 manifest identity.

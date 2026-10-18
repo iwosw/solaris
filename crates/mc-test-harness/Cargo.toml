@@ -1,6 +1,7 @@
 [package]
 name = "mc-test-harness"
 description = "Differential / wire-capture testing infrastructure (Solaris)."
+autobins = false
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -27,31 +28,26 @@ path = "src/bin/core_replay_validate.rs"
 name = "registry-data-extract"
 path = "src/bin/registry_data_extract.rs"
 
+[[bin]]
+name = "player-scale-bots"
+path = "src/bin/player_scale_bots.rs"
+
 [dependencies]
 mc-data = { path = "../mc-data" }
 mc-protocol = { path = "../mc-protocol" }
+mc-vanilla = { path = "../mc-vanilla" }
 mc-nbt = { path = "../mc-nbt" }
+mc-world = { path = "../mc-world" }
+mc-loader = { path = "../mc-loader" }
+sha2 = { workspace = true }
+flate2 = { workspace = true }
 bytes = { workspace = true }
 tokio = { workspace = true }
 anyhow = { workspace = true }
-thiserror = { workspace = true }
 clap = { workspace = true }
 tracing-subscriber = { workspace = true }
 uuid = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+parking_lot = "0.12"
 tempfile = "3"
-
-[dev-dependencies]
-flate2 = { workspace = true }
-mc-entity = { path = "../mc-entity" }
-mc-net = { path = "../mc-net", features = ["load-bench"] }
-mc-plugin-host = { path = "../mc-plugin-host" }
-mc-script = { path = "../mc-script" }
-mc-world = { path = "../mc-world" }
-mc-worldgen = { path = "../mc-worldgen" }
-toml = { workspace = true }
-zip = { workspace = true }
-# `tests/wasm_storage_compat.rs` includes the component fixture source the host
-# tests share, and that fixture encodes the real guest module with `wit-component`.
-wit-component = "0.259"

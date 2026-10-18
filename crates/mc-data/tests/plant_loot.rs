@@ -11,7 +11,13 @@ fn id(name: &str) -> Identifier {
 }
 
 fn drops(block: &str, tool: &LootContextItem, seed: u64) -> Vec<LootDrop> {
-    let table = loot::builtin();
+    static TABLE: std::sync::LazyLock<loot::LootTables> = std::sync::LazyLock::new(|| {
+        loot::load_builtin(
+            &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data/vanilla"),
+        )
+        .expect("repo vanilla fixture loads builtin loot")
+    });
+    let table = &*TABLE;
     let block = id(block);
     table
         .evaluate_block(

@@ -311,14 +311,6 @@ impl PreparedWorld {
         &self.store
     }
 
-    pub fn store_arc(&self) -> Arc<NativeStore> {
-        Arc::clone(&self.store)
-    }
-
-    pub fn lease_arc(&self) -> Arc<WorldRootLease> {
-        Arc::clone(&self._lease)
-    }
-
     pub fn set_bounds(&mut self, bounds: PlaneBounds) -> Result<PlayableBounds, PrepareError> {
         let operating_revision = self
             .playable

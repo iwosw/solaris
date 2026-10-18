@@ -12,6 +12,8 @@ repository = "https://github.com/kaiserproger/solaris"
 
 [workspace.dependencies]
 arc-swap = "1.7"
+parking_lot = "0.12"
+rustc-hash = "2"
 tokio = { version = "1", features = ["full"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -29,7 +31,6 @@ flate2 = { version = "1", default-features = false, features = ["zlib-rs"] }
 lz4_flex = "0.11"
 md-5 = "0.10"
 proptest = "1"
-bevy_ecs = { version = "0.18.1", default-features = false, features = ["std"] }
 bytemuck = "1"
 wide = "1.5"
 rayon = "1"
@@ -50,9 +51,34 @@ unsafe_code = "forbid"
 [workspace.lints.clippy]
 all = { level = "warn", priority = -1 }
 
+# The debug server compiles deployed Wasm components at startup. Keep Solaris
+# crates debuggable, but optimize every third-party dependency (Wasmtime,
+# wasmparser, serde_json, ...): with six deployed packages an unoptimized-deps
+# debug server took 64 s to listen, 28 s with `opt-level = 2` on all deps
+# (.analysis/codex-logs/restart-hang/). Cranelift lowering and register
+# allocation stay at 3. Guest optimization and the host's sequential compile
+# policy are unchanged.
+[profile.dev.package."*"]
+opt-level = 2
+
+[profile.dev.package.cranelift-codegen]
+opt-level = 3
+
+[profile.dev.package.regalloc2]
+opt-level = 3
+
 [profile.test]
 debug = 1
 incremental = false
 
 [profile.test.package."*"]
 debug = 0
+
+# Density-graph evaluation and noise loops also run during debug-server startup.
+# Optimize worldgen while keeping the rest of the development server debuggable.
+[profile.dev.package.mc-worldgen]
+opt-level = 3
+
+# Lighting/admission runs on the tick thread during join.
+[profile.dev.package.mc-world]
+opt-level = 3

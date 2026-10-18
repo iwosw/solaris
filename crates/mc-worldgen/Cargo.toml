@@ -12,6 +12,7 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
+anyhow = { workspace = true }
 flate2 = { workspace = true }
 mc-data = { path = "../mc-data" }
 mc-nbt = { path = "../mc-nbt" }

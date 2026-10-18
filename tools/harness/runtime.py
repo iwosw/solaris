@@ -483,6 +483,7 @@ def start_client(
         process = subprocess.Popen(
             [
                 str(gradlew),
+                "--no-daemon",
                 "--no-configuration-cache",
                 "-p",
                 str(AGENT_ROOT),

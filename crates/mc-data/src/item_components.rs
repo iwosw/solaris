@@ -7,6 +7,8 @@ use thiserror::Error;
 use crate::food::FoodEntry;
 use crate::{Identifier, read_json_file, visit_json_files};
 
+pub use crate::item_profiles::*;
+
 const REQUIRED_ITEM_COMPONENTS: &str = include_str!("../data/required_item_components.json");
 const DEFAULT_CONSUME_SECONDS: f32 = 1.6;
 
@@ -34,6 +36,8 @@ pub enum ItemComponentsError {
 pub struct ItemFactsTable {
     items: BTreeMap<Identifier, ItemFacts>,
     custom_items: BTreeMap<Identifier, CustomItemDefinition>,
+    work_recipes: BTreeMap<Identifier, crate::recipes::work::WorkRecipe>,
+    has_physical_profiles: bool,
 }
 
 /// A server-owned item identity whose wire representation uses a vanilla carrier.
@@ -61,11 +65,34 @@ pub enum CustomItemError {
 }
 
 impl ItemFactsTable {
+    /// Admit immutable authored physical definitions before sharing startup facts.
+    pub fn with_work_recipes(
+        mut self,
+        definitions: impl IntoIterator<Item = crate::recipes::work::WorkRecipe>,
+        items: &crate::items::ItemRegistry,
+    ) -> Result<Self, String> {
+        for definition in definitions {
+            definition.validate(items, &self).map_err(str::to_owned)?;
+            let id = definition.id.clone();
+            if self.work_recipes.insert(id.clone(), definition).is_some() {
+                return Err(format!("duplicate native work recipe {id}"));
+            }
+        }
+        Ok(self)
+    }
+
+    #[must_use]
+    pub fn work_recipe(&self, id: &Identifier) -> Option<&crate::recipes::work::WorkRecipe> {
+        self.work_recipes.get(id)
+    }
+
     #[must_use]
     pub fn from_entries(entries: impl IntoIterator<Item = (Identifier, ItemFacts)>) -> Self {
         Self {
             items: entries.into_iter().collect(),
             custom_items: BTreeMap::new(),
+            work_recipes: BTreeMap::new(),
+            has_physical_profiles: false,
         }
     }
 
@@ -88,6 +115,14 @@ impl ItemFactsTable {
                 return Err(CustomItemError::UnknownCarrier(definition.carrier));
             }
             let facts = &definition.facts;
+            if facts.physical_profile.as_ref().is_some_and(|profile| {
+                profile
+                    .validate(items, facts.max_damage, facts.equippable_slot.as_deref())
+                    .is_err()
+                    || facts.max_stack_size != Some(1)
+            }) {
+                return Err(CustomItemError::InvalidDefinition(definition.id));
+            }
             if definition.name.is_empty()
                 || definition.name.len() > 128
                 || !matches!(facts.max_stack_size, Some(1..=64))
@@ -108,6 +143,7 @@ impl ItemFactsTable {
             {
                 return Err(CustomItemError::InvalidDefinition(definition.id));
             }
+            self.has_physical_profiles |= facts.physical_profile.is_some();
             let id = definition.id.clone();
             if self.custom_items.insert(id.clone(), definition).is_some() {
                 return Err(CustomItemError::Duplicate(id));
@@ -119,6 +155,28 @@ impl ItemFactsTable {
                 && !self.custom_items.contains_key(ingredient)
             {
                 return Err(CustomItemError::UnknownRecipeIngredient(ingredient.clone()));
+            }
+            if let Some(profile) = &definition.facts.physical_profile {
+                for consumption in profile
+                    .attacks
+                    .iter()
+                    .filter_map(|attack| attack.consumption.as_ref())
+                {
+                    if consumption.item.namespace() != "minecraft"
+                        && consumption.item.namespace() != definition.id.namespace()
+                    {
+                        return Err(CustomItemError::UnknownRecipeIngredient(
+                            consumption.item.clone(),
+                        ));
+                    }
+                    if items.id_of(&consumption.item).is_none()
+                        && !self.custom_items.contains_key(&consumption.item)
+                    {
+                        return Err(CustomItemError::UnknownRecipeIngredient(
+                            consumption.item.clone(),
+                        ));
+                    }
+                }
             }
         }
         Ok(self)
@@ -135,14 +193,25 @@ impl ItemFactsTable {
     }
 
     #[must_use]
+    pub const fn has_physical_profiles(&self) -> bool {
+        self.has_physical_profiles
+    }
+
+    #[must_use]
     pub fn custom_for_stack(
         &self,
         stack: &crate::ItemStack,
         items: &crate::items::ItemRegistry,
     ) -> Option<&CustomItemDefinition> {
         let model = stack.item_model.as_deref()?;
-        let definition = self.custom(model)?;
-        (items.id_of(&definition.carrier) == Some(stack.item_id)).then_some(definition)
+        self.custom_for_carrier(model.as_str(), items.name_of(stack.item_id)?.as_str())
+    }
+
+    /// Borrowed native custody projection of the very same model/carrier gate.
+    /// No alternate registry or opaque component lookup participates.
+    pub fn custom_for_carrier(&self, model: &str, carrier: &str) -> Option<&CustomItemDefinition> {
+        let definition = self.custom_items.get(model)?;
+        (definition.carrier.as_str() == carrier).then_some(definition)
     }
 
     #[must_use]
@@ -174,6 +243,10 @@ impl ItemFactsTable {
 pub struct ItemFacts {
     pub max_stack_size: Option<u32>,
     pub max_damage: Option<u32>,
+    /// Default `minecraft:entity_data.id`, authored by the item report.
+    pub spawn_entity: Option<Identifier>,
+    /// Default `damage_resistant` includes the vanilla `is_fire` damage tag.
+    pub fire_resistant: bool,
     pub food: Option<FoodEntry>,
     pub use_duration_ticks: Option<u32>,
     pub use_action: Option<UseAction>,
@@ -181,14 +254,33 @@ pub struct ItemFacts {
     pub consume_effects: Vec<crate::food::ConsumeEffect>,
     pub tool: Option<ToolFacts>,
     pub equippable_slot: Option<String>,
+    /// `None` uses the component codec's default (`true`).
+    pub equippable_swappable: Option<bool>,
+    /// Entity ids or a `#tag`; absent means any entity.
+    pub equippable_allowed_entities: Option<Vec<String>>,
     pub weapon: bool,
     pub weapon_damage_per_attack: Option<u32>,
     pub weapon_disable_blocking_seconds: Option<f32>,
     pub blocks_attacks_disable_cooldown_scale: Option<f32>,
     pub attack_damage_modifier: Option<f32>,
     pub attack_speed_modifier: Option<f32>,
+    /// Complete equipment modifiers, retaining vanilla ids and operations.
+    pub attribute_modifiers: Vec<ItemAttributeModifier>,
     pub attack_range: Option<AttackRangeFacts>,
     pub armor: Option<ItemArmorFacts>,
+    /// Provider-authored mechanics; only exact admitted model/carrier stacks use these.
+    pub physical_profile: Option<Box<PhysicalItemProfile>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct ItemAttributeModifier {
+    #[serde(rename = "type")]
+    pub kind: String,
+    #[serde(default)]
+    pub id: String,
+    pub amount: f64,
+    pub operation: String,
+    pub slot: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -310,6 +402,10 @@ struct RawComponents {
     max_stack_size: Option<u32>,
     #[serde(rename = "minecraft:max_damage")]
     max_damage: Option<u32>,
+    #[serde(rename = "minecraft:entity_data")]
+    entity_data: Option<RawEntityData>,
+    #[serde(rename = "minecraft:damage_resistant")]
+    damage_resistant: Option<RawDamageResistant>,
     #[serde(rename = "minecraft:food")]
     food: Option<RawFood>,
     #[serde(rename = "minecraft:consumable")]
@@ -335,11 +431,13 @@ impl RawItemComponents {
         let RawComponents {
             max_stack_size,
             max_damage,
+            entity_data,
+            damage_resistant,
             food,
             consumable,
             use_remainder,
             tool,
-            equippable,
+            mut equippable,
             weapon,
             blocks_attacks,
             attack_range,
@@ -376,6 +474,9 @@ impl RawItemComponents {
         ItemFacts {
             max_stack_size,
             max_damage,
+            spawn_entity: entity_data.map(|data| data.id),
+            fire_resistant: damage_resistant
+                .is_some_and(|value| value.types == "#minecraft:is_fire"),
             food: food.filter(|_| consumable.is_some()).map(|raw| FoodEntry {
                 food: raw.nutrition,
                 saturation: raw.saturation,
@@ -386,6 +487,11 @@ impl RawItemComponents {
             use_remainder: use_remainder.map(|raw| raw.id),
             consume_effects: consumable.map_or_else(Vec::new, |raw| raw.on_consume_effects),
             tool: tool.map(RawTool::into_facts),
+            equippable_swappable: equippable.as_ref().and_then(|raw| raw.swappable),
+            equippable_allowed_entities: equippable
+                .as_mut()
+                .and_then(|raw| raw.allowed_entities.take())
+                .map(RawToolBlocks::into_vec),
             equippable_slot: equippable.map(|raw| raw.slot),
             weapon: weapon.is_some(),
             weapon_damage_per_attack: weapon
@@ -399,8 +505,10 @@ impl RawItemComponents {
                 .map(|raw| raw.disable_cooldown_scale.unwrap_or(1.0)),
             attack_damage_modifier,
             attack_speed_modifier,
+            attribute_modifiers,
             attack_range: attack_range.map(RawAttackRange::into_facts),
             armor,
+            physical_profile: None,
         }
     }
 }
@@ -418,10 +526,23 @@ struct RawUseRemainder {
     id: Identifier,
 }
 
+#[derive(Deserialize)]
+struct RawEntityData {
+    id: Identifier,
+}
+
+#[derive(Deserialize)]
+struct RawDamageResistant {
+    types: String,
+}
+
 #[derive(Default, Deserialize)]
 struct RawEmbeddedItemFacts {
     max_stack_size: Option<u32>,
     max_damage: Option<u32>,
+    spawn_entity: Option<Identifier>,
+    #[serde(default)]
+    fire_resistant: bool,
     food: Option<FoodEntry>,
     use_duration_ticks: Option<u32>,
     use_action: Option<RawEmbeddedUseAction>,
@@ -436,28 +557,71 @@ struct RawEmbeddedItemFacts {
     attack_speed_modifier: Option<f32>,
     attack_range: Option<RawAttackRange>,
     tool: Option<RawTool>,
+    equippable_slot: Option<String>,
+    equippable_swappable: Option<bool>,
+    equippable_allowed_entities: Option<RawToolBlocks>,
+    #[serde(default)]
+    attribute_modifiers: Vec<RawAttributeModifier>,
 }
 
 impl RawEmbeddedItemFacts {
     fn into_facts(self) -> ItemFacts {
+        let mut attribute_modifiers = self.attribute_modifiers;
+        if attribute_modifiers.is_empty() {
+            attribute_modifiers = [
+                ("attack_damage", self.attack_damage_modifier),
+                ("attack_speed", self.attack_speed_modifier),
+            ]
+            .into_iter()
+            .filter_map(|(kind, amount)| {
+                amount.map(|amount| ItemAttributeModifier {
+                    kind: format!("minecraft:{kind}"),
+                    id: format!("minecraft:base_{kind}"),
+                    amount: (f64::from(amount) * 1.0e6).round() / 1.0e6,
+                    operation: "add_value".into(),
+                    slot: Some("mainhand".into()),
+                })
+            })
+            .collect();
+        }
+        let armor = self.equippable_slot.as_ref().and_then(|slot| {
+            Some(ItemArmorFacts {
+                slot: slot.clone(),
+                armor: find_slot_add_modifier(&attribute_modifiers, "minecraft:armor", slot)?,
+                toughness: find_slot_add_modifier(
+                    &attribute_modifiers,
+                    "minecraft:armor_toughness",
+                    slot,
+                )
+                .unwrap_or(0.0),
+            })
+        });
         ItemFacts {
             max_stack_size: self.max_stack_size,
             max_damage: self.max_damage,
+            spawn_entity: self.spawn_entity,
+            fire_resistant: self.fire_resistant,
             food: self.food,
             use_duration_ticks: self.use_duration_ticks,
             use_action: self.use_action.map(RawEmbeddedUseAction::into_use_action),
             use_remainder: self.use_remainder,
             consume_effects: self.consume_effects,
             tool: self.tool.map(RawTool::into_facts),
-            equippable_slot: None,
+            equippable_swappable: self.equippable_swappable,
+            equippable_allowed_entities: self
+                .equippable_allowed_entities
+                .map(RawToolBlocks::into_vec),
+            equippable_slot: self.equippable_slot,
             weapon: self.weapon.unwrap_or(false),
             weapon_damage_per_attack: self.weapon_damage_per_attack,
             weapon_disable_blocking_seconds: self.weapon_disable_blocking_seconds,
             blocks_attacks_disable_cooldown_scale: self.blocks_attacks_disable_cooldown_scale,
             attack_damage_modifier: self.attack_damage_modifier,
             attack_speed_modifier: self.attack_speed_modifier,
+            attribute_modifiers,
             attack_range: self.attack_range.map(RawAttackRange::into_facts),
-            armor: None,
+            armor,
+            physical_profile: None,
         }
     }
 }
@@ -540,6 +704,8 @@ impl RawToolBlocks {
 #[derive(Deserialize)]
 struct RawEquippable {
     slot: String,
+    swappable: Option<bool>,
+    allowed_entities: Option<RawToolBlocks>,
 }
 
 #[derive(Deserialize)]
@@ -598,14 +764,7 @@ const fn default_attack_mob_factor() -> f32 {
     1.0
 }
 
-#[derive(Deserialize)]
-struct RawAttributeModifier {
-    #[serde(rename = "type")]
-    kind: String,
-    amount: f32,
-    operation: String,
-    slot: Option<String>,
-}
+type RawAttributeModifier = ItemAttributeModifier;
 
 fn find_mainhand_add_modifier(modifiers: &[RawAttributeModifier], kind: &str) -> Option<f32> {
     find_slot_add_modifier(modifiers, kind, "mainhand")
@@ -626,7 +785,7 @@ fn find_slot_add_modifier(
                     .as_deref()
                     .is_some_and(|value| normalize_id(value) == normalize_id(slot))
         })
-        .map(|modifier| modifier.amount)
+        .map(|modifier| modifier.amount as f32)
 }
 
 fn normalize_id(value: &str) -> &str {
@@ -634,423 +793,13 @@ fn normalize_id(value: &str) -> &str {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use std::fs;
+#[path = "item_components_tests.rs"]
+mod tests;
 
-    #[test]
-    fn loads_component_report_fixture() {
-        let tmp = tempfile::tempdir().unwrap();
-        fs::write(
-            tmp.path().join("apple.json"),
-            r#"{
-              "components": {
-                "minecraft:max_stack_size": 64,
-                "minecraft:food": { "nutrition": 4, "saturation": 2.4 },
-                "minecraft:consumable": {}
-              }
-            }"#,
-        )
-        .unwrap();
-        fs::write(
-            tmp.path().join("iron_helmet.json"),
-            r#"{
-              "components": {
-                "minecraft:max_damage": 165,
-                "minecraft:max_stack_size": 1,
-                "minecraft:equippable": { "slot": "head" }
-              }
-            }"#,
-        )
-        .unwrap();
-        fs::write(
-            tmp.path().join("diamond_sword.json"),
-            r#"{
-              "components": {
-                "minecraft:max_damage": 1561,
-                "minecraft:max_stack_size": 1,
-                "minecraft:attribute_modifiers": [
-                  {
-                    "type": "minecraft:attack_damage",
-                    "amount": 6.0,
-                    "id": "minecraft:base_attack_damage",
-                    "operation": "add_value",
-                    "slot": "mainhand"
-                  },
-                  {
-                    "type": "minecraft:attack_speed",
-                    "amount": -2.4,
-                    "id": "minecraft:base_attack_speed",
-                    "operation": "add_value",
-                    "slot": "mainhand"
-                  }
-                ],
-                "minecraft:weapon": {}
-              }
-            }"#,
-        )
-        .unwrap();
-        fs::write(
-            tmp.path().join("iron_chestplate.json"),
-            r#"{
-              "components": {
-                "minecraft:max_damage": 240,
-                "minecraft:max_stack_size": 1,
-                "minecraft:equippable": { "slot": "chest" },
-                "minecraft:attribute_modifiers": [
-                  {
-                    "type": "minecraft:armor",
-                    "amount": 6.0,
-                    "operation": "add_value",
-                    "slot": "chest"
-                  },
-                  {
-                    "type": "minecraft:armor_toughness",
-                    "amount": 0.0,
-                    "operation": "add_value",
-                    "slot": "chest"
-                  }
-                ]
-              }
-            }"#,
-        )
-        .unwrap();
-        fs::write(
-            tmp.path().join("wooden_pickaxe.json"),
-            r##"{
-              "components": {
-                "minecraft:max_damage": 59,
-                "minecraft:tool": {
-                  "rules": [
-                    {
-                      "blocks": "#minecraft:incorrect_for_wooden_tool",
-                      "correct_for_drops": false
-                    },
-                    {
-                      "blocks": ["minecraft:stone", "minecraft:cobblestone"],
-                      "speed": 2.0,
-                      "correct_for_drops": true
-                    }
-                  ]
-                }
-              }
-            }"##,
-        )
-        .unwrap();
-        fs::write(
-            tmp.path().join("wooden_spear.json"),
-            r#"{
-              "components": {
-                "minecraft:attack_range": {
-                  "min_reach": 2.0,
-                  "max_reach": 4.5,
-                  "min_creative_reach": 2.0,
-                  "max_creative_reach": 6.5,
-                  "hitbox_margin": 0.125,
-                  "mob_factor": 0.5
-                }
-              }
-            }"#,
-        )
-        .unwrap();
+#[cfg(test)]
+#[path = "item_components_spawn_egg_tests.rs"]
+mod spawn_egg_tests;
 
-        let facts = load_item_facts(tmp.path()).unwrap();
-
-        let apple = facts
-            .get(&Identifier::parse("minecraft:apple").unwrap())
-            .unwrap();
-        assert_eq!(apple.max_stack_size, Some(64));
-        assert_eq!(
-            apple.food,
-            Some(FoodEntry {
-                food: 4,
-                saturation: 2.4,
-                can_always_eat: false,
-            })
-        );
-        assert_eq!(apple.use_duration_ticks, Some(32));
-        assert_eq!(apple.use_action, Some(UseAction::Eat));
-
-        let helmet = facts
-            .get(&Identifier::parse("minecraft:iron_helmet").unwrap())
-            .unwrap();
-        assert_eq!(helmet.max_damage, Some(165));
-        assert_eq!(helmet.max_stack_size, Some(1));
-        assert_eq!(helmet.equippable_slot.as_deref(), Some("head"));
-
-        let sword = facts
-            .get(&Identifier::parse("minecraft:diamond_sword").unwrap())
-            .unwrap();
-        assert_eq!(sword.max_damage, Some(1561));
-        assert!(sword.weapon);
-        assert_eq!(sword.weapon_damage_per_attack, Some(1));
-        assert_eq!(sword.attack_damage_modifier, Some(6.0));
-        assert_eq!(sword.attack_speed_modifier, Some(-2.4));
-
-        let chestplate = facts
-            .get(&Identifier::parse("minecraft:iron_chestplate").unwrap())
-            .unwrap();
-        assert_eq!(chestplate.max_damage, Some(240));
-        assert_eq!(chestplate.equippable_slot.as_deref(), Some("chest"));
-        assert_eq!(
-            chestplate.armor,
-            Some(ItemArmorFacts {
-                slot: "chest".to_string(),
-                armor: 6.0,
-                toughness: 0.0,
-            })
-        );
-
-        let pickaxe = facts
-            .get(&Identifier::parse("minecraft:wooden_pickaxe").unwrap())
-            .and_then(|facts| facts.tool.as_ref())
-            .expect("wooden pickaxe tool facts");
-        assert_eq!(pickaxe.default_mining_speed, None);
-        assert_eq!(pickaxe.rules.len(), 2);
-        assert_eq!(
-            pickaxe.rules[0],
-            ToolRuleFacts {
-                blocks: vec!["#minecraft:incorrect_for_wooden_tool".to_string()],
-                speed: None,
-                correct_for_drops: Some(false),
-            }
-        );
-        assert_eq!(
-            pickaxe.rules[1],
-            ToolRuleFacts {
-                blocks: vec![
-                    "minecraft:stone".to_string(),
-                    "minecraft:cobblestone".to_string(),
-                ],
-                speed: Some(2.0),
-                correct_for_drops: Some(true),
-            }
-        );
-
-        let spear = facts
-            .get(&Identifier::parse("minecraft:wooden_spear").unwrap())
-            .and_then(|facts| facts.attack_range)
-            .expect("wooden spear attack range");
-        assert_eq!(
-            spear,
-            AttackRangeFacts {
-                min_reach: 2.0,
-                max_reach: 4.5,
-                min_creative_reach: 2.0,
-                max_creative_reach: 6.5,
-                hitbox_margin: 0.125,
-                mob_factor: 0.5,
-            }
-        );
-    }
-
-    #[test]
-    fn missing_component_dir_is_empty() {
-        let tmp = tempfile::tempdir().unwrap();
-        let facts = load_item_facts(tmp.path().join("missing")).unwrap();
-        assert!(facts.is_empty());
-    }
-
-    #[test]
-    fn embedded_required_item_facts_cover_basic_wood_and_stone_tools() {
-        let facts = solaris_required_item_facts();
-        for (id, max_damage) in [
-            ("minecraft:wooden_pickaxe", 59),
-            ("minecraft:wooden_axe", 59),
-            ("minecraft:wooden_shovel", 59),
-            ("minecraft:wooden_sword", 59),
-            ("minecraft:wooden_hoe", 59),
-            ("minecraft:stone_pickaxe", 131),
-            ("minecraft:stone_axe", 131),
-            ("minecraft:stone_shovel", 131),
-            ("minecraft:stone_sword", 131),
-            ("minecraft:stone_hoe", 131),
-        ] {
-            let item = Identifier::parse(id).unwrap();
-            let fact = facts.get(&item).unwrap_or_else(|| panic!("missing {id}"));
-            assert_eq!(fact.max_damage, Some(max_damage), "{id}");
-            assert!(fact.attack_damage_modifier.is_some(), "{id}");
-        }
-    }
-
-    #[test]
-    fn embedded_required_item_facts_cover_shield_disable_contract() {
-        let facts = solaris_required_item_facts();
-        for id in ["minecraft:wooden_axe", "minecraft:stone_axe"] {
-            let fact = facts
-                .get(&Identifier::parse(id).unwrap())
-                .unwrap_or_else(|| panic!("missing {id}"));
-            assert_eq!(fact.weapon_disable_blocking_seconds, Some(5.0), "{id}");
-        }
-        let shield = facts
-            .get(&Identifier::parse("minecraft:shield").unwrap())
-            .expect("embedded shield facts");
-        assert_eq!(shield.max_damage, Some(336));
-        assert_eq!(shield.max_stack_size, Some(1));
-        assert_eq!(shield.blocks_attacks_disable_cooldown_scale, Some(1.0));
-    }
-
-    #[test]
-    fn embedded_required_item_facts_cover_shears_durability() {
-        let facts = solaris_required_item_facts();
-        let shears = facts
-            .get(&Identifier::parse("minecraft:shears").unwrap())
-            .expect("embedded shears facts");
-        assert_eq!(shears.max_damage, Some(238));
-        assert_eq!(shears.max_stack_size, Some(1));
-    }
-
-    #[test]
-    fn embedded_required_item_facts_cover_spear_attack_range() {
-        let facts = solaris_required_item_facts();
-        for id in [
-            "minecraft:wooden_spear",
-            "minecraft:stone_spear",
-            "minecraft:copper_spear",
-            "minecraft:iron_spear",
-            "minecraft:golden_spear",
-            "minecraft:diamond_spear",
-            "minecraft:netherite_spear",
-        ] {
-            let range = facts
-                .get(&Identifier::parse(id).unwrap())
-                .and_then(|facts| facts.attack_range)
-                .unwrap_or_else(|| panic!("missing attack range for {id}"));
-            assert_eq!(range.max_reach, 4.5, "{id}");
-            assert_eq!(range.max_creative_reach, 6.5, "{id}");
-            assert_eq!(range.hitbox_margin, 0.125, "{id}");
-        }
-    }
-
-    #[test]
-    #[ignore = "requires local 26.1.2 item component reports"]
-    fn loads_real_apple_and_bread_components_when_present() {
-        let path = workspace_path("data/vanilla/reports/minecraft/components/item");
-        assert!(
-            path.is_dir(),
-            "{} not present; run tools/extract-vanilla-data.sh",
-            path.display()
-        );
-
-        let facts = load_item_facts(path).unwrap();
-
-        let apple = facts
-            .get(&Identifier::parse("minecraft:apple").unwrap())
-            .unwrap();
-        assert_eq!(apple.max_stack_size, Some(64));
-        assert_eq!(
-            apple.food,
-            Some(FoodEntry {
-                food: 4,
-                saturation: 2.4,
-                can_always_eat: false,
-            })
-        );
-        assert_eq!(apple.use_duration_ticks, Some(32));
-        assert_eq!(apple.use_action, Some(UseAction::Eat));
-
-        let bread = facts
-            .get(&Identifier::parse("minecraft:bread").unwrap())
-            .unwrap();
-        assert_eq!(bread.max_stack_size, Some(64));
-        assert_eq!(
-            bread.food,
-            Some(FoodEntry {
-                food: 5,
-                saturation: 6.0,
-                can_always_eat: false,
-            })
-        );
-    }
-
-    #[test]
-    #[ignore = "requires local 26.1.2 item component reports"]
-    fn loads_real_combat_components_when_present() {
-        let path = workspace_path("data/vanilla/reports/minecraft/components/item");
-        assert!(
-            path.is_dir(),
-            "{} not present; run tools/extract-vanilla-data.sh",
-            path.display()
-        );
-
-        let facts = load_item_facts(path).unwrap();
-
-        let sword = facts
-            .get(&Identifier::parse("minecraft:diamond_sword").unwrap())
-            .unwrap();
-        assert_eq!(sword.max_damage, Some(1561));
-        assert!(sword.weapon);
-        assert_eq!(sword.weapon_damage_per_attack, Some(1));
-        assert_eq!(sword.attack_damage_modifier, Some(6.0));
-        assert!(sword.attack_speed_modifier.is_some());
-
-        let axe = facts
-            .get(&Identifier::parse("minecraft:iron_axe").unwrap())
-            .unwrap();
-        assert!(axe.weapon);
-        assert_eq!(axe.weapon_damage_per_attack, Some(2));
-        assert_eq!(axe.weapon_disable_blocking_seconds, Some(5.0));
-        assert_eq!(axe.attack_damage_modifier, Some(8.0));
-
-        let shield = facts
-            .get(&Identifier::parse("minecraft:shield").unwrap())
-            .unwrap();
-        assert_eq!(shield.blocks_attacks_disable_cooldown_scale, Some(1.0));
-
-        let bow = facts
-            .get(&Identifier::parse("minecraft:bow").unwrap())
-            .unwrap();
-        assert_eq!(bow.max_damage, Some(384));
-        assert_eq!(bow.max_stack_size, Some(1));
-
-        let chestplate = facts
-            .get(&Identifier::parse("minecraft:iron_chestplate").unwrap())
-            .unwrap();
-        assert_eq!(chestplate.max_damage, Some(240));
-        assert_eq!(chestplate.equippable_slot.as_deref(), Some("chest"));
-        assert_eq!(
-            chestplate.armor,
-            Some(ItemArmorFacts {
-                slot: "chest".to_string(),
-                armor: 6.0,
-                toughness: 0.0,
-            })
-        );
-    }
-
-    fn workspace_path(rel: &str) -> PathBuf {
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .and_then(Path::parent)
-            .unwrap()
-            .join(rel)
-    }
-
-    #[test]
-    #[ignore = "requires local 26.1.2 item component reports"]
-    fn loads_real_ordered_tool_rules_when_present() {
-        let path = workspace_path("data/vanilla/reports/minecraft/components/item");
-        assert!(
-            path.is_dir(),
-            "{} not present; run tools/extract-vanilla-data.sh",
-            path.display()
-        );
-
-        let facts = load_item_facts(path).unwrap();
-        let pickaxe = facts
-            .get(&Identifier::parse("minecraft:wooden_pickaxe").unwrap())
-            .and_then(|facts| facts.tool.as_ref())
-            .expect("wooden pickaxe tool facts");
-        assert_eq!(pickaxe.default_mining_speed, None);
-        assert_eq!(pickaxe.damage_per_block, None);
-        assert_eq!(pickaxe.rules.len(), 2);
-        assert_eq!(
-            pickaxe.rules[0].blocks,
-            ["#minecraft:incorrect_for_wooden_tool"]
-        );
-        assert_eq!(pickaxe.rules[0].correct_for_drops, Some(false));
-        assert_eq!(pickaxe.rules[1].blocks, ["#minecraft:mineable/pickaxe"]);
-        assert_eq!(pickaxe.rules[1].speed, Some(2.0));
-        assert_eq!(pickaxe.rules[1].correct_for_drops, Some(true));
-    }
-}
+#[cfg(test)]
+#[path = "item_components_fire_tests.rs"]
+mod fire_tests;

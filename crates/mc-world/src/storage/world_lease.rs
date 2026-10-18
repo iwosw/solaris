@@ -11,7 +11,7 @@ const WORLD_LEASE_FILE_NAME: &str = ".solaris-world.lock";
 const WORLD_LEASE_METADATA_MAX_BYTES: usize = 4 * 1024;
 static WORLD_LEASES: OnceLock<Mutex<HashMap<PathBuf, Weak<WorldRootLease>>>> = OnceLock::new();
 
-pub(super) struct WorldRootLease {
+pub struct WorldRootLease {
     _file: File,
 }
 
@@ -27,7 +27,12 @@ fn world_leases() -> &'static Mutex<HashMap<PathBuf, Weak<WorldRootLease>>> {
     WORLD_LEASES.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-pub(super) fn acquire_world_root_lease(root: &Path) -> Result<Arc<WorldRootLease>, WorldError> {
+/// Native-world owners and offline operations require an exclusive root lease.
+pub fn acquire_exclusive_world_root_lease(root: &Path) -> Result<Arc<WorldRootLease>, WorldError> {
+    acquire(root)
+}
+
+fn acquire(root: &Path) -> Result<Arc<WorldRootLease>, WorldError> {
     let canonical_root =
         std::fs::canonicalize(root).map_err(|source| WorldError::WorldLeaseIo {
             operation: "canonicalize root",
@@ -37,8 +42,15 @@ pub(super) fn acquire_world_root_lease(root: &Path) -> Result<Arc<WorldRootLease
     let mut leases = world_leases()
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
-    if let Some(lease) = leases.get(&canonical_root).and_then(Weak::upgrade) {
-        return Ok(lease);
+    if leases
+        .get(&canonical_root)
+        .and_then(Weak::upgrade)
+        .is_some()
+    {
+        return Err(WorldError::WorldLocked {
+            root: canonical_root,
+            metadata: "held by this process".into(),
+        });
     }
 
     let lease_path = canonical_root.join(WORLD_LEASE_FILE_NAME);

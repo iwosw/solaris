@@ -1,6 +1,11 @@
 mod compile;
 mod evaluate;
 mod model;
+mod vanilla;
+mod vanilla_lookups;
+
+pub use vanilla::load_vanilla;
+pub use vanilla_lookups::{VanillaEntityLootLookups, load_vanilla_lookups};
 
 pub use model::{
     CompiledEntityLootTable, EntityDeathCause, EntityLootAttack, EntityLootCatalog,

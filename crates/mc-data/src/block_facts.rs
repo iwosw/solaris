@@ -6,6 +6,19 @@ use crate::block_mining::{BlockMiningFacts, BlockMiningTable};
 use crate::blocks::BlockReport;
 use crate::collision_shapes::{COLLISION_UNITS_PER_BLOCK, vanilla_collision_shapes};
 
+#[path = "block_note_instruments.rs"]
+mod note_instruments;
+
+/// Vanilla block property instrument, including copied block variants.
+#[must_use]
+pub fn note_instrument(block: &Identifier) -> &'static str {
+    if block.namespace() == "minecraft" {
+        note_instruments::for_block(block.path())
+    } else {
+        "harp"
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RandomTickFamily {
     Crop,
@@ -166,6 +179,35 @@ pub fn has_full_sturdy_face(
     properties: &[(String, String)],
     face: SturdyFace,
 ) -> bool {
+    face_covered(state_id, block, properties, face, 0, 16)
+}
+
+/// Vanilla CENTER support: the central 2×2 pixels, rather than the whole face.
+/// Hanging signs expose their selection shape as their support shape; every
+/// embedded hanging-sign rotation covers this central patch on its underside.
+#[must_use]
+pub fn has_center_sturdy_face(
+    state_id: u32,
+    block: &Identifier,
+    properties: &[(String, String)],
+    face: SturdyFace,
+) -> bool {
+    if face == SturdyFace::Down && block.path().ends_with("_hanging_sign") {
+        return vanilla_collision_shapes()
+            .get_for_state(state_id, block, properties)
+            .is_some();
+    }
+    face_covered(state_id, block, properties, face, 7, 9)
+}
+
+fn face_covered(
+    state_id: u32,
+    block: &Identifier,
+    properties: &[(String, String)],
+    face: SturdyFace,
+    start: i16,
+    end: i16,
+) -> bool {
     let Some(shape) = vanilla_collision_shapes().get_for_state(state_id, block, properties) else {
         return false;
     };
@@ -197,8 +239,8 @@ pub fn has_full_sturdy_face(
         let Some((min_a, max_a, min_b, max_b)) = projected else {
             continue;
         };
-        for a in 0..16 {
-            for b in 0..16 {
+        for a in start..end {
+            for b in start..end {
                 let cell_min_a = a * CELL_UNITS;
                 let cell_max_a = cell_min_a + CELL_UNITS;
                 let cell_min_b = b * CELL_UNITS;
@@ -214,7 +256,7 @@ pub fn has_full_sturdy_face(
         }
     }
 
-    covered.into_iter().all(|cell| cell)
+    (start..end).all(|a| (start..end).all(|b| covered[a as usize * 16 + b as usize]))
 }
 
 fn classify_fluid_kind(path: &str) -> Option<FluidKind> {
@@ -558,6 +600,88 @@ mod tests {
         assert!(
             !has_full_sturdy_face(cobblestone_id, &stone, &stone_properties, SturdyFace::Up),
             "a numeric state id with the wrong block fingerprint must reject"
+        );
+    }
+
+    #[test]
+    fn center_underside_support_accepts_fences_and_every_hanging_rotation_with_exact_fingerprint() {
+        let report = crate::blocks::solaris_required_blocks_report();
+        for name in [
+            "minecraft:oak_fence",
+            "minecraft:oak_hanging_sign",
+            "minecraft:oak_wall_hanging_sign",
+        ] {
+            let block = report
+                .iter()
+                .find(|block| block.id.as_str() == name)
+                .unwrap();
+            for state in &block.states {
+                let properties: Vec<_> = state
+                    .properties
+                    .iter()
+                    .map(|(key, value)| (key.clone(), value.clone()))
+                    .collect();
+                assert!(
+                    has_center_sturdy_face(state.id, &block.id, &properties, SturdyFace::Down),
+                    "{name} {properties:?}"
+                );
+                assert!(!has_full_sturdy_face(
+                    state.id,
+                    &block.id,
+                    &properties,
+                    SturdyFace::Down
+                ));
+                let wrong = Identifier::parse("minecraft:stone").unwrap();
+                assert!(!has_center_sturdy_face(
+                    state.id,
+                    &wrong,
+                    &properties,
+                    SturdyFace::Down
+                ));
+            }
+        }
+    }
+
+    #[test]
+    fn vanilla_note_instrument_facts_include_property_copies_and_copper_oxidation() {
+        for (name, instrument) in [
+            ("stone", "basedrum"),
+            ("deepslate_gold_ore", "basedrum"),
+            ("oak_planks", "bass"),
+            ("oak_stairs", "bass"),
+            ("sand", "snare"),
+            ("heavy_core", "snare"),
+            ("white_wool", "guitar"),
+            ("glass", "hat"),
+            ("white_stained_glass", "hat"),
+            ("gold_block", "bell"),
+            ("iron_block", "iron_xylophone"),
+            ("clay", "flute"),
+            ("packed_ice", "chime"),
+            ("bone_block", "xylophone"),
+            ("soul_sand", "cow_bell"),
+            ("pumpkin", "didgeridoo"),
+            ("emerald_block", "bit"),
+            ("hay_block", "banjo"),
+            ("glowstone", "pling"),
+            ("skeleton_skull", "skeleton"),
+            ("skeleton_wall_skull", "harp"),
+            ("player_head", "custom_head"),
+            ("dirt", "harp"),
+            ("waxed_cut_copper_stairs", "trumpet"),
+            ("waxed_exposed_cut_copper_stairs", "trumpet_exposed"),
+            ("weathered_copper", "trumpet_weathered"),
+            ("oxidized_copper", "trumpet_oxidized"),
+        ] {
+            assert_eq!(
+                note_instrument(&Identifier::parse(format!("minecraft:{name}")).unwrap()),
+                instrument,
+                "{name}"
+            );
+        }
+        assert_eq!(
+            note_instrument(&Identifier::parse("custom:stone").unwrap()),
+            "harp"
         );
     }
 }

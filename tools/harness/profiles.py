@@ -51,6 +51,8 @@ class ProfileContext:
     client_evidence: dict[str, Any] = field(default_factory=dict)
     plugins_dir: Path | None = None
     windowed: bool = False
+    # loader-live can exercise an immutable v2 candidate without building it.
+    server_bin: Path | None = None
 
 
 def _run_command(
@@ -136,6 +138,25 @@ def _backend_env(ctx: ProfileContext) -> dict[str, str]:
     return env
 
 
+def _server_binary(ctx: ProfileContext, log_name: str = "server-build.log") -> Path:
+    """Resolve a frozen candidate or build the sole server executable."""
+    override = os.environ.get("SOLARIS_SERVER_BINARY")
+    if override:
+        binary = Path(override).expanduser().resolve()
+    else:
+        env = os.environ.copy()
+        env.setdefault("CARGO_BUILD_JOBS", "3")
+        _run_command(
+            ["cargo", "build", "--locked", "--bin", "solaris-v2", "-p", "mc-edge"],
+            ctx, log_name, env=env,
+        )
+        target = Path(env.get("CARGO_TARGET_DIR", str(REPO_ROOT / "target")))
+        binary = (target if target.is_absolute() else REPO_ROOT / target) / "debug" / "solaris-v2"
+    if not binary.is_file() or not os.access(binary, os.X_OK):
+        raise RuntimeError(f"missing executable server binary: {binary}")
+    return binary
+
+
 # ---------------------------------------------------------------- cargo/jdk
 
 
@@ -161,18 +182,64 @@ def run_code_health(ctx: ProfileContext) -> dict[str, Any]:
     )
 
 
+def _test_scope_memory(
+    cgroup_file: Path = Path("/proc/self/cgroup"),
+    cgroup_root: Path = Path("/sys/fs/cgroup"),
+) -> dict[str, Any]:
+    """Read the kernel's exact peak while this transient test scope still exists."""
+    try:
+        group = next(
+            line.removeprefix("0::")
+            for line in cgroup_file.read_text().splitlines()
+            if line.startswith("0::")
+        )
+        scope = cgroup_root / group.lstrip("/")
+        peak = int((scope / "memory.peak").read_text().strip())
+        limit = (scope / "memory.max").read_text().strip()
+    except (OSError, StopIteration, ValueError) as error:
+        return {"memory_peak_bytes": None, "memory_peak_error": str(error)}
+    details = {
+        "memory_peak_bytes": peak,
+        "memory_limit_bytes": None if limit == "max" else int(limit),
+        "memory_cgroup": group,
+    }
+    try:
+        details["memory_events"] = {
+            name: int(value)
+            for name, value in (
+                line.split() for line in (scope / "memory.events").read_text().splitlines()
+            )
+        }
+        details["memory_swap_peak_bytes"] = int(
+            (scope / "memory.swap.peak").read_text().strip()
+        )
+    except (OSError, ValueError) as error:
+        details["memory_pressure_error"] = str(error)
+    return details
+
+
 def run_test(ctx: ProfileContext) -> dict[str, Any]:
-    # NOTE: benches excluded on purpose (`--benches` never here): the
-    # mc-world criterion `light_engine` bench (harness=false) executes on
-    # `cargo test --all-targets` and burns the heavy slot. Benches run only
-    # via explicit `cargo bench -p <crate>`. `#[ignore]` stress/benchmark
-    # tests stay ignored by default cargo semantics — no module disables.
-    argv = (
-        ["cargo", "test", *ctx.extra_args]
-        if ctx.extra_args
-        else ["cargo", "test", "--workspace", "--lib", "--bins", "--tests", "--examples"]
+    # One runner for both the full L2 gate and focused selectors. Nextest rejects
+    # unsupported Cargo/libtest arguments rather than changing execution engines.
+    non_execution = {"--no-run", "--help", "-h", "--version", "-V"}
+    if any(arg in non_execution for arg in ctx.extra_args):
+        raise ValueError("the test gate must execute tests; preparation/help flags are unsupported")
+    env = os.environ.copy()
+    env["NEXTEST_TEST_THREADS"] = env.get(
+        "RUST_TEST_THREADS", env.get("NEXTEST_TEST_THREADS", "num-cpus")
     )
-    return _run_command(argv, ctx, "test.log")
+    argv = [
+        "cargo", "nextest", "run",
+        "--profile", "default", "--ignore-default-filter", "--no-fail-fast",
+        "--no-tests=fail",
+        *(ctx.extra_args or ["--workspace", "--all-targets"]),
+    ]
+    details = _run_command(argv, ctx, "test.log", env=env)
+    details.update(_test_scope_memory())
+    details["rust_test_threads_env"] = env.get("RUST_TEST_THREADS")
+    details["test_runner"] = "nextest"
+    details["nextest_test_threads_env"] = env["NEXTEST_TEST_THREADS"]
+    return details
 
 
 def run_correctness(ctx: ProfileContext) -> dict[str, Any]:
@@ -186,10 +253,9 @@ def run_correctness(ctx: ProfileContext) -> dict[str, Any]:
 
 
 def run_build(ctx: ProfileContext) -> dict[str, Any]:
+    argv = ["cargo", "build", "--locked", "-p", "mc-edge", "--bin", "solaris-v2"]
     if ctx.release:
-        argv = ["cargo", "build", "--locked", "--release", "--workspace"]
-    else:
-        argv = ["cargo", "build", "--bin", "mc-server"]
+        argv.append("--release")
     return _run_command(argv, ctx, "build.log")
 
 
@@ -244,9 +310,6 @@ def _run_first_party_gate(ctx: ProfileContext, profile: str) -> dict[str, Any]:
 def run_standard_pack(ctx: ProfileContext) -> dict[str, Any]:
     return _run_first_party_gate(ctx, "standard-pack")
 
-def run_settlement_cargo(ctx: ProfileContext) -> dict[str, Any]:
-    return _run_first_party_gate(ctx, "settlement-cargo")
-
 
 def run_installer(ctx: ProfileContext) -> dict[str, Any]:
     return _run_command(
@@ -257,19 +320,6 @@ def run_installer(ctx: ProfileContext) -> dict[str, Any]:
     )
 
 
-def _build_mc_server(ctx: ProfileContext) -> dict[str, Any]:
-    """Build the server once; scenario functions must not rebuild it."""
-    return _run_command(
-        ["cargo", "build", "-p", "mc-server"], ctx, "server-build.log"
-    )
-
-
-def _prepare_loader_fixture(ctx: ProfileContext) -> None:
-    _run_command(
-        ["bash", "tools/build-loader-live-gate-fixture.sh", "--prepare"],
-        ctx,
-        "fixture-prepare.log",
-    )
 
 
 def run_survival(ctx: ProfileContext) -> dict[str, Any]:
@@ -277,39 +327,22 @@ def run_survival(ctx: ProfileContext) -> dict[str, Any]:
     from .backends import gameplay
 
     return gameplay.run(ctx)
+def run_title_connect(ctx: ProfileContext) -> dict[str, Any]:
+    """No-`--server` Title/connect windowed proof for the native client."""
+    from .backends import title_connect
+
+    return title_connect.run(ctx)
 
 def run_core_client(ctx: ProfileContext) -> dict[str, Any]:
-    from . import compatibility
-    if ctx.client == "native":
-        from .backends import client_probes
+    from .backends import client_probes
 
-        return client_probes.run(ctx, "core-client")
-
-    _prepare_loader_fixture(ctx)
-    details = _build_mc_server(ctx)
-    timeout = ctx.timeout_seconds or CORE_CLIENT_TIMEOUT_SECONDS
-    result = compatibility.run(timeout, ctx.artifact_dir, inventory=False)
-    details["scenario"] = result
-    if result.get("passed") is not True:
-        raise RuntimeError(f"core-client scenario did not pass: {result}")
-    return details
+    return client_probes.run(ctx, "core-client")
 
 
 def run_inventory(ctx: ProfileContext) -> dict[str, Any]:
-    from . import compatibility
-    if ctx.client == "native" or ctx.scenario_id == compatibility.INVENTORY_SCENARIO_ID:
-        from .backends import client_probes
+    from .backends import client_probes
 
-        return client_probes.run(ctx, "inventory")
-
-    _prepare_loader_fixture(ctx)
-    details = _build_mc_server(ctx)
-    timeout = ctx.timeout_seconds or CORE_CLIENT_TIMEOUT_SECONDS
-    result = compatibility.run(timeout, ctx.artifact_dir, inventory=True)
-    details["scenario"] = result
-    if result.get("passed") is not True:
-        raise RuntimeError(f"inventory scenario did not pass: {result}")
-    return details
+    return client_probes.run(ctx, "inventory")
 
 
 def run_entities(ctx: ProfileContext) -> dict[str, Any]:
@@ -345,18 +378,31 @@ def run_loader_live(ctx: ProfileContext) -> dict[str, Any]:
             f"loader-live requires --platform {'|'.join(LOADER_PLATFORMS)}, "
             f"got {platform!r}"
         )
-    _prepare_loader_fixture(ctx)
-    details = _build_mc_server(ctx)
+    if ctx.server_bin is None or ctx.plugins_dir is None:
+        raise ValueError("loader-live requires --server-bin and --plugins-dir")
+    if ctx.scenario_id is None:
+        raise ValueError("loader-live requires a named scenario")
+    from .backends.gameplay import prepare_operator_fixture
+
+    prepare_operator_fixture(ctx, [loader.USERNAMES[platform]])
+    details: dict[str, Any] = {}
     timeout = ctx.timeout_seconds or LOADER_LIVE_TIMEOUT_SECONDS
     scenario = None
-    if ctx.scenario_id is not None:
-        # A named first-party scenario lives beside its package in the sibling
-        # repository; core supplies only this Loader lifecycle.
+    if ctx.scenario_id == "loader-v2-settlements-smoke":
+        from .loader_settlements import run
+
+        scenario = {"run": run}
+    elif ctx.scenario_id is not None:
+        # Named first-party scenarios normally live beside their sibling package.
         plugins_root = Path(
             os.environ.get("SOLARIS_DEFAULT_PLUGINS_ROOT", str(DEFAULT_PLUGINS_ROOT))
         )
         scenario = runpy.run_path(str(plugins_root / "tools" / f"{ctx.scenario_id}.py"))
-    result = loader.run(platform, timeout, ctx.artifact_dir, scenario)
+    result = loader.run(
+        platform, timeout, ctx.artifact_dir, scenario,
+        server_bin=ctx.server_bin,
+        plugins_dir=ctx.plugins_dir,
+    )
     details["scenario"] = result
     if result.get("passed") is not True:
         raise RuntimeError(f"loader-live scenario did not pass: {result}")
@@ -478,99 +524,50 @@ def run_oracle_check(ctx: ProfileContext) -> dict[str, Any]:
     )
 
 
-def run_entity_scale(ctx: ProfileContext) -> dict[str, Any]:
-    env = _backend_env(ctx)
-    env.setdefault(
-        "SOLARIS_ENTITY_BENCH_OUT_DIR",
-        str(ctx.artifact_dir / "bench"),
-    )
-    return _run_command(
-        ["bash", str(BACKENDS / "entity_scale.sh")] + ctx.extra_args,
-        ctx,
-        "entity-scale.log",
-        env=env,
-    )
 
 
-def run_living_world_scale(ctx: ProfileContext) -> dict[str, Any]:
-    env = _backend_env(ctx)
-    env.setdefault(
-        "SOLARIS_ENTITY_BENCH_OUT_DIR",
-        str(ctx.artifact_dir / "bench"),
-    )
-    return _run_command(
-        ["bash", str(BACKENDS / "living_world_scale.sh")] + ctx.extra_args,
-        ctx,
-        "living-world-scale.log",
-        env=env,
-    )
-
-
-def run_player_scale(ctx: ProfileContext) -> dict[str, Any]:
-    env = _backend_env(ctx)
-    env.setdefault("CARGO_PROFILE_RELEASE_DEBUG", "0")
-    env.setdefault("CARGO_PROFILE_RELEASE_STRIP", "false")
-    env.setdefault("RUSTFLAGS", "-C force-frame-pointers=yes")
-    _run_command(
-        [
-            "cargo", "build", "--release",
-            "-p", "mc-server", "--bin", "mc-server",
-            "-p", "mc-test-harness", "--bin", "player-scale-bots",
-        ],
-        ctx,
-        "player-scale-build.log",
-        env=env,
-    )
+def run_catalog_load(ctx: ProfileContext) -> dict[str, Any]:
+    """Explicit release artifacts; fixture preparation uses public v2 commands."""
+    extra = ctx.extra_args[1:] if ctx.extra_args[:1] == ["--"] else ctx.extra_args
     details = _run_command(
-        [
-            sys.executable,
-            "-m",
-            "tools.harness.backends.player_scale",
-            "--out",
-            str(ctx.artifact_dir / "bench"),
-        ] + ctx.extra_args,
-        ctx,
-        "player-scale.log",
-        env=env,
+        [sys.executable, "-m", "tools.harness.backends.catalog_load",
+         "--out", str(ctx.artifact_dir / "catalog-load")] + extra,
+        ctx, "catalog-load.log", env=_backend_env(ctx),
     )
-    final_event = json.loads((ctx.artifact_dir / "player-scale.log").read_text().splitlines()[-1])
+    final_event = json.loads((ctx.artifact_dir / "catalog-load.log").read_text().splitlines()[-1])
     receipt_path = Path(final_event["receipt"])
     backend = json.loads(receipt_path.read_text())
-    details["backend_receipt"] = str(receipt_path)
-    details["backend_status"] = backend["status"]
-    if backend["status"] == "smoke_only":
+    details.update({"backend_receipt": str(receipt_path), "backend_outcome": backend["outcome"],
+                    "scenario_outcomes": backend["results"]})
+    if backend["smoke_only"] or backend["outcome"] != "PASS":
         details["mode"] = "prepared"
-    elif backend["status"] != "passed":
-        raise RuntimeError(f"player-scale backend did not pass: {backend['status']}")
     return details
 
-
-def run_load_matrix(ctx: ProfileContext) -> dict[str, Any]:
-    """Use explicit prebuilt artifacts; Main owns the one combined release build."""
+def run_constantinople(ctx: ProfileContext) -> dict[str, Any]:
+    """Functional imported-city fixture; no throughput or performance verdict."""
+    extra = ctx.extra_args[1:] if ctx.extra_args[:1] == ["--"] else ctx.extra_args
+    native = "--native" in extra
+    extra = [argument for argument in extra if argument != "--native"]
     details = _run_command(
-        [sys.executable, "-m", "tools.harness.backends.load_matrix",
-         "--out", str(ctx.artifact_dir / "bench")] + ctx.extra_args,
-        ctx, "load-matrix.log", env=_backend_env(ctx),
+        [sys.executable, "-m", "tools.coreperf.constantinople", "native-smoke" if native else "smoke",
+         "--out", str(ctx.artifact_dir / "constantinople")] + extra,
+        ctx, "constantinople.log", env=_backend_env(ctx),
     )
-    final_event = json.loads((ctx.artifact_dir / "load-matrix.log").read_text().splitlines()[-1])
-    receipt_path = Path(final_event["receipt"])
-    backend = json.loads(receipt_path.read_text())
-    details.update({"backend_receipt": str(receipt_path), "backend_status": backend["status"],
-                    "summary": final_event["summary"]})
-    if backend["status"] == "smoke_only":
-        details["mode"] = "prepared"
-    elif backend["status"] != "passed":
-        raise RuntimeError(f"load-matrix backend did not pass: {backend['status']}")
+    final_event = json.loads((ctx.artifact_dir / "constantinople.log").read_text().splitlines()[-1])
+    details.update({"fixture_receipt": final_event["receipt"], "performance_claim": False})
     return details
+
 
 
 def run_seed_review(ctx: ProfileContext) -> dict[str, Any]:
-    return _run_command(
+    details = _run_command(
         ["python3", "-m", "tools.harness.backends.seed_review"] + ctx.extra_args,
         ctx,
         "seed-review.log",
         env=_backend_env(ctx),
     )
+    details["mode"] = "prepared" if _prepared_mode(ctx.extra_args) else "run"
+    return details
 
 
 def run_seed_contact_sheet(ctx: ProfileContext) -> dict[str, Any]:
@@ -617,7 +614,7 @@ PROFILES: dict[str, dict[str, Any]] = {
     },
     "correctness": {
         "scope": "rust",
-        "description": "L2 gates: fmt, code-health, clippy, test --workspace (--lib --bins --tests --examples; benches excluded)",
+        "description": "L2 gates: fmt, clippy, code-health, nextest workspace/all-target tests",
         "run": run_correctness,
     },
     "fmt": {
@@ -637,12 +634,12 @@ PROFILES: dict[str, dict[str, Any]] = {
     },
     "test": {
         "scope": "rust",
-        "description": "cargo test --workspace (--lib --bins --tests --examples; benches excluded); trailing arguments run a focused Cargo test",
+        "description": "cargo nextest run --workspace --all-targets (Criterion test mode); trailing selectors use nextest",
         "run": run_test,
     },
     "build": {
         "scope": "rust",
-        "description": "cargo build --bin mc-server (dev); --release for the locked release workspace build",
+        "description": "cargo build --locked -p mc-edge --bin solaris-v2; --release selects release",
         "run": run_build,
     },
     "java": {
@@ -660,11 +657,6 @@ PROFILES: dict[str, dict[str, Any]] = {
         "description": "rebuild and byte-verify the explicit first-party standard-pack sibling",
         "run": run_standard_pack,
     },
-    "settlement-cargo": {
-        "scope": "plugins",
-        "description": "rebuild the Settlements component and verify warehouse cargo plus vanilla-village construction",
-        "run": run_settlement_cargo,
-    },
     "installer": {
         "scope": "release",
         "description": "installer self-test backend",
@@ -674,6 +666,11 @@ PROFILES: dict[str, dict[str, Any]] = {
         "scope": "real-client",
         "description": "Shared MCP survival mining, pickup and placement (--client java|native)",
         "run": run_survival,
+    },
+    "title-connect": {
+        "scope": "real-client",
+        "description": "Native Title screen type-address+name, Connect, disconnect-back-to-Title (--client native, windowed for screenshots)",
+        "run": run_title_connect,
     },
     "core-client": {
         "scope": "real-client",
@@ -692,7 +689,7 @@ PROFILES: dict[str, dict[str, Any]] = {
     },
     "native-lifecycle": {
         "scope": "real-client",
-        "description": "Native reconnect, received death/respawn and 30-minute RSS soak (--soak-seconds 0 is smoke-only)",
+        "description": "Reconnect, received death/respawn and 30-minute RSS soak (--client native|java; --soak-seconds 0 is smoke-only)",
         "run": run_native_lifecycle,
     },
     "logical-native": {
@@ -735,25 +732,15 @@ PROFILES: dict[str, dict[str, Any]] = {
         "description": "oracle runner self-check backend",
         "run": run_oracle_check,
     },
-    "entity-scale": {
+    "catalog-load": {
         "scope": "scale",
-        "description": "entity-scale backend; evidence under the run artifact dir",
-        "run": run_entity_scale,
+        "description": "Owner catalog v2 open-loop controls, exact wall windows and classified receipts (explicit release binaries)",
+        "run": run_catalog_load,
     },
-    "living-world-scale": {
-        "scope": "scale",
-        "description": "living-world-scale backend; evidence under the run artifact dir",
-        "run": run_living_world_scale,
-    },
-    "player-scale": {
-        "scope": "scale",
-        "description": "Two-core many-player ladder using lightweight Rust protocol bots",
-        "run": run_player_scale,
-    },
-    "load-matrix": {
-        "scope": "scale",
-        "description": "Diverse external-release single-core load matrix (explicit prebuilt binaries; no build)",
-        "run": run_load_matrix,
+    "constantinople": {
+        "scope": "fixture",
+        "description": "Imported vanilla city: deterministic population, street walking, native save/reopen (not performance)",
+        "run": run_constantinople,
     },
     "seed-review": {
         "scope": "terrain",

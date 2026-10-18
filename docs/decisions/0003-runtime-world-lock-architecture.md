@@ -1,7 +1,9 @@
 # ADR 0003 - Runtime world lock architecture
 
 **Date:** 2026-06-01
-**Status:** Accepted for legacy paths; staged supersession by ADR 0004
+**Status:** Superseded by ADR 0013/0014, Phase 5 (2026-10-15).
+The lock model, source paths and follow-up notes below describe deleted v1
+implementations. They are historical constraints, not the native tick model.
 **Context:** M68.d architecture drift note
 
 ## Context

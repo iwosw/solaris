@@ -1,4 +1,43 @@
 {
+  "minecraft:swords": [
+    "minecraft:diamond_sword",
+    "minecraft:stone_sword",
+    "minecraft:golden_sword",
+    "minecraft:netherite_sword",
+    "minecraft:wooden_sword",
+    "minecraft:iron_sword",
+    "minecraft:copper_sword"
+  ],
+  "minecraft:piglin_loved": [
+    "minecraft:bell",
+    "minecraft:clock",
+    "minecraft:deepslate_gold_ore",
+    "minecraft:enchanted_golden_apple",
+    "minecraft:gilded_blackstone",
+    "minecraft:glistering_melon_slice",
+    "minecraft:gold_block",
+    "minecraft:gold_ingot",
+    "minecraft:gold_ore",
+    "minecraft:golden_apple",
+    "minecraft:golden_axe",
+    "minecraft:golden_boots",
+    "minecraft:golden_carrot",
+    "minecraft:golden_chestplate",
+    "minecraft:golden_dandelion",
+    "minecraft:golden_helmet",
+    "minecraft:golden_hoe",
+    "minecraft:golden_horse_armor",
+    "minecraft:golden_leggings",
+    "minecraft:golden_nautilus_armor",
+    "minecraft:golden_pickaxe",
+    "minecraft:golden_shovel",
+    "minecraft:golden_spear",
+    "minecraft:golden_sword",
+    "minecraft:light_weighted_pressure_plate",
+    "minecraft:nether_gold_ore",
+    "minecraft:raw_gold",
+    "minecraft:raw_gold_block"
+  ],
   "minecraft:planks": [
     "minecraft:oak_planks",
     "minecraft:spruce_planks",
@@ -130,6 +169,25 @@
     "minecraft:beetroot_seeds",
     "minecraft:torchflower_seeds",
     "minecraft:pitcher_pod"
+  ],
+  "minecraft:pig_food": [
+    "minecraft:carrot",
+    "minecraft:potato",
+    "minecraft:beetroot"
+  ],
+  "minecraft:goat_food": [
+    "minecraft:wheat"
+  ],
+  "minecraft:rabbit_food": [
+    "minecraft:carrot",
+    "minecraft:golden_carrot",
+    "minecraft:dandelion"
+  ],
+  "minecraft:camel_food": [
+    "minecraft:cactus"
+  ],
+  "minecraft:armadillo_food": [
+    "minecraft:spider_eye"
   ],
   "minecraft:bamboo_blocks": [
     "minecraft:bamboo_block",
@@ -424,6 +482,63 @@
     "minecraft:pale_oak_planks",
     "minecraft:spruce_planks",
     "minecraft:warped_planks"
+  ],
+  "minecraft:fishes": [
+    "minecraft:cod",
+    "minecraft:cooked_cod",
+    "minecraft:salmon",
+    "minecraft:cooked_salmon",
+    "minecraft:pufferfish",
+    "minecraft:tropical_fish"
+  ],
+  "minecraft:cat_food": [
+    "minecraft:cod",
+    "minecraft:salmon"
+  ],
+  "minecraft:parrot_food": [
+    "minecraft:wheat_seeds",
+    "minecraft:melon_seeds",
+    "minecraft:pumpkin_seeds",
+    "minecraft:beetroot_seeds",
+    "minecraft:torchflower_seeds",
+    "minecraft:pitcher_pod"
+  ],
+  "minecraft:horse_food": [
+    "minecraft:wheat",
+    "minecraft:sugar",
+    "minecraft:hay_block",
+    "minecraft:apple",
+    "minecraft:carrot",
+    "minecraft:golden_carrot",
+    "minecraft:golden_apple",
+    "minecraft:enchanted_golden_apple"
+  ],
+  "minecraft:llama_food": [
+    "minecraft:wheat",
+    "minecraft:hay_block"
+  ],
+  "minecraft:strider_food": [
+    "minecraft:warped_fungus"
+  ],
+  "minecraft:wolf_food": [
+    "minecraft:beef",
+    "minecraft:chicken",
+    "minecraft:cooked_beef",
+    "minecraft:cooked_chicken",
+    "minecraft:cooked_mutton",
+    "minecraft:cooked_porkchop",
+    "minecraft:cooked_rabbit",
+    "minecraft:mutton",
+    "minecraft:porkchop",
+    "minecraft:rabbit",
+    "minecraft:rotten_flesh",
+    "minecraft:cod",
+    "minecraft:cooked_cod",
+    "minecraft:salmon",
+    "minecraft:cooked_salmon",
+    "minecraft:tropical_fish",
+    "minecraft:pufferfish",
+    "minecraft:rabbit_stew"
   ],
   "minecraft:wool": [
     "minecraft:black_wool",

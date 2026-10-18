@@ -29,14 +29,9 @@
 //!
 //! ## Partial-layer contract
 //!
-//! This is **checkpoints A1+A2 of a partial layer**. It is library code
-//! exercised by tests: nothing in the live `settlement_profile = "vanilla"` path
-//! calls it, no config flag or entry point activates it, no worldgen identity
-//! changed, and `PlainsVillagePrototype` still owns village generation. The
-//! whole reachable village decor closure — all 19 feature elements, 13 distinct
-//! features — now loads and places; what remains is village assembly
-//! (checkpoint B), which will drive [`CompiledPlacedFeature`] over the real
-//! generation world.
+//! Village decor is executed by [`crate::village::decor`] during native jigsaw
+//! generation. The reachable village decor closure includes all 19 feature
+//! elements and 13 distinct features; unsupported feature kinds fail closed.
 //!
 //! Everything outside the surface above fails closed by name at load or compile
 //! time rather than being approximated:

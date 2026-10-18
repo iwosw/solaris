@@ -102,3 +102,34 @@ pub fn start_origin(chunk_x: i32, chunk_z: i32, start_height: i32, free_height: 
         z: chunk_z * 16,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::RandomSpreadPlacement;
+
+    #[test]
+    fn village_candidates_match_local_26_1_2_java_oracle() {
+        // Captured by invoking the local server jar's
+        // RandomSpreadStructurePlacement.getPotentialStructureChunk.
+        let placement = RandomSpreadPlacement {
+            spacing: 34,
+            separation: 8,
+            salt: 10_387_312,
+            triangular: false,
+        };
+        for (seed, expected) in [
+            (0, [(-46, -49), (-27, 1), (15, 2), (90, 71)]),
+            (1, [(-46, -68), (-28, 7), (15, 8), (90, 79)]),
+            (-123_456_789, [(-49, -48), (-20, 1), (19, 0), (91, 73)]),
+        ] {
+            for ((x, z), candidate) in [(-68, -68), (-1, 0), (0, 0), (68, 68)]
+                .into_iter()
+                .zip(expected)
+            {
+                assert_eq!(placement.potential_chunk(seed, x, z), candidate);
+                assert!(placement.is_placement_chunk(seed, candidate.0, candidate.1));
+                assert!(!placement.is_placement_chunk(seed, candidate.0 + 1, candidate.1));
+            }
+        }
+    }
+}

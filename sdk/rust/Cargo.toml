@@ -14,3 +14,4 @@ license = "MIT OR Apache-2.0"
 solaris-plugin-sdk = { path = "solaris-plugin-sdk" }
 wit-bindgen = "0.62"
 toml = "0.8"
+serde = { version = "1", features = ["derive"] }

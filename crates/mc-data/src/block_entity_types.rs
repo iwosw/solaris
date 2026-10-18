@@ -88,30 +88,16 @@ impl BlockEntityTypeRegistry {
 
 #[must_use]
 pub fn solaris_required_block_entity_types() -> BlockEntityTypeRegistry {
-    // Values mirrored from data/vanilla/reports/registries.json for 26.1.x.
-    // Keep this fallback minimal; full runtime sidecars can load all entries.
-    let report = [
-        ("minecraft:furnace", 0),
-        ("minecraft:chest", 1),
-        ("minecraft:trapped_chest", 2),
-        ("minecraft:barrel", 27),
-        ("minecraft:smoker", 28),
-        ("minecraft:blast_furnace", 29),
-        ("minecraft:campfire", 33),
-        ("minecraft:sign", 7),
-        ("minecraft:hanging_sign", 8),
-        // Vanilla renders beds exclusively through their block entity
-        // (`BedBlockEntityRenderer`); without it the client draws nothing
-        // where the two bed halves stand.
-        ("minecraft:bed", 25),
-    ]
-    .into_iter()
-    .map(|(id, protocol_id)| BlockEntityTypeReport {
-        id: Identifier::parse(id).expect("static block entity type id is valid"),
-        protocol_id,
-    })
-    .collect::<Vec<_>>();
-    BlockEntityTypeRegistry::from_report(&report)
+    let by_name = crate::block_entity_kinds::BlockEntityKind::ALL
+        .iter()
+        .map(|kind| {
+            (
+                Identifier::parse(kind.vanilla_id()).expect("static block entity type id is valid"),
+                kind.protocol_id(),
+            )
+        })
+        .collect();
+    BlockEntityTypeRegistry { by_name }
 }
 
 #[cfg(test)]
@@ -142,6 +128,15 @@ mod tests {
             registry.id_of(&Identifier::parse("minecraft:bed").unwrap()),
             Some(25),
             "26.1 registries.json block_entity_type protocol id for minecraft:bed"
+        );
+    }
+
+    #[test]
+    fn shrieker_block_entity_type_matches_vanilla_protocol_id() {
+        let registry = solaris_required_block_entity_types();
+        assert_eq!(
+            registry.id_of(&Identifier::parse("minecraft:sculk_shrieker").unwrap()),
+            Some(38)
         );
     }
 }

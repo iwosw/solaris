@@ -9,6 +9,25 @@ fn id(value: &str) -> Identifier {
     Identifier::parse(value).unwrap()
 }
 
+fn vanilla_root() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data/vanilla")
+}
+
+fn vanilla() -> &'static EntityLootCatalog {
+    static CATALOG: std::sync::LazyLock<EntityLootCatalog> = std::sync::LazyLock::new(|| {
+        load_vanilla(&vanilla_root()).expect("local vanilla entity loot fixture")
+    });
+    &CATALOG
+}
+
+fn vanilla_lookups() -> &'static VanillaEntityLootLookups {
+    static LOOKUPS: std::sync::LazyLock<VanillaEntityLootLookups> =
+        std::sync::LazyLock::new(|| {
+            load_vanilla_lookups(&vanilla_root()).expect("local vanilla entity loot lookups")
+        });
+    &LOOKUPS
+}
+
 fn entity(entity_type: &str) -> EntityLootEntity {
     EntityLootEntity::new(id(entity_type))
 }
@@ -27,6 +46,62 @@ fn context_with_random(
         EntityDeathCause::new(BTreeSet::new(), EntityLootAttack::None, None),
         LootRandomBinding::new(sequence.map(id), seed),
     )
+}
+
+#[test]
+fn runtime_vanilla_catalog_smokes_contextual_cooked_and_player_only_loot() {
+    let catalog = vanilla();
+    let lookups = vanilla_lookups();
+    let table = id("minecraft:entities/cow");
+    let mut burning_cow = entity("minecraft:cow");
+    burning_cow.flags.is_on_fire = true;
+    let cooked_context = EntityLootContext::new(
+        burning_cow,
+        EntityDeathCause::new(BTreeSet::new(), EntityLootAttack::None, None),
+        LootRandomBinding::new(catalog.random_sequence(&table).cloned(), 5),
+    )
+    .with_lookups(lookups, lookups);
+    let cooked = catalog.evaluate(&table, &cooked_context).unwrap();
+    assert!(
+        cooked
+            .iter()
+            .any(|drop| drop.item == id("minecraft:cooked_beef") && drop.count > 0)
+    );
+    assert!(cooked.iter().all(|drop| drop.item != id("minecraft:beef")));
+
+    let blaze_table = id("minecraft:entities/blaze");
+    let environment = context_with_random("minecraft:blaze", Some("minecraft:entities/blaze"), 3)
+        .with_lookups(lookups, lookups);
+    assert!(
+        catalog
+            .evaluate(&blaze_table, &environment)
+            .unwrap()
+            .is_empty()
+    );
+    let player = entity("minecraft:player");
+    let player_context = EntityLootContext::new(
+        entity("minecraft:blaze"),
+        EntityDeathCause::new(
+            BTreeSet::new(),
+            EntityLootAttack::Direct(player.clone()),
+            Some(EntityLootPlayerAttribution::try_new(player).unwrap()),
+        ),
+        LootRandomBinding::new(Some(blaze_table.clone()), 3),
+    )
+    .with_lookups(lookups, lookups);
+    assert!((0..64).any(|seed| {
+        let context = EntityLootContext::new(
+            player_context.this_entity.clone(),
+            player_context.cause.clone(),
+            LootRandomBinding::new(Some(blaze_table.clone()), seed),
+        )
+        .with_lookups(lookups, lookups);
+        catalog
+            .evaluate(&blaze_table, &context)
+            .unwrap()
+            .iter()
+            .any(|drop| drop.item == id("minecraft:blaze_rod") && drop.count > 0)
+    }));
 }
 
 fn random_context(
@@ -107,37 +182,43 @@ fn source_and_recursive_json_budgets_fail_closed() {
     ));
 
     let value = serde_json::json!({"long_key": ["long value", null]});
+    let unbounded = compile::JsonBudgetLimits {
+        nodes: usize::MAX,
+        collection_elements: usize::MAX,
+        string_bytes: usize::MAX,
+        array_length: usize::MAX,
+    };
     for (limits, expected) in [
         (
-            super::compile::JsonBudgetLimits {
+            compile::JsonBudgetLimits {
                 nodes: 3,
-                ..super::compile::JsonBudgetLimits::unbounded()
+                ..unbounded
             },
             EntityLootLimit::JsonNodes,
         ),
         (
-            super::compile::JsonBudgetLimits {
+            compile::JsonBudgetLimits {
                 collection_elements: 2,
-                ..super::compile::JsonBudgetLimits::unbounded()
+                ..unbounded
             },
             EntityLootLimit::JsonCollectionElements,
         ),
         (
-            super::compile::JsonBudgetLimits {
+            compile::JsonBudgetLimits {
                 string_bytes: 8,
-                ..super::compile::JsonBudgetLimits::unbounded()
+                ..unbounded
             },
             EntityLootLimit::JsonStringBytes,
         ),
         (
-            super::compile::JsonBudgetLimits {
+            compile::JsonBudgetLimits {
                 array_length: 1,
-                ..super::compile::JsonBudgetLimits::unbounded()
+                ..unbounded
             },
             EntityLootLimit::JsonArrayLength,
         ),
     ] {
-        let violation = super::compile::validate_json_budget(&value, limits)
+        let violation = compile::validate_json_budget(&value, limits)
             .expect_err("the selected recursive JSON budget must fail");
         assert_eq!(violation.limit, expected);
     }
@@ -781,6 +862,61 @@ fn probability_boundaries_and_explicit_seed_replay_are_deterministic() {
     assert_eq!(first, second);
     assert_eq!(first[0].item, id("minecraft:always"));
     assert_eq!(first.len(), 2);
+}
+
+#[test]
+fn vanilla_creeper_drops_disc_only_for_skeleton_killer() {
+    // MOBS-04: the runtime creeper table gates its disc pool on
+    // `entity_properties { entity: attacker, type: #skeletons }`. A
+    // skeleton-arrow kill (Indirect, source = skeleton) must be disc-eligible
+    // while a direct player kill is not.
+    let catalog = vanilla();
+    let lookups = vanilla_lookups();
+    let table = id("minecraft:entities/creeper");
+    let discs = lookups
+        .item_tag(&id("minecraft:creeper_drop_music_discs"))
+        .expect("runtime disc tag");
+    assert!(!discs.is_empty());
+    let context_for = |attack: EntityLootAttack| {
+        EntityLootContext::new(
+            entity("minecraft:creeper"),
+            EntityDeathCause::new(BTreeSet::new(), attack, None),
+            LootRandomBinding::new(catalog.random_sequence(&table).cloned(), 7),
+        )
+        .with_lookups(lookups, lookups)
+    };
+    let skeleton_arrow_kill = context_for(EntityLootAttack::Indirect {
+        source: Some(entity("minecraft:skeleton")),
+        direct: entity("minecraft:arrow"),
+    });
+    let skeleton_drops = catalog.evaluate(&table, &skeleton_arrow_kill).unwrap();
+    assert!(
+        skeleton_drops.iter().any(|drop| discs.contains(&drop.item)),
+        "skeleton-arrow creeper kill must roll a music disc"
+    );
+    let player = entity("minecraft:player");
+    let player_kill = EntityLootContext::new(
+        entity("minecraft:creeper"),
+        EntityDeathCause::new(
+            BTreeSet::new(),
+            EntityLootAttack::Direct(player.clone()),
+            Some(EntityLootPlayerAttribution::try_new(player).unwrap()),
+        ),
+        LootRandomBinding::new(catalog.random_sequence(&table).cloned(), 7),
+    )
+    .with_lookups(lookups, lookups);
+    // The disc pool is exclusive to skeleton killers; every other pool is
+    // shared, so assert on the disc entries only rather than the full drop.
+    let player_discs = catalog
+        .evaluate(&table, &player_kill)
+        .unwrap()
+        .into_iter()
+        .filter(|drop| discs.contains(&drop.item))
+        .collect::<Vec<_>>();
+    assert!(
+        player_discs.is_empty(),
+        "direct player kill must not drop a music disc"
+    );
 }
 
 #[test]

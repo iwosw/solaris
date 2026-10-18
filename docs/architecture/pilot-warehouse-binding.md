@@ -1,9 +1,10 @@
 # Pilot contract — warehouse binding (CP-REFACTOR-030)
 
-**Status.** Prepared in CP-REFACTOR-010; **executed in CP-REFACTOR-030** (2026-09-26) on base
-tree `9889036ee786dc90d2e44d7aeeb80fa62efe1a5d`. The binding implementation now lives in the
-child module described below; the sections that follow are the contract the slice had to keep,
-followed by what the executed slice actually did.
+**Status:** Historical CP-REFACTOR-030 extraction record (2026-09-26, base
+`9889036ee786dc90d2e44d7aeeb80fa62efe1a5d`), superseded by ADR 0013/0014.
+The v1 implementations, source paths and test commands below were deleted in
+Phase 5. Present-tense descriptions apply only to that recorded tree; they are
+not current native-runtime navigation or evidence.
 
 ## Result of the executed slice
 
@@ -44,6 +45,13 @@ contract plus a narrow set of implementation and test files, without reading all
   rebuild + 0.38 s for 3 tests (build-bound; splitting test files does not by itself shorten it).
 
 ## Current code and callers (verified, after the CP-REFACTOR-030 move)
+
+CP-ARCH-020 later split this code by crate: the ledger/data half (`DurableWarehouseBinding`,
+`DurableWarehouseSource`, validation, `binding_position`, `warehouse_for_position`,
+`same_warehouse_target`, `SettlementLedger::apply`) lives in
+`crates/mc-simulation/src/services/settlement{.rs,/warehouse.rs}`; the three `bind_*`
+operations and their tests live in `crates/mc-net/src/script/storage/settlement_runtime/warehouse{,_tests}.rs`.
+The line anchors in this table are from the CP-REFACTOR-030 tree.
 
 | Concern | Symbol |
 | --- | --- |

@@ -15,10 +15,18 @@ use thiserror::Error;
 /// Stored as a single owned string and an index pointing at the colon.
 /// We don't intern here; if interning turns out to matter for the
 /// data-pack loader we'll revisit (PROJECT_SPEC §3.2 leaves room).
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Identifier {
     full: String,
     colon: usize,
+}
+
+// `Borrow<str>` requires `Hash` to match `str`'s: hash only the full string
+// (`colon` is derived from it), so `map.get("minecraft:stone")` finds keys.
+impl std::hash::Hash for Identifier {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.full.hash(state);
+    }
 }
 
 #[derive(Deserialize)]
@@ -74,6 +82,12 @@ impl Identifier {
     #[must_use]
     pub fn path(&self) -> &str {
         &self.full[self.colon + 1..]
+    }
+}
+
+impl std::borrow::Borrow<str> for Identifier {
+    fn borrow(&self) -> &str {
+        self.as_str()
     }
 }
 
@@ -153,6 +167,13 @@ mod tests {
     #[test]
     fn rejects_uppercase() {
         assert!(Identifier::parse("Minecraft:Stone").is_err());
+    }
+
+    #[test]
+    fn hash_map_lookup_by_str_finds_identifier_key() {
+        let mut map = std::collections::HashMap::new();
+        map.insert(Identifier::parse("stone").unwrap(), 42);
+        assert_eq!(map.get("minecraft:stone"), Some(&42));
     }
 
     #[test]

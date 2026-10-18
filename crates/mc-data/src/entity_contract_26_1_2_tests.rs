@@ -508,7 +508,7 @@ fn reviewed_contract_checksum_detects_committed_data_drift() {
             checksum,
             &[
                 category_fingerprint_code(contract.category),
-                contract.flags.bits(),
+                contract.flags.0,
             ],
         );
         checksum = hash_bytes(

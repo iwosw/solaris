@@ -836,6 +836,7 @@ async fn a_package_that_never_declared_the_capability_loses_its_route_instead_of
 
 fn assert_inventory_fence_text_bound(operation: inventories::InventoryOperation) {
     let command = Command::Operation(domain_operations::OperationRequest {
+        expected_plugin_storage_versions: Vec::new(),
         request: "query".to_owned(),
         operation: domain_operations::DomainOperation::Inventory(operation),
     });
@@ -872,6 +873,7 @@ fn transfer_fence_hash_obeys_the_configured_text_bound() {
         inventories::InventoryTransfer {
             operation_id: "move".to_owned(),
             actor_id: SESSION,
+            execution_permit: None,
             transfers: vec![inventories::OwnedItemTransfer {
                 source: inventories::InventoryEndpoint::PlayerInventory(SESSION),
                 source_slot: 9,

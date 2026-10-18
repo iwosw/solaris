@@ -192,9 +192,64 @@ fn assert_refused_by_the_transfer_budget(answer: Result<(), HostError>) {
 }
 
 const ON_EVENTS: &str = "solaris:plugin/events@0.7.0#on-events";
-const COMMAND_STRIDE: i32 = 120;
-const SEND_MESSAGE_TEXT_OFFSET: i32 = 24;
-const SEND_MESSAGE_TEXT_LENGTH_OFFSET: i32 = 28;
+
+/// `(stride, text offset, text length offset)` of one `send-message` command in
+/// the guest's lowered answer, read from the WIT the host implements so that a
+/// new command case cannot silently move the bytes this fixture rewrites.
+fn command_layout() -> (i32, i32, i32) {
+    use wit_parser::{Resolve, SizeAlign, Type, TypeDefKind};
+    static LAYOUT: std::sync::OnceLock<(i32, i32, i32)> = std::sync::OnceLock::new();
+    *LAYOUT.get_or_init(|| {
+        let mut resolve = Resolve::default();
+        resolve
+            .push_dir(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../mc-script/wit"))
+            .expect("the plugin WIT parses");
+        let mut sizes = SizeAlign::default();
+        sizes.fill(&resolve).expect("the plugin WIT has a layout");
+        let (id, variant) = resolve
+            .types
+            .iter()
+            .find_map(|(id, def)| match &def.kind {
+                TypeDefKind::Variant(variant)
+                    if def.name.as_deref() == Some("command")
+                        && variant.cases.iter().any(|case| case.name == "send-message") =>
+                {
+                    Some((id, variant))
+                }
+                _ => None,
+            })
+            .expect("the command variant has a send-message case");
+        let message = variant
+            .cases
+            .iter()
+            .find(|case| case.name == "send-message")
+            .and_then(|case| case.ty.as_ref())
+            .and_then(|ty| match ty {
+                Type::Id(id) => match &resolve.types[*id].kind {
+                    TypeDefKind::Record(record) => Some(record),
+                    _ => None,
+                },
+                _ => None,
+            })
+            .expect("send-message carries a record");
+        let payload = sizes
+            .payload_offset(
+                variant.tag(),
+                variant.cases.iter().map(|case| case.ty.as_ref()),
+            )
+            .size_wasm32();
+        let text = message
+            .fields
+            .iter()
+            .position(|field| field.name == "text")
+            .expect("send-message carries text");
+        let offsets = sizes.field_offsets(message.fields.iter().map(|field| &field.ty));
+        let text_offset = payload + offsets[text].0.size_wasm32();
+        let stride = sizes.size(&Type::Id(id)).size_wasm32();
+        let to_i32 = |value: usize| i32::try_from(value).expect("layout offsets fit i32");
+        (to_i32(stride), to_i32(text_offset), to_i32(text_offset + 4))
+    })
+}
 
 /// Retarget only the event export of the SDK-built guest after its canonical
 /// lowering has materialised the answer. The replacement keeps the first wide
@@ -285,12 +340,12 @@ impl Reencode for AliasWideOutput {
         alias.instruction(&Instruction::I32GtU);
         alias.instruction(&Instruction::If(BlockType::Empty));
         alias.instruction(&Instruction::LocalGet(6));
-        alias.instruction(&Instruction::I32Const(SEND_MESSAGE_TEXT_OFFSET));
+        alias.instruction(&Instruction::I32Const(command_layout().1));
         alias.instruction(&Instruction::I32Add);
         alias.instruction(&Instruction::I32Load(memory));
         alias.instruction(&Instruction::LocalSet(8));
         alias.instruction(&Instruction::LocalGet(6));
-        alias.instruction(&Instruction::I32Const(SEND_MESSAGE_TEXT_LENGTH_OFFSET));
+        alias.instruction(&Instruction::I32Const(command_layout().2));
         alias.instruction(&Instruction::I32Add);
         alias.instruction(&Instruction::I32Load(memory));
         alias.instruction(&Instruction::LocalSet(9));
@@ -307,19 +362,19 @@ impl Reencode for AliasWideOutput {
         alias.instruction(&Instruction::BrIf(1));
         alias.instruction(&Instruction::LocalGet(6));
         alias.instruction(&Instruction::LocalGet(10));
-        alias.instruction(&Instruction::I32Const(COMMAND_STRIDE));
+        alias.instruction(&Instruction::I32Const(command_layout().0));
         alias.instruction(&Instruction::I32Mul);
         alias.instruction(&Instruction::I32Add);
-        alias.instruction(&Instruction::I32Const(SEND_MESSAGE_TEXT_OFFSET));
+        alias.instruction(&Instruction::I32Const(command_layout().1));
         alias.instruction(&Instruction::I32Add);
         alias.instruction(&Instruction::LocalGet(8));
         alias.instruction(&Instruction::I32Store(memory));
         alias.instruction(&Instruction::LocalGet(6));
         alias.instruction(&Instruction::LocalGet(10));
-        alias.instruction(&Instruction::I32Const(COMMAND_STRIDE));
+        alias.instruction(&Instruction::I32Const(command_layout().0));
         alias.instruction(&Instruction::I32Mul);
         alias.instruction(&Instruction::I32Add);
-        alias.instruction(&Instruction::I32Const(SEND_MESSAGE_TEXT_LENGTH_OFFSET));
+        alias.instruction(&Instruction::I32Const(command_layout().2));
         alias.instruction(&Instruction::I32Add);
         alias.instruction(&Instruction::LocalGet(9));
         alias.instruction(&Instruction::LocalGet(10));
@@ -344,8 +399,8 @@ impl Reencode for AliasWideOutput {
 fn component_with_aliased_wide_output() -> Vec<u8> {
     let _ = fixture::component_bytes();
     let bytes = std::fs::read(
-        fixture::repo_root()
-            .join("sdk/rust/target/wasm32-unknown-unknown/release/solaris_hello_plugin.wasm"),
+        fixture::target_directory(&fixture::repo_root().join("sdk/rust"))
+            .join("wasm32-unknown-unknown/release/solaris_hello_plugin.wasm"),
     )
     .expect("the SDK-built core module exists");
     let mut imports = 0;

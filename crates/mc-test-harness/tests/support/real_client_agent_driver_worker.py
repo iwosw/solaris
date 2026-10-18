@@ -1,4 +1,5 @@
 import contextlib
+import hashlib
 import importlib.util
 import io
 import json
@@ -10,6 +11,26 @@ driver_path = sys.argv[1]
 spec = importlib.util.spec_from_file_location("solaris_real_client_agent_driver", driver_path)
 module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
+
+
+def replay_provenance_fixture(run_dir):
+    # Driver tests also run from sealed, Git-less snapshots without a loader checkout.
+    return {
+        "git_commit": "0123456789abcdef0123456789abcdef01234567",
+        "config_sha256": hashlib.sha256((run_dir / "server.toml").read_bytes()).hexdigest(),
+        "build_profile": "debug",
+        "sidecar_version": "fixture:26.1.2",
+        "hardware": {
+            "os": "linux",
+            "arch": "x86_64",
+            "cpu_model": "driver-test-fixture",
+            "logical_cpus": 1,
+            "memory_mib": 1024,
+        },
+    }
+
+
+sys.modules["driver_replay"].core_replay_provenance = replay_provenance_fixture
 
 for line in sys.stdin:
     request = json.loads(line)

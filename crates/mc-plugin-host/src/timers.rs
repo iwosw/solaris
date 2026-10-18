@@ -46,6 +46,29 @@ pub struct TimerSchedule {
 }
 
 impl TimerSchedule {
+    /// Anchor the initial relative schedule to the restored simulation clock.
+    /// Validate every deadline first so overflow leaves both indexes untouched.
+    pub(crate) fn rebase_deadlines(&mut self, offset: u64) -> Result<(), TimerRefusal> {
+        if offset == 0 {
+            return Ok(());
+        }
+        if self
+            .by_deadline
+            .last()
+            .is_some_and(|(deadline, _)| deadline.checked_add(offset).is_none())
+        {
+            return Err(TimerRefusal::DeadlineOverflow);
+        }
+        for deadline in self.by_id.values_mut() {
+            *deadline += offset;
+        }
+        self.by_deadline = std::mem::take(&mut self.by_deadline)
+            .into_iter()
+            .map(|(deadline, id)| (deadline + offset, id))
+            .collect();
+        Ok(())
+    }
+
     /// Schedule `timer_id` for `deadline`, replacing the timer of that id.
     ///
     /// A replace is admitted while the plugin holds the maximum on purpose: an id
@@ -223,3 +246,7 @@ fn classify(command: Command, observed_tick: u64) -> Result<TimerMutation, Timer
 fn validate_id(timer_id: &str) -> Result<(), TimerRefusal> {
     mc_script::validate_script_id_value(timer_id).map_err(|_| TimerRefusal::InvalidId)
 }
+
+#[cfg(test)]
+#[path = "timer_clock_tests.rs"]
+mod clock_tests;

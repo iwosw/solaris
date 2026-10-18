@@ -4,6 +4,37 @@ use mc_data::worldgen_ores::{HeightAnchor, OreFeature, OrePlacementCount, OreTar
 use mc_world::chunk::{MAX_Y, MIN_Y, OVERWORLD_GEOMETRY};
 use std::collections::BTreeMap;
 
+#[test]
+fn diagnostic_cache_evicts_one_column_without_clearing_a_full_shard() {
+    let cache = DiagnosticCache::default();
+    let coordinate = |index: usize| (index as i32 * DIAGNOSTIC_CACHE_SHARDS as i32, 0);
+    let sample = |index| TerrainDiagnosticSample {
+        surface_y: index,
+        biome: Identifier::parse("minecraft:plains").unwrap(),
+        vegetation_density: Some(0.25),
+    };
+    for index in 0..DIAGNOSTIC_CACHE_ENTRIES_PER_SHARD {
+        let (x, z) = coordinate(index);
+        assert_eq!(DiagnosticCache::shard_index(x, z), 0);
+        assert_eq!(
+            cache.insert(x, z, sample(index as i32)),
+            sample(index as i32)
+        );
+    }
+    assert_eq!(cache.insert(0, 0, sample(-1)), sample(0));
+    let (x, z) = coordinate(DIAGNOSTIC_CACHE_ENTRIES_PER_SHARD);
+    cache.insert(x, z, sample(-1));
+    assert!(
+        cache.get(0, 0).is_none(),
+        "only the oldest column is evicted"
+    );
+    for index in 1..DIAGNOSTIC_CACHE_ENTRIES_PER_SHARD {
+        let (x, z) = coordinate(index);
+        assert_eq!(cache.get(x, z), Some(sample(index as i32)));
+    }
+    assert_eq!(cache.get(x, z), Some(sample(-1)));
+}
+
 impl TerrainGenerator {
     pub(super) fn biome_for(&self, world_x: i32, world_z: i32, height: i32) -> Identifier {
         let sample = self.density_router().sample(world_x, world_z);
@@ -561,12 +592,14 @@ fn generated_leaf_distances_follow_nearest_logs_and_preserve_decay() {
                 expected,
                 "leaf at ({x}, {y}, {z}) must use its nearest supporting log"
             );
-            assert!(registry
-                .by_id(state)
-                .unwrap()
-                .properties
-                .iter()
-                .any(|(key, value)| key == "persistent" && value == "false"));
+            assert!(
+                registry
+                    .by_id(state)
+                    .unwrap()
+                    .properties
+                    .iter()
+                    .any(|(key, value)| key == "persistent" && value == "false")
+            );
         }
     }
     assert_eq!(
@@ -680,7 +713,7 @@ fn generated_column_has_bedrock_and_biome_surface() {
 
 #[test]
 fn generated_chunk_uses_explicit_geometry() {
-    let geometry = mc_world::ChunkGeometry::new(0, 256).unwrap();
+    let geometry = ChunkGeometry::new(0, 256).unwrap();
     let generator = TerrainGenerator::new(42, tiny_registry()).with_geometry(geometry);
 
     let chunk = generator.generate(ChunkPos { x: 0, z: 0 });
@@ -699,7 +732,7 @@ fn generated_chunk_uses_explicit_geometry() {
 
 #[test]
 fn generated_chunk_handles_geometry_above_vanilla_surface_band() {
-    let geometry = mc_world::ChunkGeometry::new(256, 256).unwrap();
+    let geometry = ChunkGeometry::new(256, 256).unwrap();
     let generator = TerrainGenerator::new(42, tiny_registry()).with_geometry(geometry);
 
     let chunk = generator.generate(ChunkPos { x: 0, z: 0 });
@@ -720,18 +753,18 @@ fn generation_rejects_chunk_coordinates_outside_the_block_domain() {
 
 #[test]
 fn chunk_geometry_typed_boundary_rejects_invalid_vertical_ranges() {
-    assert_eq!(mc_world::ChunkGeometry::new(0, 0), None);
-    assert_eq!(mc_world::ChunkGeometry::new(1, 16), None);
-    assert_eq!(mc_world::ChunkGeometry::new(0, 15), None);
-    assert_eq!(mc_world::ChunkGeometry::new(0, 512), None);
-    assert_eq!(mc_world::ChunkGeometry::new(i32::MAX - 15, 16), None);
+    assert_eq!(ChunkGeometry::new(0, 0), None);
+    assert_eq!(ChunkGeometry::new(1, 16), None);
+    assert_eq!(ChunkGeometry::new(0, 15), None);
+    assert_eq!(ChunkGeometry::new(0, 512), None);
+    assert_eq!(ChunkGeometry::new(i32::MAX - 15, 16), None);
 }
 
 #[test]
 fn generated_chunks_respect_short_and_tall_geometry_boundaries() {
     for geometry in [
-        mc_world::ChunkGeometry::new(-16, 16).expect("one section"),
-        mc_world::ChunkGeometry::new(-128, 496).expect("maximum section-aligned height"),
+        ChunkGeometry::new(-16, 16).expect("one section"),
+        ChunkGeometry::new(-128, 496).expect("maximum section-aligned height"),
     ] {
         let generator = TerrainGenerator::new(42, tiny_registry()).with_geometry(geometry);
         let chunk = generator.generate(ChunkPos { x: 0, z: 0 });
@@ -754,8 +787,8 @@ fn generated_chunks_respect_short_and_tall_geometry_boundaries() {
 #[test]
 fn generated_chunks_handle_extreme_valid_geometry_without_y_overflow() {
     for geometry in [
-        mc_world::ChunkGeometry::new(i32::MIN, 16).expect("lowest aligned section"),
-        mc_world::ChunkGeometry::new(i32::MAX - 31, 16).expect("highest aligned section"),
+        ChunkGeometry::new(i32::MIN, 16).expect("lowest aligned section"),
+        ChunkGeometry::new(i32::MAX - 31, 16).expect("highest aligned section"),
     ] {
         let generator = TerrainGenerator::new(42, tiny_registry()).with_geometry(geometry);
 
@@ -804,7 +837,7 @@ fn generated_block_fingerprint(generator: &TerrainGenerator, positions: &[ChunkP
 
 #[test]
 fn custom_geometry_generation_is_deterministic_for_the_same_seed() {
-    let geometry = mc_world::ChunkGeometry::new(0, 32).expect("two sections");
+    let geometry = ChunkGeometry::new(0, 32).expect("two sections");
     let positions = [ChunkPos { x: -2, z: 3 }, ChunkPos { x: 7, z: -5 }];
     let first = TerrainGenerator::new(99, tiny_registry()).with_geometry(geometry);
     let second = TerrainGenerator::new(99, tiny_registry()).with_geometry(geometry);
@@ -854,43 +887,6 @@ fn different_seeds_change_generated_chunks() {
     }
 
     panic!("different world seeds should alter at least one sampled generated chunk");
-}
-
-#[test]
-fn persisted_chunk_edit_wins_after_seed_change() {
-    let registry = tiny_registry();
-    let generator_a = Arc::new(TerrainGenerator::new(0, Arc::clone(&registry)));
-    let generator_b = Arc::new(TerrainGenerator::new(1, Arc::clone(&registry)));
-    let cpos = ChunkPos { x: 5, z: -3 };
-    let world_x = cpos.x * 16 + 8;
-    let world_z = cpos.z * 16 + 8;
-    let edit_pos = mc_world::chunk::BlockPos {
-        x: world_x,
-        y: generator_a.surface_height(world_x, world_z) + 1,
-        z: world_z,
-    };
-    let marker = BlockStateId(25);
-    let root = unique_temp_world_dir();
-    std::fs::create_dir_all(root.join("region")).unwrap();
-
-    let mut storage = mc_world::WorldStorage::open(&root, Arc::clone(&registry))
-        .unwrap()
-        .with_generator(Arc::clone(&generator_a) as Arc<dyn ChunkGenerator>);
-    assert_ne!(
-        storage.get_block(edit_pos).unwrap(),
-        Some(marker),
-        "generated fallback should not already contain the edit marker"
-    );
-    storage.set_block_at(edit_pos, marker).unwrap().unwrap();
-    assert!(storage.flush_dirty().unwrap() >= 1);
-    drop(storage);
-
-    let mut reopened = mc_world::WorldStorage::open(&root, Arc::clone(&registry))
-        .unwrap()
-        .with_generator(Arc::clone(&generator_b) as Arc<dyn ChunkGenerator>);
-    assert_eq!(reopened.get_block(edit_pos).unwrap(), Some(marker));
-
-    let _ = std::fs::remove_dir_all(root);
 }
 
 #[test]
@@ -1793,15 +1789,21 @@ fn tree_species_have_distinct_tapered_canopy_profiles() {
     assert_eq!(acacia.last(), Some(&1));
     assert!(oak.iter().any(|radius| *radius > *oak.last().unwrap()));
     assert!(birch.iter().any(|radius| *radius > *birch.last().unwrap()));
-    assert!(spruce
-        .iter()
-        .any(|radius| *radius > *spruce.last().unwrap()));
-    assert!(jungle
-        .iter()
-        .any(|radius| *radius > *jungle.last().unwrap()));
-    assert!(acacia
-        .iter()
-        .any(|radius| *radius > *acacia.last().unwrap()));
+    assert!(
+        spruce
+            .iter()
+            .any(|radius| *radius > *spruce.last().unwrap())
+    );
+    assert!(
+        jungle
+            .iter()
+            .any(|radius| *radius > *jungle.last().unwrap())
+    );
+    assert!(
+        acacia
+            .iter()
+            .any(|radius| *radius > *acacia.last().unwrap())
+    );
     assert_ne!(oak, birch);
     assert_ne!(oak, spruce);
     assert_ne!(oak, jungle);
@@ -1973,14 +1975,6 @@ fn generated_columns_keep_a_solid_surface_shell_across_seeds() {
     }
 }
 
-fn unique_temp_world_dir() -> std::path::PathBuf {
-    let suffix = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
-    std::env::temp_dir().join(format!("solaris-worldgen-{suffix}"))
-}
-
 fn find_ore_cell(
     g: &TerrainGenerator,
     y: i32,
@@ -2005,7 +1999,7 @@ pub(in crate::terrain) fn ore_feature(
     max_y: i32,
     count: u32,
 ) -> OreFeature {
-    mc_data::worldgen_ores::OreFeature {
+    OreFeature {
         placed_feature: Identifier::parse(feature).unwrap(),
         configured_feature: Identifier::parse(feature).unwrap(),
         placement: mc_data::worldgen_ores::OrePlacement {
@@ -2034,27 +2028,6 @@ pub(in crate::terrain) fn ore_feature(
             },
         ],
     }
-}
-
-#[test]
-fn ore_growth_never_uses_a_rejected_cell_as_a_bridge() {
-    let mut offsets = [[0_i8; 3]; MAX_ORE_VEIN_SIZE];
-    let offset_count = connected_ore_offsets(&mut offsets, 0x51, 0, 4, |offset, _hash| {
-        offset != [1, 0, 0]
-    });
-    let offsets = &offsets[..offset_count];
-
-    assert!(!offsets.contains(&[1, 0, 0]));
-    assert!(offsets.iter().all(|offset| {
-        *offset == [0, 0, 0]
-            || ORE_DIRECTIONS.iter().any(|direction| {
-                offsets.contains(&[
-                    offset[0] - direction[0],
-                    offset[1] - direction[1],
-                    offset[2] - direction[2],
-                ])
-            })
-    }));
 }
 
 #[test]
@@ -2294,8 +2267,7 @@ fn generated_spawn_window_debug_stage_profile() {
                 let plan = &columns[idx];
                 (plan.wx, plan.wz, g.base_surface_y(plan.wx, plan.wz))
             });
-            let mut heights =
-                crate::terrain::HeightContext::for_chunk(&g, pos, &source_columns, None);
+            let mut heights = HeightContext::for_chunk(&g, pos, &source_columns, None);
             let mut ore_cache = g.ore_column_cache(&chunk, &columns, &mut heights);
             g.apply_caves_with_cache(&mut chunk, &columns, Some(&mut ore_cache));
             caves += started.elapsed();

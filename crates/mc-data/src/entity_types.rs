@@ -194,6 +194,13 @@ impl EntityTypeRegistry {
     }
 
     #[must_use]
+    pub fn name_of(&self, id: u32) -> Option<&Identifier> {
+        self.by_name
+            .iter()
+            .find_map(|(name, facts)| (facts.protocol_id == id).then_some(name))
+    }
+
+    #[must_use]
     pub fn len(&self) -> usize {
         self.by_name.len()
     }
@@ -306,7 +313,8 @@ fn canonical_entity_type_facts(
     }
 }
 
-fn canonical_dimensions(contract: EntityTypeContract) -> EntityDimensions {
+/// Canonical physical dimensions shared by registry facts and entity recovery.
+pub fn canonical_dimensions(contract: EntityTypeContract) -> EntityDimensions {
     EntityDimensions {
         width: f64::from(contract.dimensions.width),
         height: f64::from(contract.dimensions.height),
@@ -397,6 +405,15 @@ fn independently_sourced_attributes_and_loot(
                 attack_damage: Some(2.0),
             },
             static_id("minecraft:entities/spider"),
+        ),
+        "minecraft:creeper" => (
+            EntityAttributeFacts {
+                max_health: Some(20.0),
+                movement_speed: Some(0.25),
+                follow_range: Some(16.0),
+                attack_damage: None,
+            },
+            static_id("minecraft:entities/creeper"),
         ),
         "minecraft:guardian" => (
             EntityAttributeFacts {

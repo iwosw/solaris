@@ -41,7 +41,7 @@ Environment:
 	  Primary client adapter is auto-selected as the repo-native
 	                                Gradle runClient adapter:
 	                                ../solaris-loader/gradlew
-	                                --no-configuration-cache :fabric-agent:runClientAgent.
+	                                --no-daemon --no-configuration-cache :fabric-agent:runClientAgent.
   SOLARIS_REAL_CLIENT_MANIFEST  Regression pack manifest path.
   SOLARIS_REAL_CLIENT_RUN_ROOT  Local-only artifact root. Defaults to .analysis/real-client-runs.
   SOLARIS_REAL_CLIENT_SERVER_CONFIG
@@ -201,6 +201,10 @@ fi
 
 if [[ "$MODE" == "run" ]]; then
   client_adapter_status >/dev/null
+  if [[ -n "${SOLARIS_SERVER_BINARY:-}" && ! -x "$SOLARIS_SERVER_BINARY" ]]; then
+    printf 'error: frozen server override is not executable: %s\n' "$SOLARIS_SERVER_BINARY" >&2
+    exit 1
+  fi
   if [[ "$CLIENT_KIND" == "gradle-runclient" && -z "$AGENT_SECRET" ]]; then
     AGENT_SECRET="$(python3 - <<'PY'
 import secrets
@@ -234,12 +238,20 @@ PY
   {
     printf 'server_config_source=%s\n' "$server_config_source"
     printf 'server_config_effective=%s\n' "$server_config"
-    printf 'server_command_effective=%s\n' "cargo run --bin mc-server -- --config $server_config"
+    if [[ -n "${SOLARIS_SERVER_BINARY:-}" ]]; then
+      printf 'server_command_effective=%s\n' "$SOLARIS_SERVER_BINARY --config $server_config"
+      printf 'server_binary_effective=%s\n' "$SOLARIS_SERVER_BINARY"
+      printf 'server_binary_sha256_effective=%s\n' "$(sha256sum -- "$SOLARIS_SERVER_BINARY" | cut -d ' ' -f 1)"
+    else
+      printf 'server_command_effective=%s\n' "cargo run --bin solaris-v2 -p mc-edge -- --config $server_config"
+    fi
     if [[ "$SCENARIO_NO_DEBUG" == "1" ]]; then
       printf 'server_op_users=NONE\n'
     else
       printf 'server_op_users=%s,%s\n' "$(client_username_for_label primary)" "$(client_username_for_label secondary)"
     fi
+      printf 'server_ops_file=%s\n' "${server_config%/*}/ops.json"
+      printf 'server_ops_sha256=%s\n' "$(sha256sum -- "${server_config%/*}/ops.json" | cut -d ' ' -f 1)"
     if [[ -n "$fresh_world_dir" ]]; then
       printf 'server_world_dir=%s\n' "$fresh_world_dir"
     else
@@ -272,7 +284,12 @@ PY
     exec {ready_fd}<>"$ready_fifo"
     (
       cd "$REPO_ROOT"
-      exec cargo run --bin mc-server -- --config "$server_config"
+      # Prefer the caller's immutable binary over rebuilding the frozen tree.
+      if [[ -n "${SOLARIS_SERVER_BINARY:-}" ]]; then
+        exec "$SOLARIS_SERVER_BINARY" --config "$server_config"
+      else
+        exec cargo run --bin solaris-v2 -p mc-edge -- --config "$server_config"
+      fi
     ) > >(
       ready_sent=0
       while IFS= read -r line; do
@@ -521,7 +538,7 @@ PY
         SOLARIS_CLIENT_AGENT_GAME_DIR="$client_game_dir" \
         SOLARIS_CLIENT_AGENT_USERNAME="$client_username" \
         JDK_JAVA_OPTIONS="$jdk_options" \
-        ./gradlew --no-configuration-cache "$GRADLE_RUNCLIENT_TASK" \
+        ./gradlew --no-daemon --no-configuration-cache "$GRADLE_RUNCLIENT_TASK" \
           -Psolaris.clientAgent.secret="$secret" \
           -Psolaris.clientAgent.port="$port" \
           -Psolaris.clientAgent.runDir="$run_dir" \

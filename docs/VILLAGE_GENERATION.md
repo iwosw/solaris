@@ -2,21 +2,74 @@
 
 Quality label: `draft`.
 
-This page is the operator-facing description of vanilla village generation in
-Solaris: what places a village, what each `[data] settlement_profile` value
-means, the one terrain-adaptation divergence we declare on purpose, what it does
-to world identity, and what is still not implemented.
+This page describes the shared `mc-worldgen` village library and preserves its
+earlier integration/evidence record. **Runtime scope after ADR 0014 Phase 5:**
+the current `mc-edge` / `mc-core` configuration has no `settlement_profile` or
+`worldgen_mode` setting. Old village-profile selection, stream-time inhabitant
+adoption and revision-24/25 operator claims below are historical v1 behavior,
+not proof that the native server wires those paths or has graphical acceptance.
+Current serving/storage/configuration is documented in [OPERATING.md](OPERATING.md).
 
-Village assembly follows the placed-feature executor
-(`crates/mc-worldgen/src/vanilla_features/`,
-`crates/mc-data/src/vanilla_feature_closure.rs`). Its engine
-(`crates/mc-worldgen/src/village/`) and its data loaders
-(`crates/mc-data/src/village_data.rs`) are active library code: the default
-`settlement_profile` builds a village plan source from the derived content cache
-at startup, `WORLDGEN_REVISION` is 24, and the interim
-`settlement_profile_vanilla_generates_no_villages` warning is retired. The notices
-a vanilla village world still carries are the terrain-adaptation analogue and the
-mobs the lane does not spawn, both below.
+Village assembly, processors and data loaders remain shared library code in
+`crates/mc-worldgen/src/village/` and `crates/mc-data/src/village_data.rs`.
+Use current source and native-runtime evidence before claiming an integrated
+village capability; do not infer it from the old profile or warning names.
+
+## Vanilla overworld routing
+
+The shared vanilla-like generator loads the 26.1.2 overworld noise settings,
+density functions, noise parameters and expanded multi-noise biome preset from
+the local content cache. `tools/extract-vanilla-data.sh` exports these bootstrap
+registries with `tools/extract-vanilla-worldgen.sh`; extracted Mojang data stays
+outside Git. The current packaged `solaris-v2 content import` path embeds the Java
+exporter; cache discovery requires its native routing outputs. Export-only
+invocations do not require biome tags or structure templates.
+
+`vanilla_climate/` uses the seeded native noise stream, quart-coordinate sampling
+and nearest climate target; `vanilla_density/` compiles and evaluates the native
+overworld router, including its interpolated caves and overhangs. Chunk filling,
+biome palettes, height queries, spawn search and the village start-stub biome
+gate all read those fields. The village gate includes the stub's Y coordinate.
+
+Chunk-local density scratch retains shared interpolator lattice vertices and
+flat-cache quart columns across cell boundaries. The ore halo owns one bounded
+native height sampler, sharing those vertices across its first border-column
+queries; completed column plans retain the resulting heights. Stateless climate
+sampling evaluates its six router fields together through bounded stack scratch, sharing
+raw node results without allocating a node-sized cache per sample. These caches
+are local to a generation call; they do not share mutable interpolation state
+between workers. Regression fixtures retain exact climate/biome results, and
+the chunk-density regression compares every density bit with independently
+evaluated columns at aligned, negative and unaligned chunk extents. Halo-height
+fixtures compare independently sampled columns across negative boundaries and
+queries outside the bounded cache.
+
+The headless Java oracle (`tools/VanillaWorldgenOracle.java`) constructs real
+26.1.2 `RandomState`, `NoiseBasedChunkGenerator` and structure starts. The
+`vanilla_worldgen_compare` binary compares Solaris with its output and also
+records the old analogue baseline. Observed results for 1,089 biome/climate and
+height columns per seed (XZ −2,048 through 2,048, step 128, climate Y 64):
+
+| Seed | Old analogue biome agreement | Native biome/climate agreement | Mean height error | P95 height error | Village starts |
+| --- | --- | --- | --- | --- | --- |
+| 0 | 0.83% | 100% | 0.021 blocks | 0 blocks | 4/4, no extras |
+| 81 | 4.04% | 100% | 0.102 blocks | 0 blocks | 1/1, no extras |
+| 497625 | 3.12% | 100% | 0.056 blocks | 0 blocks | 3/3, no extras |
+
+Village starts were compared over the 25 placement-grid cells at grid
+coordinates −2 through 2 on each axis. Generating a village start chunk for
+each seed produced villager markers; seed 497625's plains village starts at
+chunk `(42, -33)` (block centre `(680, -520)`).
+
+These measurements are not a claim of complete vanilla worldgen parity.
+Aquifer pressure/fluid decisions, configured carvers and the full surface-rule
+executor are not implemented in the native density lane; the maximum sampled
+height errors were 12, 30 and 27 blocks respectively. Surface decoration and
+ores still use the existing analogues, and village terrain adaptation remains
+the column-height analogue described below. The oracle records other surface
+structure sets and separately audits stronghold rings, but Solaris does not
+yet generate those common structures or concentric-ring starts. The start
+agreement above is specifically for villages, not all structures.
 
 ## What generates a village
 
@@ -87,8 +140,8 @@ from Solaris constants: `data/minecraft/worldgen/structure_set/villages.json`,
 `worldgen/template_pool/`, `worldgen/processor_list/` and `structure/` data
 underneath them. There is no separate village dataset to install — villages use
 the same derived content cache as the rest of vanilla worldgen (see
-[Plugin worldgen](PLUGINS.md#package-and-manifest) for cache discovery and
-`mc-server content import`).
+[content cache guide](OPERATING.md#vanilla-content-cache) and
+`solaris-v2 content import`).
 
 Code paths:
 
@@ -112,9 +165,9 @@ Code paths:
   `crates/mc-worldgen/src/structures.rs` execute the processor lists and the
   piece templates; the template reader is also what reads each template's
   `entities` list.
-- `crates/mc-net/src/play/session/settlement_authority.rs` resolves a chunk's
-  inhabitant markers into villagers and spawns them when the chunk is streamed
-  (see [Village inhabitants](#village-inhabitants)).
+- Historical v1 adoption used `mc-net`'s `settlement_authority` session module.
+  ADR 0014 deletes that module. It is not a current source-navigation target or
+  evidence of native stream-time inhabitant adoption (see the historical note below).
 
 ## Village decor
 
@@ -157,50 +210,15 @@ tokens, noise and placement modifiers come from the derived cache, resolved by
 reference from the pool entries the closure reaches, and anything outside that
 closure fails the startup load by name.
 
-## `settlement_profile` semantics
+## Retired `settlement_profile` integration
 
-`[data] settlement_profile` selects the settlement authority for a world. The
-value is part of the persisted world identity, so changing it means a fresh
-`world_dir` (see [World identity](#world-identity-and-reusing-a-world)).
-
-| Value | What places villages |
-| --- | --- |
-| `vanilla` (default) | Core Solaris generates the five vanilla village structures above, decor included: the startup path loads the `minecraft:villages` closure from the derived content cache, compiles its feature elements, validates every reachable piece against the block registry, and attaches the plan source to the terrain generator. |
-| A deployed component settlement plan | The plan's worldgen declaration wins. Its descriptor string — profile, owner, buildings, inhabitants, extensions — is the recorded settlement identity. |
-| `plains_village_prototype` | Interim opt-in, still present because its composite is not yet removable (see below). It attaches no core villages and is not vanilla village generation. |
-
-**A deployed component settlement plan wins, and nothing is placed twice.** Core
-villages attach to exactly one configuration: `settlement_profile = "vanilla"`
-with no deployed component settlement plan. A deployed plan owns settlement
-content, so startup attaches no plan source and logs that a package owns it; the
-`plains_village_prototype` profile keeps its own structure rules and likewise
-attaches no core villages. Two plugins claiming the same profile fail startup
-rather than resolving by load order, and a deployed set carrying no plan leaves
-the config value in charge.
-
-The catalogue-driven path is separate from worldgen placement: a package that
-declares `world_sites` and `structure_operations` and ships an authored
-`structures/` catalogue places and stages settlements at runtime through the
-world-storage kernel rather than through the structure rules. A package without
-a `[worldgen]` selector does not change the worldgen settlement identity. Core
-does not bind that rule to any product id. See [Plugin packages](PLUGINS.md) for
-that path.
-
-`plains_village_prototype` was the interim opt-in. It combined three vanilla
-plains templates (`plains_fountain_01`, `plains_small_house_1`,
-`plains_tool_smith_1`) into one bounded composite placed on the extracted plains
-village spacing, separation and salt, required a `vanilla_data_dir` sidecar for
-the piece NBT, and placed no desert, savanna, snowy or taiga villages. It is not
-vanilla village generation and the default profile no longer needs it.
-
-**Its removal is not done, and this is the unresolved part of the checkpoint.**
-The composite is still the mechanism a deployed legacy settlement plan
-materializes its buildings through (`structure_rules_for_startup` maps the
-plan's `PlainsFountain`/`PlainsSmallHouse`/`PlainsToolsmith` templates onto
-`PlainsVillagePrototypePart` and builds `StructureRules::plains_village_prototype`),
-so deleting it now would delete that route. Removing the profile and composite
-requires the last plan user to place buildings through its own mechanism first;
-until then, the profile and this page do not claim it is permanent.
+The v1 server selected vanilla villages, a plugin settlement plan or the
+`plains_village_prototype` composite through `[data].settlement_profile`.
+That configuration and its v1 composition path are deleted by ADR 0014.
+They are not supported native server keys; unknown settings warn and are ignored.
+The shared structure/template library's existence does not restore that operator
+selection API. Current native plugin startup declarations must pass the actual
+deployment validation described in [PLUGINS.md](PLUGINS.md).
 
 ## Declared divergence: terrain adaptation
 
@@ -262,15 +280,16 @@ column cache reaches into neighbouring chunks
 per column.
 
 The expensive part of a lookup is per *start* chunk, not per question: a
-candidate that can start a village runs the whole solver, and the questions
-arrive per column. `VillagePlanSource` therefore keeps the start chunks it has
-already assembled in a bounded memo (`AssemblyCache`, 64 entries). An assembly
+candidate that can start a village runs the whole solver, and even a candidate
+rejected by every biome gate projects its start pieces through terrain heights.
+`VillagePlanSource` therefore keeps both successful assemblies and biome-rejected
+placement candidates in a bounded memo (`AssemblyCache`, 64 entries). Each result
 is a pure function of the world seed and its start chunk — the free height and
 biome it reads come from the generator and are the world's own — so a memo hit
 cannot answer differently from a miss, and eviction costs only the work to redo
-it. A candidate the placement formula rejects is never memoized: it costs that
-formula and nothing else, and entries holding such answers would crowd out the
-real villages.
+it. A chunk the placement formula rejects is never memoized: it costs that
+formula and nothing else, and those cheap empty answers would crowd out the
+expensive candidate results.
 
 The memo belongs to one world: a `VillagePlanSource` carries that world's seed,
 and every lookup hands it that world's own free height and biome, so an assembly
@@ -369,6 +388,10 @@ ordering assumption this page makes.
 
 ## Village inhabitants
 
+**Integration-era note:** the geometry/marker description below records the
+shared library's v1 handoff. The v1 stream-time adopter was deleted in Phase 5;
+this section is not a native-runtime spawn/restart acceptance claim.
+
 A village's houses carry their population in the *template*, not in the pool: a
 house's `minecraft:bottom` jigsaw points at `minecraft:village/<type>/villagers`,
 whose elements are `legacy_single_pool_element`s over the one-block templates
@@ -395,8 +418,8 @@ are the templates' own values: the adult villager templates author
 The placement does not spawn an entity at generation time. It writes a **chunk
 inhabitant marker** (the `SolarisSettlementInhabitants` entry in the chunk's
 extras, `mc_world::SettlementInhabitantMarker`), which is the core's one
-generation-to-runtime entity handoff: when the chunk is streamed to a client,
-`mc-net` resolves each marker against the entity registry — the village types
+generation-to-runtime handoff in the historical v1 integration: when streamed,
+the now-deleted `mc-net` adopter resolved each marker against the registry — types
 `plains`/`desert`/`savanna`/`snow`/`taiga` and the professions `none`/`nitwit` —
 and spawns the villager, with its authored `Age` (a negative `Age` selects the
 baby brain schedule), the yaw its placement computed and the pitch its template
@@ -438,40 +461,14 @@ placement rather than a bed.
 
 ## World identity and reusing a world
 
-Every generated Solaris world persists `solaris/world.json`, which fences
-generation revision, seed, worldgen mode, chunk geometry, ore profile,
-settlement profile, and the selected spawn block. A world that was generated
-without villages, or with a different settlement authority, is a different
-generation identity — it is not a superset or a subset of this one.
+The current server persists native state plus one tick WAL and validates its
+generation identity before recovery/generation. It does not serve an unversioned
+Anvil world or use `solaris/world.json` as an operator migration API. Use explicit
+offline Anvil conversion, retain source worlds, back up before upgrades and never
+bypass an identity refusal by hand-editing metadata. See [OPERATING.md](OPERATING.md).
 
-The village checkpoint changes newly generated terrain in three ways: villages
-place structures and their contents where there were none, the terrain analogue
-moves columns around every village, and the assembled geometry and placement of
-those villages changed with `WORLDGEN_REVISION` 23 (selection re-draws, rotated
-source jigsaws, shuffled candidate lists, the expansion-hack box, the shared free
-shape, the priority queue, the stub-position biome gate, and the decor lane).
-All are generation changes, so all are fenced by `WORLDGEN_REVISION` in
-`crates/mc-worldgen/src/lib.rs`.
-
-The revision is **24**: village chunks now carry their inhabitants (see
-[Village inhabitants](#village-inhabitants)), so a revision-23 chunk would
-generate without them if it were reused.
-
-What to expect as an operator:
-
-- Reusing an existing world with the new binary is **refused**, not silently
-  mixed: startup reports that the persisted revision/profile does not match the
-  configured one and tells you to use a fresh `world_dir`.
-- Existing chunks are never retroactively reshaped; deleting only
-  `solaris/world.json` is not a migration and mixes incompatible terrain.
-- Back up the whole world directory before upgrading an alpha, then start a
-  fresh `world_dir` for the new generation.
-- Deploying, removing, or editing a settlement plugin package changes the recorded
-  settlement descriptor and therefore the identity in the same way.
-- An unversioned vanilla Anvil import still opens without Solaris fallback
-  generation: Solaris does not generate villages into missing chunks of an
-  import.
-
+The following revision-24 paragraphs preserve the original village checkpoint
+evidence and its limits; they are not current revision numbers or operator recipes.
 **No real-client run was made for revision 24.** The checkpoint's evidence is the
 Rust gates (workspace tests, `fmt`, `code-health`, strict clippy) plus the Java
 probe over the real 26.1.2 classes for the entity transform and the decor stream,

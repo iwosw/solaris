@@ -42,6 +42,7 @@ REQUIRED_REPORT_OBSERVATION_FRAGMENTS: dict[str, tuple[str, ...]] = {
         "natural spawn acceptance: passed",
         "passive_observed=true",
         "hostile_observed=true",
+        "survival combat acceptance: passed",
         "20-minute survival soak: passed",
     ),
     "playable-03-save-restart-after": (

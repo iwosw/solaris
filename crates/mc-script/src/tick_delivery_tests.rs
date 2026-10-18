@@ -160,3 +160,25 @@ fn closing_event_admission_drains_an_already_coalesced_tick() {
     );
     assert_eq!(endpoint.recv_event_blocking(), None);
 }
+
+#[test]
+fn coalesced_tick_preserves_the_full_u64_tick_domain() {
+    let (boundary, mut endpoint) = script_boundary_pair(nonzero(1), nonzero(1));
+    boundary
+        .try_enqueue_event(ScriptEvent::server_started())
+        .unwrap();
+    boundary
+        .try_enqueue_latest_server_tick(u64::MAX - 1)
+        .unwrap();
+    boundary.try_enqueue_latest_server_tick(u64::MAX).unwrap();
+    boundary.close_event_admission();
+    assert_eq!(
+        endpoint.recv_event_blocking(),
+        Some(ScriptEvent::server_started())
+    );
+    assert_eq!(
+        endpoint.recv_event_blocking(),
+        Some(ScriptEvent::server_tick(u64::MAX))
+    );
+    assert_eq!(endpoint.recv_event_blocking(), None);
+}

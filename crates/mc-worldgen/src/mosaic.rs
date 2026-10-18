@@ -7,7 +7,8 @@ use std::path::{Path, PathBuf};
 use flate2::Compression;
 use flate2::write::ZlibEncoder;
 
-use crate::TerrainGenerator;
+use crate::earth::{EarthRuntime, prepared::PrepareError};
+use crate::{TerrainDiagnosticSample, TerrainGenerator};
 
 const PNG_SIGNATURE: &[u8; 8] = b"\x89PNG\r\n\x1a\n";
 
@@ -71,6 +72,8 @@ pub struct MosaicImages {
 pub enum MosaicError {
     #[error("invalid mosaic configuration: {0}")]
     InvalidConfig(&'static str),
+    #[error("Earth natural sampling: {0}")]
+    Earth(#[from] PrepareError),
     #[error("mosaic image is too large")]
     ImageTooLarge,
     #[error("failed to encode PNG: {0}")]
@@ -90,6 +93,24 @@ pub enum MosaicError {
 pub fn render_mosaic(
     generator: &TerrainGenerator,
     config: &MosaicConfig,
+) -> Result<MosaicImages, MosaicError> {
+    render_samples(config, |x, z| Ok(generator.diagnostic_sample(x, z)))
+}
+
+pub fn render_earth_mosaic(
+    generator: &EarthRuntime,
+    config: &MosaicConfig,
+) -> Result<MosaicImages, MosaicError> {
+    render_samples(config, |x, z| {
+        generator
+            .diagnostic_sample(x, z)
+            .map_err(MosaicError::Earth)
+    })
+}
+
+fn render_samples(
+    config: &MosaicConfig,
+    sample: impl Fn(i32, i32) -> Result<TerrainDiagnosticSample, MosaicError>,
 ) -> Result<MosaicImages, MosaicError> {
     let (width, height) = config.dimensions()?;
     let (min_x, min_z) = config.minimum()?;
@@ -111,7 +132,7 @@ pub fn render_mosaic(
             let block_z = i64::from(min_z)
                 + i64::from(pixel_z) * i64::from(config.blocks_per_pixel)
                 + i64::from(sample_offset);
-            let sample = generator.diagnostic_sample(block_x as i32, block_z as i32);
+            let sample = sample(block_x as i32, block_z as i32)?;
             heights.extend_from_slice(&height_color(sample.surface_y));
             biomes.extend_from_slice(&biome_color(sample.biome.path()));
             vegetation.extend_from_slice(&vegetation_color(sample.vegetation_density));

@@ -53,6 +53,28 @@ fn a_strict_deployment_reads_every_package_and_sorts_them() {
 }
 
 #[test]
+fn operator_discovery_does_not_automatically_register_declared_hooks() {
+    let root = tempfile::tempdir().expect("deployment root");
+    write_package(
+        root.path(),
+        "alpha",
+        "hooks = [\"before-build\", \"before-damage\"]\n",
+    );
+    let mut strict = config(root.path(), DiscoveryMode::Strict);
+    strict.expected = vec!["alpha".to_owned()];
+    let deployment = discover(&strict, &PluginLimits::default()).expect("deployment loads");
+    let package = &deployment.packages()[0];
+    assert_eq!(
+        package.declared_hooks(),
+        &[
+            mc_script::precommit::HookKind::Build,
+            mc_script::precommit::HookKind::Damage,
+        ]
+    );
+    assert!(package.precommit_registrations().is_empty());
+}
+
+#[test]
 fn strict_mode_refuses_a_stray_entry_and_permissive_mode_skips_a_broken_package() {
     let root = tempfile::tempdir().expect("deployment root");
     write_package(root.path(), "alpha", "");
@@ -173,7 +195,7 @@ fn a_requested_capability_without_a_grant_fails_the_package() {
         "{error}"
     );
 
-    let mut granted = settings.clone();
+    let mut granted = settings;
     granted
         .grants
         .insert("alpha".to_owned(), vec!["player_inventory".to_owned()]);

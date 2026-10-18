@@ -125,7 +125,7 @@ fn c01_ocean_upwind_ridge_has_rain_and_a_downstream_deficit() {
             *marine = false;
         }
     }
-    let mut land_dem = dem.clone();
+    let mut land_dem = dem;
     for i in 0..grid.len() {
         if !ocean[i] && land_dem[i] < 0.0 {
             land_dem[i] = 0.0;

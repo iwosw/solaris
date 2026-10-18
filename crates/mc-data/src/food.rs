@@ -158,6 +158,28 @@ pub fn rule_for_item(
         return Some((food, duration));
     }
 
+    // Non-food drinks use their canonical consumable duration without restoring hunger.
+    if let Some(facts) = item_facts.get(item)
+        && facts.use_duration_ticks.is_some()
+        && (facts
+            .consume_effects
+            .iter()
+            .any(|effect| matches!(effect, ConsumeEffect::ClearAllEffects))
+            || matches!(
+                item.as_str(),
+                "minecraft:potion" | "minecraft:ominous_bottle"
+            ))
+    {
+        return Some((
+            FoodEntry {
+                food: 0,
+                saturation: 0.0,
+                can_always_eat: true,
+            },
+            Duration::from_millis(u64::from(facts.use_duration_ticks?) * 50),
+        ));
+    }
+
     builtin()
         .entry(item)
         .copied()

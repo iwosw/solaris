@@ -53,7 +53,7 @@ enum BlockStorage {
     Indirect(Arc<IndirectStorage>),
 }
 
-/// Unchanged sections stay shared when a resident chunk snapshot is cloned.
+/// Unchanged sections stay shared when a chunk snapshot is cloned.
 /// A block edit detaches only this section's palette and packed indices.
 #[derive(Debug, Clone)]
 struct IndirectStorage {
@@ -79,6 +79,7 @@ impl ChunkSection {
     }
 
     #[must_use]
+    #[inline]
     pub fn get(&self, x: u8, y: u8, z: u8) -> BlockStateId {
         let idx = cell_index(x, y, z);
         match &self.storage {
@@ -177,18 +178,6 @@ impl ChunkSection {
         }
     }
 
-    /// Identity, owner count and full heap charge for deduplicated snapshot accounting.
-    pub(crate) fn shared_heap_allocation(&self) -> Option<(usize, usize, usize)> {
-        match &self.storage {
-            BlockStorage::Single(_) => None,
-            BlockStorage::Indirect(storage) => Some((
-                Arc::as_ptr(storage) as usize,
-                Arc::strong_count(storage),
-                self.estimated_heap_bytes(),
-            )),
-        }
-    }
-
     #[must_use]
     pub fn non_air_count(&self) -> u16 {
         self.non_air_count
@@ -206,22 +195,6 @@ impl ChunkSection {
         match &self.storage {
             BlockStorage::Single(_) => None,
             BlockStorage::Indirect(storage) => Some(&storage.palette),
-        }
-    }
-
-    #[must_use]
-    pub(crate) fn estimated_heap_bytes(&self) -> usize {
-        match &self.storage {
-            BlockStorage::Single(_) => 0,
-            BlockStorage::Indirect(storage) => std::mem::size_of::<IndirectStorage>()
-                .saturating_add(2 * std::mem::size_of::<usize>())
-                .saturating_add(
-                    storage
-                        .palette
-                        .capacity()
-                        .saturating_mul(std::mem::size_of::<BlockStateId>()),
-                )
-                .saturating_add(storage.indices.estimated_heap_bytes()),
         }
     }
 }
@@ -261,11 +234,24 @@ fn bits_for_palette(palette_len: usize) -> u8 {
 ///
 /// Padding bits at the top of each word are unused. Disk and wire
 /// codecs may need to widen RAM indices to their minimum entry width.
-#[derive(Debug, Clone)]
+/// The immutable entries-per-word divisor occupies existing struct padding,
+/// avoiding a second division on every read without changing codec words.
+#[derive(Clone)]
 pub struct PackedBitArray {
     bits_per_entry: u8,
+    entries_per_word: u8,
     len: usize,
     data: Vec<u64>,
+}
+
+impl std::fmt::Debug for PackedBitArray {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PackedBitArray")
+            .field("bits_per_entry", &self.bits_per_entry)
+            .field("len", &self.len)
+            .field("data", &self.data)
+            .finish()
+    }
 }
 
 impl PackedBitArray {
@@ -277,6 +263,7 @@ impl PackedBitArray {
         let words = len.div_ceil(epw);
         Self {
             bits_per_entry,
+            entries_per_word: epw as u8,
             len,
             data: vec![0; words],
         }
@@ -291,6 +278,7 @@ impl PackedBitArray {
         assert_eq!(words.len(), len.div_ceil(epw));
         Self {
             bits_per_entry,
+            entries_per_word: epw as u8,
             len,
             data: words,
         }
@@ -312,10 +300,11 @@ impl PackedBitArray {
     }
 
     #[must_use]
+    #[inline]
     pub fn get(&self, idx: usize) -> u32 {
         assert!(idx < self.len);
         let bits = self.bits_per_entry as u32;
-        let epw = entries_per_word(self.bits_per_entry);
+        let epw = usize::from(self.entries_per_word);
         let (w, o) = (idx / epw, (idx % epw) as u32 * bits);
         let mask = if bits == 64 {
             u64::MAX
@@ -334,7 +323,7 @@ impl PackedBitArray {
             (1u32 << bits) - 1
         };
         assert!(value <= max_value, "value {value} exceeds {bits}-bit field");
-        let epw = entries_per_word(self.bits_per_entry);
+        let epw = usize::from(self.entries_per_word);
         let (w, o) = (idx / epw, (idx % epw) as u32 * bits);
         let mask = if bits == 64 {
             u64::MAX
@@ -369,27 +358,31 @@ impl PackedBitArray {
     pub(crate) fn words_at_bits(&self, bits: u8) -> impl ExactSizeIterator<Item = u64> + '_ {
         assert!((1..=32).contains(&bits));
         let epw = entries_per_word(bits);
+        let source_bits = usize::from(self.bits_per_entry);
+        let source_entries = entries_per_word(self.bits_per_entry);
+        let source_end = source_entries * source_bits;
+        let source_mask = (1u64 << source_bits) - 1;
         (0..self.len.div_ceil(epw)).map(move |word| {
             if bits == self.bits_per_entry {
                 return self.data[word];
             }
             let start = word * epw;
             let end = (start + epw).min(self.len);
+            let mut source_word = start / source_entries;
+            let mut source_shift = (start % source_entries) * source_bits;
             let mut packed = 0;
             for idx in start..end {
-                let value = u64::from(self.get(idx));
+                let value = (self.data[source_word] >> source_shift) & source_mask;
                 assert!(value < (1u64 << bits), "palette index exceeds target width");
                 packed |= value << ((idx - start) * bits as usize);
+                source_shift += source_bits;
+                if source_shift == source_end {
+                    source_shift = 0;
+                    source_word += 1;
+                }
             }
             packed
         })
-    }
-
-    #[must_use]
-    pub(crate) fn estimated_heap_bytes(&self) -> usize {
-        self.data
-            .capacity()
-            .saturating_mul(std::mem::size_of::<u64>())
     }
 }
 

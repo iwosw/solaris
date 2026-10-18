@@ -35,6 +35,89 @@ use mc_script::{
     BiomeSpawns, ClayRule, GameplayRules, GameplayRulesError, SpawnEntry, SpawnPlacement, TreeRule,
 };
 
+fn authored_work_recipe() -> serde_json::Value {
+    serde_json::json!({
+        "id": "planner:planks", "revision": "1", "station": "minecraft:crafting_table",
+        "duration_ticks": 20,
+        "inputs": [{"item": "minecraft:oak_log", "tag": null, "count": 1, "components": null}],
+        "outputs": [{"item": "minecraft:oak_planks", "count": 4, "components": {
+            "damage": null, "enchantments": [], "custom_name": null, "item_model": null,
+            "stew_effects": [], "max_damage": null, "custom_data": null
+        }}],
+        "remainders": [], "tools": []
+    })
+}
+
+#[test]
+fn work_recipe_catalog_rejects_malformed_foreign_duplicate_and_unknown_definitions_atomically() {
+    let good = authored_work_recipe();
+    let contribution = |values: Vec<serde_json::Value>| StartupContribution {
+        work_recipes: Some(values.into_iter().map(|value| value.to_string()).collect()),
+        ..no_categories()
+    };
+    let accepted = convert_startup_contribution("planner", &contribution(vec![good.clone()]))
+        .expect("owned registered recipe");
+    assert_eq!(accepted.work_recipes()[0].outputs[0].count, 4);
+    let mut invalid = Vec::new();
+    let mut foreign = good.clone();
+    foreign["id"] = serde_json::json!("other:planks");
+    invalid.push(foreign);
+    let mut unknown = good.clone();
+    unknown["id"] = serde_json::json!("planner:invalid");
+    unknown["inputs"][0]["item"] = serde_json::json!("planner:undeclared");
+    invalid.push(unknown);
+    let mut unknown_tag = good.clone();
+    unknown_tag["id"] = serde_json::json!("planner:invalid");
+    unknown_tag["inputs"][0]["item"] = serde_json::Value::Null;
+    unknown_tag["inputs"][0]["tag"] = serde_json::json!("minecraft:undeclared");
+    invalid.push(unknown_tag);
+    let mut unknown_alternative = good.clone();
+    unknown_alternative["id"] = serde_json::json!("planner:invalid");
+    unknown_alternative["inputs"][0]["alternatives"] =
+        serde_json::json!([{"kind": "tag", "id": "minecraft:undeclared"}]);
+    invalid.push(unknown_alternative);
+    let mut revision = good.clone();
+    revision["id"] = serde_json::json!("planner:invalid");
+    revision["revision"] = serde_json::json!("");
+    invalid.push(revision);
+    let mut malformed = good.clone();
+    malformed["id"] = serde_json::json!("planner:invalid");
+    malformed["unexpected"] = serde_json::json!(true);
+    invalid.push(malformed);
+    let mut malformed_nbt = good.clone();
+    malformed_nbt["id"] = serde_json::json!("planner:invalid");
+    malformed_nbt["outputs"][0]["components"]["custom_data"] = serde_json::json!([10, 0, 0, 0, 1]);
+    invalid.push(malformed_nbt);
+    invalid.push(good.clone());
+    for rejected in invalid {
+        assert!(
+            matches!(
+                convert_startup_contribution(
+                    "planner",
+                    &contribution(vec![good.clone(), rejected])
+                ),
+                Err(ContributionRefusal::InvalidWorkRecipe(_))
+            ),
+            "one bad definition refuses the entire contribution"
+        );
+    }
+}
+
+#[test]
+fn work_recipe_authoring_bounds_are_refused_before_decoding() {
+    for definitions in [vec!["{}".to_owned(); 257], vec![" ".repeat(1_048_577)]] {
+        let contribution = StartupContribution {
+            work_recipes: Some(definitions),
+            ..no_categories()
+        };
+        assert!(matches!(
+            convert_startup_contribution("planner", &contribution),
+            Err(ContributionRefusal::InvalidWorkRecipe(reason))
+                if reason == "catalog exceeds 256 definitions or 1 MiB"
+        ));
+    }
+}
+
 /// A component that declares no contribution at all: every category absent.
 fn no_categories() -> StartupContribution {
     StartupContribution {
@@ -43,6 +126,7 @@ fn no_categories() -> StartupContribution {
         clay: None,
         spawning: None,
         items: None,
+        work_recipes: None,
     }
 }
 
@@ -59,6 +143,7 @@ fn item_only_contribution_preserves_identity_and_refuses_invalid_definitions() {
         attack_speed_modifier: None,
         equippable_slot: None,
         crafting_ingredient: Some("minecraft:paper".to_owned()),
+        physical_profile: None,
     };
     let contribution = |item: ItemDefinition| StartupContribution {
         items: Some(vec![item]),
@@ -95,6 +180,72 @@ fn item_only_contribution_preserves_identity_and_refuses_invalid_definitions() {
     ));
 }
 
+#[test]
+fn physical_profile_admission_preserves_carrier_gate_and_closes_consumption() {
+    let profile = serde_json::json!({
+        "stamina_capacity": 12.0, "stamina_recovery_per_tick": 0.25,
+        "armor": null, "shield": null,
+        "attacks": [{
+            "mode": "melee", "damage_kind": "pierce", "base_damage_hp": 5.0,
+            "windup_ticks": 4, "active_ticks": 2, "recovery_ticks": 9,
+            "min_range_blocks": 1.0, "reach_blocks": 4.0, "stamina_cost": 3.0,
+            "shape": {"kind": "thrust", "radius_blocks": 0.4},
+            "projectile": null, "consumption": null, "brace": null,
+            "charge": null, "two_handed": true, "wear": 1
+        }]
+    });
+    let mut item = ItemDefinition {
+        id: "ruby-live:spear".to_owned(),
+        carrier: "minecraft:paper".to_owned(),
+        name: "Spear".to_owned(),
+        max_stack_size: 1,
+        max_damage: Some(50),
+        weapon: true,
+        attack_damage_modifier: None,
+        attack_speed_modifier: None,
+        equippable_slot: None,
+        crafting_ingredient: None,
+        physical_profile: Some(profile.to_string()),
+    };
+    let contribution = |item| StartupContribution {
+        items: Some(vec![item]),
+        ..no_categories()
+    };
+    let admitted = convert_startup_contribution("ruby-live", &contribution(item.clone())).unwrap();
+    let items = mc_data::items::solaris_required_items();
+    let facts = mc_data::item_components::ItemFactsTable::default()
+        .with_custom_items(admitted.items().iter().cloned(), &items)
+        .unwrap();
+    let model = mc_data::Identifier::parse("ruby-live:spear").unwrap();
+    let mut stack = mc_data::ItemStack::new(
+        items
+            .id_of(&mc_data::Identifier::parse("minecraft:paper").unwrap())
+            .unwrap(),
+        1,
+    )
+    .with_item_model(model);
+    stack.item_id = items
+        .id_of(&mc_data::Identifier::parse("minecraft:stick").unwrap())
+        .unwrap();
+    assert!(facts.custom_for_stack(&stack, &items).is_none());
+
+    let mut invalid = profile.clone();
+    invalid["attacks"][0]["consumption"] =
+        serde_json::json!({"item":"ruby-live:missing", "count":1});
+    item.physical_profile = Some(invalid.to_string());
+    assert!(matches!(
+        convert_startup_contribution("ruby-live", &contribution(item.clone())),
+        Err(ContributionRefusal::InvalidItem(_))
+    ));
+    invalid = profile;
+    invalid["attacks"][0]["shape"]["radius_blocks"] = serde_json::json!(-0.1);
+    item.physical_profile = Some(invalid.to_string());
+    assert!(matches!(
+        convert_startup_contribution("ruby-live", &contribution(item)),
+        Err(ContributionRefusal::InvalidItem(_))
+    ));
+}
+
 /// A contribution whose only category is one tree declaration over one biome.
 fn one_tree(spacing: u32) -> StartupContribution {
     StartupContribution {
@@ -107,6 +258,7 @@ fn one_tree(spacing: u32) -> StartupContribution {
         clay: None,
         spawning: None,
         items: None,
+        work_recipes: None,
     }
 }
 
@@ -156,6 +308,7 @@ fn component_rules_fingerprint_matches_its_independent_construction() {
             ],
         }]),
         items: None,
+        work_recipes: None,
     };
     let from_component = convert_startup_contribution("planner", &plan)
         .expect("a plan inside every bound is accepted")
@@ -232,6 +385,7 @@ fn a_value_wider_than_its_contract_field_is_refused_rather_than_truncated() {
         }),
         spawning: None,
         items: None,
+        work_recipes: None,
     };
 
     // 272 truncated to a byte is 16, which is a legal water depth: this is the
@@ -320,6 +474,7 @@ fn a_contribution_that_breaks_an_enforced_bound_is_refused_with_the_check_that_r
         clay: None,
         spawning: None,
         items: None,
+        work_recipes: None,
     };
     convert_startup_contribution("planner", &declarations(64))
         .expect("64 tree declarations are the bound");
@@ -346,6 +501,7 @@ fn a_contribution_that_breaks_an_enforced_bound_is_refused_with_the_check_that_r
             }],
         }]),
         items: None,
+        work_recipes: None,
     };
     convert_startup_contribution("planner", &spawn_group("creature", 1, 4))
         .expect("a supported group is accepted");

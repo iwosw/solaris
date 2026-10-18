@@ -33,13 +33,12 @@ use mc_script::precommit::{
 };
 
 use mc_script::{
-    ClientBundle, CommandBatchError, HostCommandAdmission, PluginSettlementPlan,
-    PluginWorldgenOreProfile, ScriptBatchSubmissionError, ScriptBoundary, ScriptEvent,
-    ScriptEventKind, ScriptHostEndpoint, ScriptHostInput, ScriptHostInputSender,
-    ScriptInventoryClick, ScriptOperationFailure, ScriptOperationOutcome, ScriptOperationPayload,
-    ScriptOperationState, ScriptPlayerId, ScriptPlayerTeleportFailure, ScriptPluginStorageFailure,
-    ScriptReloadCommitError, ScriptStorageChange, ValidatedScriptPluginManifest,
-    script_boundary_pair,
+    ClientBundle, CommandBatchError, HostCommandAdmission, PluginWorldgenOreProfile,
+    ScriptBatchSubmissionError, ScriptBoundary, ScriptEvent, ScriptEventKind, ScriptHostEndpoint,
+    ScriptHostInput, ScriptHostInputSender, ScriptInventoryClick, ScriptOperationFailure,
+    ScriptOperationOutcome, ScriptOperationPayload, ScriptOperationState, ScriptPlayerId,
+    ScriptPlayerTeleportFailure, ScriptPluginStorageFailure, ScriptReloadCommitError,
+    ScriptStorageChange, ValidatedScriptPluginManifest, script_boundary_pair,
 };
 
 use crate::adapter::{AdapterError, PlayerSessions, to_script_batch};
@@ -71,6 +70,10 @@ use crate::{
 pub struct HostQueues {
     pub events: usize,
     pub commands: usize,
+    /// Anchor timers created by `init` to the first explicitly pushed simulation
+    /// tick. Native-store runtimes use this to restore their clock before any
+    /// lifecycle or result callback; legacy runtimes retain the zero origin.
+    pub defer_initial_timer_clock: bool,
 }
 
 impl Default for HostQueues {
@@ -78,6 +81,7 @@ impl Default for HostQueues {
         Self {
             events: 1024,
             commands: 256,
+            defer_initial_timer_clock: false,
         }
     }
 }
@@ -85,7 +89,7 @@ impl Default for HostQueues {
 /// How often the epoch watchdog advances. One tick is the resolution of every
 /// callback deadline: a guest that blocks past its deadline is interrupted at the
 /// next tick, whatever it is doing.
-pub const EPOCH_INTERVAL: std::time::Duration = std::time::Duration::from_millis(25);
+pub const EPOCH_INTERVAL: Duration = Duration::from_millis(25);
 
 const CALLBACK_LATENCY_SAMPLE_CAPACITY: usize = 1_200;
 
@@ -201,6 +205,7 @@ struct Hosted<S: HostServices + 'static> {
     /// timer early nor have a tick already delivered fire again.
     timers: TimerSchedule,
     observed_tick: u64,
+    initial_timer_clock_pending: bool,
     /// Set once a callback failed: the instance keeps its place for the final
     /// report, but it is never called again and it holds no routes.
     retired: bool,
@@ -227,7 +232,7 @@ pub enum HostStartError {
     Package { id: String, message: String },
     /// Two packages of one deployment declared the same worldgen profile.
     ///
-    /// A world opens against exactly one ore profile and one settlement plan, so
+    /// A world opens against exactly one ore profile, so
     /// a second declaration has no second slot. It is refused before any guest
     /// runs rather than resolved by keeping the later declaration. `kind` is the
     /// profile the two packages both declared.
@@ -437,12 +442,6 @@ impl PluginHost {
         self.surface.ore_profile()
     }
 
-    /// The one settlement plan this deployment declared, if any.
-    #[must_use]
-    pub fn worldgen_settlement_plan(&self) -> Option<&PluginSettlementPlan> {
-        self.surface.settlement_plan()
-    }
-
     /// Build and atomically activate an already-discovered replacement deployment.
     ///
     /// The candidate crosses the same FIFO as events, so events admitted before
@@ -526,7 +525,7 @@ where
 
     // The deployment's own declarations are settled before the first guest runs:
     // core reads the catalog through this boundary, the Loader stages the bundles,
-    // and a world opens against exactly one ore profile and one settlement plan.
+    // and a world opens against exactly one ore profile.
     // The aggregation is the same one `check_deployment` performs, so a duplicate
     // declaration is refused identically on both paths.
     let surface =
@@ -613,11 +612,10 @@ where
             )
             .map_err(|error| refuse(error.to_string()))?;
         let mut diagnostics = InstanceDiagnostics::default();
-        // A package may schedule its first timers from `init`: those requests are
-        // checked against the same bounds a callback's are, and they are applied to
-        // this instance's own schedule before it observes any tick, so the deadline
-        // is the delay itself - no tick has been pushed yet - and the first pushed
-        // tick that reaches it fires it.
+        // `init` has no simulation clock yet. Legacy deployments keep its zero
+        // origin; native-store deployments rebase this bounded initial schedule
+        // once, when the server explicitly pushes its restored tick before any
+        // lifecycle or result callback.
         let (batch, mutations) = batch
             .split_timers(0)
             .map_err(|error| refuse(timer_refusal(error)))?;
@@ -635,7 +633,7 @@ where
             .register_plugin_routes(package.manifest())
             .map_err(|error| refuse(format!("{error:?}")))?;
         submit(
-            &mut endpoint,
+            &endpoint,
             &admission,
             batch,
             batch_limit,
@@ -660,13 +658,14 @@ where
             limits,
             timers,
             observed_tick: 0,
+            initial_timer_clock_pending: queues.defer_initial_timer_clock,
             retired: false,
         });
     }
     let reload_contract = PluginReloadContract::from_deployment(
         &manifests,
         catalog,
-        precommit_hooks.clone(),
+        precommit_hooks,
         surface.clone(),
         contribution.clone(),
     );
@@ -788,7 +787,7 @@ where
                         continue;
                     }
                     ScriptHostInput::Precommit(request) => {
-                        deliver_precommit(&mut hosted, &mut endpoint, request);
+                        deliver_precommit(&mut hosted, &endpoint, request);
                         continue;
                     }
                     _ => continue,
@@ -806,7 +805,7 @@ where
                     // anything.
                     for hosted in &mut hosted {
                         if !hosted.retired {
-                            deliver_timers(hosted, &mut endpoint, sessions.as_ref(), tick);
+                            deliver_timers(hosted, &endpoint, sessions.as_ref(), tick);
                         }
                     }
                     continue;
@@ -827,7 +826,7 @@ where
                     } else if !interested(hosted, name, &event) {
                         continue;
                     }
-                    deliver(hosted, &mut endpoint, sessions.as_ref(), context, &events);
+                    deliver(hosted, &endpoint, sessions.as_ref(), context, &events);
                 }
             }
             shutdown_hosts(hosted)
@@ -980,6 +979,7 @@ where
             limits,
             timers,
             observed_tick: active.current_tick,
+            initial_timer_clock_pending: false,
             retired: false,
         });
     }
@@ -1044,7 +1044,7 @@ fn interested<S: HostServices + 'static>(
 /// it held never fire.
 fn deliver<S: HostServices + 'static>(
     hosted: &mut Hosted<S>,
-    endpoint: &mut ScriptHostEndpoint,
+    endpoint: &ScriptHostEndpoint,
     sessions: &dyn PlayerSessions,
     context: EventContext,
     events: &[Event],
@@ -1122,7 +1122,7 @@ fn deliver<S: HostServices + 'static>(
 /// never received.
 fn notify_batch_rejected<S: HostServices + 'static>(
     hosted: &mut Hosted<S>,
-    endpoint: &mut ScriptHostEndpoint,
+    endpoint: &ScriptHostEndpoint,
     context: EventContext,
 ) {
     let started = Instant::now();
@@ -1167,10 +1167,19 @@ fn notify_batch_rejected<S: HostServices + 'static>(
 /// half-reschedule itself because a later callback failed.
 fn deliver_timers<S: HostServices + 'static>(
     hosted: &mut Hosted<S>,
-    endpoint: &mut ScriptHostEndpoint,
+    endpoint: &ScriptHostEndpoint,
     sessions: &dyn PlayerSessions,
     tick: u64,
 ) {
+    if hosted.initial_timer_clock_pending {
+        if let Err(error) = hosted.timers.rebase_deadlines(tick) {
+            retire(hosted, endpoint, &HostError::Answer(timer_refusal(error)));
+            return;
+        }
+        hosted.initial_timer_clock_pending = false;
+        hosted.observed_tick = tick;
+        return;
+    }
     // A pushed tick that does not move the clock this instance observes is not a
     // new tick: the value it repeats already had its delivery, so it fires nothing
     // and a timer the per-tick bound deferred waits for a tick that does move.
@@ -1317,7 +1326,7 @@ fn batch_limit(limits: &PluginLimits) -> NonZeroUsize {
 
 fn retire<S: HostServices + 'static>(
     hosted: &mut Hosted<S>,
-    endpoint: &mut ScriptHostEndpoint,
+    endpoint: &ScriptHostEndpoint,
     error: &HostError,
 ) {
     tracing::warn!(plugin = %hosted.id, %error, "plugin instance retired after a failed callback");
@@ -1342,13 +1351,14 @@ enum SubmissionFailure {
 /// silently removed from the protection the operator installed.
 fn deliver_precommit<S: HostServices + 'static>(
     hosted: &mut [Hosted<S>],
-    endpoint: &mut ScriptHostEndpoint,
+    endpoint: &ScriptHostEndpoint,
     request: Request,
 ) {
     if request.is_expired() {
         let _ = request.fail(HookFailure::Expired);
         return;
     }
+    let mut storage_versions = Vec::new();
     match request.context() {
         mc_script::precommit::HookContext::Build(context) => {
             if !is_supported_hook_actor(context.actor()) {
@@ -1374,27 +1384,38 @@ fn deliver_precommit<S: HostServices + 'static>(
                                     retire(candidate, endpoint, &error);
                                 }
                             })
+                    })
+                    .map(|answer| {
+                        if !answer.expected_plugin_storage_versions.is_empty() {
+                            storage_versions.push(
+                                mc_script::precommit::HookStorageVersionGuards::new(
+                                    registration.plugin_id().to_owned(),
+                                    answer.expected_plugin_storage_versions,
+                                ),
+                            );
+                        }
+                        answer.decision
                     });
                 match result {
                     Ok(HookDecision::Keep) => {}
                     Ok(HookDecision::Cancel) => {
-                        let _ = request.answer(HookDecision::Cancel);
+                        let _ = request.answer(HookDecision::Cancel, Vec::new());
                         return;
                     }
                     Ok(HookDecision::Replace(_)) | Err(())
                         if registration.on_failure() == HookFailurePolicy::Deny =>
                     {
-                        let _ = request.answer(HookDecision::Cancel);
+                        let _ = request.answer(HookDecision::Cancel, Vec::new());
                         return;
                     }
                     Ok(HookDecision::Replace(_)) | Err(()) => {}
                     Ok(_) => {
-                        let _ = request.answer(HookDecision::Cancel);
+                        let _ = request.answer(HookDecision::Cancel, Vec::new());
                         return;
                     }
                 }
             }
-            let _ = request.answer(HookDecision::Keep);
+            let _ = request.answer(HookDecision::Keep, storage_versions);
         }
         mc_script::precommit::HookContext::Damage(context) => {
             if !is_supported_hook_actor(context.source())
@@ -1423,11 +1444,22 @@ fn deliver_precommit<S: HostServices + 'static>(
                                     retire(candidate, endpoint, &error);
                                 }
                             })
+                    })
+                    .map(|answer| {
+                        if !answer.expected_plugin_storage_versions.is_empty() {
+                            storage_versions.push(
+                                mc_script::precommit::HookStorageVersionGuards::new(
+                                    registration.plugin_id().to_owned(),
+                                    answer.expected_plugin_storage_versions,
+                                ),
+                            );
+                        }
+                        answer.decision
                     });
                 match result {
                     Ok(HookDecision::Keep) => {}
                     Ok(HookDecision::Cancel) => {
-                        let _ = request.answer(HookDecision::Cancel);
+                        let _ = request.answer(HookDecision::Cancel, Vec::new());
                         return;
                     }
                     Ok(HookDecision::Replace(amount)) => {
@@ -1442,11 +1474,11 @@ fn deliver_precommit<S: HostServices + 'static>(
                         .expect("a valid replacement preserves a valid damage context");
                     }
                     Ok(_) => {
-                        let _ = request.answer(HookDecision::Cancel);
+                        let _ = request.answer(HookDecision::Cancel, Vec::new());
                         return;
                     }
                     Err(()) if registration.on_failure() == HookFailurePolicy::Deny => {
-                        let _ = request.answer(HookDecision::Cancel);
+                        let _ = request.answer(HookDecision::Cancel, Vec::new());
                         return;
                     }
                     Err(()) => {}
@@ -1454,7 +1486,7 @@ fn deliver_precommit<S: HostServices + 'static>(
             }
             let decision = HookDecision::replacement(current.amount())
                 .expect("a damage context always carries a valid amount");
-            let _ = request.answer(decision);
+            let _ = request.answer(decision, storage_versions);
         }
         _ => {
             let _ = request.fail(HookFailure::Invalid);
@@ -1474,7 +1506,7 @@ fn is_supported_damage_target(target: &DamageTarget) -> bool {
 }
 
 fn submit(
-    endpoint: &mut ScriptHostEndpoint,
+    endpoint: &ScriptHostEndpoint,
     admission: &HostCommandAdmission,
     batch: CommandBatch,
     batch_limit: NonZeroUsize,
@@ -1682,10 +1714,10 @@ fn contract_events(event: &ScriptEvent, tick: u64) -> Option<(EventContext, Vec<
         // so the answer is keyed by the zone and the host adds no correlation id the
         // server never sent - inventing one would promise an attribution the answer
         // cannot support when a plugin has two commands for one zone in flight. The
-        // finer reasons behind a refusal are the zone owner's own vocabulary
-        // (`ZoneAdapterError`, `ZoneCapacity` in `mc-net`), which never crosses the
-        // script boundary, so the contract does not invent one here: a member is
-        // added to `zone-command-outcome` by the change that carries a reason.
+        // finer reasons behind a refusal are the zone owner's own vocabulary,
+        // which never crosses the script boundary, so the contract does not
+        // invent one here: a member is added to `zone-command-outcome` by the
+        // change that carries a reason.
         ScriptEventKind::ZoneCommandResult { zone_id, accepted } => {
             vec![Event::ZoneCommandAnswered(ZoneCommandAnswered {
                 zone: zone_id.clone(),
@@ -1794,7 +1826,6 @@ fn storage_failure(failure: ScriptPluginStorageFailure) -> StorageFailure {
 fn teleport_failure(failure: ScriptPlayerTeleportFailure) -> PlayerTeleportFailure {
     match failure {
         ScriptPlayerTeleportFailure::PlayerUnavailable => PlayerTeleportFailure::PlayerUnavailable,
-        ScriptPlayerTeleportFailure::TeleportPending => PlayerTeleportFailure::TeleportPending,
         ScriptPlayerTeleportFailure::RuntimeUnavailable | _ => {
             PlayerTeleportFailure::RuntimeUnavailable
         }
@@ -1837,14 +1868,20 @@ fn operation_payload(payload: &ScriptOperationPayload) -> Option<OperationPayloa
         ScriptOperationPayload::StorageBatch { changes } => {
             OperationPayload::StorageBatch(changes.iter().map(storage_change).collect())
         }
+        ScriptOperationPayload::WorldStructure { result } => {
+            OperationPayload::WorldStructure(crate::domain_world_structures::encode_result(result)?)
+        }
+        ScriptOperationPayload::Npc { result } => {
+            OperationPayload::Npc(crate::domain_npcs::encode_result(result)?)
+        }
         ScriptOperationPayload::Settlement { result } => {
-            OperationPayload::Settlement(crate::domain_settlements::encode_result(result)?)
+            crate::domain_settlements::encode_result(result)?
         }
-        ScriptOperationPayload::Resident { result } => {
-            OperationPayload::Resident(crate::domain_residents::encode_result(result)?)
+        ScriptOperationPayload::NpcOrder { result } => {
+            OperationPayload::NpcOrder(crate::domain_npcs::encode_order_result(result)?)
         }
-        ScriptOperationPayload::ResidentOrder { result } => {
-            OperationPayload::ResidentOrder(crate::domain_residents::encode_order_result(result)?)
+        ScriptOperationPayload::NpcRoute { result } => {
+            OperationPayload::NpcRoute(crate::domain_npc_routes::encode_result(result)?)
         }
         ScriptOperationPayload::OwnedInventory { result } => {
             OperationPayload::OwnedInventory(crate::domain_inventories::encode_result(result)?)

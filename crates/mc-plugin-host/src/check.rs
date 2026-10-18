@@ -126,7 +126,7 @@ pub fn check_deployment(
 ) -> Result<CheckReport, CheckError> {
     let mut deployment = discover(config, limits)?;
     // The deployment's own declarations are settled with the run path's own
-    // aggregation, before anything is compiled: a second ore or settlement
+    // aggregation, before anything is compiled: a second ore
     // declaration is refused here exactly as `start_deployment` refuses it, so a
     // check cannot pass a deployment that cannot start.
     let surface =

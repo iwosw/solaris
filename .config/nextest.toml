@@ -1,0 +1,17 @@
+[profile.default]
+test-threads = "num-cpus"
+fail-fast = false
+retries = 0
+
+[profile.default.junit]
+path = "junit.xml"
+
+# Four simultaneous component compilations fit the existing measured host
+# budget; the rest of the workspace still uses all available CPUs.
+[test-groups.component-host]
+max-threads = 4
+
+[[profile.default.overrides]]
+filter = "package(mc-plugin-host)"
+test-group = "component-host"
+priority = 100

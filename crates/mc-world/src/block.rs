@@ -83,62 +83,6 @@ pub struct BlockRegistry {
 }
 
 impl BlockRegistry {
-    /// On-demand allocation-capacity estimates. Shared block definitions are
-    /// charged once, not once per state; hash control bytes are excluded.
-    pub fn memory_profile(&self) -> std::collections::BTreeMap<&'static str, usize> {
-        let strings = |values: &Vec<(String, String)>| {
-            values.capacity() * std::mem::size_of::<(String, String)>()
-                + values
-                    .iter()
-                    .map(|(key, value)| key.capacity() + value.capacity())
-                    .sum::<usize>()
-        };
-        let definitions = self.by_name.capacity() * std::mem::size_of::<(Identifier, Arc<Block>)>()
-            + self
-                .by_name
-                .iter()
-                .map(|(key, block)| {
-                    key.as_str().len()
-                        + std::mem::size_of::<Block>()
-                        + 2 * std::mem::size_of::<usize>()
-                        + block.id.as_str().len()
-                        + block.states.capacity() * std::mem::size_of::<BlockStateId>()
-                        + block.properties.capacity() * std::mem::size_of::<(String, Vec<String>)>()
-                        + block
-                            .properties
-                            .iter()
-                            .map(|(key, values)| {
-                                key.capacity()
-                                    + values.capacity() * std::mem::size_of::<String>()
-                                    + values.iter().map(String::capacity).sum::<usize>()
-                            })
-                            .sum::<usize>()
-                })
-                .sum::<usize>();
-        let states = self.by_id.capacity() * std::mem::size_of::<Arc<BlockState>>()
-            + self
-                .by_id
-                .iter()
-                .map(|state| {
-                    std::mem::size_of::<BlockState>()
-                        + 2 * std::mem::size_of::<usize>()
-                        + strings(&state.properties)
-                })
-                .sum::<usize>();
-        let lookup = self.by_key.capacity()
-            * std::mem::size_of::<((Identifier, Vec<(String, String)>), BlockStateId)>()
-            + self
-                .by_key
-                .keys()
-                .map(|(id, props)| id.as_str().len() + strings(props))
-                .sum::<usize>();
-        std::collections::BTreeMap::from([
-            ("block_definitions", definitions),
-            ("block_states", states),
-            ("state_lookup_keys", lookup),
-        ])
-    }
-
     /// Build the registry from a parsed `blocks.json` report. Verifies
     /// that state ids are dense from 0..n with no duplicates and that
     /// every block declares exactly one default state.
@@ -191,14 +135,14 @@ impl BlockRegistry {
                 raw_id: *raw_ids
                     .get(&raw.id)
                     .expect("block with a default state has a raw id"),
-                properties: schema.clone(),
+                properties: schema,
                 default,
-                states: states.clone(),
+                states,
             });
             by_name.insert(raw.id.clone(), Arc::clone(&block));
 
             for s in &raw.states {
-                let props_in_order = props_in_schema_order(&schema, s);
+                let props_in_order = props_in_schema_order(&block.properties, s);
                 let state = Arc::new(BlockState {
                     block: Arc::clone(&block),
                     id: BlockStateId(s.id),
@@ -236,12 +180,6 @@ impl BlockRegistry {
     #[must_use]
     pub fn by_id(&self, id: BlockStateId) -> Option<&BlockState> {
         self.by_id.get(id.0 as usize).map(Arc::as_ref)
-    }
-
-    pub(crate) fn same_block_type(&self, first: BlockStateId, second: BlockStateId) -> bool {
-        self.by_id(first)
-            .zip(self.by_id(second))
-            .is_some_and(|(first, second)| first.block.id == second.block.id)
     }
 
     #[must_use]
@@ -304,131 +242,5 @@ fn props_in_schema_order(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use mc_data::blocks::{BlockReport, BlockStateReport};
-    use std::collections::BTreeMap;
-    use std::path::{Path, PathBuf};
-
-    fn workspace_path(rel: &str) -> PathBuf {
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .and_then(Path::parent)
-            .unwrap()
-            .join(rel)
-    }
-
-    type StateSpec<'a> = (u32, bool, &'a [(&'a str, &'a str)]);
-
-    fn report(id: &str, props: &[(&str, &[&str])], states: &[StateSpec<'_>]) -> BlockReport {
-        BlockReport {
-            id: Identifier::parse(id).unwrap(),
-            properties: props
-                .iter()
-                .map(|(n, vs)| {
-                    (
-                        (*n).to_string(),
-                        vs.iter().map(|s| (*s).to_string()).collect(),
-                    )
-                })
-                .collect(),
-            states: states
-                .iter()
-                .map(|(id, default, ps)| BlockStateReport {
-                    id: *id,
-                    default: *default,
-                    properties: ps
-                        .iter()
-                        .map(|(k, v)| ((*k).to_string(), (*v).to_string()))
-                        .collect::<BTreeMap<_, _>>(),
-                })
-                .collect(),
-        }
-    }
-
-    #[test]
-    fn builds_from_minimal_report() {
-        // Dense ids 0..5 — real reports are dense and the registry
-        // enforces that invariant.
-        let r = vec![
-            report("minecraft:air", &[], &[(0, true, &[])]),
-            report("minecraft:stone", &[], &[(1, true, &[])]),
-            report(
-                "minecraft:oak_log",
-                &[("axis", &["x", "y", "z"])],
-                &[
-                    (2, false, &[("axis", "x")]),
-                    (3, true, &[("axis", "y")]),
-                    (4, false, &[("axis", "z")]),
-                ],
-            ),
-        ];
-        let reg = BlockRegistry::from_report(&r).unwrap();
-        assert_eq!(reg.len(), 5);
-
-        let air_id = Identifier::parse("minecraft:air").unwrap();
-        assert_eq!(reg.block(&air_id).unwrap().default, BlockStateId(0));
-        assert_eq!(reg.by_id(BlockStateId(0)).unwrap().block.id, air_id);
-        assert_eq!(reg.by_id(BlockStateId(0)).unwrap().block.raw_id, 0);
-        assert_eq!(reg.by_id(BlockStateId(1)).unwrap().block.raw_id, 1);
-
-        let oak = Identifier::parse("minecraft:oak_log").unwrap();
-        assert_eq!(
-            reg.by_name_and_props(&oak, &[("axis".into(), "y".into())]),
-            Some(BlockStateId(3))
-        );
-        // Property ordering shouldn't matter to the caller.
-        assert_eq!(
-            reg.by_name_and_props(&oak, &[("axis".into(), "z".into())]),
-            Some(BlockStateId(4))
-        );
-    }
-
-    #[test]
-    fn rejects_duplicate_state_id() {
-        let r = vec![
-            report("minecraft:air", &[], &[(0, true, &[])]),
-            report("minecraft:stone", &[], &[(0, true, &[])]),
-        ];
-        assert!(matches!(
-            BlockRegistry::from_report(&r),
-            Err(RegistryError::DuplicateState(_))
-        ));
-    }
-
-    #[test]
-    fn rejects_missing_default() {
-        let r = vec![report("minecraft:air", &[], &[(0, false, &[])])];
-        assert!(matches!(
-            BlockRegistry::from_report(&r),
-            Err(RegistryError::NoDefault(_))
-        ));
-    }
-
-    /// Exhaustive opt-in round-trip on the local vanilla sidecar.
-    #[test]
-    #[ignore = "requires local 26.1.2 data/vanilla blocks report"]
-    fn round_trip_real_blocks_report() {
-        let path = workspace_path("data/vanilla/reports/blocks.json");
-        assert!(
-            path.is_file(),
-            "{} not present; run tools/extract-vanilla-data.sh",
-            path.display()
-        );
-        let report = mc_data::blocks::load_blocks_report(&path).unwrap();
-        let reg = BlockRegistry::from_report(&report).unwrap();
-
-        // Cardinals pinned to 26.1.2.
-        assert_eq!(reg.len(), 29873);
-        let air = Identifier::parse("minecraft:air").unwrap();
-        assert_eq!(reg.block(&air).unwrap().default, BlockStateId(0));
-
-        // Every state survives an id → (name, props) → id round-trip.
-        for state in reg.states() {
-            let same = reg
-                .by_name_and_props(&state.block.id, &state.properties)
-                .expect("registered state must round-trip");
-            assert_eq!(same, state.id);
-        }
-    }
-}
+#[path = "block_tests.rs"]
+mod tests;

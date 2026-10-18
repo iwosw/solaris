@@ -529,10 +529,8 @@ fn item_stack_custom_name_component_matches_26_1_2_component_stream_codec() {
         buf,
         vec![
             0x01, 0x05, 0x01, 0x00, 0x06, // stack patch header and component id
-            0x0a, // network-NBT root compound (the component codec has no root name)
-            0x08, 0x00, 0x04, b't', b'e', b'x', b't',
-            0x00, 0x0d, b'C', b'a', b't', b'a', b'l', b'o', b'g', b' ', b'A', b'p', b'p', b'l', b'e',
-            0x00,
+            0x08, 0x00, 0x0d, b'C', b'a', b't', b'a', b'l', b'o', b'g', b' ', b'A', b'p', b'p',
+            b'l', b'e',
         ]
     );
     let mut cur: &[u8] = &buf;
@@ -570,6 +568,65 @@ fn item_stack_decoder_refuses_unsupported_component_patches() {
 }
 
 #[test]
+fn item_stack_native_max_damage_and_custom_data_use_vanilla_component_payloads() {
+    let bytes =
+        mc_data::item_stack::custom_data_from_tag(Tag::Compound(vec![("a".into(), Tag::Int(7))]))
+            .unwrap();
+    let stack = ItemStack::new(5, 1)
+        .with_max_damage(300)
+        .unwrap()
+        .with_custom_data(&bytes)
+        .unwrap()
+        .with_damage(2);
+    let mut wire = Vec::new();
+    stack.encode(&mut wire).unwrap();
+    assert_eq!(
+        wire,
+        vec![
+            1, 5, 3, 0, 0, 10, 3, 0, 1, b'a', 0, 0, 0, 7, 0, 2, 0xac, 0x02, 3, 2,
+        ]
+    );
+    let mut input = wire.as_slice();
+    assert_eq!(ItemStack::decode(&mut input).unwrap(), stack);
+    assert!(input.is_empty());
+}
+
+#[test]
+fn item_stack_rejects_invalid_max_damage_and_custom_data_wire_payloads() {
+    for payload in [
+        vec![1, 5, 1, 0, 2, 0],
+        vec![1, 5, 1, 0, 0, 3, 0, 0, 0, 7],
+        vec![1, 5, 1, 0, 0, 10],
+    ] {
+        assert!(ItemStack::decode(&mut payload.as_slice()).is_err());
+    }
+    let mut oversized = vec![1, 5, 1, 0, 0];
+    mc_nbt::write_network(
+        &mut oversized,
+        &Tag::Compound(vec![(
+            "a".into(),
+            Tag::ByteArray(vec![0; mc_data::item_stack::MAX_CUSTOM_DATA_BYTES]),
+        )]),
+    )
+    .unwrap();
+    assert!(ItemStack::decode(&mut oversized.as_slice()).is_err());
+}
+
+#[test]
+fn custom_data_wire_roundtrip_accepts_the_exact_native_byte_budget() {
+    let bytes = mc_data::item_stack::custom_data_from_tag(Tag::Compound(vec![(
+        "a".into(),
+        Tag::ByteArray(vec![0; mc_data::item_stack::MAX_CUSTOM_DATA_BYTES - 12]),
+    )]))
+    .unwrap();
+    assert_eq!(bytes.len(), mc_data::item_stack::MAX_CUSTOM_DATA_BYTES);
+    let stack = ItemStack::new(5, 1).with_custom_data(&bytes).unwrap();
+    let mut wire = Vec::new();
+    stack.encode(&mut wire).unwrap();
+    assert_eq!(ItemStack::decode(&mut wire.as_slice()).unwrap(), stack);
+}
+
+#[test]
 fn set_held_slot_round_trip() {
     round_trip(ClientboundSetHeldSlot { slot: 0 });
     round_trip(ClientboundSetHeldSlot { slot: 3 });
@@ -604,6 +661,20 @@ fn container_set_slot_round_trip() {
         state_id: 6,
         slot: 36,
         item_stack: ItemStack::EMPTY,
+    });
+}
+
+#[test]
+fn set_cursor_item_is_one_optional_stack() {
+    let mut empty = Vec::new();
+    ClientboundSetCursorItem {
+        item_stack: ItemStack::EMPTY,
+    }
+    .encode(&mut empty)
+    .unwrap();
+    assert_eq!(empty, [0]);
+    round_trip(ClientboundSetCursorItem {
+        item_stack: ItemStack::new(28, 63),
     });
 }
 
@@ -1311,7 +1382,8 @@ fn hashed_stack_component_hashes_encode_accepts_exact_count_ceilings() {
 
     components.encode(&mut encoded).unwrap();
 
-    let decoded = HashedStackComponentHashes::decode(&mut encoded.as_slice()).unwrap();
+    let decoded =
+        HashedStackComponentHashes::decode_with_budget(&mut encoded.as_slice(), &mut 0).unwrap();
     assert_eq!(decoded, components);
 }
 
@@ -1438,7 +1510,7 @@ fn clientbound_recipe_book_packets_match_local_vanilla_2612() {
             display_id: 2,
             display: RecipeBookDisplay::Shapeless {
                 ingredients: vec![RecipeBookSlotDisplay::Tag(birch_logs.clone())],
-                result: RecipeBookSlotDisplay::ItemStack(ItemStack::new(5, 4)),
+                result: RecipeBookSlotDisplay::ItemStack(Box::new(ItemStack::new(5, 4))),
                 crafting_station: RecipeBookSlotDisplay::Item { item_id: 6 },
             },
             group: None,
@@ -1479,7 +1551,7 @@ fn clientbound_recipe_book_round_trips_supported_display_variants() {
                         RecipeBookSlotDisplay::Item { item_id: 1 },
                         RecipeBookSlotDisplay::Empty,
                     ],
-                    result: RecipeBookSlotDisplay::ItemStack(ItemStack::new(2, 3)),
+                    result: RecipeBookSlotDisplay::ItemStack(Box::new(ItemStack::new(2, 3))),
                     crafting_station: RecipeBookSlotDisplay::Item { item_id: 4 },
                 },
                 group: Some(3),
@@ -1495,7 +1567,7 @@ fn clientbound_recipe_book_round_trips_supported_display_variants() {
                         RecipeBookSlotDisplay::Tag(sample_identifier("minecraft:logs")),
                     ]),
                     fuel: RecipeBookSlotDisplay::AnyFuel,
-                    result: RecipeBookSlotDisplay::ItemStack(ItemStack::new(10, 1)),
+                    result: RecipeBookSlotDisplay::ItemStack(Box::new(ItemStack::new(10, 1))),
                     crafting_station: RecipeBookSlotDisplay::Item { item_id: 11 },
                     duration: 200,
                     experience: 0.35,
@@ -1522,7 +1594,7 @@ fn clientbound_shaped_recipe_display_writes_ingredient_list_length() {
                     RecipeBookSlotDisplay::Item { item_id: 1 },
                     RecipeBookSlotDisplay::Empty,
                 ],
-                result: RecipeBookSlotDisplay::ItemStack(ItemStack::new(2, 3)),
+                result: RecipeBookSlotDisplay::ItemStack(Box::new(ItemStack::new(2, 3))),
                 crafting_station: RecipeBookSlotDisplay::Item { item_id: 4 },
             },
             group: Some(3),
@@ -1598,4 +1670,42 @@ fn serverbound_set_creative_mode_slot_round_trip() {
         slot: -1,
         item_stack: ItemStack::EMPTY,
     });
+}
+
+#[test]
+fn vehicle_movement_wire_preserves_coordinates_and_ground_flag() {
+    let mut bytes = Vec::new();
+    for coordinate in [-12.25_f64, 80.5, 4096.125] {
+        bytes.extend_from_slice(&coordinate.to_be_bytes());
+    }
+    bytes.extend_from_slice(&(-179.5_f32).to_be_bytes());
+    bytes.extend_from_slice(&(89.25_f32).to_be_bytes());
+    bytes.push(1);
+    let mut cursor = bytes.as_slice();
+    let movement = ServerboundMoveVehicle::decode(&mut cursor).unwrap();
+    assert_eq!(
+        movement,
+        ServerboundMoveVehicle {
+            x: -12.25,
+            y: 80.5,
+            z: 4096.125,
+            yaw: -179.5,
+            pitch: 89.25,
+            on_ground: true,
+        }
+    );
+    assert!(cursor.is_empty());
+    for end in 0..bytes.len() {
+        assert!(ServerboundMoveVehicle::decode(&mut &bytes[..end]).is_err());
+    }
+    let correction = ClientboundMoveVehicle {
+        x: movement.x,
+        y: movement.y,
+        z: movement.z,
+        yaw: movement.yaw,
+        pitch: movement.pitch,
+    };
+    let mut encoded = Vec::new();
+    correction.encode(&mut encoded).unwrap();
+    assert_eq!(encoded, bytes[..32]);
 }

@@ -209,7 +209,7 @@ async fn required_event_delivery_wakes_closed_when_saturated_receiver_closes() {
 #[test]
 fn script_event_queue_errors_stay_below_the_result_size_threshold() {
     assert!(
-        std::mem::size_of::<ScriptQueueError>() <= 1,
+        size_of::<ScriptQueueError>() <= 1,
         "queue errors must contain only bounded state metadata"
     );
 }
@@ -802,6 +802,134 @@ fn player_command_event_is_an_immutable_targeted_snapshot() {
 }
 
 #[test]
+fn prepared_player_command_uses_no_capacity_and_commits_after_earlier_observations() {
+    let (boundary, mut endpoint) = script_boundary_pair(nonzero(1), nonzero(1));
+    let manifest = ScriptPluginManifest::new(
+        "greetings",
+        "Greetings",
+        "0.1.0",
+        COMPONENT_PLUGIN_API_VERSION,
+    )
+    .declare_player_command_root("hello")
+    .validate()
+    .unwrap();
+    endpoint.register_plugin_routes(&manifest).unwrap();
+    let player = ScriptPlayerId::new(7);
+    let context = ScriptPlayerContext::new("player-7", "Alex", false, 1.0, 64.0, 2.0);
+    let joined = ScriptEvent::player_joined_with_context(player, context.clone());
+    boundary.try_enqueue_event(joined.clone()).unwrap();
+    let PreparedPlayerCommand::Event(command) = boundary
+        .prepare_player_command_with_context(player, context.clone(), "/hello one  two ")
+        .unwrap()
+    else {
+        panic!("registered root must prepare a command");
+    };
+    assert_eq!(boundary.event_queue_depth(), 1);
+    assert_eq!(command.target_plugin_id(), Some("greetings"));
+    assert_eq!(endpoint.recv_event_blocking(), Some(joined));
+    assert_eq!(
+        boundary.event_queue_depth(),
+        0,
+        "preparation must not publish"
+    );
+    let chat = ScriptEvent::player_chat_with_context(player, "earlier chat", context.clone());
+    boundary.try_enqueue_event(chat.clone()).unwrap();
+    assert_eq!(
+        boundary.try_enqueue_event(command.clone()),
+        Err(ScriptQueueError::Full)
+    );
+    assert_eq!(endpoint.recv_event_blocking(), Some(chat));
+    boundary.try_enqueue_event(command.clone()).unwrap();
+    assert_eq!(endpoint.recv_event_blocking(), Some(command.clone()));
+    assert!(matches!(
+        command.kind(),
+        ScriptEventKind::PlayerCommand { arguments, context: captured, .. }
+            if arguments == "one  two " && captured == &context
+    ));
+}
+
+#[test]
+fn prepared_player_commands_validate_authority_and_bounds_before_capacity() {
+    let (boundary, mut endpoint) = script_boundary_pair(nonzero(1), nonzero(1));
+    let manifest =
+        ScriptPluginManifest::new("owner", "Owner", "0.1.0", COMPONENT_PLUGIN_API_VERSION)
+            .declare_player_command_root("owned")
+            .declare_operator_command_root("adminowned")
+            .validate()
+            .unwrap();
+    endpoint.register_plugin_routes(&manifest).unwrap();
+    boundary
+        .try_enqueue_event(ScriptEvent::server_started())
+        .unwrap();
+    let player = ScriptPlayerId::new(7);
+    let context = ScriptPlayerContext::new("player-7", "Alex", false, 0.0, 64.0, 0.0);
+    assert_eq!(
+        boundary.prepare_player_command_with_context(player, context.clone(), "missing"),
+        Ok(PreparedPlayerCommand::NotOwned)
+    );
+    assert_eq!(
+        boundary.prepare_player_command_with_context(player, context.clone(), "adminowned"),
+        Ok(PreparedPlayerCommand::PermissionDenied)
+    );
+    let arguments = "x".repeat(MAX_SCRIPT_CHAT_MESSAGE_BYTES + 1);
+    assert_eq!(
+        boundary.prepare_player_command_with_context(
+            player,
+            context.clone(),
+            &format!("owned {arguments}"),
+        ),
+        Ok(PreparedPlayerCommand::OwnedRejected {
+            error: ScriptDtoError::ValueTooLong {
+                field: "player command arguments",
+                max_bytes: MAX_SCRIPT_CHAT_MESSAGE_BYTES,
+                actual_bytes: MAX_SCRIPT_CHAT_MESSAGE_BYTES + 1,
+            },
+        })
+    );
+    assert!(matches!(
+        boundary.prepare_player_command_with_context(
+            player,
+            context,
+            &format!("owned {}", "a".repeat(MAX_SCRIPT_CHAT_MESSAGE_BYTES)),
+        ),
+        Ok(PreparedPlayerCommand::Event(_))
+    ));
+    assert_eq!(boundary.event_queue_depth(), 1);
+    assert_eq!(
+        endpoint.recv_event_blocking(),
+        Some(ScriptEvent::server_started())
+    );
+}
+
+#[test]
+fn preparing_a_command_after_host_close_clears_the_dead_routes() {
+    let (boundary, endpoint) = script_boundary_pair(nonzero(1), nonzero(1));
+    let manifest =
+        ScriptPluginManifest::new("owner", "Owner", "0.1.0", COMPONENT_PLUGIN_API_VERSION)
+            .declare_player_command_root("owned")
+            .validate()
+            .unwrap();
+    endpoint.register_plugin_routes(&manifest).unwrap();
+    let player = ScriptPlayerId::new(7);
+    let context = || ScriptPlayerContext::new("player-7", "Alex", false, 0.0, 64.0, 0.0);
+    assert!(matches!(
+        boundary.prepare_player_command_with_context(player, context(), "owned"),
+        Ok(PreparedPlayerCommand::Event(_))
+    ));
+    assert_eq!(boundary.event_queue_depth(), 0);
+    drop(endpoint);
+    assert_eq!(
+        boundary.prepare_player_command_with_context(player, context(), "owned"),
+        Err(ScriptQueueError::Closed)
+    );
+    assert!(boundary.player_command_roots().is_empty());
+    assert_eq!(
+        boundary.prepare_player_command_with_context(player, context(), "owned"),
+        Ok(PreparedPlayerCommand::NotOwned)
+    );
+}
+
+#[test]
 fn player_command_boundary_reports_full_and_closed_without_retaining_events() {
     let (boundary, mut endpoint) = script_boundary_pair(nonzero(1), nonzero(1));
     let manifest = ScriptPluginManifest::new(
@@ -1154,6 +1282,21 @@ fn trusted_host_derives_command_capabilities_from_validated_manifest() {
     };
     let entity_damage = entity_damage_command.required_capability().unwrap();
     assert!(!capabilities.allows(entity_damage));
+}
+
+#[test]
+fn manifest_capability_name_grants_inventory_storage_transactions() {
+    let validated =
+        ScriptPluginManifest::new("economy", "Economy", "0.1.0", COMPONENT_PLUGIN_API_VERSION)
+            .declare_capability("inventory_storage_transactions")
+            .expect("packages declare this capability by name")
+            .validate()
+            .unwrap();
+    assert!(
+        validated
+            .to_command_capabilities()
+            .allows(RequiredCommandCapability::InventoryStorageTransactions)
+    );
 }
 
 #[test]

@@ -91,8 +91,8 @@ use std::sync::Mutex;
 use mc_data::Identifier;
 use mc_data::village_data::{HeightmapType, ProcessorRef, Projection, StructureProcessorSpec};
 use mc_world::{
-    BlockPos, BlockRegistry, BlockStateId, Chunk, GeneratedVillagePiece, GeneratedVillageSite,
-    SettlementInhabitantMarker,
+    BlockPos, BlockRegistry, BlockStateId, Chunk, GeneratedEntityMarker, GeneratedVillagePiece,
+    GeneratedVillageSite,
 };
 
 use crate::structures::{StructureLoot, TemplateChest};
@@ -297,6 +297,21 @@ pub struct VillagePlanSet {
 }
 
 impl VillagePlanSet {
+    pub(crate) fn from_plans(plans: Vec<Arc<VillagePlan>>) -> Option<Self> {
+        let first = plans.first()?;
+        let mut affected_min = first.affected_min;
+        let mut affected_max = first.affected_max;
+        for plan in &plans[1..] {
+            affected_min = min_of(affected_min, plan.affected_min);
+            affected_max = max_of(affected_max, plan.affected_max);
+        }
+        Some(Self {
+            plans,
+            affected_min,
+            affected_max,
+        })
+    }
+
     /// The plans, in ascending start-chunk order.
     #[must_use]
     pub fn plans(&self) -> &[Arc<VillagePlan>] {
@@ -420,16 +435,17 @@ const ASSEMBLY_CACHE_CAPACITY: usize = 64;
 /// would invalidate it, which is why they are production terrain functions, not
 /// per-query state.
 ///
-/// Only the start chunks that *do* hold a village are kept: a candidate the
-/// placement formula rejects costs that formula and nothing else, so the memo
-/// that would hold its `None` would be mostly empty answers — and, being
-/// bounded, would evict the real assemblies it exists for.
+/// Only placement candidates enter the memo. Non-candidates cost the placement
+/// formula alone, while a real candidate rejected by every biome gate still
+/// projects start pieces through expensive terrain heights. Retain that exact
+/// negative result alongside successful assemblies, without filling the cache
+/// with every non-candidate column's empty answer.
 ///
 /// Eviction is insertion-ordered and bounded: the memo is a cache, never a
 /// source of truth, so evicting an entry costs only the assembly it holds.
 struct AssemblyCache {
     order: VecDeque<(i32, i32)>,
-    entries: HashMap<(i32, i32), Arc<VillageAssembly>>,
+    entries: HashMap<(i32, i32), Option<Arc<VillageAssembly>>>,
 }
 
 impl AssemblyCache {
@@ -440,7 +456,7 @@ impl AssemblyCache {
         }
     }
 
-    fn insert(&mut self, key: (i32, i32), assembly: &Arc<VillageAssembly>) {
+    fn insert(&mut self, key: (i32, i32), assembly: &Option<Arc<VillageAssembly>>) {
         if self.entries.insert(key, assembly.clone()).is_none() {
             self.order.push_back(key);
         }
@@ -515,16 +531,16 @@ impl VillagePlanSource {
     /// ascending start-chunk order, or `None` when no village reaches it.
     ///
     /// `free_height` is the `WORLD_SURFACE_WG` first-free-height query at a
-    /// column, the height the solver projects the start piece to. `biome_at` is
-    /// the terrain's own plan-free biome at a column, which the structure gate
-    /// resolves each structure's biome tag against.
+    /// column, the height the solver projects the start piece to. `biome_at`
+    /// resolves the plan-free noise biome at the stub's block X/Y/Z coordinates
+    /// against each structure's biome tag.
     #[must_use]
     pub fn plans_for_chunk(
         &self,
         chunk_x: i32,
         chunk_z: i32,
         free_height: &dyn Fn(i32, i32) -> i32,
-        biome_at: &dyn Fn(i32, i32) -> Identifier,
+        biome_at: &dyn Fn(i32, i32, i32) -> Identifier,
     ) -> Option<VillagePlanSet> {
         let mut plans = Vec::new();
         for offset_z in -NEIGHBOURHOOD_CHUNK_RADIUS..=NEIGHBOURHOOD_CHUNK_RADIUS {
@@ -583,7 +599,7 @@ impl VillagePlanSource {
         min_chunk: (i32, i32),
         max_chunk: (i32, i32),
         free_height: &dyn Fn(i32, i32) -> i32,
-        biome_at: &dyn Fn(i32, i32) -> Identifier,
+        biome_at: &dyn Fn(i32, i32, i32) -> Identifier,
     ) -> Vec<GeneratedVillageSite> {
         if min_chunk.0 > max_chunk.0 || min_chunk.1 > max_chunk.1 {
             return Vec::new();
@@ -611,7 +627,7 @@ impl VillagePlanSource {
         world_x: i32,
         world_z: i32,
         free_height: &dyn Fn(i32, i32) -> i32,
-        biome_at: &dyn Fn(i32, i32) -> Identifier,
+        biome_at: &dyn Fn(i32, i32, i32) -> Identifier,
     ) -> Option<VillagePlanSet> {
         let set = self.plans_for_chunk(
             world_x.div_euclid(16),
@@ -627,12 +643,12 @@ impl VillagePlanSource {
     /// set can start there, the solver draws the set's entries (re-drawing when
     /// one fails its biome gate), and the biome gate itself is decided at the
     /// assembly's stub position.
-    fn plan_for_start_chunk(
+    pub(crate) fn plan_for_start_chunk(
         &self,
         chunk_x: i32,
         chunk_z: i32,
         free_height: &dyn Fn(i32, i32) -> i32,
-        biome_at: &dyn Fn(i32, i32) -> Identifier,
+        biome_at: &dyn Fn(i32, i32, i32) -> Identifier,
     ) -> Option<VillagePlan> {
         let biome_matches =
             |tag: &Identifier, biome: &Identifier| self.biome_tags.biome_in_tag(tag, biome);
@@ -652,9 +668,16 @@ impl VillagePlanSource {
         chunk_x: i32,
         chunk_z: i32,
         free_height: &dyn Fn(i32, i32) -> i32,
-        biome_at: &dyn Fn(i32, i32) -> Identifier,
+        biome_at: &dyn Fn(i32, i32, i32) -> Identifier,
         biome_matches: impl Fn(&Identifier, &Identifier) -> bool,
     ) -> Option<Arc<VillageAssembly>> {
+        if !self
+            .closure
+            .placement
+            .is_placement_chunk(self.seed, chunk_x, chunk_z)
+        {
+            return None;
+        }
         if let Some(hit) = self
             .assemblies
             .lock()
@@ -662,9 +685,9 @@ impl VillagePlanSource {
             .entries
             .get(&(chunk_x, chunk_z))
         {
-            return Some(hit.clone());
+            return hit.clone();
         }
-        let assembly = Arc::new(assemble_village(
+        let assembly = assemble_village(
             &self.closure,
             self.seed,
             chunk_x,
@@ -672,12 +695,13 @@ impl VillagePlanSource {
             biome_at,
             biome_matches,
             free_height,
-        )?);
+        )
+        .map(Arc::new);
         self.assemblies
             .lock()
             .expect("the assembly memo is never held across a panic")
             .insert((chunk_x, chunk_z), &assembly);
-        Some(assembly)
+        assembly
     }
 
     /// Turn the solver's assembly into the plan, resolving per piece the
@@ -959,7 +983,7 @@ impl VillagePlanSource {
         );
         let mut placed = 0;
         // The villagers the pieces put in this chunk. One list for the whole
-        // chunk, written after every plan: `set_settlement_inhabitants` replaces
+        // chunk, written after every plan: `set_generated_entities` replaces
         // the chunk's list, so a per-piece call would drop the previous plans'.
         let mut inhabitants = Vec::new();
         // One random per structure, seeded the way `applyBiomeDecoration` seeds
@@ -1053,7 +1077,7 @@ impl VillagePlanSource {
             }
         }
         if !inhabitants.is_empty() {
-            chunk.set_settlement_inhabitants(&inhabitants);
+            chunk.set_generated_entities(&inhabitants);
         }
         Ok(placed)
     }
@@ -1137,10 +1161,9 @@ struct ChunkPieceWriter<'a, 'b> {
     registry: &'a BlockRegistry,
     /// The villagers the placed pieces put in this chunk, in placement order.
     ///
-    /// They leave as the chunk's inhabitant markers: the core's one
-    /// generation-to-runtime entity handoff, which `mc-net`'s chunk stream turns
-    /// into spawned villagers.
-    inhabitants: &'a mut Vec<SettlementInhabitantMarker>,
+    /// They leave as the chunk's generated-entity markers for the runtime's
+    /// generation-to-entity handoff.
+    inhabitants: &'a mut Vec<GeneratedEntityMarker>,
 }
 
 impl ChunkPieceWriter<'_, '_> {
@@ -1185,19 +1208,9 @@ impl PieceWriter for ChunkPieceWriter<'_, '_> {
         self.chunk.chests.insert(pos, contents);
     }
 
-    /// The village lane's entity step, as the chunk's inhabitant markers.
-    ///
-    /// `VillagerData` and `Age` come from the template entity. The templates
-    /// author no home, job site or meeting point, and this engine does not model
-    /// vanilla's own POI acquisition (a villager claiming a bed, a workstation or
-    /// the bell from the blocks around it), so the marker carries the core's
-    /// existing answer for a villager with no authored POI: the entity's own
-    /// placed position stands in for all three — it is the home it was placed
-    /// into, a working profession gets its job site there, and every villager has
-    /// somewhere to meet. That is the shape
-    /// [`default_villager_pois`](mc_entity::villager_26_1_2::default_villager_pois)
-    /// defines and the shape the settlement lane's markers also carry, filled
-    /// from its plan.
+    /// Preserve the placed entity's native `VillagerData`, `Age`, and rotation.
+    /// Templates author no POIs here; generation does not invent home, job-site,
+    /// or meeting-point ownership for the runtime entity.
     fn set_entity(&mut self, placed: &PlacedEntity<'_>) {
         let Some(villager) = placed.entity.villager.as_ref() else {
             return;
@@ -1210,31 +1223,18 @@ impl PieceWriter for ChunkPieceWriter<'_, '_> {
         if placed.entity.entity_type != crate::village::closure::SPAWNED_PIECE_MOB {
             return;
         }
-        self.inhabitants.push(SettlementInhabitantMarker {
+        self.inhabitants.push(GeneratedEntityMarker {
             claim: placed.claim.clone(),
             entity_type: placed.entity.entity_type.clone(),
             position: placed.position,
             villager_kind: villager.kind.clone(),
             profession: villager.profession.clone(),
             level: villager.level,
-            home: Some(placed.position),
-            // `default_villager_pois` gives a job site to every profession but
-            // `none`; the village templates' other profession is `nitwit`, which
-            // works nowhere, so the working set is named rather than inferred
-            // from "not none".
-            job_site: is_working_profession(&villager.profession).then_some(placed.position),
-            meeting_point: Some(placed.position),
             age: villager.age,
             yaw: placed.yaw,
             pitch: placed.pitch,
         });
     }
-}
-
-/// Whether a template entity's `VillagerData.profession` path is one that works:
-/// `none` and `nitwit` have no job site, every other profession does.
-fn is_working_profession(profession: &str) -> bool {
-    !matches!(profession, "none" | "nitwit")
 }
 
 /// The same chunk view serves the decor lane: `minecraft`'s `WorldGenLevel`

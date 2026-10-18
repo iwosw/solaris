@@ -12,6 +12,7 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
+arc-swap = { workspace = true }
 serde = { workspace = true }
 # Deterministic resident generation ids, the durable handles derived from them and
 # the rule-plan fingerprint (sha256 over canonical TOML) are core contract

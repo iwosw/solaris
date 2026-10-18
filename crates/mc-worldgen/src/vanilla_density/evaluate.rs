@@ -1,7 +1,5 @@
 use super::{Binary, DensityRuntime, Id, Mapped, Marker, Node, Shift, Spline};
 use std::collections::HashMap;
-#[cfg(test)]
-use std::collections::HashSet;
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 enum Mode {
@@ -237,21 +235,13 @@ impl<'a> DensitySampler<'a> {
     }
     /// Additive-only diagnostics: enable counting, read a snapshot, disable.
     /// Off by default; enabling never changes sampled values.
-    #[allow(dead_code)]
+    #[cfg(test)]
     pub(crate) fn enable_counters(&mut self) {
         self.counters.enabled = true;
     }
-    #[allow(dead_code)]
+    #[cfg(test)]
     pub(crate) fn counter_snapshot(&self) -> &DensityCounters {
         &self.counters
-    }
-    /// Zero the counters without disabling them, for per-column deltas.
-    /// Additive-only; never changes sampled values.
-    #[allow(dead_code)]
-    pub(crate) fn reset_counters(&mut self) {
-        let enabled = self.counters.enabled;
-        self.counters = DensityCounters::default();
-        self.counters.enabled = enabled;
     }
 }
 
@@ -278,10 +268,6 @@ trait Cache {
     /// Lazily computed Y-freedom for `cache_2d`. Default: not free (miss).
     fn node_y_free(&mut self, _id: Id) -> bool {
         false
-    }
-    #[allow(dead_code)]
-    fn counters(&self) -> Option<&DensityCounters> {
-        None
     }
     fn counters_mut(&mut self) -> Option<&mut DensityCounters> {
         None
@@ -381,9 +367,6 @@ impl Cache for DensitySampler<'_> {
         }
         self.node_y_free[id].unwrap_or(false)
     }
-    fn counters(&self) -> Option<&DensityCounters> {
-        self.counters.enabled.then_some(&self.counters)
-    }
     fn counters_mut(&mut self) -> Option<&mut DensityCounters> {
         self.counters.enabled.then_some(&mut self.counters)
     }
@@ -418,60 +401,6 @@ impl Cache for FieldMemo {
         None
     }
     fn put_cell(&mut self, _: Id, _: Cell) {}
-}
-
-/// Test/benchmark wrapper adding unique-context tracking around any `Cache`.
-/// `contexts` holds every distinct `(node, position)` *requested* from this
-/// sampler; production code never builds one (gated behind `#[cfg(test)]`,
-/// and every hook is a no-op unless constructed explicitly).
-#[cfg(test)]
-#[allow(dead_code)]
-struct DiagCache<'c, C: Cache> {
-    inner: &'c mut C,
-    contexts: HashSet<(Id, Position)>,
-    requests: u64,
-    misses: u64,
-    hits: u64,
-}
-
-#[cfg(test)]
-impl<C: Cache> Cache for DiagCache<'_, C> {
-    fn get(&self, id: Id, position: Position) -> Option<f64> {
-        self.inner.get(id, position)
-    }
-    fn put(&mut self, id: Id, position: Position, value: f64) {
-        self.inner.put(id, position, value);
-    }
-    fn cell(&self, id: Id, x: i32, y: i32, z: i32) -> Option<[f64; 8]> {
-        self.inner.cell(id, x, y, z)
-    }
-    fn put_cell(&mut self, id: Id, cell: Cell) {
-        self.inner.put_cell(id, cell);
-    }
-    fn corner(&self, id: Id, position: Position) -> Option<f64> {
-        self.inner.corner(id, position)
-    }
-    fn put_corner(&mut self, id: Id, position: Position, value: f64) {
-        self.inner.put_corner(id, position, value);
-    }
-    fn pair(&self, id: Id, key: u64) -> Option<f64> {
-        self.inner.pair(id, key)
-    }
-    fn put_pair(&mut self, id: Id, key: u64, value: f64) {
-        self.inner.put_pair(id, key, value);
-    }
-    fn node_bound(&mut self, id: Id) -> Option<[f64; 2]> {
-        self.inner.node_bound(id)
-    }
-    fn node_y_free(&mut self, id: Id) -> bool {
-        self.inner.node_y_free(id)
-    }
-    fn counters(&self) -> Option<&DensityCounters> {
-        self.inner.counters()
-    }
-    fn counters_mut(&mut self) -> Option<&mut DensityCounters> {
-        self.inner.counters_mut()
-    }
 }
 
 pub(super) fn direct_fields<const N: usize>(

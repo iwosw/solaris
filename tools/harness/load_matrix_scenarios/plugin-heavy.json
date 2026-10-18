@@ -1,6 +1,6 @@
 {
   "id": "plugin-heavy",
-  "description": "Real deployed settlements WASM creates the durable lowercase-named load_matrix settlement and repeatedly handles settlement info/list/site/survey commands; no plugin publication",
+  "description": "Native settlement commands create the durable lowercase-named load_matrix settlement and repeatedly handle settlement list/info commands; no package deployed",
   "fixture": "plugin-heavy",
   "plugin_required": true,
   "clients": 16,
@@ -14,16 +14,14 @@
   ],
   "commands": {
     "setup": [
-      "settlement create load_matrix large"
+      "settlement create load_matrix"
     ],
     "recurring": [
       {
         "every_ticks": 20,
         "commands": [
           "settlement list",
-          "settlement info load_matrix",
-          "settlement site load_matrix",
-          "settlement survey load_matrix plot"
+          "settlement info load_matrix"
         ]
       }
     ]

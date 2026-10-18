@@ -60,10 +60,10 @@ fuzz TARGET *ARGS:
     cargo +nightly fuzz run {{TARGET}} {{ARGS}}
 
 run:
-    RUST_LOG=info cargo run --release -p mc-server
+    RUST_LOG=info cargo run --release -p mc-edge --bin solaris-v2 -- --config example.toml
 
 run-debug:
-    RUST_LOG=debug RUST_BACKTRACE=1 cargo run -p mc-server
+    RUST_LOG=debug RUST_BACKTRACE=1 cargo run -p mc-edge --bin solaris-v2 -- --config example.toml
 
 # Rebuild a fresh high-context bundle for the planning-only Pro whole-core audit.
 pro-audit-context:

@@ -393,7 +393,7 @@ fn candidate_work_is_bounded_independently_of_root_catalog_and_upstream_length()
     assert!(geometry.feature_count() <= MAX_REACH_FEATURES + MAX_CANDIDATE_CELLS);
     assert!(geometry.reaches.iter().all(|r| r.source_cell >= 32));
     // Unrelated root-owned catalogs are not candidates or traversed trees.
-    let before = geometry.clone();
+    let before = geometry;
     let large = vec![0; 100_000];
     root.hydrology.depressions.push(Depression {
         id: 0,

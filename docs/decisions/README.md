@@ -1,40 +1,44 @@
 # Architecture Decision Index
 
-Read this index, then only the ADR that owns the decision. Later ADRs take
-priority where they explicitly narrow or replace an older design. Milestone
-notes record progress; they do not silently change an ADR.
-
-The new core target is [ARCHITECTURE.md](../ARCHITECTURE.md). These ADRs retain
-the constraints of existing runtime paths until their implementation is replaced;
-staged migration text is not proof of current behavior.
+Read the ADR owning the decision. Later explicit supersession takes priority;
+milestone notes and desired migrations do not silently change runtime truth.
+The current server is `mc-edge`/`solaris-v2` + `mc-core`, defined by
+[ADR 0013](0013-core-model-v2.md); [ADR 0014](0014-v1-core-retirement.md)
+records the completed v1 source retirement. [ARCHITECTURE.md](../ARCHITECTURE.md)
+summarizes current boundaries.
 
 | ADR | Status | Scope |
 | --- | --- | --- |
-| [0001](0001-vanilla-data-as-runtime-input.md) | Accepted | Mojang data as local runtime/build input; vendor bytes stay out of git |
-| [0002](0002-vanilla-protocol-metadata-as-reference.md) | Accepted | Protocol metadata, oracle provenance, and packet-layout proof |
-| [0003](0003-runtime-world-lock-architecture.md) | Accepted for legacy paths; staged supersession by ADR 0004 | Runtime world-lock structure and lock-order constraints |
-| [0004](0004-staged-single-writer-simulation.md) | Accepted, staged migration | Single-writer authority, commands, publication, and migration fences |
-| [0005](0005-regional-simulation.md) | Accepted, staged migration | Regional ownership, phases, transfers, WAL, and cross-region rules |
-| [0006](0006-mc-net-module-boundaries.md) | Accepted, staged migration | `mc-net` module ownership and extraction boundaries |
-| [0007](0007-connection-liveness-under-outbound-pressure.md) | Accepted | Keepalive liveness and bounded entity movement publication under pressure |
-| [0008](0008-overworld-density-router.md) | Accepted, staged extraction | Single worldgen shape authority and deterministic chunk pipeline |
-| [0009](0009-regional-plugin-boundary.md) | Accepted, staged implementation | Regional simulation stays behind serial plugin semantics and transactional commands |
-| [0010](0010-solaris-loader-contract.md) | Accepted, staged implementation | Shared untrusted client-bundle manifest, Configuration handshake, permissions, and cache identity |
+| [0001](0001-vanilla-data-as-runtime-input.md) | Accepted; current ownership updated | Licensed local vanilla content cache, explicit import/verify, no vendor bytes in Git |
+| [0002](0002-vanilla-protocol-metadata-as-reference.md) | Accepted | Protocol metadata, oracle provenance and packet-layout proof |
+| [0003](0003-runtime-world-lock-architecture.md) | Superseded by 0013/0014 | Historical v1 world locks and lock order |
+| [0004](0004-staged-single-writer-simulation.md) | Superseded by 0013/0014 | Historical v1 central simulation authority and commit/publication |
+| [0005](0005-regional-simulation.md) | Superseded by 0013/0014 | Historical v1 region leases, owner lanes and regional WAL |
+| [0006](0006-mc-net-module-boundaries.md) | Superseded by 0013/0014 | Historical deleted modular-monolith/extraction boundaries |
+| [0007](0007-connection-liveness-under-outbound-pressure.md) | Liveness principle retained; v1 implementation historical | Keepalive and bounded publication under pressure; current edge behavior governed by 0013 |
+| [0008](0008-overworld-density-router.md) | Accepted worldgen design | Worldgen shape authority and deterministic pipeline; old serving-storage descriptions retired |
+| [0009](0009-regional-plugin-boundary.md) | Isolation/admission principles retained; v1 implementation superseded | Serial plugins over bounded values; current native host/commit model in 0013 |
+| [0010](0010-solaris-loader-contract.md) | Accepted | Untrusted client bundles, Configuration handshake, permissions and cache identity; wire owner `mc-loader` |
+| [0011](0011-core-crate-topology-and-threading.md) | V1 topology/threading/durability superseded by 0013/0014 | Historical extraction and multiple durable streams; general ownership principles retained |
+| [0012](0012-earth-worldplan-and-native-overlay.md) | Proposed for native v2; not ported | Earth WorldPlan/base/overlay proposal; v1 W0–W5 evidence is historical |
+| [0013](0013-core-model-v2.md) | Accepted; sole current core model | Data-parallel snapshot/intents/merge, native state, one tick WAL, off-tick plugins and remote tickets |
+| [0014](0014-v1-core-retirement.md) | Accepted; Phase 5 source retirement complete | Shared Loader/vanilla boundaries, v2-only harness/operator surface and clean v1 deletion |
 
 ## Routing
 
-- Data loading or licensing boundary: 0001.
-- Packet IDs, layouts, or vanilla protocol evidence: 0002.
-- Lock scope without an authority change: 0003.
-- Simulation authority, commit, or publication: 0004.
-- Regional ownership, transfer, ECS cutover interaction, or WAL ordering: 0005.
-- `play.rs`, `session.rs`, or `simulation.rs` modularization: 0006.
-- Connection liveness, keepalive timeout, or client movement pressure: 0007.
-- Worldgen topology, climate, rivers, caves, or feature-pipeline ownership: 0008.
-- Lua execution, plugin event ordering, consistency, or regional API exposure: 0009.
-- Client bundle manifests, loader negotiation, artifact trust, permissions, or
-  cache identity: 0010.
+- Data loading/licensing and content cache: 0001.
+- Packet ids/layouts and vanilla protocol provenance: 0002.
+- Current state authority, tick/merge, threads, waiting, persistence, shutdown,
+  snapshots, plugin intents, block work and tickets: 0013.
+- Current crate ownership, retirement and explicit port/delete decisions: 0013/0014.
+- Worldgen topology, climate, rivers, caves and feature ownership: 0008; runtime
+  storage/recovery constraints remain 0013.
+- Plugin author/operator contract: [PLUGINS.md](../PLUGINS.md) and 0013; 0009
+  supplies the historical rationale, not old Luau/reload configuration.
+- Loader bundles, trust, negotiation and permissions: 0010.
+- Earth WorldPlan proposal: 0012, not a current serving mode.
 
-Update the owning ADR in the same slice when authority, threading, waiting,
-persistence ordering, or module policy changes. State non-goals and staged
-scope explicitly.
+Superseded ADR bodies intentionally retain deleted names and old test commands
+as decision history. Never execute them as current recipes or treat their
+receipts as current verification. Update the owning live ADR when authority,
+threading, persistence ordering or module policy changes.

@@ -34,7 +34,12 @@ fn known_zero_baked_light_survives_disk_roundtrip() {
         section.sky.as_ref().is_some_and(LightSection::is_zero)
             && section.block.as_ref().is_some_and(LightSection::is_zero)
     }));
-    let decoded = chunk_from_nbt(&chunk_to_nbt(&chunk, &registry).unwrap(), &registry).unwrap();
+    let decoded = chunk_from_nbt(
+        &chunk_to_nbt(&chunk, &registry).unwrap(),
+        &registry,
+        crate::OVERWORLD_GEOMETRY,
+    )
+    .unwrap();
     assert_eq!(ChunkLight::from_chunk(&decoded), Some(ChunkLight::zeroed()));
     assert_eq!(decoded.section_lights, chunk.section_lights);
     assert!(decoded.section_lights.iter().all(|section| {
@@ -94,7 +99,7 @@ fn mixed_uniform_and_unknown_layers_preserve_disk_and_wire_values() {
     let mut bytes = Vec::new();
     mc_nbt::write_named(&mut bytes, "", &root).unwrap();
     let (_, root) = mc_nbt::read_named(&mut std::io::Cursor::new(bytes)).unwrap();
-    let decoded = chunk_from_nbt(&root, &registry).unwrap();
+    let decoded = chunk_from_nbt(&root, &registry, crate::OVERWORLD_GEOMETRY).unwrap();
     assert_eq!(decoded.section_lights, chunk.section_lights);
     assert_eq!(decoded.section_lights[1].sky, None);
     assert!(decoded.section_lights[0].block.as_ref().unwrap().is_zero());

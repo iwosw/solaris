@@ -26,7 +26,7 @@
 //! inventory-and-storage transaction per action and reports what the owners did.
 //! `mode = "menu-observer"` is the second package the menu wire test deploys: it
 //! subscribes to `inventory.menu.clicked` and owns no menu, so it answers a click
-//! - if one ever reached it - with a line a test reads, and answers its own
+//! (if one ever reached it) with a line a test reads, and answers its own
 //! `menu-fence` command with another, which is how the same test knows the
 //! package is live while it proves a click reaches only the plugin that opened
 //! the menu.
@@ -39,6 +39,9 @@
 //! owns no zone, so it reports any transition that ever reached it and answers
 //! its own `zone-fence` command, which is what makes its silence about the
 //! owner's transitions a result.
+//! `mode = "settlement-operations"` is the S1–S3 settlement acceptance fixture in
+//! `settlement_ops.rs`: a player's `settlement-api` command answers exactly one
+//! native settlement operation per action against the id the query observed.
 
 use solaris_plugin_sdk::events::{
     OperationOutcome, OperationPayload, PlayerTeleportFailure, PlayerTeleportOutcome,
@@ -47,21 +50,22 @@ use solaris_plugin_sdk::events::{
 use solaris_plugin_sdk::operation_types::OperationFailure;
 use solaris_plugin_sdk::{
     broadcast, commands, disconnect_player, export_plugin, lifecycle, list_online_players, log,
-    message_player, storage, storage_cas, storage_get, types, BuildContext, BuildDecision, Command,
-    Config, DamageContext, DamageDecision, Event, EventContext, Failure, InitContext,
-    InventoryClick, LogLevel, Plugin, StartupContribution, StorageCasOutcome, StorageFailure,
-    StorageGetOutcome,
+    message_player, storage, storage_cas, storage_get, types, BuildContext, BuildDecision,
+    BuildResult, Command, Config, DamageContext, DamageDecision, DamageResult, Event, EventContext,
+    Failure, InitContext, InventoryClick, LogLevel, Plugin, StartupContribution, StorageCasOutcome,
+    StorageFailure, StorageGetOutcome,
 };
 
 mod audit_events;
 mod inventory_ops;
 mod inventory_storage;
 mod loader_live;
+mod npc_ops;
 mod precommit;
-mod resident_ops;
 mod settlement_ops;
 mod storage_compat;
 mod timers;
+mod world_structure_ops;
 mod zone_market;
 
 /// The command root the observer package's manifest declares: the one command a
@@ -351,8 +355,9 @@ struct Hello {
     /// for the market, and every trade action stays the state machine that module
     /// already is.
     zone_market: Option<zone_market::ZoneMarket>,
+    world_structure_ops: Option<world_structure_ops::Fixture>,
+    npc_ops: Option<npc_ops::Fixture>,
     settlement_ops: Option<settlement_ops::Fixture>,
-    resident_ops: Option<resident_ops::Fixture>,
     inventory_ops: Option<inventory_ops::Fixture>,
     audit_events: Option<audit_events::Audit>,
     loader_live: Option<loader_live::Fixture>,
@@ -456,8 +461,11 @@ enum Mode {
     /// Answers a plugin error from `configure`: a package whose own startup phase
     /// fails, which has to refuse the deployment before a runtime store exists.
     RefuseConfigure,
+    WorldStructureOperations,
+    NpcOperations,
+    /// Runs the S1 settlement acceptance fixture in `settlement_ops.rs`: one
+    /// `settlement-api` command answers exactly one native settlement operation.
     SettlementOperations,
-    ResidentOperations,
     OwnedInventory,
     AuditEvents,
     LoaderLive,
@@ -500,8 +508,9 @@ impl Mode {
             Some("placement") => Mode::Placement,
             Some("configure-isolation") => Mode::ConfigureIsolation,
             Some("refuse-configure") => Mode::RefuseConfigure,
+            Some("world-structure-operations") => Mode::WorldStructureOperations,
+            Some("npc-operations") => Mode::NpcOperations,
             Some("settlement-operations") => Mode::SettlementOperations,
-            Some("resident-operations") => Mode::ResidentOperations,
             Some("owned-inventory") => Mode::OwnedInventory,
             Some("audit-events") => Mode::AuditEvents,
             Some("loader-live") => Mode::LoaderLive,
@@ -587,11 +596,14 @@ impl Hello {
         self.size = settings.size;
         self.count = settings.count;
         match self.mode {
+            Mode::WorldStructureOperations => {
+                self.world_structure_ops = Some(world_structure_ops::Fixture::configure(config)?);
+            }
+            Mode::NpcOperations => {
+                self.npc_ops = Some(npc_ops::Fixture::configure(config)?);
+            }
             Mode::SettlementOperations => {
                 self.settlement_ops = Some(settlement_ops::Fixture::configure(config)?);
-            }
-            Mode::ResidentOperations => {
-                self.resident_ops = Some(resident_ops::Fixture::configure(config)?);
             }
             Mode::OwnedInventory => {
                 self.inventory_ops = Some(inventory_ops::Fixture::configure(config)?);
@@ -651,6 +663,7 @@ fn placement_contribution() -> StartupContribution {
         clay: None,
         spawning: None,
         items: None,
+        work_recipes: None,
     }
 }
 
@@ -685,6 +698,7 @@ impl Plugin for Hello {
                         attack_speed_modifier: None,
                         equippable_slot: None,
                         crafting_ingredient: Some("minecraft:paper".to_owned()),
+                        physical_profile: None,
                     }];
                     if id == "ruby-live:ruby" {
                         items.push(lifecycle::ItemDefinition {
@@ -698,6 +712,7 @@ impl Plugin for Hello {
                             attack_speed_modifier: Some(-2.0),
                             equippable_slot: None,
                             crafting_ingredient: Some(id.to_owned()),
+                            physical_profile: None,
                         });
                     }
                     StartupContribution {
@@ -706,6 +721,7 @@ impl Plugin for Hello {
                         clay: None,
                         spawning: None,
                         items: Some(items),
+                        work_recipes: None,
                     }
                 }))
             }
@@ -725,6 +741,7 @@ impl Plugin for Hello {
                 clay: None,
                 spawning: None,
                 items: None,
+                work_recipes: None,
             })),
             // The one probe that the two phases do not share a store: this mode
             // answers a valid contribution like `placement` and writes a marker
@@ -765,8 +782,9 @@ impl Plugin for Hello {
             | Mode::Oversized
             | Mode::Wide
             | Mode::Nested
+            | Mode::WorldStructureOperations
+            | Mode::NpcOperations
             | Mode::SettlementOperations
-            | Mode::ResidentOperations
             | Mode::OwnedInventory
             | Mode::AuditEvents
             | Mode::LoaderLive
@@ -806,10 +824,13 @@ impl Plugin for Hello {
                 format!("{CONFIGURATION_PROBE_LINE} {marker}"),
             )]);
         }
-        if let Some(fixture) = &mut self.settlement_ops {
+        if let Some(fixture) = &mut self.world_structure_ops {
             return fixture.init();
         }
-        if let Some(fixture) = &mut self.resident_ops {
+        if let Some(fixture) = &mut self.npc_ops {
+            return fixture.init();
+        }
+        if let Some(fixture) = &mut self.settlement_ops {
             return fixture.init();
         }
         if let Some(fixture) = &mut self.inventory_ops {
@@ -837,10 +858,13 @@ impl Plugin for Hello {
         _context: &EventContext,
         events: &[Event],
     ) -> Result<Vec<Command>, Failure> {
-        if let Some(fixture) = &mut self.settlement_ops {
+        if let Some(fixture) = &mut self.world_structure_ops {
             return fixture.on_events(events);
         }
-        if let Some(fixture) = &mut self.resident_ops {
+        if let Some(fixture) = &mut self.npc_ops {
+            return fixture.on_events(events);
+        }
+        if let Some(fixture) = &mut self.settlement_ops {
             return fixture.on_events(events);
         }
         if let Some(fixture) = &mut self.inventory_ops {
@@ -1244,20 +1268,28 @@ impl Plugin for Hello {
     /// Every mode but `precommit` keeps every build, and says so by answering the
     /// trait's own default: this example registers no hook anywhere, and the host
     /// asks a hook only for a registration an operator made.
-    fn before_build(&mut self, context: &BuildContext) -> Result<BuildDecision, Failure> {
-        match &mut self.precommit {
+    fn before_build(&mut self, context: &BuildContext) -> Result<BuildResult, Failure> {
+        let decision = match &mut self.precommit {
             Some(hooks) => hooks.before_build(context),
             None => Ok(BuildDecision::Keep),
-        }
+        }?;
+        Ok(BuildResult {
+            decision,
+            expected_plugin_storage_versions: Vec::new(),
+        })
     }
 
     /// The damage half of the same default: `precommit` answers what its `damage`
     /// key says, and every other mode keeps the amount it was asked about.
-    fn before_damage(&mut self, context: &DamageContext) -> Result<DamageDecision, Failure> {
-        match &mut self.precommit {
+    fn before_damage(&mut self, context: &DamageContext) -> Result<DamageResult, Failure> {
+        let decision = match &mut self.precommit {
             Some(hooks) => hooks.before_damage(context),
             None => Ok(DamageDecision::Keep),
-        }
+        }?;
+        Ok(DamageResult {
+            decision,
+            expected_plugin_storage_versions: Vec::new(),
+        })
     }
 
     fn shutdown(&mut self) -> Result<(), Failure> {

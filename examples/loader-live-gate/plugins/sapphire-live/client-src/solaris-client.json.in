@@ -2,7 +2,6 @@
   "schema": 2,
   "screens": [{
     "id": "sapphire-live:showcase",
-    "kind": "settlement",
     "title": "Sapphire Loader Fixture",
     "item_id": "sapphire-live:sapphire",
     "block_id": "sapphire-live:sapphire_block",
@@ -22,7 +21,7 @@
     }]
   }, {
     "id": "sapphire-live:hud",
-    "kind": "hud",
+    "overlay": true,
     "title": "Sapphire HUD",
     "widgets": [{
       "type": "paged_table",
@@ -34,7 +33,7 @@
     }]
   }, {
     "id": "sapphire-live:input",
-    "kind": "hud",
+    "overlay": true,
     "title": "Sapphire input",
     "widgets": [],
     "input_bindings": [{

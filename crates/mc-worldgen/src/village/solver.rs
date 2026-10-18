@@ -263,7 +263,7 @@ impl VillageAssembly {
 /// satisfies a structure's `biome` tag. Every gate question is "is this
 /// column's biome in this tag", so the solver carries the pair as one.
 struct BiomeGate<'a> {
-    biome_at: &'a dyn Fn(i32, i32) -> Identifier,
+    biome_at: &'a dyn Fn(i32, i32, i32) -> Identifier,
     matches: &'a dyn Fn(&Identifier, &Identifier) -> bool,
 }
 
@@ -273,16 +273,15 @@ struct BiomeGate<'a> {
 /// set passes its biome gate.
 ///
 /// `free_height(x, z)` is the `WORLD_SURFACE_WG` first-free-height query,
-/// `biome_at(x, z)` the terrain's plan-free biome at a column (vanilla resolves
-/// `getNoiseBiome` at the stub position; the terrain's own biome is the same
-/// answer for that column), and `biome_matches(tag, biome)` the tag membership
-/// of the worldgen biome tag the structure names.
+/// `biome_at(x, y, z)` is the terrain's plan-free noise biome at the stub's
+/// block coordinates (the caller converts all three axes to quart coordinates),
+/// and `biome_matches(tag, biome)` is membership in the structure's biome tag.
 pub fn assemble_village(
     closure: &VillageClosure,
     seed: i64,
     chunk_x: i32,
     chunk_z: i32,
-    biome_at: impl Fn(i32, i32) -> Identifier,
+    biome_at: impl Fn(i32, i32, i32) -> Identifier,
     biome_matches: impl Fn(&Identifier, &Identifier) -> bool,
     free_height: impl Fn(i32, i32) -> i32,
 ) -> Option<VillageAssembly> {
@@ -353,7 +352,7 @@ fn assemble_structure(
 ) -> Option<VillageAssembly> {
     let (mut assembly, mut random) =
         plan_start(closure, structure, seed, chunk_x, chunk_z, free_height)?;
-    let biome = (gate.biome_at)(assembly.origin.x, assembly.origin.z);
+    let biome = (gate.biome_at)(assembly.origin.x, assembly.origin.y, assembly.origin.z);
     if !(gate.matches)(&assembly.biome_tag, &biome) {
         return None;
     }
@@ -398,7 +397,7 @@ fn plan_start(
     let bottom_y = if spec.project_start_to_heightmap.is_some() {
         let center_x = (center_max.x + center_min.x) / 2;
         let center_z = (center_max.z + center_min.z) / 2;
-        free_height(center_x, center_z)
+        origin.y + free_height(center_x, center_z)
     } else {
         anchored.y
     };
@@ -426,7 +425,7 @@ fn plan_start(
 
     let center_x = (center_max.x + center_min.x) / 2;
     let center_z = (center_max.z + center_min.z) / 2;
-    let center_y = bottom_y + (anchored.y - origin.y);
+    let center_y = bottom_y + (origin.y - anchored.y);
 
     let mut assembly = VillageAssembly {
         structure: structure.id.clone(),

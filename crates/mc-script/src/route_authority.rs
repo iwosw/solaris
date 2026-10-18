@@ -6,8 +6,10 @@
 //! private inside the single owner that uses them.
 
 use std::collections::BTreeMap;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, RwLock};
+
+use arc_swap::ArcSwap;
 
 use crate::manifest::ValidatedScriptPluginManifest;
 use crate::{MAX_PLAYER_COMMAND_ROOTS, MAX_PLUGIN_PAYLOAD_CHANNELS, precommit};
@@ -37,7 +39,8 @@ pub enum ScriptRouteRegistrationError {
 
 #[derive(Debug, Clone)]
 struct PluginRouteAuthority {
-    routes: Arc<RwLock<PluginRouteTable>>,
+    routes: Arc<ArcSwap<PluginRouteTable>>,
+    writer: Arc<StdMutex<()>>,
     disabled: Arc<AtomicBool>,
     /// The next live-registration generation this authority hands out.
     ///
@@ -51,7 +54,8 @@ struct PluginRouteAuthority {
 impl Default for PluginRouteAuthority {
     fn default() -> Self {
         Self {
-            routes: Arc::default(),
+            routes: Arc::new(ArcSwap::from_pointee(PluginRouteTable::default())),
+            writer: Arc::default(),
             disabled: Arc::default(),
             next_registration: Arc::new(AtomicU64::new(1)),
         }
@@ -74,6 +78,7 @@ struct PluginRouteTable {
 #[derive(Debug, Clone)]
 struct PluginRegistration {
     generation: u64,
+    subscriptions: Arc<std::collections::BTreeSet<String>>,
 }
 
 /// One package's registration, as a decision was admitted under it.
@@ -101,84 +106,53 @@ struct PluginCommandOwner {
     operator_only: bool,
 }
 
-impl PluginRouteTable {
-    fn clear(&mut self) {
-        self.commands.clear();
-        self.payload_channels.clear();
-        self.registrations.clear();
-    }
-}
-
 impl PluginRouteAuthority {
-    /// Run `f` while holding the route table's write lock.
-    ///
-    /// Test-only: the poisoning regression needs to drop the guard through a panic
-    /// without the authority exposing its lock type outside this module.
+    fn snapshot(&self) -> arc_swap::Guard<Arc<PluginRouteTable>> {
+        if self.writer.is_poisoned() {
+            self.disable();
+        }
+        self.routes.load()
+    }
+
+    /// Test-only: panic while serializing a publication, never a reader.
     #[cfg(test)]
     fn with_routes_write_for_test<R>(&self, f: impl FnOnce(&mut PluginRouteTable) -> R) -> R {
-        let mut guard = self.routes.write().expect("route table lock is free");
-        f(&mut guard)
+        let _guard = self.writer.lock().expect("route writer lock is free");
+        let mut table = (**self.routes.load()).clone();
+        f(&mut table)
     }
 
     fn roots(&self, operator_only: bool) -> Vec<String> {
         if self.disabled.load(Ordering::Acquire) {
             return Vec::new();
         }
-        match self.routes.read() {
-            Ok(routes) => routes
-                .commands
-                .iter()
-                .filter(|(_, owner)| owner.operator_only == operator_only)
-                .map(|(root, _)| root.clone())
-                .collect(),
-            Err(poisoned) => {
-                drop(poisoned);
-                self.disable();
-                Vec::new()
-            }
-        }
+        self.snapshot()
+            .commands
+            .iter()
+            .filter(|(_, owner)| owner.operator_only == operator_only)
+            .map(|(root, _)| root.clone())
+            .collect()
     }
 
     fn has_channel(&self, channel: &str) -> bool {
         if self.disabled.load(Ordering::Acquire) {
             return false;
         }
-        match self.routes.read() {
-            Ok(routes) => routes.payload_channels.contains_key(channel),
-            Err(poisoned) => {
-                drop(poisoned);
-                self.disable();
-                false
-            }
-        }
+        self.snapshot().payload_channels.contains_key(channel)
     }
 
     fn owner(&self, root: &str) -> Option<PluginCommandOwner> {
         if self.disabled.load(Ordering::Acquire) {
             return None;
         }
-        match self.routes.read() {
-            Ok(routes) => routes.commands.get(root).cloned(),
-            Err(poisoned) => {
-                drop(poisoned);
-                self.disable();
-                None
-            }
-        }
+        self.snapshot().commands.get(root).cloned()
     }
 
     fn channel_owner(&self, channel: &str) -> Option<String> {
         if self.disabled.load(Ordering::Acquire) {
             return None;
         }
-        match self.routes.read() {
-            Ok(routes) => routes.payload_channels.get(channel).cloned(),
-            Err(poisoned) => {
-                drop(poisoned);
-                self.disable();
-                None
-            }
-        }
+        self.snapshot().payload_channels.get(channel).cloned()
     }
 
     fn register(
@@ -188,14 +162,8 @@ impl PluginRouteAuthority {
         if self.disabled.load(Ordering::Acquire) {
             return Err(ScriptRouteRegistrationError::AuthorityPoisoned);
         }
-        let mut routes = match self.routes.write() {
-            Ok(routes) => routes,
-            Err(poisoned) => {
-                poisoned.into_inner().clear();
-                self.disabled.store(true, Ordering::Release);
-                return Err(ScriptRouteRegistrationError::AuthorityPoisoned);
-            }
-        };
+        let _writer = self.lock_writer()?;
+        let mut routes = (**self.routes.load()).clone();
         let channels = manifest.custom_payload_channels();
         let requested_roots = manifest
             .player_command_roots()
@@ -273,8 +241,16 @@ impl PluginRouteAuthority {
             manifest.plugin_id().to_owned(),
             PluginRegistration {
                 generation: self.next_generation(),
+                subscriptions: Arc::new(
+                    manifest
+                        .event_subscriptions()
+                        .iter()
+                        .map(|subscription| subscription.event_name().to_owned())
+                        .collect(),
+                ),
             },
         );
+        self.routes.store(Arc::new(routes));
         Ok(())
     }
 
@@ -288,14 +264,7 @@ impl PluginRouteAuthority {
     /// accepted. Those inputs retain their captured registrations; only a route
     /// replacement, unregistration, or poisoned authority makes them stale.
     fn registration(&self, plugin_id: &str) -> Option<PluginRegistration> {
-        match self.routes.read() {
-            Ok(routes) => routes.registrations.get(plugin_id).cloned(),
-            Err(poisoned) => {
-                drop(poisoned);
-                self.disable();
-                None
-            }
-        }
+        self.snapshot().registrations.get(plugin_id).cloned()
     }
 
     /// Whether the registration a decision was admitted under is still live.
@@ -311,24 +280,18 @@ impl PluginRouteAuthority {
         if self.disabled.load(Ordering::Acquire) {
             return;
         }
-        match self.routes.write() {
-            Ok(mut routes) => {
-                routes
-                    .commands
-                    .retain(|_, owner| owner.plugin_id != plugin_id);
-                routes
-                    .payload_channels
-                    .retain(|_, owner| owner.as_str() != plugin_id);
-                // A package that lost its routes lost the authority its own
-                // requests were admitted under: every fence captured from that
-                // registration stops being live the moment it is dropped.
-                routes.registrations.remove(plugin_id);
-            }
-            Err(poisoned) => {
-                poisoned.into_inner().clear();
-                self.disabled.store(true, Ordering::Release);
-            }
-        }
+        let Ok(_writer) = self.lock_writer() else {
+            return;
+        };
+        let mut routes = (**self.routes.load()).clone();
+        routes
+            .commands
+            .retain(|_, owner| owner.plugin_id != plugin_id);
+        routes
+            .payload_channels
+            .retain(|_, owner| owner.as_str() != plugin_id);
+        routes.registrations.remove(plugin_id);
+        self.routes.store(Arc::new(routes));
     }
 
     /// Replace every route with one candidate table, or refuse the whole table.
@@ -406,19 +369,30 @@ impl PluginRouteAuthority {
                 manifest.plugin_id().to_owned(),
                 PluginRegistration {
                     generation: self.next_generation(),
+                    subscriptions: Arc::new(
+                        manifest
+                            .event_subscriptions()
+                            .iter()
+                            .map(|subscription| subscription.event_name().to_owned())
+                            .collect(),
+                    ),
                 },
             );
         }
-        let mut routes = match self.routes.write() {
-            Ok(routes) => routes,
-            Err(poisoned) => {
-                poisoned.into_inner().clear();
-                self.disabled.store(true, Ordering::Release);
-                return Err(ScriptRouteRegistrationError::AuthorityPoisoned);
-            }
-        };
-        *routes = replacement;
+        let _writer = self.lock_writer()?;
+        self.routes.store(Arc::new(replacement));
         Ok(())
+    }
+
+    fn lock_writer(&self) -> Result<std::sync::MutexGuard<'_, ()>, ScriptRouteRegistrationError> {
+        match self.writer.lock() {
+            Ok(writer) if !self.disabled.load(Ordering::Acquire) => Ok(writer),
+            Ok(_) => Err(ScriptRouteRegistrationError::AuthorityPoisoned),
+            Err(_) => {
+                self.disable();
+                Err(ScriptRouteRegistrationError::AuthorityPoisoned)
+            }
+        }
     }
 
     /// Close new route admission without invalidating events already in the FIFO.
@@ -432,10 +406,7 @@ impl PluginRouteAuthority {
     }
 
     fn clear_poisoned(&self) {
-        match self.routes.write() {
-            Ok(mut routes) => routes.clear(),
-            Err(poisoned) => poisoned.into_inner().clear(),
-        }
+        self.routes.store(Arc::new(PluginRouteTable::default()));
     }
 }
 
@@ -447,6 +418,7 @@ pub struct ScriptBoundary {
     plugin_routes: PluginRouteAuthority,
     host_admissions: Arc<HostAdmissionLedger>,
     deployed_packages: Arc<[PluginPackage]>,
+    observations: Arc<StdMutex<ObservationQueues>>,
     /// The operator's hook registrations and the questions admitted under them.
     ///
     /// It is shared by every clone of this boundary rather than copied per clone,
@@ -468,6 +440,21 @@ struct ScriptEventAdmission {
 struct CoalescedServerTick {
     pending: Option<u64>,
     highest_seen: Option<u64>,
+}
+
+const MAX_OBSERVATIONS_PER_PLUGIN: usize = 256;
+
+#[derive(Debug, Default)]
+struct ObservationQueues {
+    plugins: BTreeMap<String, PluginObservations>,
+    last_delivered: Option<String>,
+}
+
+#[derive(Debug)]
+struct PluginObservations {
+    generation: u64,
+    events: std::collections::VecDeque<(u64, ScriptHostEvent)>,
+    dropped: u64,
 }
 
 impl ScriptEventAdmission {
@@ -569,6 +556,101 @@ impl ScriptBoundary {
             })
     }
 
+    /// Best-effort observations have a separate, 256-entry queue per registered
+    /// subscriber. A full queue drops the newest observation for that plugin
+    /// only. The host round-robins these queues, independently of required input.
+    /// An observation becomes visible only after a server-tick WAL ACK reaches
+    /// the host; callers must publish that clock through the ordinary event FIFO.
+    pub fn enqueue_observation(&self, event: ScriptEvent) {
+        let routes = self.plugin_routes.snapshot();
+        let mut targeted_events = Vec::new();
+        for (id, registration) in &routes.registrations {
+            if event.target_plugin_id().is_some_and(|target| target != id)
+                || (event.target_plugin_id().is_none()
+                    && !registration.subscriptions.contains(event.event_name()))
+            {
+                continue;
+            }
+            let mut targeted = event.clone();
+            targeted.target_plugin_id = Some(id.clone());
+            targeted_events.push((
+                id.clone(),
+                registration.generation,
+                ScriptHostEvent {
+                    event: targeted,
+                    target_generation: EventTargetGeneration::Targeted(Some(
+                        registration.generation,
+                    )),
+                },
+            ));
+        }
+        let mut observations = self.observations.lock().unwrap_or_else(|e| e.into_inner());
+        // A reload can publish while the event copies are being prepared.
+        // Never let an older snapshot evict a newer registration's queue.
+        let current_routes = self.plugin_routes.snapshot();
+        observations.plugins.retain(|id, queue| {
+            current_routes
+                .registrations
+                .get(id)
+                .is_some_and(|registration| registration.generation == queue.generation)
+        });
+        for (id, generation, targeted) in targeted_events {
+            if current_routes
+                .registrations
+                .get(&id)
+                .is_none_or(|registration| registration.generation != generation)
+            {
+                // Admission belongs to the captured registration, just like
+                // queued host inputs; never rebind old events to a replacement.
+                continue;
+            }
+            let queue = observations
+                .plugins
+                .entry(id)
+                .or_insert_with(|| PluginObservations {
+                    generation,
+                    events: Default::default(),
+                    dropped: 0,
+                });
+            if self.event_admission.closed.load(Ordering::Acquire)
+                || queue.events.len() >= MAX_OBSERVATIONS_PER_PLUGIN
+            {
+                queue.dropped = queue.dropped.saturating_add(1);
+                continue;
+            }
+            queue.events.push_back((u64::MAX, targeted));
+        }
+    }
+
+    /// Bind pending observations to their completed native tick, before its WAL
+    /// append. They stay invisible until that tick's acknowledged clock arrives.
+    pub fn seal_observations(&self, tick: u64) {
+        let mut observations = self.observations.lock().unwrap_or_else(|e| e.into_inner());
+        for queue in observations.plugins.values_mut() {
+            for (pending_tick, _) in queue.events.iter_mut().rev() {
+                if *pending_tick != u64::MAX {
+                    break;
+                }
+                *pending_tick = tick;
+            }
+        }
+    }
+
+    /// Number of observations shed for this plugin's current registration.
+    /// Durable completion callbacks never contribute to this counter.
+    pub fn observation_events_dropped(&self, plugin_id: &str) -> u64 {
+        let Some(registration) = self.plugin_routes.registration(plugin_id) else {
+            return 0;
+        };
+        self.observations
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .plugins
+            .get(plugin_id)
+            .filter(|queue| queue.generation == registration.generation)
+            .map_or(0, |queue| queue.dropped)
+    }
+
     /// Push the latest simulation tick without blocking or losing timer progress.
     ///
     /// When the normal event queue is full, newer ticks replace the one pending
@@ -578,6 +660,8 @@ impl ScriptBoundary {
         let Some(event_tx) = self.event_admission.sender() else {
             return Err(ScriptQueueError::Closed);
         };
+        let input =
+            ScriptHostInput::Event(ScriptHostEvent::untargeted(ScriptEvent::server_tick(tick)));
         let mut coalesced = match self.event_admission.coalesced_server_tick.lock() {
             Ok(coalesced) => coalesced,
             Err(poisoned) => poisoned.into_inner(),
@@ -589,16 +673,15 @@ impl ScriptBoundary {
             return Ok(());
         }
         coalesced.highest_seen = Some(tick);
-        let latest_tick = coalesced
-            .pending
-            .take()
-            .map_or(tick, |pending| pending.max(tick));
-        match event_tx.try_send(ScriptHostInput::Event(ScriptHostEvent::untargeted(
-            ScriptEvent::server_tick(latest_tick),
-        ))) {
-            Ok(()) => Ok(()),
+        // Keep publication atomic with the FIFO send: otherwise the consumer
+        // can drain its last input before the pending tick becomes visible.
+        match event_tx.try_send(input) {
+            Ok(()) => {
+                coalesced.pending = None;
+                Ok(())
+            }
             Err(mpsc::error::TrySendError::Full(_)) => {
-                coalesced.pending = Some(latest_tick);
+                coalesced.pending = Some(tick);
                 Ok(())
             }
             Err(mpsc::error::TrySendError::Closed(_)) => Err(ScriptQueueError::Closed),
@@ -629,6 +712,14 @@ impl ScriptBoundary {
     #[must_use]
     pub fn plugin_is_active(&self, plugin_id: &str) -> bool {
         self.plugin_routes.registration(plugin_id).is_some()
+    }
+
+    /// Recover native event ownership only for an actually live host registration.
+    ///
+    /// Persisted menu/zone owners cannot invent a plugin or revive retired routes.
+    pub fn plugin_target(&self, plugin_id: &str) -> Option<crate::ScriptPluginTarget> {
+        self.plugin_is_active(plugin_id)
+            .then(|| crate::ScriptPluginTarget::from_registration(plugin_id))
     }
 
     /// Stop accepting new host events while allowing already admitted events to drain.
@@ -766,24 +857,25 @@ impl ScriptBoundary {
         self.plugin_routes.roots(true)
     }
 
-    /// Route a raw player command with the immutable context observed by the server.
+    /// Prepare a targeted command snapshot without publishing it to the guest.
     ///
-    /// Permission is checked before the bounded event queue so an operator-only
-    /// root always reports denial instead of inheriting queue backpressure.
-    pub fn try_enqueue_player_command_with_context(
+    /// Owners with a commit FIFO retain this event until their earlier sealed
+    /// observations are admitted. Validation does not consume event capacity;
+    /// permission and DTO refusals retain their ordinary routing semantics.
+    pub fn prepare_player_command_with_context(
         &self,
         player_id: ScriptPlayerId,
         context: ScriptPlayerContext,
         raw: &str,
-    ) -> Result<PlayerCommandAdmission, ScriptQueueError> {
+    ) -> Result<crate::PreparedPlayerCommand, ScriptQueueError> {
         let Some((root, arguments)) = split_player_command(raw) else {
-            return Ok(PlayerCommandAdmission::NotOwned);
+            return Ok(crate::PreparedPlayerCommand::NotOwned);
         };
         let Some(owner) = self.plugin_routes.owner(root) else {
-            return Ok(PlayerCommandAdmission::NotOwned);
+            return Ok(crate::PreparedPlayerCommand::NotOwned);
         };
         if owner.operator_only && !context.operator() {
-            return Ok(PlayerCommandAdmission::PermissionDenied);
+            return Ok(crate::PreparedPlayerCommand::PermissionDenied);
         };
         let event = match ScriptEvent::try_player_command_with_context(
             owner.plugin_id,
@@ -793,7 +885,35 @@ impl ScriptBoundary {
             arguments,
         ) {
             Ok(event) => event,
-            Err(error) => return Ok(PlayerCommandAdmission::OwnedRejected { error }),
+            Err(error) => return Ok(crate::PreparedPlayerCommand::OwnedRejected { error }),
+        };
+        if self
+            .event_admission
+            .sender()
+            .is_none_or(|sender| sender.is_closed())
+        {
+            self.plugin_routes.clear();
+            return Err(ScriptQueueError::Closed);
+        }
+        Ok(crate::PreparedPlayerCommand::Event(event))
+    }
+
+    /// Prepare and immediately admit an event for owners without a commit FIFO.
+    pub fn try_enqueue_player_command_with_context(
+        &self,
+        player_id: ScriptPlayerId,
+        context: ScriptPlayerContext,
+        raw: &str,
+    ) -> Result<PlayerCommandAdmission, ScriptQueueError> {
+        let event = match self.prepare_player_command_with_context(player_id, context, raw)? {
+            crate::PreparedPlayerCommand::NotOwned => return Ok(PlayerCommandAdmission::NotOwned),
+            crate::PreparedPlayerCommand::PermissionDenied => {
+                return Ok(PlayerCommandAdmission::PermissionDenied);
+            }
+            crate::PreparedPlayerCommand::OwnedRejected { error } => {
+                return Ok(PlayerCommandAdmission::OwnedRejected { error });
+            }
+            crate::PreparedPlayerCommand::Event(event) => event,
         };
         match self.try_enqueue_event(event) {
             Ok(()) => Ok(PlayerCommandAdmission::Enqueued),
@@ -846,6 +966,15 @@ impl ScriptBoundary {
         self.command_rx.lock().await.recv().await
     }
 
+    /// Receive an admitted host command without waiting on the tick owner.
+    ///
+    /// A competing receiver holding the queue, an empty queue and a closed
+    /// queue all return `None`; no command is removed until this caller owns
+    /// the receiver.
+    pub fn try_recv_command(&self) -> Option<ScriptCommand> {
+        self.command_rx.try_lock().ok()?.try_recv().ok()
+    }
+
     /// Consume one exact host-issued admission ticket.
     pub fn accept_host_command(
         &self,
@@ -877,6 +1006,8 @@ pub struct ScriptHostEndpoint {
     command_tx: mpsc::Sender<ScriptCommand>,
     plugin_routes: PluginRouteAuthority,
     host_admissions: Arc<HostAdmissionLedger>,
+    observations: Arc<StdMutex<ObservationQueues>>,
+    observation_turn: bool,
 }
 
 impl ScriptHostEndpoint {
@@ -960,8 +1091,48 @@ impl ScriptHostEndpoint {
         }
     }
 
+    fn next_observation(&mut self) -> Option<ScriptHostInput> {
+        let written_tick = self.highest_delivered_tick?;
+        loop {
+            let mut observations = self.observations.lock().unwrap_or_else(|e| e.into_inner());
+            let ready = |queue: &&PluginObservations| {
+                queue
+                    .events
+                    .front()
+                    .is_some_and(|(tick, _)| *tick <= written_tick)
+            };
+            let after = observations
+                .plugins
+                .iter()
+                .filter(|(id, _)| {
+                    observations
+                        .last_delivered
+                        .as_ref()
+                        .is_none_or(|last| *id > last)
+                })
+                .find(|(_, queue)| ready(queue));
+            let id = after
+                .or_else(|| observations.plugins.iter().find(|(_, queue)| ready(queue)))
+                .map(|(id, _)| id.clone())?;
+            let (_, event) = observations.plugins.get_mut(&id)?.events.pop_front()?;
+            observations.last_delivered = Some(id);
+            drop(observations);
+            let input = self.accept_input(ScriptHostInput::Event(event));
+            self.observation_turn = false;
+            if input.is_some() {
+                return input;
+            }
+        }
+    }
+
     fn try_recv_input(&mut self) -> Result<ScriptHostInput, mpsc::error::TryRecvError> {
         loop {
+            if self.observation_turn {
+                self.observation_turn = false;
+                if let Some(input) = self.next_observation() {
+                    return Ok(input);
+                }
+            }
             if self.coalesced_tick_due {
                 self.coalesced_tick_due = false;
                 if let Some(event) = take_coalesced_server_tick(&self.coalesced_server_tick) {
@@ -990,6 +1161,9 @@ impl ScriptHostEndpoint {
                         }
                         continue;
                     }
+                    if let Some(input) = self.next_observation() {
+                        return Ok(input);
+                    }
                     return Err(error);
                 }
             }
@@ -1014,6 +1188,7 @@ impl ScriptHostEndpoint {
     }
 
     fn accept_input(&mut self, input: ScriptHostInput) -> Option<ScriptHostInput> {
+        self.observation_turn = true;
         match input {
             ScriptHostInput::Event(event) => event
                 .target_is_live(&self.plugin_routes)
@@ -1276,6 +1451,7 @@ pub fn script_boundary_pair(
     let plugin_routes = PluginRouteAuthority::default();
     let host_admissions = Arc::new(HostAdmissionLedger::default());
     let coalesced_server_tick = Arc::new(StdMutex::new(CoalescedServerTick::default()));
+    let observations = Arc::new(StdMutex::new(ObservationQueues::default()));
     let weak_event_tx = event_tx.downgrade();
     (
         ScriptBoundary {
@@ -1290,6 +1466,7 @@ pub fn script_boundary_pair(
             plugin_routes: plugin_routes.clone(),
             host_admissions: Arc::clone(&host_admissions),
             deployed_packages: Arc::from(Vec::new()),
+            observations: Arc::clone(&observations),
             precommit: Arc::new(precommit::PrecommitAuthority::new()),
         },
         ScriptHostEndpoint {
@@ -1300,6 +1477,8 @@ pub fn script_boundary_pair(
             command_tx,
             plugin_routes,
             host_admissions,
+            observations,
+            observation_turn: false,
         },
     )
 }
@@ -1359,3 +1538,7 @@ fn split_player_command(raw: &str) -> Option<(&str, &str)> {
     }
     Some((root, command[root_end..].trim_start()))
 }
+
+#[cfg(test)]
+#[path = "route_authority_tests.rs"]
+mod tests;

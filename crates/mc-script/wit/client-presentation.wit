@@ -44,7 +44,7 @@ interface client-presentation {
         label: string,
     }
 
-    /// One server-authoritative resource amount shown in a resource panel.
+    /// Plugin-supplied nonnegative display amounts; core validates transport only.
     record view-resource-entry {
         id: string,
         have: f64,
@@ -59,6 +59,16 @@ interface client-presentation {
         square,
     }
 
+    /// Bounded, non-authoritative display geometry in one named dimension.
+    /// Coordinates obey `types.position` bounds. Supplying a position neither
+    /// queries world state nor grants a selection, route or action right.
+    record view-marker-position {
+        dimension: string,
+        x: f64,
+        y: f64,
+        z: f64,
+    }
+
     /// One world-selection affordance. `selection-token` is the opaque,
     /// server-issued selection-context id the client may only echo.
     record view-marker {
@@ -67,6 +77,7 @@ interface client-presentation {
         action-id: option<string>,
         formation: option<view-formation>,
         radius: option<f64>,
+        position: option<view-marker-position>,
     }
 
     /// One bounded page of one declarative screen: flat lists of bounded values,

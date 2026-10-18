@@ -5,11 +5,7 @@ use std::path::Path;
 use flate2::bufread::GzDecoder;
 use mc_data::Identifier;
 use mc_data::items::ItemRegistry;
-use mc_data::loot::LootCount;
 use mc_data::loot::chest_26_1_2::{CHEST_SLOT_COUNT, ChestLootCatalog, ChestRng};
-use mc_data::worldgen_structures::{
-    StructureDataError, StructureSetFacts, load_structure_set_facts,
-};
 use mc_nbt::{ListTag, Tag};
 use mc_world::{BlockRegistry, BlockStateId, ChestBlockEntity, FurnaceSlot};
 use thiserror::Error;
@@ -52,16 +48,6 @@ pub enum StructureError {
     UnknownBlock { path: String, block: Identifier },
     #[error("structure template {path} references unresolved block state {block}")]
     UnknownState { path: String, block: Identifier },
-    #[error("Solaris playable ruin references missing item {item}")]
-    MissingPlayableRuinItem { item: Identifier },
-    #[error(
-        "plains village templates expose {available} villager slots for {requested} planned inhabitants"
-    )]
-    MissingVillagerSlots { requested: usize, available: usize },
-    #[error("plains toolsmith template cell {pos:?} is not air for the Solaris loot chest")]
-    ToolsmithChestObstructed { pos: [i32; 3] },
-    #[error(transparent)]
-    StructureData(#[from] StructureDataError),
 }
 
 #[derive(Debug, Clone)]
@@ -179,60 +165,56 @@ pub struct TemplateBlock {
 pub struct TemplateChest {
     pub pos: [i32; 3],
     pub chest: ChestBlockEntity,
-    /// Vanilla chest table rolled at paste time. When `None`, or when the
-    /// paste-time catalog lacks the table, the fixed `chest` contents above
-    /// are pasted unchanged.
+    /// Vanilla chest table rolled with the production catalog, retaining
+    /// canonical item components in the generated block entity.
     pub loot_table: Option<Identifier>,
 }
 
 impl TemplateChest {
-    /// Resolve the pasted contents: roll `loot_table` from the catalog under
-    /// `loot_seed` — vanilla's `LootTableSeed`, the `nextLong` the structure
-    /// placement draws for this container — scattering stacks into random slots
-    /// (vanilla overwrite semantics). Falls back to the fixed `chest` contents
-    /// when no table is configured or the catalog lacks it; rolled stacks whose
-    /// items the registry cannot resolve are skipped.
+    /// Resolve the production table and distribute canonical stacks into
+    /// distinct slots. Missing catalog entries remain unopened vanilla loot
+    /// instead of substituting a handcrafted inventory.
     #[must_use]
     pub fn resolve_contents(&self, loot: &StructureLoot<'_>, loot_seed: u64) -> ChestBlockEntity {
-        let table = self.loot_table.as_ref().and_then(|id| loot.catalog.get(id));
-        let Some(table) = table else {
+        let Some(table_id) = &self.loot_table else {
             return self.chest.clone();
+        };
+        let Some(table) = loot.catalog.get(table_id) else {
+            return ChestBlockEntity {
+                loot_table: Some(table_id.clone()),
+                loot_seed: loot_seed as i64,
+                ..ChestBlockEntity::default()
+            };
         };
         let mut rng = ChestRng::new(loot_seed);
         let mut out = ChestBlockEntity::default();
-        for drop in table.roll(&mut rng) {
-            let Some(item_id) = loot.items.id_of(&drop.item) else {
-                continue;
-            };
-            let count = match drop.count {
-                LootCount::Fixed(count) => count,
-                LootCount::UniformInclusive { min, .. } => min,
-            };
-            let Ok(count) = i32::try_from(count) else {
-                continue;
-            };
-            let slot = rng.next_bounded(CHEST_SLOT_COUNT) as usize;
+        let mut available: [usize; CHEST_SLOT_COUNT as usize] = std::array::from_fn(|slot| slot);
+        let mut remaining = available.len();
+        for stack in table
+            .roll(&mut rng, loot.items, 0.0)
+            .expect("production structure loot")
+        {
+            if remaining == 0 {
+                break;
+            }
+            let choice = rng.next_bounded(remaining as u64) as usize;
+            let slot = available[choice];
+            remaining -= 1;
+            available[choice] = available[remaining];
             out.slots[slot] = FurnaceSlot {
-                item_id,
-                count,
-                damage: None,
-                enchantments: Vec::new(),
-                custom_name: None,
-                item_model: None,
-                stew_effects: Vec::new(),
+                item_id: stack.item_id,
+                count: stack.count,
+                damage: stack.damage,
+                enchantments: stack.enchantments,
+                custom_name: stack.custom_name.map(|name| name.into_string()),
+                item_model: stack.item_model,
+                stew_effects: stack.stew_effects,
+                components: stack.components,
             };
         }
         out
     }
 }
-
-/// Vanilla chest table rolled for the toolsmith house of the Solaris plains
-/// village prototype. The 26.1.2 toolsmith NBT shell contains no chest block;
-/// vanilla places the chest in piece code, so Solaris owns the chest position
-/// (an interior floor cell of the toolsmith part) and rolls the real table.
-pub const VILLAGE_TOOLSMITH_LOOT_TABLE: &str = "minecraft:chests/village/village_toolsmith";
-/// Vanilla chest table rolled for the seed-zero Solaris playable ruin.
-pub const SOLARIS_RUIN_LOOT_TABLE: &str = "minecraft:chests/simple_dungeon";
 
 /// Loot context threaded through structure pasting: the world seed plus the
 /// compiled chest tables and the item registry that resolves rolled stacks.
@@ -243,32 +225,6 @@ pub struct StructureLoot<'a> {
     pub seed: i64,
     pub catalog: &'a ChestLootCatalog,
     pub items: &'a ItemRegistry,
-}
-
-/// Salt distinguishing chest-loot seeds from terrain feature hashes.
-const CHEST_LOOT_SALT: u64 = 0xC4E5_57A1_1007;
-
-/// Deterministic per-chest loot seed from the world seed, the chest's pasted
-/// world position, and its index in the template. Same seed and position
-/// roll the same contents; distinct chests differ.
-///
-/// This is the *plugin* prototype lane's seeding. The vanilla village lane does
-/// not use it: there a chest's `LootTableSeed` is the `nextLong` the structure's
-/// placement random draws for it ([`crate::village::piece::place_piece`]).
-#[must_use]
-pub fn chest_loot_seed(seed: i64, world_pos: [i32; 3], index: usize) -> u64 {
-    let mut hash = seed as u64 ^ CHEST_LOOT_SALT;
-    for word in [
-        world_pos[0] as i64 as u64,
-        world_pos[1] as i64 as u64,
-        world_pos[2] as i64 as u64,
-        index as u64,
-    ] {
-        hash ^= word.wrapping_mul(0x9E37_79B9_7F4A_7C15);
-        hash = hash.rotate_left(17).wrapping_mul(0xC2B2_AE3D_27D4_EB4F);
-        hash ^= hash >> 29;
-    }
-    hash
 }
 
 enum BoundedLength {
@@ -487,7 +443,7 @@ impl StructureTemplate {
             })?;
         if !bytes.is_empty() {
             return Err(StructureError::TrailingData {
-                path: display.clone(),
+                path: display,
                 kind: "decompressed NBT",
                 bytes: bytes.len(),
             });
@@ -546,419 +502,12 @@ impl StructureTemplate {
         template.entities = parse_entities(path, compound)?;
         Ok(template)
     }
-
-    fn combine(parts: Vec<(Self, [i32; 3])>) -> Self {
-        let mut size = [0; 3];
-        let mut blocks = Vec::new();
-        let mut chests = Vec::new();
-        let mut villager_markers = Vec::new();
-        let mut entities = Vec::new();
-        for (part, offset) in parts {
-            for axis in 0..3 {
-                size[axis] = size[axis].max(offset[axis] + part.size[axis]);
-            }
-            blocks.extend(part.blocks.into_iter().map(|mut block| {
-                for (coordinate, delta) in block.pos.iter_mut().zip(offset.iter()) {
-                    *coordinate += delta;
-                }
-                block
-            }));
-            chests.extend(part.chests.into_iter().map(|mut chest| {
-                for (coordinate, delta) in chest.pos.iter_mut().zip(offset.iter()) {
-                    *coordinate += delta;
-                }
-                chest
-            }));
-            villager_markers.extend(part.villager_markers.into_iter().map(|mut marker| {
-                for (coordinate, delta) in marker.iter_mut().zip(offset.iter()) {
-                    *coordinate += delta;
-                }
-                marker
-            }));
-            entities.extend(part.entities.into_iter().map(|mut entity| {
-                for (coordinate, delta) in entity.position.iter_mut().zip(offset.iter()) {
-                    *coordinate += f64::from(*delta);
-                }
-                for (coordinate, delta) in entity.block_position.iter_mut().zip(offset.iter()) {
-                    *coordinate += delta;
-                }
-                entity
-            }));
-        }
-        Self {
-            size,
-            blocks,
-            chests,
-            villager_markers,
-            jigsaws: Vec::new(),
-            entities,
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct StructureInhabitant {
-    pub id: String,
-    pub entity_type: String,
-    pub villager_kind: String,
-    pub profession: String,
-    pub level: u8,
-}
-
-#[derive(Debug, Clone)]
-pub struct StructureRules {
-    templates: Vec<StructureTemplate>,
-    grid_chunks: i32,
-    separation_chunks: i32,
-    salt: u64,
-    fixed_center: Option<(i32, i32)>,
-    inhabitants: Vec<StructureInhabitant>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PlainsVillagePrototypePart {
-    Fountain,
-    SmallHouse,
-    Toolsmith,
-}
-
-impl PlainsVillagePrototypePart {
-    const fn source(self) -> (&'static str, [i32; 3]) {
-        match self {
-            Self::Fountain => (
-                "village/plains/town_centers/plains_fountain_01.nbt",
-                [0, 0, 0],
-            ),
-            Self::SmallHouse => ("village/plains/houses/plains_small_house_1.nbt", [12, 0, 0]),
-            Self::Toolsmith => ("village/plains/houses/plains_tool_smith_1.nbt", [0, 0, 12]),
-        }
-    }
-}
-
-impl StructureRules {
-    #[must_use]
-    pub fn none() -> Self {
-        Self {
-            templates: Vec::new(),
-            grid_chunks: 34,
-            separation_chunks: 8,
-            salt: 0x9E37_8731_2B17,
-            fixed_center: None,
-            inhabitants: Vec::new(),
-        }
-    }
-
-    #[must_use]
-    pub fn plains_village_markers(templates: Vec<StructureTemplate>) -> Self {
-        Self {
-            templates,
-            // Mirrors the vanilla village spacing as data, while Solaris owns
-            // the placement hash and filtering below.
-            grid_chunks: 34,
-            separation_chunks: 8,
-            salt: 10_387_312,
-            fixed_center: None,
-            inhabitants: Vec::new(),
-        }
-    }
-
-    /// One bounded village prototype assembled from unmodified vanilla NBT
-    /// templates and vanilla village spacing data.
-    pub fn plains_village_prototype(
-        vanilla_data_dir: impl AsRef<Path>,
-        blocks: &BlockRegistry,
-    ) -> Result<Self, StructureError> {
-        Self::plains_village_prototype_with_parts(
-            vanilla_data_dir,
-            blocks,
-            &[
-                PlainsVillagePrototypePart::Fountain,
-                PlainsVillagePrototypePart::SmallHouse,
-                PlainsVillagePrototypePart::Toolsmith,
-            ],
-        )
-    }
-
-    pub fn plains_village_prototype_with_parts(
-        vanilla_data_dir: impl AsRef<Path>,
-        blocks: &BlockRegistry,
-        parts: &[PlainsVillagePrototypePart],
-    ) -> Result<Self, StructureError> {
-        let vanilla_data_dir = vanilla_data_dir.as_ref();
-        let structure_root = vanilla_data_dir.join("data/minecraft/structure");
-        let toolsmith_offset = parts
-            .contains(&PlainsVillagePrototypePart::Toolsmith)
-            .then(|| PlainsVillagePrototypePart::Toolsmith.source().1);
-        let parts = parts
-            .iter()
-            .copied()
-            .map(PlainsVillagePrototypePart::source)
-            .map(|(path, offset)| {
-                StructureTemplate::from_nbt_file(structure_root.join(path), blocks)
-                    .map(|template| (template, offset))
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        let mut combined = StructureTemplate::combine(parts);
-        if let Some(offset) = toolsmith_offset {
-            attach_toolsmith_loot_chest(&mut combined, blocks, offset)?;
-        }
-        let facts = load_structure_set_facts(vanilla_data_dir.join("data/minecraft/worldgen"))?;
-        Ok(Self::plains_village_markers(vec![combined]).with_structure_set_facts(&facts))
-    }
-
-    pub fn plains_village_prototype_with_plan(
-        vanilla_data_dir: impl AsRef<Path>,
-        blocks: &BlockRegistry,
-        parts: &[PlainsVillagePrototypePart],
-        inhabitants: Vec<StructureInhabitant>,
-    ) -> Result<Self, StructureError> {
-        let mut rules = Self::plains_village_prototype_with_parts(vanilla_data_dir, blocks, parts)?;
-        let available = rules
-            .templates
-            .first()
-            .map_or(0, |template| template.villager_markers.len());
-        if inhabitants.len() > available {
-            return Err(StructureError::MissingVillagerSlots {
-                requested: inhabitants.len(),
-                available,
-            });
-        }
-        rules.inhabitants = inhabitants;
-        Ok(rules)
-    }
-
-    #[must_use]
-    pub fn with_fixed_center(mut self, center: (i32, i32)) -> Self {
-        self.fixed_center = Some(center);
-        self
-    }
-
-    /// A Solaris-owned reward ruin for the seed-zero playable loop.
-    ///
-    /// Its block states and item protocol ids are resolved from startup
-    /// registries; no protocol values are embedded here.
-    pub fn solaris_playable_ruin(
-        blocks: &BlockRegistry,
-        items: &ItemRegistry,
-    ) -> Result<Self, StructureError> {
-        let cobblestone = playable_ruin_block(blocks, "minecraft:cobblestone")?;
-        let chest_state = playable_ruin_block(blocks, "minecraft:chest")?;
-        let mut chest = ChestBlockEntity::default();
-        chest.slots[0] = playable_ruin_slot(items, "minecraft:diamond", 1)?;
-        chest.slots[1] = playable_ruin_slot(items, "minecraft:lapis_lazuli", 4)?;
-        chest.slots[2] = playable_ruin_slot(items, "minecraft:bread", 2)?;
-
-        let mut ruin_blocks = Vec::new();
-        for x in 0..5 {
-            for z in 0..5 {
-                ruin_blocks.push(TemplateBlock {
-                    pos: [x, 0, z],
-                    state: cobblestone,
-                });
-            }
-        }
-        for x in [0, 4] {
-            for z in [0, 4] {
-                for y in 1..4 {
-                    ruin_blocks.push(TemplateBlock {
-                        pos: [x, y, z],
-                        state: cobblestone,
-                    });
-                }
-            }
-        }
-        ruin_blocks.push(TemplateBlock {
-            pos: [2, 1, 2],
-            state: chest_state,
-        });
-
-        let template =
-            StructureTemplate::new([5, 4, 5], ruin_blocks).with_chests(vec![TemplateChest {
-                pos: [2, 1, 2],
-                // Fixed contents stay as the paste-time fallback when the
-                // generator has no chest-loot catalog wired.
-                chest,
-                loot_table: Some(
-                    Identifier::parse(SOLARIS_RUIN_LOOT_TABLE).expect("static ruin loot table"),
-                ),
-            }]);
-        Ok(Self {
-            templates: vec![template],
-            grid_chunks: 34,
-            separation_chunks: 8,
-            salt: 0x0053_4F4C_4152_4953,
-            // Chunk (4, 0): 4.5 chunks east of spawn, inside one generated chunk.
-            fixed_center: Some((72, 8)),
-            inhabitants: Vec::new(),
-        })
-    }
-
-    #[must_use]
-    pub fn with_structure_set_facts(mut self, facts: &[StructureSetFacts]) -> Self {
-        let Some(villages) = facts.iter().find(|set| {
-            set.structures
-                .iter()
-                .any(|structure| structure.as_str() == "minecraft:village_plains")
-        }) else {
-            return self;
-        };
-        if let Some(spacing) = villages.spacing {
-            self.grid_chunks = spacing.max(1);
-        }
-        if let Some(separation) = villages.separation {
-            self.separation_chunks = separation.max(0).min(self.grid_chunks - 1);
-        }
-        if let Some(salt) = villages.salt {
-            self.salt = salt;
-        }
-        self
-    }
-
-    #[must_use]
-    pub fn is_empty(&self) -> bool {
-        self.templates.is_empty()
-    }
-
-    #[must_use]
-    pub fn templates(&self) -> &[StructureTemplate] {
-        &self.templates
-    }
-
-    #[must_use]
-    pub fn grid_chunks(&self) -> i32 {
-        self.grid_chunks
-    }
-
-    #[must_use]
-    pub fn separation_chunks(&self) -> i32 {
-        self.separation_chunks
-    }
-
-    #[must_use]
-    pub fn salt(&self) -> u64 {
-        self.salt
-    }
-
-    pub(crate) fn fixed_center(&self) -> Option<(i32, i32)> {
-        self.fixed_center
-    }
-
-    #[must_use]
-    pub fn inhabitants(&self) -> &[StructureInhabitant] {
-        &self.inhabitants
-    }
-
-    #[cfg(test)]
-    pub(crate) fn fixed_for_test(template: StructureTemplate, center: (i32, i32)) -> Self {
-        Self {
-            templates: vec![template],
-            grid_chunks: 34,
-            separation_chunks: 8,
-            salt: 0,
-            fixed_center: Some(center),
-            inhabitants: Vec::new(),
-        }
-    }
-}
-
-fn playable_ruin_block(blocks: &BlockRegistry, name: &str) -> Result<BlockStateId, StructureError> {
-    let block = Identifier::parse(name).expect("static playable ruin block identifier");
-    blocks
-        .block(&block)
-        .map(|entry| entry.default)
-        .ok_or(StructureError::UnknownBlock {
-            path: "Solaris playable ruin".to_string(),
-            block,
-        })
-}
-
-fn playable_ruin_slot(
-    items: &ItemRegistry,
-    name: &str,
-    count: i32,
-) -> Result<FurnaceSlot, StructureError> {
-    let item = Identifier::parse(name).expect("static playable ruin item identifier");
-    let item_id = items
-        .id_of(&item)
-        .ok_or_else(|| StructureError::MissingPlayableRuinItem { item: item.clone() })?;
-    Ok(FurnaceSlot {
-        item_id,
-        count,
-        damage: None,
-        enchantments: Vec::new(),
-        custom_name: None,
-        item_model: None,
-        stew_effects: Vec::new(),
-    })
-}
-
-/// Toolsmith-part-local cell for the Solaris village loot chest: interior air
-/// on the cobblestone floor, clear of the smithing table, door, and walls
-/// (verified against the 26.1.2 `plains_tool_smith_1` shell).
-const TOOLSMITH_CHEST_LOCAL: [i32; 3] = [5, 1, 4];
-
-/// Place the village toolsmith loot chest into a combined prototype. The
-/// vanilla toolsmith shell ships no chest block, so Solaris adds one shell
-/// chest block plus a loot-table chest entity; the fixed contents stay empty
-/// as the paste-time fallback when no catalog is wired.
-fn attach_toolsmith_loot_chest(
-    template: &mut StructureTemplate,
-    blocks: &BlockRegistry,
-    toolsmith_offset: [i32; 3],
-) -> Result<(), StructureError> {
-    let chest_id = Identifier::parse("minecraft:chest").expect("static chest identifier");
-    let chest_state =
-        blocks
-            .block(&chest_id)
-            .map(|entry| entry.default)
-            .ok_or(StructureError::UnknownBlock {
-                path: "plains village toolsmith chest".to_string(),
-                block: chest_id.clone(),
-            })?;
-    let air_id = Identifier::parse("minecraft:air").expect("static air identifier");
-    let pos = [
-        toolsmith_offset[0] + TOOLSMITH_CHEST_LOCAL[0],
-        toolsmith_offset[1] + TOOLSMITH_CHEST_LOCAL[1],
-        toolsmith_offset[2] + TOOLSMITH_CHEST_LOCAL[2],
-    ];
-    match template.blocks.iter().position(|block| block.pos == pos) {
-        Some(index) => {
-            let incumbent = template.blocks[index].state;
-            let is_air = blocks
-                .by_id(incumbent)
-                .is_some_and(|state| state.block.id == air_id);
-            if !is_air {
-                return Err(StructureError::ToolsmithChestObstructed { pos });
-            }
-            template.blocks[index].state = chest_state;
-        }
-        None => template.blocks.push(TemplateBlock {
-            pos,
-            state: chest_state,
-        }),
-    }
-    template.chests.push(TemplateChest {
-        pos,
-        chest: ChestBlockEntity::default(),
-        loot_table: Some(
-            Identifier::parse(VILLAGE_TOOLSMITH_LOOT_TABLE).expect("static toolsmith loot table"),
-        ),
-    });
-    Ok(())
-}
-
-impl Default for StructureRules {
-    fn default() -> Self {
-        Self::none()
-    }
 }
 
 #[derive(Debug, Clone, Copy)]
 enum TemplatePaletteEntry {
     Block(BlockStateId),
-    /// A `minecraft:jigsaw` state, kept separate from `Block` because the
-    /// prototype only needed its position; the piece loader reads its
-    /// `orientation` for the connector.
+    /// A `minecraft:jigsaw` state whose orientation supplies the connector face.
     Jigsaw(BlockStateId),
     Ignored,
 }
@@ -1782,7 +1331,7 @@ mod tests {
             ("size".into(), Tag::List(int_triplet([1, 2, 3]))),
             (
                 "palette".into(),
-                Tag::List(mc_nbt::ListTag {
+                Tag::List(ListTag {
                     element_type: mc_nbt::tag_type::COMPOUND,
                     elements: vec![
                         Tag::Compound(vec![("Name".into(), Tag::String("minecraft:air".into()))]),
@@ -1793,7 +1342,7 @@ mod tests {
             ),
             (
                 "blocks".into(),
-                Tag::List(mc_nbt::ListTag {
+                Tag::List(ListTag {
                     element_type: mc_nbt::tag_type::COMPOUND,
                     elements: vec![
                         Tag::Compound(vec![
@@ -1859,8 +1408,8 @@ mod tests {
         );
     }
 
-    fn int_triplet(values: [i32; 3]) -> mc_nbt::ListTag {
-        mc_nbt::ListTag {
+    fn int_triplet(values: [i32; 3]) -> ListTag {
+        ListTag {
             element_type: mc_nbt::tag_type::INT,
             elements: values.into_iter().map(Tag::Int).collect(),
         }
@@ -1895,148 +1444,5 @@ mod tests {
                 .iter()
                 .all(|block| registry.by_id(block.state).is_some())
         );
-    }
-
-    #[test]
-    #[ignore = "requires local 26.1.2 blocks report and plains fountain structure"]
-    fn loads_real_plains_village_prototype_when_present() {
-        let vanilla = workspace_path("data/vanilla");
-        let blocks_path = vanilla.join("reports/blocks.json");
-        let fountain = vanilla
-            .join("data/minecraft/structure/village/plains/town_centers/plains_fountain_01.nbt");
-        assert!(
-            blocks_path.is_file(),
-            "requires local 26.1.2 blocks report at {}",
-            blocks_path.display()
-        );
-        assert!(
-            fountain.is_file(),
-            "requires local 26.1.2 plains fountain structure at {}",
-            fountain.display()
-        );
-        let report = mc_data::blocks::load_blocks_report(&blocks_path).unwrap();
-        let registry = BlockRegistry::from_report(&report).unwrap();
-
-        let rules = StructureRules::plains_village_prototype(&vanilla, &registry).unwrap();
-
-        assert_eq!(rules.templates().len(), 1);
-        assert!(rules.templates()[0].size()[0] > 16);
-        assert!(rules.templates()[0].size()[2] > 16);
-        assert!(rules.templates()[0].blocks().len() > 200);
-        assert_eq!(rules.templates()[0].villager_markers().len(), 4);
-        assert_eq!(rules.grid_chunks(), 34);
-        assert_eq!(rules.separation_chunks(), 8);
-        assert_eq!(rules.salt(), 10_387_312);
-    }
-
-    #[test]
-    #[ignore = "requires local 26.1.2 blocks report and plains fountain structure"]
-    fn plains_village_plan_selects_only_declared_building_parts_when_present() {
-        let vanilla = workspace_path("data/vanilla");
-        let blocks_path = vanilla.join("reports/blocks.json");
-        let fountain = vanilla
-            .join("data/minecraft/structure/village/plains/town_centers/plains_fountain_01.nbt");
-        assert!(
-            blocks_path.is_file(),
-            "requires local 26.1.2 blocks report at {}",
-            blocks_path.display()
-        );
-        assert!(
-            fountain.is_file(),
-            "requires local 26.1.2 plains fountain structure at {}",
-            fountain.display()
-        );
-        let report = mc_data::blocks::load_blocks_report(&blocks_path).unwrap();
-        let registry = BlockRegistry::from_report(&report).unwrap();
-
-        let rules = StructureRules::plains_village_prototype_with_parts(
-            &vanilla,
-            &registry,
-            &[PlainsVillagePrototypePart::Fountain],
-        )
-        .unwrap();
-
-        assert_eq!(rules.templates().len(), 1);
-        assert_eq!(rules.templates()[0].size(), [9, 4, 9]);
-        assert!(rules.templates()[0].blocks().len() > 100);
-    }
-
-    #[test]
-    fn combined_templates_keep_stable_offsets() {
-        let combined = StructureTemplate::combine(vec![
-            (
-                StructureTemplate::new(
-                    [2, 1, 1],
-                    vec![TemplateBlock {
-                        pos: [1, 0, 0],
-                        state: BlockStateId(1),
-                    }],
-                ),
-                [0, 0, 0],
-            ),
-            (
-                StructureTemplate::new(
-                    [1, 2, 1],
-                    vec![TemplateBlock {
-                        pos: [0, 1, 0],
-                        state: BlockStateId(2),
-                    }],
-                ),
-                [4, 0, 3],
-            ),
-        ]);
-
-        assert_eq!(combined.size(), [5, 2, 4]);
-        assert_eq!(combined.blocks()[0].pos, [1, 0, 0]);
-        assert_eq!(combined.blocks()[1].pos, [4, 1, 3]);
-    }
-
-    #[test]
-    fn plains_village_rules_accept_multiple_templates() {
-        let a = StructureTemplate::new(
-            [1, 1, 1],
-            vec![TemplateBlock {
-                pos: [0, 0, 0],
-                state: BlockStateId(1),
-            }],
-        );
-        let b = StructureTemplate::new(
-            [1, 2, 1],
-            vec![TemplateBlock {
-                pos: [0, 1, 0],
-                state: BlockStateId(2),
-            }],
-        );
-
-        let rules = StructureRules::plains_village_markers(vec![a, b]);
-
-        assert_eq!(rules.templates().len(), 2);
-        assert_eq!(rules.grid_chunks(), 34);
-        assert_eq!(rules.separation_chunks(), 8);
-    }
-
-    #[test]
-    fn structure_set_facts_adjust_plains_village_spacing() {
-        let template = StructureTemplate::new(
-            [1, 1, 1],
-            vec![TemplateBlock {
-                pos: [0, 0, 0],
-                state: BlockStateId(1),
-            }],
-        );
-        let facts = vec![StructureSetFacts {
-            id: Identifier::parse("minecraft:villages").unwrap(),
-            structures: vec![Identifier::parse("minecraft:village_plains").unwrap()],
-            spacing: Some(20),
-            separation: Some(5),
-            salt: Some(1234),
-        }];
-
-        let rules =
-            StructureRules::plains_village_markers(vec![template]).with_structure_set_facts(&facts);
-
-        assert_eq!(rules.grid_chunks(), 20);
-        assert_eq!(rules.separation_chunks(), 5);
-        assert_eq!(rules.salt(), 1234);
     }
 }

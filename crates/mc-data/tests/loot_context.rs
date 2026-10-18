@@ -55,10 +55,10 @@ fn unsequenced(seed: u64) -> LootRandomBinding {
 #[test]
 fn simple_fallback_block_drops_observe_explosion_survival_context() {
     let block = id("minecraft:test_block");
-    let loot = LootTables::from_drop_maps(
-        BTreeMap::new(),
-        BTreeMap::from([(block.clone(), LootDrop::single(id("minecraft:fragment")))]),
-    );
+    let loot = LootTables::from_drop_maps(BTreeMap::from([(
+        block.clone(),
+        LootDrop::single(id("minecraft:fragment")),
+    )]));
     let tool = LootContextItem::empty();
 
     let certain = LootExplosion::try_new(1.0).unwrap();

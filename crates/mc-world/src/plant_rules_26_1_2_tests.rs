@@ -5,11 +5,11 @@ use mc_data::Identifier;
 use mc_data::blocks::{BlockReport, BlockStateReport};
 
 use crate::plant_rules_26_1_2::{
-    PlantBlockEdit, PlantHorizontalDirection, PlantItemDrop, bonemeal_growth_edit,
-    bonemeal_growth_edits, cocoa_state_for_use_on, grass_block_bonemeal_edits,
-    next_crop_growth_state, plant_drop_stacks, sweet_berry_harvest, vertical_plant_growth_edits,
+    PlantBlockEdit, PlantBlockRead, PlantHorizontalDirection, PlantItemDrop, bonemeal_growth_edits,
+    cocoa_state_for_use_on, grass_block_bonemeal_edits, next_crop_growth_state, plant_drop_stacks,
+    sweet_berry_harvest, vertical_plant_growth_edits,
 };
-use crate::{BlockPos, BlockRegistry, BlockStateId, Chunk, ChunkPos, WorldStorage};
+use crate::{BlockPos, BlockRegistry, BlockStateId, Chunk, ChunkPos};
 
 fn properties(entries: &[(&str, &str)]) -> BTreeMap<String, String> {
     entries
@@ -49,7 +49,7 @@ fn simple_block(id: u32, name: &str) -> BlockReport {
 fn age_block(name: &str, states: &[(u32, u8, bool)]) -> BlockReport {
     BlockReport {
         id: Identifier::parse(name).expect("test age block identifier"),
-        properties: property_schema(&[("age", &["0", "1", "2", "3", "7"])]),
+        properties: property_schema(&[("age", &["0", "1", "2", "3", "4", "5", "6", "7"])]),
         states: states
             .iter()
             .map(|&(id, age, default)| state(id, default, &[("age", &age.to_string())]))
@@ -57,20 +57,30 @@ fn age_block(name: &str, states: &[(u32, u8, bool)]) -> BlockReport {
     }
 }
 
-fn in_memory_world(registry: Arc<BlockRegistry>) -> WorldStorage {
-    let mut world = WorldStorage::in_memory(registry);
-    let chunk = ChunkPos { x: 0, z: 0 };
-    world
-        .insert_generated_chunk(
-            chunk,
-            Chunk::empty(
-                chunk,
-                BlockStateId(0),
-                Identifier::parse("minecraft:plains").expect("test biome identifier"),
-            ),
-        )
-        .expect("insert test chunk");
-    world
+struct PlantWorld(Chunk);
+
+impl PlantBlockRead for PlantWorld {
+    fn get_cached_block(&self, pos: BlockPos) -> Option<BlockStateId> {
+        if !(0..16).contains(&pos.x) || !(0..16).contains(&pos.z) {
+            return None;
+        }
+        self.0.get_block(pos.x as u8, pos.y, pos.z as u8)
+    }
+}
+
+impl PlantWorld {
+    fn set_block_at(&mut self, pos: BlockPos, state: BlockStateId) -> Option<BlockStateId> {
+        assert!((0..16).contains(&pos.x) && (0..16).contains(&pos.z));
+        self.0.set_block(pos.x as u8, pos.y, pos.z as u8, state)
+    }
+}
+
+fn in_memory_world() -> PlantWorld {
+    PlantWorld(Chunk::empty(
+        ChunkPos { x: 0, z: 0 },
+        BlockStateId(0),
+        Identifier::parse("minecraft:plains").expect("test biome identifier"),
+    ))
 }
 
 #[test]
@@ -92,13 +102,6 @@ fn crop_harvest_and_drop_contracts_are_protocol_neutral() {
     assert_eq!(
         next_crop_growth_state(&registry, BlockStateId(1)),
         Some(BlockStateId(2))
-    );
-    assert_eq!(
-        bonemeal_growth_edit(&registry, position, BlockStateId(1)),
-        Some(PlantBlockEdit {
-            pos: position,
-            new_state: BlockStateId(2),
-        })
     );
     assert_eq!(
         sweet_berry_harvest(&registry, position, BlockStateId(6)),
@@ -129,6 +132,92 @@ fn crop_harvest_and_drop_contracts_are_protocol_neutral() {
 }
 
 #[test]
+fn bonemeal_grows_crops_by_two_to_five_stages_and_caps_at_maturity() {
+    let position = BlockPos { x: 1, y: 64, z: 2 };
+    let ages: Vec<_> = (0..=7u8)
+        .map(|age| (u32::from(age) + 1, age, age == 0))
+        .collect();
+    for crop in [
+        "minecraft:wheat",
+        "minecraft:carrots",
+        "minecraft:potatoes",
+        "minecraft:melon_stem",
+        "minecraft:pumpkin_stem",
+    ] {
+        let registry = Arc::new(
+            BlockRegistry::from_report(&[simple_block(0, "minecraft:air"), age_block(crop, &ages)])
+                .unwrap(),
+        );
+        let world = in_memory_world();
+        for seed in 0..32 {
+            let edits = bonemeal_growth_edits(&registry, &world, position, BlockStateId(1), seed)
+                .expect("young crops accept bone meal");
+            assert_eq!(edits.len(), 1);
+            assert_eq!(edits[0].pos, position);
+            assert!(
+                (3..=6).contains(&edits[0].new_state.0),
+                "{crop} must advance two to five stages"
+            );
+            assert_eq!(
+                bonemeal_growth_edits(&registry, &world, position, BlockStateId(7), seed),
+                Some(vec![PlantBlockEdit {
+                    pos: position,
+                    new_state: BlockStateId(8)
+                }]),
+                "{crop} must stop at age seven",
+            );
+            assert_eq!(
+                bonemeal_growth_edits(&registry, &world, position, BlockStateId(8), seed),
+                None,
+                "{crop} must reject bone meal after maturity",
+            );
+        }
+    }
+}
+
+#[test]
+fn bonemeal_rejects_mature_stems_but_newly_mature_stems_can_bear_fruit() {
+    let ages: Vec<_> = (0..=7u8)
+        .map(|age| (u32::from(age) + 1, age, age == 0))
+        .collect();
+    let registry = Arc::new(
+        BlockRegistry::from_report(&[
+            simple_block(0, "minecraft:air"),
+            age_block("minecraft:melon_stem", &ages),
+            simple_block(9, "minecraft:melon"),
+            BlockReport {
+                id: Identifier::parse("minecraft:attached_melon_stem").unwrap(),
+                properties: property_schema(&[("facing", &["north"])]),
+                states: vec![state(10, true, &[("facing", "north")])],
+            },
+        ])
+        .unwrap(),
+    );
+    let mut world = in_memory_world();
+    let position = BlockPos { x: 4, y: 64, z: 4 };
+    let fruit = BlockPos { z: 3, ..position };
+    world.set_block_at(position, BlockStateId(8)).unwrap();
+    assert_eq!(
+        bonemeal_growth_edits(&registry, &world, position, BlockStateId(8), 0),
+        None
+    );
+    world.set_block_at(position, BlockStateId(7)).unwrap();
+    assert_eq!(
+        bonemeal_growth_edits(&registry, &world, position, BlockStateId(7), 0),
+        Some(vec![
+            PlantBlockEdit {
+                pos: position,
+                new_state: BlockStateId(10)
+            },
+            PlantBlockEdit {
+                pos: fruit,
+                new_state: BlockStateId(9)
+            },
+        ]),
+    );
+}
+
+#[test]
 fn vertical_growth_reads_loaded_world_without_mutating_it() {
     let registry = Arc::new(
         BlockRegistry::from_report(&[
@@ -138,7 +227,7 @@ fn vertical_growth_reads_loaded_world_without_mutating_it() {
         ])
         .expect("vertical plant registry"),
     );
-    let mut world = in_memory_world(Arc::clone(&registry));
+    let mut world = in_memory_world();
     let support = BlockPos { x: 4, y: 63, z: 4 };
     let cactus = BlockPos { x: 4, y: 64, z: 4 };
     let above = BlockPos { x: 4, y: 65, z: 4 };
@@ -201,7 +290,7 @@ fn sapling_planning_is_seeded_and_read_only() {
         ])
         .expect("sapling registry"),
     );
-    let mut world = in_memory_world(Arc::clone(&registry));
+    let mut world = in_memory_world();
     let sapling = BlockPos { x: 4, y: 64, z: 4 };
     world
         .set_block_at(sapling, BlockStateId(1))
@@ -276,8 +365,8 @@ fn grass_scatter_registry() -> Arc<BlockRegistry> {
     )
 }
 
-fn world_with_grass(registry: &Arc<BlockRegistry>) -> (WorldStorage, BlockPos) {
-    let mut world = in_memory_world(Arc::clone(registry));
+fn world_with_grass() -> (PlantWorld, BlockPos) {
+    let mut world = in_memory_world();
     let clicked = BlockPos { x: 4, y: 64, z: 4 };
     world
         .set_block_at(clicked, BlockStateId(1))
@@ -294,7 +383,7 @@ fn world_with_grass(registry: &Arc<BlockRegistry>) -> (WorldStorage, BlockPos) {
 #[test]
 fn grass_block_bonemeal_scatters_deterministically_onto_open_soil() {
     let registry = grass_scatter_registry();
-    let (world, clicked) = world_with_grass(&registry);
+    let (world, clicked) = world_with_grass();
 
     let growing_seed = (0..256u64)
         .find(|&seed| {
@@ -370,7 +459,7 @@ fn grass_block_bonemeal_scatters_deterministically_onto_open_soil() {
 #[test]
 fn grass_block_bonemeal_rejects_covered_and_nongrass_blocks() {
     let registry = grass_scatter_registry();
-    let (mut world, clicked) = world_with_grass(&registry);
+    let (mut world, clicked) = world_with_grass();
 
     world
         .set_block_at(BlockPos { x: 4, y: 65, z: 4 }, BlockStateId(3))
@@ -401,7 +490,7 @@ fn grass_block_bonemeal_rejects_covered_and_nongrass_blocks() {
 #[test]
 fn bonemeal_dispatcher_routes_grass_block_to_the_scatter() {
     let registry = grass_scatter_registry();
-    let (world, clicked) = world_with_grass(&registry);
+    let (world, clicked) = world_with_grass();
 
     let seed = (0..256u64)
         .find(|&seed| {

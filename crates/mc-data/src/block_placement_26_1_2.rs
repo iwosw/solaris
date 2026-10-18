@@ -1,7 +1,7 @@
 //! Protocol-neutral block placement state rules for Java Edition 26.1.2.
 //!
 //! This module owns deterministic placement math only. World snapshot reads,
-//! support checks, edit preconditions, and commits remain in mc-net.
+//! support checks, edit preconditions, and commits remain in the runtime.
 
 use mc_domain::Direction;
 

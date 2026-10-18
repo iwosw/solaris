@@ -15,7 +15,7 @@
 //! chunk generation order.
 
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 #[cfg(feature = "worldgen-counters")]
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -40,6 +40,7 @@ mod biome_rules;
 mod gameplay_rules;
 mod geological_ores;
 mod ore_rules;
+mod ore_veins;
 mod overworld;
 mod sediments;
 mod trees;
@@ -71,7 +72,6 @@ const RIVER_GRAVEL_THRESHOLD: f64 = 0.30;
 const RIVER_GRAVEL_SALT: i64 = 0x5247_5256;
 const ORE_VEIN_RADIUS: i32 = 4;
 const ORE_COLUMN_HALO: i32 = ORE_VEIN_RADIUS * 2 + 1;
-const ORE_GROWTH_ATTEMPTS: usize = 12;
 const ORE_DIRECTIONS: [[i8; 3]; 6] = [
     [-1, 0, 0],
     [1, 0, 0],
@@ -85,6 +85,9 @@ const CAVE_VERTICAL_SAMPLE_STEP: i32 = 2;
 const DEEPSLATE_TOP_Y: i32 = 0;
 const DEEPSLATE_SOLID_Y: i32 = -8;
 const VEGETATION_REGION_SCALE: f64 = 192.0;
+/// Columns per plains tree outside groves: vanilla `trees_plains` places one
+/// tree with 5% chance per chunk (256 columns / 0.05).
+const GRASSLAND_SPARSE_TREE_SPACING: u64 = 5120;
 const SPAWN_SEARCH_STEP_BLOCKS: i32 = 64;
 const SPAWN_SEARCH_MAX_RADIUS_BLOCKS: i32 = 8_192;
 const SPAWN_SITE_SAMPLE_RADIUS_BLOCKS: i32 = 8;
@@ -203,14 +206,22 @@ pub struct TerrainDiagnosticSample {
     pub vegetation_density: Option<f64>,
 }
 
+/// Derived column facts, with bounded FIFO eviction rather than whole-shard
+/// invalidation. Sampling remains outside the shard lock.
 struct DiagnosticCache {
-    shards: [Mutex<HashMap<(i32, i32), TerrainDiagnosticSample>>; DIAGNOSTIC_CACHE_SHARDS],
+    shards: [Mutex<DiagnosticCacheShard>; DIAGNOSTIC_CACHE_SHARDS],
+}
+
+#[derive(Default)]
+struct DiagnosticCacheShard {
+    entries: HashMap<(i32, i32), TerrainDiagnosticSample>,
+    order: VecDeque<(i32, i32)>,
 }
 
 impl Default for DiagnosticCache {
     fn default() -> Self {
         Self {
-            shards: std::array::from_fn(|_| Mutex::new(HashMap::new())),
+            shards: std::array::from_fn(|_| Mutex::new(DiagnosticCacheShard::default())),
         }
     }
 }
@@ -226,7 +237,7 @@ impl DiagnosticCache {
         let shard = self.shards[Self::shard_index(world_x, world_z)]
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        shard.get(&(world_x, world_z)).cloned()
+        shard.entries.get(&(world_x, world_z)).cloned()
     }
 
     fn insert(
@@ -238,13 +249,16 @@ impl DiagnosticCache {
         let mut shard = self.shards[Self::shard_index(world_x, world_z)]
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        if let Some(existing) = shard.get(&(world_x, world_z)) {
+        if let Some(existing) = shard.entries.get(&(world_x, world_z)) {
             return existing.clone();
         }
-        if shard.len() >= DIAGNOSTIC_CACHE_ENTRIES_PER_SHARD {
-            shard.clear();
+        if shard.entries.len() == DIAGNOSTIC_CACHE_ENTRIES_PER_SHARD
+            && let Some(evicted) = shard.order.pop_front()
+        {
+            shard.entries.remove(&evicted);
         }
-        shard.insert((world_x, world_z), sample.clone());
+        shard.entries.insert((world_x, world_z), sample.clone());
+        shard.order.push_back((world_x, world_z));
         sample
     }
 }
@@ -382,6 +396,14 @@ impl<'h> HeightContext<'h> {
         }
     }
 
+    /// Native terrain density at one block through the shared halo sampler;
+    /// `None` without vanilla density.
+    fn native_density(&mut self, world_x: i32, y: i32, world_z: i32) -> Option<f64> {
+        self.native_sampler
+            .as_mut()
+            .map(|sampler| sampler.density(world_x, y, world_z))
+    }
+
     /// The SOURCE (pre-village) surface for one column: ready central-chunk
     /// values first, then the shared sampler, then the per-column query.
     fn source_height(&mut self, world_x: i32, world_z: i32) -> i32 {
@@ -443,14 +465,33 @@ impl<'h> HeightContext<'h> {
     }
 
     /// Column plan for halo readers that need more than a height: SOURCE
-    /// diagnostic (cached by the generator) + this context's single plan set.
+    /// diagnostic (cached by the generator; a miss takes its height from
+    /// this context's shared sampler) + this context's single plan set.
     fn halo_column(&mut self, world_x: i32, world_z: i32) -> ColumnPlan {
         let chunk = ChunkPos {
             x: world_x.div_euclid(16),
             z: world_z.div_euclid(16),
         };
         let plans = self.plans_for_chunk(chunk);
-        let diagnostic = self.generator.cached_diagnostic_sample(world_x, world_z);
+        // An independent column query walks the whole height with a fresh
+        // sampler (~0.1 ms); the shared lattice answers the same height
+        // (`vanilla_halo_surface_heights_match_independent_queries`) for a
+        // fraction. Halo planning was 89 of 104 ms of a fresh chunk.
+        let diagnostic = match self.generator.diagnostic_cache.get(world_x, world_z) {
+            Some(sample) => sample,
+            None => {
+                let height = self
+                    .native_sampler
+                    .is_some()
+                    .then(|| self.source_height(world_x, world_z));
+                let sample = self
+                    .generator
+                    .diagnostic_sample_uncached(world_x, world_z, height);
+                self.generator
+                    .diagnostic_cache
+                    .insert(world_x, world_z, sample)
+            }
+        };
         let lx = world_x.rem_euclid(16) as u8;
         let lz = world_z.rem_euclid(16) as u8;
         self.generator
@@ -486,6 +527,9 @@ struct OreColumnCache<'a, 'h> {
     cave_layers: usize,
     cave_samples: Vec<u8>,
     raw_cave_samples: Vec<u8>,
+    /// Full-density cave answers outside the sampled layers, per cell: ore
+    /// veins and their air-exposure scans ask the same cells many times.
+    dense_caves: std::collections::HashMap<(i32, i32, i32), bool>,
 }
 
 impl OreColumnCache<'_, '_> {
@@ -569,7 +613,21 @@ impl OreColumnCache<'_, '_> {
         surface_y: i32,
     ) -> bool {
         let Some(index) = self.cave_sample_index(world_x, sample_y, world_z) else {
-            return generator.is_cave_cell(world_x, sample_y, world_z, surface_y);
+            // Above the sampled cave layers: the full-density test, through
+            // the halo sampler's shared lattice corners (same values).
+            let heights = &mut *self.heights;
+            return *self
+                .dense_caves
+                .entry((world_x, sample_y, world_z))
+                .or_insert_with(|| {
+                    sample_y < surface_y
+                        && heights
+                            .native_density(world_x, sample_y, world_z)
+                            .map_or_else(
+                                || generator.is_cave_cell(world_x, sample_y, world_z, surface_y),
+                                |density| density <= 0.0,
+                            )
+                });
         };
         match self.cave_samples[index] {
             1 => false,
@@ -1642,6 +1700,7 @@ impl TerrainGenerator {
             cave_layers,
             cave_samples: vec![0; side * side * cave_layers],
             raw_cave_samples: vec![0; side * side * cave_layers],
+            dense_caves: std::collections::HashMap::new(),
         };
         let center_offset = usize::try_from(ORE_COLUMN_HALO).expect("ore halo fits usize");
         for plan in chunk_columns {
@@ -1650,46 +1709,6 @@ impl TerrainGenerator {
             cache.columns[local_z * side + local_x] = Some(plan.clone());
         }
         cache
-    }
-
-    #[allow(dead_code)]
-    fn apply_ores(&self, chunk: &mut Chunk, chunk_columns: &[ColumnPlan; 256]) {
-        if let Some(geological_ores) = &self.geological_ores {
-            geological_ores.apply(self, chunk);
-            return;
-        }
-        // `apply_ores` without a caller-owned context exists for the two
-        // non-generation callers (tests, geological-ore fallback): it builds
-        // a throwaway context with the same bounds `generate` uses, so the
-        // code path — and the bytes it emits — is one path, not two.
-        let source_columns: [(i32, i32, i32); 256] = std::array::from_fn(|idx| {
-            let plan = &chunk_columns[idx];
-            let base = self
-                .diagnostic_cache
-                .get(plan.wx, plan.wz)
-                .map(|sample| sample.surface_y)
-                .unwrap_or_else(|| self.base_surface_y(plan.wx, plan.wz));
-            (plan.wx, plan.wz, base)
-        });
-        let mut heights = HeightContext::for_chunk(
-            self,
-            chunk.pos,
-            &source_columns,
-            self.vanilla().map(|(_, density)| {
-                let min_x = i64::from(chunk.pos.x) * 16 - i64::from(ORE_COLUMN_HALO);
-                let min_z = i64::from(chunk.pos.z) * 16 - i64::from(ORE_COLUMN_HALO);
-                let clamp =
-                    |value: i64| value.clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32;
-                density.surface_height_sampler(
-                    clamp(min_x),
-                    clamp(min_z),
-                    clamp(min_x + 16 + i64::from(ORE_COLUMN_HALO) * 2 - 1),
-                    clamp(min_z + 16 + i64::from(ORE_COLUMN_HALO) * 2 - 1),
-                )
-            }),
-        );
-        let mut column_cache = self.ore_column_cache(chunk, chunk_columns, &mut heights);
-        self.apply_ores_with_cache(chunk, &mut column_cache);
     }
 
     fn apply_ores_with_cache(&self, chunk: &mut Chunk, column_cache: &mut OreColumnCache<'_, '_>) {
@@ -1771,12 +1790,19 @@ impl TerrainGenerator {
                             if !(min_y..=max_y).contains(&anchor_y) {
                                 continue;
                             }
-                            if !rule.biomes.is_any()
-                                && !column_cache
-                                    .get_or_plan(anchor_x, anchor_z)
-                                    .is_some_and(|column| rule.biomes.matches(&column.biome))
-                            {
-                                continue;
+                            if !rule.biomes.is_any() {
+                                let matches = if let Some((climate, _)) = self.vanilla() {
+                                    rule.biomes.matches_name(
+                                        climate.sample(anchor_x, anchor_y, anchor_z).biome,
+                                    )
+                                } else {
+                                    column_cache
+                                        .get_or_plan(anchor_x, anchor_z)
+                                        .is_some_and(|column| rule.biomes.matches(&column.biome))
+                                };
+                                if !matches {
+                                    continue;
+                                }
                             }
                             let vein_hash = feature_hash(
                                 self.seed,
@@ -1810,17 +1836,17 @@ impl TerrainGenerator {
         vein_size: usize,
     ) {
         let mut offsets = [[0_i8; 3]; MAX_ORE_VEIN_SIZE];
-        let offset_count = connected_ore_offsets(
-            &mut offsets,
-            vein_hash,
-            anchor[1],
-            vein_size,
-            |offset, cell_hash| {
-                self.ore_cell_can_generate(column_cache, rule, anchor, offset, cell_hash)
-            },
-        );
-        for &offset in &offsets[..offset_count] {
-            self.place_ore_cell(chunk, rule, anchor, offset);
+        let offset_count = ore_veins::ore_offsets(&mut offsets, vein_hash, vein_size);
+        for (index, &offset) in offsets[..offset_count].iter().enumerate() {
+            if self.ore_cell_can_generate(
+                column_cache,
+                rule,
+                anchor,
+                offset,
+                vein_hash ^ index as u64,
+            ) {
+                self.place_ore_cell(chunk, rule, anchor, offset);
+            }
         }
     }
 
@@ -2063,8 +2089,12 @@ impl TerrainGenerator {
                 }
 
                 let tree_spacing = self.tree_spacing_for_biome(biome);
-                if tree_spacing.is_some_and(|spacing| h.is_multiple_of(spacing))
-                    && self.tree_density_allows(plan)
+                let base_tree = self
+                    .base_tree_spacing(biome)
+                    .is_some_and(|spacing| h.is_multiple_of(spacing));
+                if (base_tree
+                    || (tree_spacing.is_some_and(|spacing| h.is_multiple_of(spacing))
+                        && self.tree_density_allows(plan)))
                     && self.tree_site_is_stable(plan, heights)
                     && self.place_tree(
                         chunk,
@@ -2096,7 +2126,6 @@ impl TerrainGenerator {
                     || self.biomes.jungle.contains(biome)
                     || self.biomes.swamp.contains(biome)
                     || Self::is_savanna(biome))
-                    && self.ground_cover_density_allows(plan)
                     && (surface == self.grass_block || surface == self.podzol)
                 {
                     let (grass_spacing, dandelion_spacing, poppy_spacing) =
@@ -2281,21 +2310,26 @@ impl TerrainGenerator {
         plan.vegetation_density >= threshold
     }
 
-    fn ground_cover_density_allows(&self, plan: &ColumnPlan) -> bool {
-        let threshold = if self.biomes.jungle.contains(&plan.biome) {
-            -0.75
-        } else if self.biomes.temperate_forest.contains(&plan.biome)
-            || self.biomes.swamp.contains(&plan.biome)
+    /// Columns per tree a biome carries everywhere, before the vegetation
+    /// field's denser groves (vanilla vegetation is per biome, never barren
+    /// regions): plains `trees_plains` one tree in ~20 chunks, savanna
+    /// `trees_savanna` ~1.1 per chunk, swamp 2 per chunk; forests, taiga and
+    /// jungle keep their full spacing everywhere.
+    fn base_tree_spacing(&self, biome: &Identifier) -> Option<u64> {
+        if self.biomes.grassland.contains(biome) {
+            Some(GRASSLAND_SPARSE_TREE_SPACING)
+        } else if Self::is_savanna(biome) {
+            Some(233)
+        } else if self.biomes.swamp.contains(biome) {
+            Some(127)
+        } else if self.biomes.jungle.contains(biome)
+            || self.biomes.temperate_forest.contains(biome)
+            || Self::is_cold_forest(biome)
         {
-            -0.55
-        } else if Self::is_savanna(&plan.biome) {
-            -0.05
-        } else if self.biomes.grassland.contains(&plan.biome) {
-            -0.35
+            self.tree_spacing_for_biome(biome)
         } else {
-            return false;
-        };
-        plan.vegetation_density >= threshold
+            None
+        }
     }
 
     fn tree_spacing_for_biome(&self, biome: &Identifier) -> Option<u64> {
@@ -2573,90 +2607,6 @@ fn feature_hash(seed: i64, x: i32, y: i32, z: i32, salt: u64) -> u64 {
     h = h.wrapping_mul(0xBF58_476D_1CE4_E5B9);
     h ^= h >> 27;
     h.wrapping_mul(0x94D0_49BB_1331_11EB) ^ (h >> 31)
-}
-
-fn ore_offset_is_available(existing: &[[i8; 3]], candidate: [i8; 3]) -> bool {
-    candidate
-        .iter()
-        .all(|coordinate| i32::from(*coordinate).abs() <= ORE_VEIN_RADIUS)
-        && !existing.contains(&candidate)
-}
-
-fn connected_ore_offsets(
-    offsets: &mut [[i8; 3]; MAX_ORE_VEIN_SIZE],
-    vein_hash: u64,
-    anchor_y: i32,
-    vein_size: usize,
-    mut can_place: impl FnMut([i8; 3], u64) -> bool,
-) -> usize {
-    let vein_size = vein_size.min(MAX_ORE_VEIN_SIZE);
-    if vein_size == 0 {
-        return 0;
-    }
-
-    let mut candidates = [[0_i8; 3]; MAX_ORE_VEIN_SIZE];
-    let mut parents = [0_usize; MAX_ORE_VEIN_SIZE];
-    for candidate_index in 1..vein_size {
-        let mut next = None;
-        for attempt in 0..ORE_GROWTH_ATTEMPTS {
-            let hash = feature_hash(
-                vein_hash as i64,
-                candidate_index as i32,
-                attempt as i32,
-                anchor_y,
-                0x0AE0_600D,
-            );
-            let parent_index = usize::try_from(hash % candidate_index as u64)
-                .expect("bounded ore parent index fits usize");
-            let parent = candidates[parent_index];
-            let direction = ORE_DIRECTIONS[((hash >> 16) % 6) as usize];
-            let candidate = [
-                parent[0] + direction[0],
-                parent[1] + direction[1],
-                parent[2] + direction[2],
-            ];
-            if ore_offset_is_available(&candidates[..candidate_index], candidate) {
-                next = Some((candidate, parent_index));
-                break;
-            }
-        }
-        let (candidate, parent_index) = next.unwrap_or_else(|| {
-            first_available_ore_offset(&candidates[..candidate_index])
-                .expect("bounded ore vein cube has room")
-        });
-        candidates[candidate_index] = candidate;
-        parents[candidate_index] = parent_index;
-    }
-
-    let mut accepted = [false; MAX_ORE_VEIN_SIZE];
-    accepted[0] = can_place(candidates[0], vein_hash);
-    let mut accepted_count = usize::from(accepted[0]);
-    for candidate_index in 1..vein_size {
-        let cell_hash = vein_hash ^ candidate_index as u64;
-        accepted[candidate_index] =
-            accepted[parents[candidate_index]] && can_place(candidates[candidate_index], cell_hash);
-        if accepted[candidate_index] {
-            offsets[accepted_count] = candidates[candidate_index];
-            accepted_count += 1;
-        }
-    }
-    accepted_count
-}
-
-fn first_available_ore_offset(existing: &[[i8; 3]]) -> Option<([i8; 3], usize)> {
-    for (parent_index, parent) in existing.iter().enumerate() {
-        for direction in ORE_DIRECTIONS {
-            let candidate = [
-                parent[0] + direction[0],
-                parent[1] + direction[1],
-                parent[2] + direction[2],
-            ];
-            if ore_offset_is_available(existing, candidate) {
-                return Some((candidate, parent_index));
-            }
-        }
-    }
-    None
 }
 
 impl ChunkGenerator for TerrainGenerator {

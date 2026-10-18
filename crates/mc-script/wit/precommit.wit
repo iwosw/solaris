@@ -24,7 +24,7 @@
 // A chain is a pipeline while it keeps, so a later damage handler is asked about
 // the amount an earlier `replace` decided, not about the raw request again.
 interface precommit {
-    use types.{plugin-error, position};
+    use types.{plugin-error, position, plugin-storage-version-guard};
 
     /// One player as the hook sees them: the stable identity and the live
     /// connection the question is about. The session is the connection that was
@@ -112,13 +112,29 @@ interface precommit {
         replace(f32),
     }
 
+    /// Guards are authenticated in this handler's own storage namespace and
+    /// checked with the final native decision, not while answering. A damage
+    /// decision checks them atomically; a build decision checks them in the
+    /// same synchronous turn as the apply, immediately before it, so a storage
+    /// write that lands inside that turn is not seen (ADR 0009, "Build
+    /// storage-version guards").
+    record build-result {
+        decision: build-decision,
+        expected-plugin-storage-versions: list<plugin-storage-version-guard>,
+    }
+
+    record damage-result {
+        decision: damage-decision,
+        expected-plugin-storage-versions: list<plugin-storage-version-guard>,
+    }
+
     /// The before-build question. Answering it neither stages nor commits
     /// anything: the host reads the decision, asks the next handler in the
     /// roster's order only while every handler so far kept the build, and applies
     /// the edits only if the whole chain kept them. A `cancel` is a veto: it
     /// settles the chain, no later handler is asked, and the build is refused
     /// whatever the handlers before it decided.
-    before-build: func(context: build-context) -> result<build-decision, plugin-error>;
+    before-build: func(context: build-context) -> result<build-result, plugin-error>;
 
     /// The before-damage question.
     ///
@@ -127,5 +143,5 @@ interface precommit {
     /// settles the chain instead - no later handler is asked, and the damage is
     /// refused whatever the handlers before it decided, so a `replace` an earlier
     /// handler answered is discarded rather than applied.
-    before-damage: func(context: damage-context) -> result<damage-decision, plugin-error>;
+    before-damage: func(context: damage-context) -> result<damage-result, plugin-error>;
 }

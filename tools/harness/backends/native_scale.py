@@ -16,7 +16,8 @@ from typing import Any
 
 from .. import runtime
 from ..mcp import McpClient
-from . import native_client, player_scale
+from . import native_client
+from . import catalog_support as scale
 from .client_probes import _server_binary, run_core_subset
 from .gameplay import require_tools
 
@@ -81,7 +82,7 @@ def run(ctx: Any) -> dict[str, Any]:
 
     def persist() -> None:
         with lock:
-            player_scale.dump(artifact / "native-scale.json", report)
+            scale.dump(artifact / "native-scale.json", report)
 
     def spawn(name: str, argv: list[str], *, pipe: bool = False) -> Any:
         log = (artifact / f"{name}.log").open("wb")
@@ -104,7 +105,7 @@ def run(ctx: Any) -> dict[str, Any]:
             current_phase = phase
         row: dict[str, Any] = {"monotonic_ns": time.monotonic_ns(), "phase": current_phase, "processes": {}}
         for name, proc in owned:
-            measured = player_scale.proc_sample(proc.pid)
+            measured = scale.proc_sample(proc.pid)
             if proc.poll() is not None or not measured["rss_bytes"]:
                 raise RuntimeError(f"{name} exited or metrics disappeared during scale diagnostic")
             measured["affinity"] = sorted(os.sched_getaffinity(proc.pid))
@@ -115,7 +116,7 @@ def run(ctx: Any) -> dict[str, Any]:
                 raise RuntimeError(f"{name} affinity differs from declared plan: {measured['affinity']}")
             row["processes"][name] = measured
         row["combined_rss_bytes"] = sum(p["rss_bytes"] for p in row["processes"].values())
-        row["headroom"] = player_scale.memory_headroom()
+        row["headroom"] = scale.memory_headroom()
         with lock:
             report["samples"].append(row)
         if row["combined_rss_bytes"] > report["combined_rss_guard_bytes"]:
@@ -176,8 +177,8 @@ def run(ctx: Any) -> dict[str, Any]:
             events.put(("error", str(error)))
 
     def dashboard(label: str) -> dict[str, Any]:
-        value = player_scale.http_json(url + "/profile", remaining())
-        player_scale.dump(artifact / f"{label}-profile.json", value)
+        value = scale.http_json(url + "/profile", remaining())
+        scale.dump(artifact / f"{label}-profile.json", value)
         if value.get("players", {}).get("count") != args.native_count + args.bots:
             raise RuntimeError(f"{label} uncached dashboard player count mismatch: {value.get('players')}")
         report[label + "_players"] = value["players"]["count"]
@@ -212,12 +213,12 @@ def run(ctx: Any) -> dict[str, Any]:
     try:
         server_bin = _server_binary(ctx)
         native_bin = native_client.resolve_binary(ctx)
-        report["server_binary"] = {"path": str(server_bin), "sha256": player_scale.binary_sha256(server_bin)}
+        report["server_binary"] = {"path": str(server_bin), "sha256": scale.binary_sha256(server_bin)}
         if args.bots:
             if not args.bots_binary.is_file():
                 raise RuntimeError(f"missing prebuilt real Rust protocol bots: {args.bots_binary}")
-            report["bots_binary"] = {"path": str(args.bots_binary), "sha256": player_scale.binary_sha256(args.bots_binary)}
-        port, dashboard_port = player_scale.reserve_ports()
+            report["bots_binary"] = {"path": str(args.bots_binary), "sha256": scale.binary_sha256(args.bots_binary)}
+        port, dashboard_port = scale.reserve_ports()
         address, url = f"127.0.0.1:{port}", f"http://127.0.0.1:{dashboard_port}"
         config = artifact / "server.toml"
         (artifact / "plugins").mkdir()
@@ -232,21 +233,10 @@ bind_address = "127.0.0.1"
 port = {port}
 [auth]
 online_mode = false
-[admin]
-allow_local_dev_operators = true
 [data]
 world_dir = {json.dumps(str(artifact / "world"))}
 vanilla_data_dir = {json.dumps(os.environ["SOLARIS_CLIENT_DATA_DIR"])}
 seed = 81
-worldgen_mode = "vanilla_like"
-[simulation]
-random_tick_speed = 0
-friendly_spawn_interval_ticks = 0
-hostile_spawn_interval_ticks = 0
-[autoscale]
-enabled = false
-[chunk_pipeline]
-worker_threads = 1
 [dashboard]
 enabled = true
 bind_address = "127.0.0.1"
@@ -286,7 +276,7 @@ directory = {json.dumps(str(artifact / "plugins"))}
                     raise RuntimeError("native did not enter Play")
                 chat = run_core_subset(mcp, child.artifact_dir, remaining())
                 state = mcp.call_tool("minecraft_observe")
-                metrics = player_scale.proc_sample(proc.pid)
+                metrics = scale.proc_sample(proc.pid)
                 startup_seconds = (time.monotonic_ns() - launched) / 1e9
                 session = {"username": username, "identity": state["player"]["entity_uuid"],
                     "instance_id": child.client_evidence["descriptor"]["instance_id"],

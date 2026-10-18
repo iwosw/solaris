@@ -1,7 +1,10 @@
 # ADR 0004 - Staged single-writer simulation boundary
 
 **Date:** 2026-07-11  
-**Status:** Accepted; superseded by ADR 0005 for region-owned entities
+**Status:** Superseded by [ADR 0013](0013-core-model-v2.md) and
+[ADR 0014](0014-v1-core-retirement.md), Phase 5 (2026-10-15).
+The decision and implementation details below are historical v1 records; the
+named authorities and source paths were deleted, not retained as current APIs.
 
 ## Decision
 
@@ -125,6 +128,32 @@ even after players begin mutating chunks. It uses the normal checkpoint's
 serialized capture, snapshot installation and journal watermarks; it does not
 relax pressure-flush generation checks or add another save path.
 
+The whole-world `entities.dat` checkpoint uses an explicit bounded named-NBT
+document policy at its file boundary, not the generic per-root string budget.
+Ordinary entity records repeat keys and retained-state JSON; the aggregate
+string ceiling is the unchanged 64 MiB encoded-file ceiling, while individual
+strings retain their u16 Modified UTF-8 limit. Decoder allocation admission is
+64 MiB plus eight times the actual bounded encoded length: four times for the
+existing cumulative string-decoding charges, four times as workload-informed
+structural headroom. This is a finite resource policy, not an NBT allocation
+invariant or a peak-RSS guarantee. Generic NBT limits remain unchanged.
+
+Entity-file writer preflight accounts for the same string, array, list,
+rounded compound-slot and reader-frame allocations before creating a temporary
+file. Over-budget trees cannot replace the previous checkpoint. The reader and
+writer retain the existing depth, node, entry, collection, wire and gzip limits;
+readback requires one gzip member and exact root consumption. Completed
+compressed output is checked before the existing fsync/atomic-replace sequence.
+
+Entity recovery replays the durable checkpoint and WAL, then initializes an
+empty regional owner without journaling those after-images again. All region
+stores are validated before installation. Recovery keeps lifecycle, sequence,
+and allocation high-water boundaries monotonic, consumes no new mutation
+sequence, and leaves checkpoint/WAL bytes untouched. Partial in-memory
+installation fail-stops instead of serving a partial population; a restart
+replays the same unchanged durable inputs. Ordinary gameplay mutations retain
+the existing journaled path and its unchanged admission limits.
+
 The command queue is admission and ordering, not an entity tick scheduler.
 Ordinary entity AI and physics do not traverse it.
 
@@ -135,6 +164,180 @@ reducing the CPU capacity needed to drain those requests. Tick-time and memory
 pressure reduce admission gradually; shutdown draining still reduces capacity
 to one immediately. The application policy lives in `server/runtime_control.rs`;
 there is no second executor, inline planning bypass or operator thread setting.
+
+The shared CPU pool starts at one worker and its default ceiling is the
+physical core count of the allowed CPU set. Sustained chunk-queue and
+first-chunk pressure grow the CPU and IO pools by one worker per `ScaleDown`
+step. Measured tick-time pressure fills the CPU pool to its existing ceiling
+even when the operator-facing producer-limit cooldown still returns `Hold`;
+it must not serialize regional simulation for that additional 60-second
+window. Memory pressure grows nothing. The pool never decays while pressure
+is observed. A completed tick with selected entities also resets the shared
+fully-idle streak: regional owner work does not acquire chunk-worker permits,
+so an idle chunk queue is not an idle simulation. Clearing active selection
+also clears the selected/population observations, so the last observer's
+departure cannot keep historical work marked busy. After a sustained fully
+idle window the pool still shrinks one step. Regional entity owner lanes follow
+the live CPU pool size. Producer rate/view reductions, their pressure
+duration, the physical-core ceiling and immediate shutdown draining remain
+unchanged; this is not a startup thread-count override or a second executor.
+
+The `tick-tail` per-tick trace distinguished one-lane convergence from scheduler
+delay: its initial measured window had 71 ticks with all 100k bodies on one
+owner, followed by 329 ticks with six owners. Slow-owner CPU time nearly
+matched wall time. Alternating same-window owner cuts kept six lanes throughout
+both 400-tick candidate windows and reduced their tails, with shared-host
+contention reported separately. Raw profiles and the final receipt live under
+`.analysis/codex-logs/tick-tail/`; only Main's exclusive unchanged-budget
+living-world gate establishes p95 <= 50 ms / p99 <= 60 ms acceptance.
+
+Standalone and regional goal transactions still borrow their prepared requests
+and retain exact transform/goal/path stale-state checks and planned speeds.
+The owner lane instead preflights its selected ECS handles while it holds the
+store, then resolves and commits each entity directly in that same uninterrupted
+operation. It does not materialize population-sized request/result maps, active
+ID sets or ordinary goal checkpoints. Only override, follow-target and terrain
+facts need maps. Missing job-site snapshots, nonlocal current-goal references,
+snapshot overrides and cross-region villager candidates reject the region
+before mutation; pending input commands must already be drained.
+
+Owner publication captures identity, motion and gameplay facts directly rather
+than constructing detached full simulation results. Standalone/regional
+transaction fences are unchanged, and goals remain separate from physics so
+central operations can still run between them. Owner diagnostics report
+scan/selection/apply/post; apply now includes bounded resolution and commit.
+There is no old owner transaction switch or diagnostic compatibility path.
+The earlier borrowed-request measurement remains in
+`.analysis/codex-logs/tick-budget/receipt.md`; the direct-owner A/B is in the
+`tick-goals` receipt below.
+
+Grounded navigation that made progress along an unchanged retained path now
+follows that path without another bounded candidate probe. The body must still
+have horizontal velocity and no vertical velocity; stopped, airborne, stalled,
+new-target and exhausted-node states return to bounded probing. The pathing
+probe must explicitly admit the next foot position in its loaded simulation
+domain without a terrain-collision marker; unknown probes conservatively veto
+reuse. This prevents a progressing retained path from steering out of the
+active chunk window. Collision physics still runs every tick, and a failed
+move invalidates reuse on the next goal tick. This follows the retained-node
+boundary in 26.1.2
+`PathNavigation.tick`, not a blanket every-other-tick navigation skip. A settled
+Wander pause returns before allocating a request only while its original
+`resume_tick`, position and zero horizontal motion are unchanged. Selection
+rolls, target epochs, pause duration, panic timing and Brain due timing remain
+unchanged.
+
+The ECS also indexes entities with villager type **and retained villager data**
+in `VillagerBrainEntities`, alongside its existing breeding/sheep indexes.
+Insertion, snapshot restore/type conversion and removal maintain membership;
+regional transfer uses those same operations. Brain preparation intersects
+this index with the captured ordered selection, retaining the existing
+lifecycle/chunk checks and all non-due gossip sources. An empty index skips
+preparation entirely. This is a membership index over authoritative ECS facts,
+not another Brain or spatial authority. Any future direct metadata mutation
+must maintain membership as part of the same owner operation.
+
+Dense physics passes also reuse a pass-local lookup of immutable loaded/missing
+chunk snapshots: at most 256 rectangular slots, built only with at least four
+body queries per slot. Sparse/wide passes use the snapshot lookup directly.
+This avoids repeated chunk hashing, not block/material/shape decoding, and dies
+with the physics snapshot. Original chunk-identity fences and every body's
+fluid, powder-snow, collision and unloaded behavior remain unchanged. Direct
+candidate sorting moves references and collision flags instead of duplicate
+full fences; crossing/rejected fallback candidates keep their original order.
+
+Owner physics prepares each selected body's exact velocity-swept sample bounds
+and current-position chunk once, then carries them through snapshot selection,
+sample completeness and sampler setup. The selected query remains unchanged;
+every body still runs the exact fluid, powder-snow and collision kernel. After
+physics publication is ID-sorted, the already ID-ordered goal publications use
+one monotonic replacement walk instead of a binary search for every body.
+Neither cut changes the immutable chunk-identity or entity/lease commit fences.
+Debug assertions check the carried query/bounds pair and both publication
+vectors' strict ID order before using these optimizations.
+
+A same-window 400-tick diagnostic bracket observed physics medians of
+21.087 ms (baseline) and 20.665 ms (prepared bounds plus replacement walk).
+The flat owner-physics symbol plus its closure fell from 4.98% to 3.32% of
+whole-run CPU samples; these include setup, and the shared host prevents a
+canonical latency claim. A 160-body, 256-tick fixture produced bit-identical
+position, velocity, grounding and collision results. Commands, rolling-profile
+sample caveats and the rejected unmeasured block-cache experiment are recorded
+in `.analysis/codex-logs/tick-phys/receipt.md`. If sampling/query semantics
+change, regenerate the carried bounds from that exact query; if goal publication
+ordering changes, restore an explicit ordering boundary before the replacement
+walk. There is no old execution switch or retained collision approximation.
+
+The unchanged living-world benchmark forces all 100k seeded types to slow
+Wander goals; its 40k villager types have no retained villager data. Measurements
+found roughly 100k goal/pathing requests and physics candidates per tick, no
+whole-region fallback in the sampled window, and fewer than 1% settled bodies.
+An instrumented navigation-only run resolved roughly 6.2k candidate probes per
+tick; the membership index removes the empty-Brain population scan rather than
+changing real villager behavior. The final direct-owner/physics run observed
+tick p50/p95/p99 of 85.682/169.264/189.772 ms, versus the clean baseline
+99.467/163.862/217.541 ms. Goal median moved from 29.668 to 19.284 ms, but the
+unchanged 50/60 ms budget is still missed on the contended host. Exact A/B
+stages, vanilla bytecode identity, correctness gates and the next measured cut
+are in `.analysis/codex-logs/tick-goals/receipt.md`. Replacing retained path,
+membership or transient lookup representations must preserve these
+collision/progress, metadata-lifecycle and immutable-world fences; there is no
+old-path switch.
+
+Entity-ID-keyed goal, physics, routing, tracking and visibility collections now
+use `EntityIdMap`/`EntityIdSet` rather than SipHash-backed collections. These
+keys are server-assigned runtime identities; UUID, session, chunk, string and
+network-authored keys retain their existing hashers. The change is confined to
+lookup/membership representations: sorted decision and mutation inputs, RNG
+inputs, due ticks, stale-state/lease fences and visibility epochs are unchanged.
+Adjacent flat profiles of the same living workload observed sampled hash-symbol
+CPU share of 6.27% before and 4.36% after. Goal/physics/dispatch medians were
+32.764/40.473/6.470 ms before and 21.026/30.121/7.795 ms after; shared-host
+contention prevents treating those latency deltas as isolated causal savings.
+The 50/60 ms tail budget remains unmet. Exact windows and correctness/population
+gates are in `.analysis/codex-logs/tick-hash/receipt.md`. Restore standard
+hash-backed collections if key provenance becomes attacker-controlled; replace
+the aliases, not ownership or gameplay scheduling, if a measured better
+representation supersedes them. There is no runtime fallback or tuning switch.
+
+Regional movement publication can outlive a coarse lane version because central
+fallback work committed unrelated entities. Refresh now compares the already
+committed ID-ordered movement facts on their current native owner lanes, rather
+than fetching and sorting a second population-sized physics/kinematics batch.
+It retains exact current lease/epoch routing, alive/unclaimed/unattached checks
+and equality of position, rotation, velocity and grounded state. Every matching
+lane supplies a captured version; after reacquiring the session lock, publication
+rechecks all captured versions. Changed facts fail closed; replaced topology or
+a later mutation invalidates the captured fence. The original movement facts,
+tracking budget, packet cadence and post-commit ordering are unchanged.
+Same-environment 1200-tick A/B traces
+reduced refresh p95/p99 from 89.796/111.362 ms to 20.214/21.331 ms; dispatch
+p95/p99 fell from 110.053/135.497 ms to 32.562/33.771 ms. The contended host still
+missed the overall 50/60 ms tick budget. There is no duplicate DTO refresh path or
+operator switch; if tracking needs additional authoritative facts, extend the
+native comparison and its version fence before publishing them. Receipt and
+remaining stage costs share the `tick-budget` evidence above.
+
+Post-physics fall damage was another coarse-version invalidator: its commit and
+finalization advanced the lane twice even when only health/damage metadata
+changed. Owner lanes now retain the last movement-relevant revision as well as
+the unchanged coarse revision. Only damage-only commits whose exact native
+kinematics fences are present and equal before/after can leave that marker
+unchanged; lethal damage, every other mutation and rollback invalidate it
+conservatively. The single writer publishes a relevant marker before its coarse
+revision. An authority-matching opaque movement proof can be re-fenced only
+when the marker shows no intervening relevant revision and the coarse revision
+is stable across the read. Ordinary snapshot fences remain coarse-stale, and
+publication still checks the final coarse fence under the session lock. Fast
+repair merges the already ordered lane runs by ID, preserving full repair's
+tracking ordinals and packet order without copying/sorting all movement facts.
+Alternating 400-tick living-workload A/B runs reduced repair-prefix medians from
+20.919/19.053 ms to 0.028/0.027 ms and slowest-5% dispatch medians from
+26.849/24.762 ms to 6.089/6.106 ms. Tick p95 fell from 79.559/78.425 ms to
+64.722/65.806 ms and p99 from 91.554/86.456 ms to 67.970/68.913 ms; the unchanged
+50/60 ms overall budget remains unmet on this shared host. Owner physics is now
+the largest remaining slow-tick stage. Commands, noise and native/packet
+equivalence evidence are in `.analysis/codex-logs/tick-repair/receipt.json`.
 
 Adaptive view/rate limits and work budgets use monotonic, continuous pressure
 and recovery windows, independently reset after each one-unit step. Both policy
@@ -212,9 +415,9 @@ that can never match.
 
 A warehouse is a bound authored container of a placed settlement structure. The
 plugin never names a coordinate: core mints the handle and `bind_warehouse`
-(`crates/mc-net/src/script/storage/settlement.rs:1251`) binds it to a durable
+(now mc-net `script/storage/settlement_runtime/warehouse.rs`) binds it to a durable
 `DurableWarehouseBinding`; reading it is already a canonical owned-inventory
-snapshot (`:1342`). Writing it must be one server-owned simulation command,
+snapshot. Writing it must be one server-owned simulation command,
 because a deposit spans the three domains this ADR keeps on one ordered
 authority: the world container, the player inventory, and the plugin operation
 receipt.

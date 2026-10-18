@@ -121,15 +121,20 @@ fn command_text_bytes(command: &Command) -> usize {
         Command::Operation(request) => {
             use crate::bindings::solaris::plugin::domain_operations::DomainOperation;
             let largest = match &request.operation {
-                DomainOperation::Settlement(value) => {
-                    crate::domain_settlements::max_text_bytes(value)
+                DomainOperation::WorldStructure(value) => {
+                    crate::domain_world_structures::max_text_bytes(value)
                 }
-                DomainOperation::Resident(value) => crate::domain_residents::max_text_bytes(value),
-                DomainOperation::ResidentOrder(value) => {
-                    crate::domain_residents::max_order_text_bytes(value)
-                }
+                DomainOperation::Npc(value) => crate::domain_npcs::max_text_bytes(value),
+                DomainOperation::NpcOrder(value) => crate::domain_npcs::max_order_text_bytes(value),
+                DomainOperation::NpcRoute(value) => crate::domain_npc_routes::max_text_bytes(value),
                 DomainOperation::Inventory(value) => {
                     crate::domain_inventories::max_text_bytes(value)
+                }
+                DomainOperation::QuerySettlement(value) => {
+                    crate::domain_settlements::max_query_text_bytes(value)
+                }
+                DomainOperation::SettlementAction(value) => {
+                    crate::domain_settlements::max_text_bytes(value)
                 }
             };
             request.request.len().max(largest)
@@ -259,6 +264,9 @@ fn view_model_text_bytes(model: &ViewModel) -> usize {
         longest = longest.max(marker.marker_id.len());
         longest = longest.max(marker.selection_token.as_ref().map_or(0, String::len));
         longest = longest.max(marker.action_id.as_ref().map_or(0, String::len));
+        if let Some(position) = &marker.position {
+            longest = longest.max(position.dimension.len());
+        }
     }
     longest
 }

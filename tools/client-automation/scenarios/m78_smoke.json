@@ -5,7 +5,7 @@
   "quality_label": "draft",
   "client_evidence_requirement": "real vanilla 26.1.2 client or PrismLauncher-launched instance only",
   "server": {
-    "command": "cargo run --bin mc-server -- --config example.toml",
+    "command": "cargo run -p mc-edge --bin solaris-v2 -- --config example.toml",
     "config": "example.toml",
     "host": "127.0.0.1",
     "port": 25565
@@ -13,7 +13,11 @@
   "preconditions": {
     "world_prep": "Use example.toml with .analysis/test-world. Before starting Solaris, prepare spawn so the player can stand at (0, 64, 0), target dirt is present at (0, 64, 1), air is clear at (0, 65, 1), and a chest is placed at (2, 64, 0) with air above it.",
     "gamemode": "survival",
-    "spawn_position": [0, 64, 0],
+    "spawn_position": [
+      0,
+      64,
+      0
+    ],
     "hotbar_block": {
       "selected_slot": 0,
       "item": "minecraft:dirt",
@@ -21,13 +25,25 @@
       "prep": "Put at least one minecraft:dirt stack in selected hotbar slot 0 before the break/place step."
     },
     "block_edit_target": {
-      "break_position": [0, 64, 1],
-      "place_position": [0, 64, 1],
+      "break_position": [
+        0,
+        64,
+        1
+      ],
+      "place_position": [
+        0,
+        64,
+        1
+      ],
       "initial_block": "minecraft:dirt"
     },
     "simple_container": {
       "type": "minecraft:chest",
-      "position": [2, 64, 0],
+      "position": [
+        2,
+        64,
+        0
+      ],
       "prep": "Place an openable chest at (2, 64, 0) near spawn before starting the run."
     }
   },

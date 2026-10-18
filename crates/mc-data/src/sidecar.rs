@@ -89,7 +89,7 @@ fn collect_files_with_limits(
             })?;
             if entries_seen > limits.max_entries {
                 return Err(SidecarIoError {
-                    path: dir.clone(),
+                    path: dir,
                     source: invalid_data(format!(
                         "sidecar walk visited {entries_seen} entries, exceeding limit {}",
                         limits.max_entries

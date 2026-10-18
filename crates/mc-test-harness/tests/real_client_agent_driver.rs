@@ -280,6 +280,11 @@ fn agent_driver_executes_checked_core_replay_manifest_and_emits_valid_result() {
     assert_eq!(result.driver, ReplayDriver::RealClient);
     assert_eq!(result.outcome, ReplayOutcome::Degraded);
     assert_eq!(result.actions, scenario.actions);
+    assert_eq!(
+        result.provenance.git_commit,
+        "0123456789abcdef0123456789abcdef01234567"
+    );
+    assert_eq!(result.provenance.sidecar_version, "fixture:26.1.2");
     assert_eq!(result.observations.len(), 1);
     assert!(result.observations[0].facts().iter().any(|fact| matches!(
         fact,

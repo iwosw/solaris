@@ -7,10 +7,12 @@
 interface events {
     use types.{player-id, plugin-error, position, session-id, sequence, tick};
     use commands.{command};
+    use settlements.{settlement-page, settlement-mutation};
     use storage.{storage-cas-outcome, storage-change, storage-get-outcome};
-    use settlements.{settlement-result};
-    use residents.{resident-result, resident-order-result};
+    use world-structures.{world-structure-result};
+    use npcs.{npc-result, npc-order-result};
     use inventories.{inventory-result};
+    use npc-routes.{npc-route-result};
     use client-presentation.{view-field};
     use operation-types.{operation-failure};
     use world-events.{player-block-broken, player-block-placed, player-item-crafted, player-item-picked-up, player-entity-killed, player-entity-interacted, player-died};
@@ -115,8 +117,8 @@ interface events {
         /// replaced and that exact session no longer exists. The world did not
         /// change.
         player-unavailable,
-        /// That connection still holds a position confirmation the server has
-        /// not seen answered, so the request is refused before anything moves.
+        /// Never sent: a newer teleport supersedes an unconfirmed one, as in
+        /// vanilla. Kept so packages built against 0.7.0 still link.
         teleport-pending,
         /// The simulation owner could not take the commit. The world did not
         /// change.
@@ -155,10 +157,13 @@ interface events {
     variant operation-payload {
         storage-batch(list<storage-change>),
         none,
-        settlement(settlement-result),
-        resident(resident-result),
-        resident-order(resident-order-result),
+        world-structure(world-structure-result),
+        npc(npc-result),
+        npc-order(npc-order-result),
+        npc-route(npc-route-result),
         owned-inventory(inventory-result),
+        settlement-page(settlement-page),
+        settlement-mutation(settlement-mutation),
     }
 
     /// Native success: a mutation's committed revision or a query's observation
@@ -393,16 +398,8 @@ interface events {
         click: inventory-click,
     }
 
-    /// The two key-driven view kinds a client may explicitly request.
-    ///
-    /// The server's own closed set: a client asks for one of these screens by
-    /// key, the declared bundle indexes route the request to its owner, and a
-    /// kind this contract does not name yet has no member here - the host skips
-    /// such an event rather than reporting it as one of these two.
-    enum view-request-kind {
-        settlement,
-        army,
-    }
+    /// A plugin-declared request/screen key, carried without core product meaning.
+    type view-request-kind = string;
 
     /// Why a view lifecycle request was refused before it reached the owner.
     ///

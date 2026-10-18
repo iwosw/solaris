@@ -43,7 +43,7 @@ fn floor_and_ceiling_cap_every_column() {
         for z in 0..16u8 {
             assert_eq!(get(&chunk, x, NETHER_MIN_Y, z), BlockStateId(1));
             assert_eq!(get(&chunk, x, NETHER_CEILING_Y, z), BlockStateId(1));
-            for y in NETHER_CEILING_Y - super::NETHER_CEILING_BAND..NETHER_CEILING_Y {
+            for y in NETHER_CEILING_Y - NETHER_CEILING_BAND..NETHER_CEILING_Y {
                 let state = get(&chunk, x, y, z);
                 assert!(
                     state == BlockStateId(1) || state == BlockStateId(2),
@@ -66,7 +66,7 @@ fn body_is_lava_below_sea_netherrack_above_air_on_top() {
                 for z in 0..16u8 {
                     let mut saw_column_lava = false;
                     let mut saw_column_rock = false;
-                    for y in 1..NETHER_CEILING_Y - super::NETHER_CEILING_BAND {
+                    for y in 1..NETHER_CEILING_Y - NETHER_CEILING_BAND {
                         match get(&chunk, x, y, z) {
                             BlockStateId(3) => {
                                 assert!(y < NETHER_LAVA_LEVEL, "lava above sea level at {y}");

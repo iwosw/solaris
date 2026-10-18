@@ -3,7 +3,7 @@
   "pack_id": "m94-real-client-regression-pack",
   "quality_label": "stabilization",
   "minecraft_version": "26.1.2",
-  "server_command": "cargo run --bin mc-server -- --config example.toml",
+  "server_command": "cargo run -p mc-edge --bin solaris-v2 -- --config example.toml",
   "client_requirement": "Normal vanilla 26.1.2 client launched through the repo-native Gradle runClient adapter; protocol harnesses do not satisfy this gate.",
   "artifact_root": ".analysis/real-client-runs",
   "automation_runner": {
@@ -57,7 +57,7 @@
   ],
   "forbidden_client_evidence": [
     "wire-probe",
-    "mc_test_harness::client::Client",
+    "mc_vanilla::wire_client::Client",
     "protocol-only bot",
     "headless mock client"
   ],

@@ -730,7 +730,7 @@ impl Trade {
                         answered.request
                     )));
                 }
-                self.outcome = Some(answered.outcome.clone());
+                self.outcome = Some(answered.outcome);
                 self.step = Step::Verify;
                 let request = format!("{}-{}", action.request(), Read::Verify.name());
                 Ok(vec![storage_get(&request, LEDGER_KEY)])
@@ -825,7 +825,7 @@ impl Trade {
         let Some(before) = self.before.clone() else {
             return Err(self.reject("the action's own deciding read is missing"));
         };
-        let Some(outcome) = self.outcome.clone() else {
+        let Some(outcome) = self.outcome else {
             return Err(self.reject("the owners' answer to the transaction is missing"));
         };
         match &outcome {

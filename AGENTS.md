@@ -14,6 +14,8 @@ git config.
 
 "On receiving new user request, first finish what you've started before taking new user request UNTIL it is explicitly required by user to take right now. Continue execution through a meaningful checkpoint; do not stop only to report intermediate progress."
 
+"Pareto: result first. Deliver the simplest version that works end to end for the real case; improve, harden or complete it only when the owner explicitly asks. Do the 20% that gives 80%. Don't burn tokens on rare edges, exhaustive inventories, byte-exact oracles, extra reviews or re-verifying what already passed. A rare blocker gets a clear error, not a subsystem." (owner, 2026-10-16)
+
 Operational meaning:
 
 - The explicit request is the source of truth. An unambiguous request does not
@@ -89,7 +91,7 @@ Validation identity is `(command, tree fingerprint, environment, covered
 scope)`. Never rerun an unchanged successful gate for the same identity.
 
 The canonical entrypoint is `python3 -m tools.harness` from the repository
-root. `python3 -m tools.harness list` enumerates the 25 named profiles;
+root. `python3 -m tools.harness list` enumerates the registered named profiles;
 `python3 -m tools.harness run PROFILE [--release] [--timeout-seconds N]
 [--platform fabric|neoforge|forge]` runs one. Wiring lives in
 `docs/AGENT_TOOLING.md`.
@@ -111,7 +113,7 @@ gates are also available as `run fmt`, `run clippy`, `run code-health`, and
 `run test`. Real-client and oracle gates run through their profiles
 (`core-client`, `inventory`, `loader-live --platform ...`, `regression`,
 `playable`, `replay`, `oracle`, `oracle-check`, `seed-review`,
-`entity-scale`, `living-world-scale`, `fixture-check`, `installer`, `java`,
+`catalog-load`, `fixture-check`, `installer`, `java`,
 `build`, `harness-check`, `bucket-resync`); client launch/check uses
 `python3 -m tools.harness client [--check] [--platform ...]` with client
 credentials set.
@@ -280,8 +282,12 @@ saves, or prevents plugin progress.
 
 Solaris has no released compatibility surface. Delete superseded Solaris APIs,
 schemas, duplicate authorities, adapters, feature flags, and fallbacks once
-callers move. Compatibility targets are vanilla protocol/behavior (with
-deliberate bug fixes) and vanilla world format, not historical Solaris code.
+callers move. Compatibility targets are exact vanilla protocol and Anvil
+import/export layouts, not Solaris runtime storage or historical Solaris schemas.
+Gameplay mechanics and worldgen only need to be
+roughly vanilla-like (reference: minecraft.wiki text); bit-exact RNG order,
+AI cadence, Mth and terrain are not required. Performance and correctness
+(no bugs, crashes, dupes, save corruption) come first; mob AI parity does not matter.
 
 Measured narrow optimization hacks are allowed. Document the bottleneck,
 boundary, correctness fence, measured effect, and fallback/removal path. Never
@@ -292,8 +298,10 @@ measurements/autoscaling move bounded budgets.
 
 - Mojang bytes never enter Git. `.analysis/*` and `data/vanilla/*` stay ignored.
 - Packet ids/layouts come from local `wire-probe`/`javap`, never memory.
-- Gameplay parity needs vanilla capture, decompiled-source inspection, or
-  side-by-side harness evidence.
+- Gameplay behavior follows minecraft.wiki-level vanilla similarity; protocol
+  and Anvil import/export layouts need exact vanilla evidence.
+- Core v2 persists only native store + tick WAL; never dual-write or fall back
+  to Anvil. Corrupt or unsupported stored state fails closed.
 - Debug builds are the development loop; do not use `--release` unless the
   checkpoint explicitly requires a performance/release gate.
 - Do not commit `Cargo.lock` without a concrete dependency reason.
@@ -301,11 +309,11 @@ measurements/autoscaling move bounded budgets.
   `data/vanilla/`, `.serena/`, `.opencode/`, `x-ui-pro/`, `YOLO_MODE.md`,
   `log.log`, and local `opencode.json` overlays.
 
-Treat `mc-net` as a modular monolith. Root orchestration files route work but do
-not own new domain behavior. Put touched state machines, authority boundaries,
-and transaction policy in focused modules with narrow interfaces. Mechanically
-extract a touched legacy domain when bounded. Keep substantial tests in sibling
-`*_tests.rs`; do not grow aggregate root or inline production test modules.
+The current server is `mc-edge`'s `solaris-v2` binary over `mc-core`
+([ADR 0013](docs/decisions/0013-core-model-v2.md)); v1 is retired by ADR 0014.
+Keep gameplay authority in the native tick/intent merge and connection/presentation
+state in the edge. Root orchestration routes work, not domain policy. Keep
+substantial tests in focused sibling `*_tests.rs` modules.
 
 Architecture, authority, threading, waiting, persistence ordering, or module
 policy changes update the owning ADR in the same checkpoint. Desired migration

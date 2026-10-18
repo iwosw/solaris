@@ -51,7 +51,10 @@ pub fn max_stack_for_stack(
         let Some(definition) = item_facts.custom_for_stack(stack, items) else {
             return 0;
         };
-        if stack.damage.is_some() || definition.facts.max_damage.is_some() {
+        if stack.damage.is_some()
+            || stack.extended().max_damage.is_some()
+            || definition.facts.max_damage.is_some()
+        {
             return 1;
         }
         return definition
@@ -61,7 +64,7 @@ pub fn max_stack_for_stack(
             .unwrap_or(64)
             .clamp(1, 64);
     }
-    if stack.damage.is_some() {
+    if stack.damage.is_some() || stack.extended().max_damage.is_some() {
         return 1;
     }
     let Some(name) = items.name_of(stack.item_id) else {
@@ -99,6 +102,33 @@ pub fn max_stack_for_stack(
     } else {
         64
     }
+}
+
+/// The stack override is authoritative; catalog definitions remain immutable.
+#[must_use]
+pub fn max_damage_for_stack(
+    item_facts: &crate::item_components::ItemFactsTable,
+    items: &crate::items::ItemRegistry,
+    stack: &crate::ItemStack,
+) -> Option<i32> {
+    if stack.is_empty() {
+        return None;
+    }
+    stack
+        .extended()
+        .max_damage
+        .or_else(|| {
+            item_facts
+                .facts_for_stack(stack, items)
+                .and_then(|facts| facts.max_damage)
+        })
+        .and_then(|value| i32::try_from(value).ok())
+        .filter(|value| *value > 0)
+        .or_else(|| {
+            items
+                .name_of(stack.item_id)
+                .and_then(|item| max_tool_damage_for_path(item.path()))
+        })
 }
 
 #[must_use]

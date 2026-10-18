@@ -11,12 +11,12 @@
 use super::map_event;
 use crate::bindings::exports::solaris::plugin::events::{
     ClientSelectionOutcome, ClientViewOutcome, Event, LoaderItemGrantFailure,
-    LoaderItemGrantOutcome, ViewFailure, ViewRequestKind,
+    LoaderItemGrantOutcome, ViewFailure,
 };
 use crate::bindings::solaris::plugin::client_presentation::ViewFieldValue;
 use mc_script::{
-    ScriptClientViewFailure, ScriptClientViewField, ScriptClientViewRequestKind, ScriptEventKind,
-    ScriptLoaderItemGrantFailure, ScriptPlayerId,
+    ScriptClientViewFailure, ScriptClientViewField, ScriptEventKind, ScriptLoaderItemGrantFailure,
+    ScriptPlayerId,
 };
 
 /// The one connection every case reports on.
@@ -149,22 +149,6 @@ fn a_grant_result_carries_the_authoritys_own_outcome() {
             LoaderItemGrantOutcome::Refused(LoaderItemGrantFailure::InventoryFull)
         ),
         "the authority's own reason is carried through"
-    );
-}
-
-#[test]
-fn a_routed_view_request_carries_the_events_own_session_and_the_declared_kind() {
-    let kind = ScriptEventKind::LoaderViewRequest {
-        player_id: ScriptPlayerId::new(SESSION),
-        request_kind: ScriptClientViewRequestKind::Settlement,
-    };
-    let Some(Event::LoaderViewRequest(request)) = map_event(&kind) else {
-        panic!("a routed view request is carried");
-    };
-    assert_eq!(request.session, SESSION);
-    assert!(
-        matches!(request.request_kind, ViewRequestKind::Settlement),
-        "the declared kind is the owner's own"
     );
 }
 

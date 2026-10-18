@@ -25,7 +25,10 @@ pub fn replace_file_durable(temporary: &Path, target: &Path) -> io::Result<()> {
 
 /// Persist the parent directory entry after create/rename.
 pub fn sync_parent_dir(path: &Path) -> io::Result<()> {
-    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    let parent = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
     #[cfg(unix)]
     {
         File::open(parent)?.sync_all()
@@ -41,6 +44,19 @@ pub fn sync_parent_dir(path: &Path) -> io::Result<()> {
         let _ = parent;
         Ok(())
     }
+}
+
+/// Persist every directory entry created by `create_dir_all`, including a
+/// previously unflushed directory left by an interrupted attempt.
+pub fn create_dir_all_durable(path: &Path) -> io::Result<()> {
+    std::fs::create_dir_all(path)?;
+    for directory in path.ancestors() {
+        if directory.as_os_str().is_empty() || directory.parent().is_none() {
+            break;
+        }
+        sync_parent_dir(directory)?;
+    }
+    Ok(())
 }
 
 #[cfg(unix)]

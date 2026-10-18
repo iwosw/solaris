@@ -1,0 +1,81 @@
+// Finite native movement and exclusive physical executor authority.
+interface npc-routes {
+    use types.{block-position, npc-execution-permit};
+    use npcs.{npc-loaded-state, npc-lifecycle};
+    use inventories.{npc-death-cargo-receipt};
+
+    enum npc-executor-mode { observed-physical, remote-physical, parked }
+    enum npc-route-state { prepared, running, blocked, handoff-pending, parked, arrived, cancelled, dead, exhausted }
+    enum npc-route-block-reason { unloaded, stale-geometry, blocked-route, foreign-protection, missing-actor, stale-identity, stale-order, executor-unavailable }
+
+    record npc-route-admission {
+        handle: string,
+        identity-revision: u64,
+        order-revision: u64,
+        dimension: string,
+        waypoints: list<block-position>,
+        max-ticks: u64,
+        reservation-refs: list<string>,
+    }
+    record npc-route-admit { operation-id: string, admission: npc-route-admission }
+    record npc-route-start { operation-id: string, route-ref: string, expected-epoch: u64, cargo-operation-id: option<string> }
+    record npc-route-query { route-ref: string }
+    record npc-route-handoff-request { operation-id: string, route-ref: string, expected-epoch: u64, mode: npc-executor-mode }
+    record npc-route-cancel { operation-id: string, route-ref: string, expected-epoch: u64 }
+    variant npc-route-operation {
+        admit(npc-route-admit),
+        start(npc-route-start),
+        query(npc-route-query),
+        handoff(npc-route-handoff-request),
+        cancel(npc-route-cancel),
+    }
+
+    record npc-route-handoff {
+        snapshot-ref: string,
+        source-epoch: u64,
+        target-epoch: u64,
+        simulation-tick: u64,
+        dimension: string,
+        pose: npc-loaded-state,
+        inventory-revision: u64,
+        inventory-image-hash: string,
+        geometry-hash: string,
+        reservation-refs: list<string>,
+    }
+    record npc-route-arrival {
+        receipt-ref: string,
+        executor-epoch: u64,
+        simulation-tick: u64,
+        dimension: string,
+        pose: npc-loaded-state,
+        inventory-revision: u64,
+        inventory-image-hash: string,
+    }
+    record npc-route-status {
+        route-ref: string,
+        handle: string,
+        entity-uuid: string,
+        entity-id: option<s32>,
+        identity-revision: u64,
+        order-revision: u64,
+        revision: u64,
+        executor-epoch: u64,
+        mode: npc-executor-mode,
+        state: npc-route-state,
+        lifecycle: npc-lifecycle,
+        pose: option<npc-loaded-state>,
+        segment: u16,
+        cursor: u16,
+        blocked-reason: option<npc-route-block-reason>,
+        due-tick: option<u64>,
+        native-ticks: u64,
+        geometry-cells: u32,
+        geometry-hash: string,
+        max-ticks: u64,
+        handoff: option<npc-route-handoff>,
+        arrival: option<npc-route-arrival>,
+        outcome-tick: option<u64>,
+        death-cargo: option<npc-death-cargo-receipt>,
+    }
+    variant npc-route-result { status(npc-route-status) }
+}

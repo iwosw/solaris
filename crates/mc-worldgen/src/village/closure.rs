@@ -244,9 +244,7 @@ pub fn load_village_closure(
                     }
                 }
                 PoolElementSpec::List { .. } => {
-                    return Err(ClosureError::UnsupportedListElement {
-                        pool: pool_id.clone(),
-                    });
+                    return Err(ClosureError::UnsupportedListElement { pool: pool_id });
                 }
             };
             elements.push((u32::try_from(entry.weight).unwrap_or(1), element));
