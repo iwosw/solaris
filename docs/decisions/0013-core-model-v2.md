@@ -3803,6 +3803,11 @@ Login prompts belong to the plugin, not core. The lock is connection-local:
 disconnect preserves player custody and a replacement connection starts locked.
 Unlock follows the existing plugin command journal/acknowledgement boundary;
 configuration-off sessions retain their existing behavior.
+Unlock admission requires the explicit `auth` manifest capability at both guest
+batch conversion and sealed host admission; event subscriptions alone grant no
+unlock authority. Only `solaris-auth` declares this grant in the standard pack.
+The auth component registers no build hook: the native session gate above is
+the sole enforcement path for login-locked gameplay.
 
 Guest password work uses synchronous `password_hash(password)` and
 `password_verify(password, phc)` host imports on the existing plugin worker.

@@ -1458,6 +1458,56 @@ fn public_command_submission_denies_privileged_raw_commands_and_provenance_repla
 }
 
 #[test]
+fn joined_event_without_auth_capability_cannot_unlock_a_session() {
+    let (boundary, endpoint) = script_boundary_pair(nonzero(1), nonzero(2));
+    let manifest =
+        ScriptPluginManifest::new("plain", "Plain", "0.1.0", COMPONENT_PLUGIN_API_VERSION)
+            .subscribe_event("player.joined")
+            .validate()
+            .unwrap();
+    let admission = HostCommandAdmission::from_manifest(&manifest);
+    let mut batch = CommandBatch::new(nonzero(1));
+    let unlock = ScriptCommand::UnlockSession {
+        player_id: ScriptPlayerId::new(7),
+    };
+    assert_eq!(
+        batch.try_push_authorized(unlock.clone(), admission.capabilities()),
+        Err(CommandBatchError::PermissionDenied {
+            capability: ScriptCommandCapabilityKind::Auth,
+        })
+    );
+    // Even a forged guest-side grant cannot override the manifest at admission.
+    batch
+        .try_push_authorized(unlock.clone(), &CommandCapabilities::none().allow_auth())
+        .unwrap();
+    assert!(endpoint.try_submit_plugin_batch(&admission, batch).is_err());
+    assert!(endpoint.try_submit_command(unlock).is_err());
+    assert!(boundary.try_recv_command_for_test().is_none());
+}
+
+#[test]
+fn declared_auth_capability_can_unlock_a_session() {
+    let (boundary, endpoint) = script_boundary_pair(nonzero(1), nonzero(2));
+    let manifest = ScriptPluginManifest::new("auth", "Auth", "0.1.0", COMPONENT_PLUGIN_API_VERSION)
+        .declare_capability("auth")
+        .unwrap()
+        .validate()
+        .unwrap();
+    let admission = HostCommandAdmission::from_manifest(&manifest);
+    let mut batch = CommandBatch::new(nonzero(1));
+    batch
+        .try_push_authorized(
+            ScriptCommand::UnlockSession {
+                player_id: ScriptPlayerId::new(7),
+            },
+            admission.capabilities(),
+        )
+        .unwrap();
+    endpoint.try_submit_plugin_batch(&admission, batch).unwrap();
+    assert!(boundary.try_recv_command_for_test().is_some());
+}
+
+#[test]
 fn sealed_admission_rechecks_manifest_capabilities_and_rejects_the_whole_batch() {
     let (boundary, endpoint) = script_boundary_pair(nonzero(1), nonzero(2));
     let manifest =

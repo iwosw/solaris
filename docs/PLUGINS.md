@@ -78,6 +78,13 @@ tree-cut, mine and replant work). Ordinary interactions, tools such as hoes or
 ignition, environmental simulation and damage are not newly made build hooks.
 Hook-free deployment keeps the direct native path.
 
+With `[auth].require_plugin_login = true`, the native session gate denies
+gameplay until an authentication plugin unlocks that session. `UnlockSession`
+requires the explicit manifest capability `auth`; observing `player.joined`
+alone grants no unlock authority. Only `solaris-auth` in the standard pack
+declares `auth`. It does not register a `before-build` hook: the native login
+gate is the single login-lock enforcement path.
+
 Registered commands are advertised in the actual client Commands tree and
 dispatch to the loaded component. A manifest-owned root takes precedence over
 an otherwise available native root, including its manifest permission in the

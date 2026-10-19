@@ -42,6 +42,7 @@ async fn admit(owner: &str, command: ScriptCommand) -> AdmittedScriptCommand {
             .declare_player_inventory()
             .declare_inventory_menus()
             .declare_zones()
+            .declare_auth()
             .validate()
             .unwrap();
     let admission = HostCommandAdmission::from_manifest(&manifest);

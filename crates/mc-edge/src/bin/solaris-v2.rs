@@ -56,7 +56,7 @@ async fn run(cli: Cli, mut cfg: mc_edge::config::EdgeConfig) -> anyhow::Result<(
 
     let listener = tokio::net::TcpListener::bind(cfg.bind_addr()).await?;
     info!(
-        addr = %cfg.bind_addr(),
+        addr = %listener.local_addr()?,
         name = %cfg.server.name,
         "Solaris is listening (edge v2)"
     );

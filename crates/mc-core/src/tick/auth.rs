@@ -33,18 +33,28 @@ pub(super) fn refuse_input(state: &mut TickState, input: &PlayerInput) -> bool {
                 crate::plugin::route_command(state, connection, command, *permission_level);
             }
         }
-        PlayerInput::Move { .. }
-        | PlayerInput::MoveRotation { .. }
-        | PlayerInput::MoveStatus { .. }
-        | PlayerInput::MoveVehicle { .. } => {
+        // Fence only a real displacement, once per teleport. The client answers every
+        // teleport with accept + its pose, so correcting each input (or an echoed
+        // pose) is a ping-pong that floods the connection until a queue overflows.
+        PlayerInput::Move { position, .. } | PlayerInput::MoveVehicle { position, .. } => {
             if let Some(entity) = state.connections.entity_of(connection)
+                && state
+                    .players
+                    .get(&entity)
+                    .is_some_and(|player| player.awaiting_teleport.is_none())
                 && let Some(slot) = state.entities.slot_of_any(entity)
             {
-                let position = state.entities.pos(slot);
-                let [yaw, pitch, _] = state.entities.rot(slot);
-                state.correct_position(connection, position, yaw, pitch);
+                let home = state.entities.pos(slot);
+                let drift: f64 = (0..3).map(|i| (position[i] - home[i]).powi(2)).sum();
+                // NaN drift compares false; a non-finite pose is fenced like any other.
+                if drift > 1e-6 || !drift.is_finite() {
+                    let [yaw, pitch, _] = state.entities.rot(slot);
+                    state.correct_position(connection, home, yaw, pitch);
+                }
             }
         }
+        // Rotation/status carry no position, so nothing can diverge.
+        PlayerInput::MoveRotation { .. } | PlayerInput::MoveStatus { .. } => {}
         _ => crate::build_precommit::resync_input(state, input),
     }
     true

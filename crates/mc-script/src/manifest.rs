@@ -6,6 +6,7 @@ use super::*;
 pub enum ScriptCommandCapability {
     SpawnEntityType { entity_type: String },
     EntityDamage,
+    Auth,
     PluginStorage,
     StorageBatches,
     InventoryTransfers,
@@ -31,6 +32,7 @@ pub enum ScriptCommandCapability {
 pub enum ScriptCommandCapabilityKind {
     SpawnEntity,
     EntityDamage,
+    Auth,
     PluginStorage,
     StorageBatches,
     InventoryTransfers,
@@ -55,6 +57,7 @@ impl ScriptCommandCapabilityKind {
         match self {
             Self::SpawnEntity => "spawn_entity",
             Self::EntityDamage => "entity_damage",
+            Self::Auth => "auth",
             Self::PluginStorage => "plugin_storage",
             Self::StorageBatches => "storage_batches",
             Self::InventoryTransfers => "inventory_transfers",
@@ -79,6 +82,7 @@ impl ScriptCommandCapabilityKind {
         match self {
             Self::SpawnEntity => "spawn entity type",
             Self::EntityDamage => "entity damage",
+            Self::Auth => "session unlock",
             Self::PluginStorage => "plugin storage",
             Self::StorageBatches => "storage batches",
             Self::InventoryTransfers => "inventory transfer",
@@ -104,6 +108,7 @@ impl ScriptCommandCapabilityKind {
 pub(super) enum RequiredCommandCapability<'a> {
     SpawnEntityType { entity_type: &'a str },
     EntityDamage,
+    Auth,
     PluginStorage,
     StorageBatches,
     InventoryTransfers,
@@ -128,6 +133,7 @@ impl RequiredCommandCapability<'_> {
         match self {
             Self::SpawnEntityType { .. } => ScriptCommandCapabilityKind::SpawnEntity,
             Self::EntityDamage => ScriptCommandCapabilityKind::EntityDamage,
+            Self::Auth => ScriptCommandCapabilityKind::Auth,
             Self::PluginStorage => ScriptCommandCapabilityKind::PluginStorage,
             Self::StorageBatches => ScriptCommandCapabilityKind::StorageBatches,
             Self::InventoryTransfers => ScriptCommandCapabilityKind::InventoryTransfers,
@@ -285,6 +291,7 @@ impl ScriptPluginManifest {
     pub fn declare_capability(self, capability: &str) -> Result<Self, ScriptPluginManifestError> {
         match capability {
             "storage" => Ok(self.declare_plugin_storage()),
+            "auth" => Ok(self.declare_auth()),
             "storage_batches" => Ok(self.declare_storage_batches()),
             "inventory_transfers" => Ok(self.declare_inventory_transfers()),
             "persistent_npcs" => Ok(self.declare_persistent_npcs()),
@@ -399,6 +406,12 @@ impl ScriptPluginManifest {
         if self.preflight_error.is_none() {
             self.push_capability(ScriptCommandCapability::SpawnEntityType { entity_type });
         }
+        self
+    }
+
+    /// Declare authority to unlock native login-locked player sessions.
+    pub fn declare_auth(mut self) -> Self {
+        self.push_capability(ScriptCommandCapability::Auth);
         self
     }
 
@@ -847,6 +860,7 @@ impl ScriptPluginManifest {
                     normalized_capabilities.push(capability);
                 }
                 ScriptCommandCapability::EntityDamage
+                | ScriptCommandCapability::Auth
                 | ScriptCommandCapability::PluginStorage
                 | ScriptCommandCapability::StorageBatches
                 | ScriptCommandCapability::InventoryTransfers
@@ -1003,6 +1017,9 @@ impl ValidatedScriptPluginManifest {
                 }
                 ScriptCommandCapability::EntityDamage => {
                     capabilities = capabilities.allow_entity_damage();
+                }
+                ScriptCommandCapability::Auth => {
+                    capabilities = capabilities.allow_auth();
                 }
                 ScriptCommandCapability::PluginStorage => {
                     capabilities = capabilities.allow_plugin_storage();
@@ -1192,6 +1209,7 @@ fn is_valid_plugin_version(version: &str) -> bool {
 pub struct CommandCapabilities {
     spawn_entity_types: Vec<String>,
     entity_damage: bool,
+    auth: bool,
     plugin_storage: bool,
     storage_batches: bool,
     inventory_transfers: bool,
@@ -1231,6 +1249,11 @@ impl CommandCapabilities {
 
     pub(crate) fn allow_entity_damage(mut self) -> Self {
         self.entity_damage = true;
+        self
+    }
+
+    pub(crate) fn allow_auth(mut self) -> Self {
+        self.auth = true;
         self
     }
 
@@ -1344,6 +1367,7 @@ impl CommandCapabilities {
                 .iter()
                 .any(|allowed| allowed == entity_type),
             RequiredCommandCapability::EntityDamage => self.entity_damage,
+            RequiredCommandCapability::Auth => self.auth,
             RequiredCommandCapability::PluginStorage => self.plugin_storage,
             RequiredCommandCapability::StorageBatches => self.storage_batches,
             RequiredCommandCapability::InventoryTransfers => self.inventory_transfers,

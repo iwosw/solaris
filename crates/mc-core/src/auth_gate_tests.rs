@@ -335,6 +335,72 @@ fn auth_gate_config_off_and_unlock_restore_inventory_and_movement_inputs() {
     }
 }
 
+#[test]
+fn auth_gate_locked_movement_corrects_once_and_never_ping_pongs() {
+    // Regression: every locked Move produced a fresh teleport; the client answers
+    // each teleport with accept + full pose, so the pair flooded the connection
+    // until the client's outbound queue overflowed and it dropped the session.
+    let (mut state, entity) = fixture(true);
+    let slot = state.entities.slot_of(entity).unwrap();
+    let home = state.entities.pos(slot);
+    let corrections = |state: &TickState| {
+        state.outbox[&SESSION]
+            .iter()
+            .filter(|change| matches!(change, PlayerChange::PositionCorrected { .. }))
+            .count()
+    };
+    let moved = |position: [f64; 3]| PlayerInput::Move {
+        connection: SESSION,
+        position,
+        yaw: 30.0,
+        pitch: 10.0,
+        on_ground: true,
+    };
+    // A genuine displacement is corrected once; further poses before the client
+    // confirms are ignored, exactly like unlocked movement while a teleport is pending.
+    apply(&mut state, &[moved([9.0, 81.0, 8.5])]);
+    apply(
+        &mut state,
+        &[moved([9.5, 81.0, 8.5]), moved([10.0, 81.0, 8.5])],
+    );
+    assert_eq!(corrections(&state), 1);
+    let teleport_id = state.players[&entity].awaiting_teleport.unwrap();
+    apply(
+        &mut state,
+        &[PlayerInput::ConfirmTeleport {
+            connection: SESSION,
+            teleport_id,
+        }],
+    );
+    // The client echoes the corrected pose, rotation-only and status packets
+    // follow: nothing diverged, so nothing is sent back.
+    apply(
+        &mut state,
+        &[
+            moved(home),
+            PlayerInput::MoveRotation {
+                connection: SESSION,
+                yaw: 90.0,
+                pitch: 0.0,
+                on_ground: true,
+            },
+            PlayerInput::MoveStatus {
+                connection: SESSION,
+                on_ground: true,
+            },
+        ],
+    );
+    assert_eq!(
+        corrections(&state),
+        1,
+        "settled client must not be re-teleported"
+    );
+    assert_eq!(state.entities.pos(slot), home);
+    // A later real divergence is fenced again.
+    apply(&mut state, &[moved([9.0, 81.0, 8.5])]);
+    assert_eq!(corrections(&state), 2);
+}
+
 #[tokio::test]
 async fn auth_gate_only_declared_login_roots_reach_plugin_without_echo() {
     let (mut state, _) = tokio::task::spawn_blocking(|| fixture(true)).await.unwrap();

@@ -120,14 +120,24 @@ fn an_unlock_names_the_exact_session_without_a_lookup() {
             &PluginLimits::default(),
         )
         .expect("staged");
+    let capabilities = mc_script::ScriptPluginManifest::new(
+        "auth",
+        "Auth",
+        "0.1.0",
+        mc_script::COMPONENT_PLUGIN_API_VERSION,
+    )
+    .declare_capability("auth")
+    .unwrap()
+    .validate()
+    .unwrap()
+    .to_command_capabilities();
     let commands = to_script_batch(
         batch,
         NonZeroUsize::new(4).expect("non-zero"),
         &NoSessions,
-        // Unlock carries no capability, exactly as disconnect does.
-        &CommandCapabilities::none(),
+        &capabilities,
     )
-    .expect("unlock needs no lookup and no grant");
+    .expect("unlock needs the auth grant but no lookup");
     assert_eq!(
         commands.commands(),
         [ScriptCommand::UnlockSession {

@@ -778,7 +778,6 @@ impl ScriptCommand {
             Self::SendChatMessage { .. }
             | Self::BroadcastChatMessage { .. }
             | Self::DisconnectPlayer { .. }
-            | Self::UnlockSession { .. }
             | Self::OpenClientView { .. }
             | Self::PresentClientView { .. }
             | Self::CloseClientView { .. }
@@ -790,6 +789,7 @@ impl ScriptCommand {
                 Some(RequiredCommandCapability::SpawnEntityType { entity_type })
             }
             Self::DamageEntity { .. } => Some(RequiredCommandCapability::EntityDamage),
+            Self::UnlockSession { .. } => Some(RequiredCommandCapability::Auth),
             Self::PluginStorageGet { .. }
             | Self::PluginStorageCompareAndSwap { .. }
             | Self::PluginStorageDelete { .. } => Some(RequiredCommandCapability::PluginStorage),
