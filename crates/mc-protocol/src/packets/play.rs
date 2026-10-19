@@ -35,8 +35,10 @@ mod component_security_tests;
 mod copied_components;
 mod crafter;
 mod damage_event;
+mod dialog;
 pub use boss_event::{BossOperation, ClientboundBossEvent};
 pub use crafter::ServerboundContainerSlotStateChanged;
+pub use dialog::{ClientboundClearDialog, ClientboundShowDialog, ServerboundCustomClickAction};
 mod entity_sync_26_1_2;
 #[cfg(test)]
 mod item_admission_tests;

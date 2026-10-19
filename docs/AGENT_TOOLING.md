@@ -28,8 +28,8 @@ Typed-option constraints (fail closed with exit 2 on violation):
   `loader-live`. The directory must already exist; it is used as-is.
 - `--windowed` requires `--client native`.
 - `--client native` is enabled only for `survival`, `inventory`, `entities`,
-  `core-client`, `native-lifecycle`, `logical-native`, `native-scale`, and
-  `title-connect`. Other profiles fail before launching Java.
+  `core-client`, `native-lifecycle`, `logical-native`, `native-scale`,
+  `title-connect`, and `dialogs`. Other profiles fail before launching Java.
 - `--release` only changes `build`; every other profile ignores it.
 - `--timeout-seconds N` overrides the scenario default where the backend
   honors it (`core-client`/`inventory` 600 s, `loader-live` 600 s,
@@ -59,6 +59,7 @@ never success.
 | `standard-pack` | plugins | Rebuilds and byte-verifies the explicit first-party `standard-pack` sibling via `../solaris-default-plugins/tools/run_integration.py`; `SOLARIS_DEFAULT_PLUGINS_ROOT` selects that checkout. `--real-client` adds the sibling graphical `/money` scenario under Xvfb. |
 | `installer` | release | Installer self-test backend |
 | `survival` | real-client | One shared Python MCP mine/pickup/place scenario, Java (default) or windowless native. `python3 -m tools.harness run survival --client native` |
+| `dialogs` | real-client | Native server-driven dialog (`--client native`; `--windowed` adds screenshots): the server runs with `SOLARIS_DIALOG_PROBE=1`, the client types the text input, steps the slider, flips the checkbox, presses Submit, and the server log must show the exact typed payload. Requires `SOLARIS_SERVER_BINARY`. |
 | `title-connect` | real-client | Native Title screen type-address+name, Connect, disconnect-back-to-Title (`--client native`; `--windowed` adds screenshots). Requires `SOLARIS_SERVER_BINARY` (reuses the survival-built server). |
 | `core-client` | real-client | Server/own-chat continuity subset only (Java default, native subset). The receipt explicitly excludes Wasm, economy, and Loader-required rejection evidence. |
 | `inventory` | real-client | Shared crafting/cursor/selection probe (Java default, native, or named `run scenario inventory-client --client java`). Ordinary slot clicks, no `minecraft_run_scenario` in the probe. |

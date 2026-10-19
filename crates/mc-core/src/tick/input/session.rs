@@ -196,6 +196,7 @@ pub(in crate::tick) fn join(
     crate::scoreboard::sync_join(state, *connection);
     crate::effects::sync_join(state, id);
     crate::advancements::sync_join(state, id);
+    crate::dialog::probe::offer(state, *connection);
     let raining = state.weather.0 != crate::commands::Weather::Clear;
     state.push_player(
         *connection,

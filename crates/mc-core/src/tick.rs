@@ -4607,6 +4607,11 @@ fn apply_inputs<'a>(
                 connection,
                 message,
             } => input::social::chat(state, (connection, message)),
+            PlayerInput::DialogClick {
+                connection,
+                id,
+                payload,
+            } => crate::dialog::route_click(state, *connection, id, payload.as_ref(), changes),
             PlayerInput::Command {
                 connection,
                 command,

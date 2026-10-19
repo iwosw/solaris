@@ -338,6 +338,12 @@ def run_title_connect(ctx: ProfileContext) -> dict[str, Any]:
 
     return title_connect.run(ctx)
 
+def run_dialogs(ctx: ProfileContext) -> dict[str, Any]:
+    """Server-driven dialog round trip (show_dialog -> custom_click_action) on the native client."""
+    from .backends import dialogs
+
+    return dialogs.run(ctx)
+
 def run_core_client(ctx: ProfileContext) -> dict[str, Any]:
     from .backends import client_probes
 
@@ -676,6 +682,11 @@ PROFILES: dict[str, dict[str, Any]] = {
         "scope": "real-client",
         "description": "Native Title screen type-address+name, Connect, disconnect-back-to-Title (--client native, windowed for screenshots)",
         "run": run_title_connect,
+    },
+    "dialogs": {
+        "scope": "real-client",
+        "description": "Native server-driven dialog: show_dialog with text/slider/checkbox inputs, submit, exact payload at the server (--client native, windowed for screenshots)",
+        "run": run_dialogs,
     },
     "core-client": {
         "scope": "real-client",

@@ -2803,6 +2803,8 @@ fn armor_stand_equipment_and_stored_pose_project_to_vanilla_packets_and_clear_sl
 
 #[path = "cooldown_tests.rs"]
 mod cooldown_tests;
+#[path = "dialog_tests.rs"]
+mod dialog_tests;
 
 #[test]
 fn native_note_event_installs_state_before_protocol_07_and_is_viewer_owned() {

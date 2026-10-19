@@ -254,6 +254,14 @@ pub enum PlayerInput {
         /// Trusted edge authorization captured when this input was admitted.
         permission_level: u8,
     },
+    /// A `custom_click_action` from a server-driven dialog ([`crate::dialog`]).
+    /// `id` is the canonical `namespace:path` action id; `payload` is the
+    /// client-built NBT (untrusted: owners re-validate in the tick).
+    DialogClick {
+        connection: ConnectionId,
+        id: String,
+        payload: Option<mc_nbt::Tag>,
+    },
     /// Trusted stdin source; has op level four and no entity.
     ConsoleCommand(crate::command_console::ConsoleCommand),
     SeenAdvancements {
@@ -318,6 +326,7 @@ impl PlayerInput {
             | Self::RequestStats { connection }
             | Self::LeaveBed { connection }
             | Self::Chat { connection, .. }
+            | Self::DialogClick { connection, .. }
             | Self::Command { connection, .. } => *connection,
             #[cfg(test)]
             Self::TestGive { connection, .. } => *connection,
@@ -779,6 +788,12 @@ pub enum PlayerChange {
         /// JSON text component, or a literal label (as for scoreboard text).
         title: String,
     },
+    /// Show this inline dialog (`Dialog.DIRECT_CODEC` NBT from [`crate::dialog::Dialog::into_tag`]).
+    ShowDialog {
+        dialog: mc_nbt::Tag,
+    },
+    /// Close whatever dialog the client is showing.
+    ClearDialog,
     MenuClosed {
         window: u8,
     },

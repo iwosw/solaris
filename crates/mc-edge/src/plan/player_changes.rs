@@ -11,18 +11,19 @@ use mc_protocol::codec::Identifier;
 use mc_protocol::packets::play::{
     AttributeId, AttributeModifierOperation, BlockChangedAck, BlockUpdate, ClientboundAwardStats,
     ClientboundBlockEntityData, ClientboundBlockEvent, ClientboundChangeDifficulty,
-    ClientboundContainerClose, ClientboundContainerSetContent, ClientboundContainerSetData,
-    ClientboundContainerSetSlot, ClientboundCooldown, ClientboundCustomPayload,
-    ClientboundMerchantOffers, ClientboundMoveVehicle, ClientboundOpenScreen,
-    ClientboundOpenSignEditor, ClientboundPlayerAbilities, ClientboundRecipeBookAdd,
-    ClientboundRemoveEntityEffect, ClientboundRespawn, ClientboundSelectAdvancementsTab,
-    ClientboundSetCursorItem, ClientboundSetEntityData, ClientboundSetExperience,
-    ClientboundSetHealth, ClientboundSystemChat, ClientboundUpdateEntityAttributes,
-    ClientboundUpdateEntityEffect, ENTITY_DATA_AIR_SUPPLY_INDEX, EntityAttributeModifier,
-    EntityAttributeSnapshot, EntityDataValue as WireEntityDataValue, EntityEffectFlags,
-    EntityEvent as WireEntityEvent, GameEvent, LevelEvent, MerchantItemCost, MerchantOffer,
-    MobEffectId, PLAYER_DATA_ABSORPTION_INDEX, PlayDisconnect, PlayerInfoActions, PlayerInfoEntry,
-    PlayerInfoRemove, PlayerInfoUpdate, SetEntityMotion, SynchronizePlayerPosition, pack_block_pos,
+    ClientboundClearDialog, ClientboundContainerClose, ClientboundContainerSetContent,
+    ClientboundContainerSetData, ClientboundContainerSetSlot, ClientboundCooldown,
+    ClientboundCustomPayload, ClientboundMerchantOffers, ClientboundMoveVehicle,
+    ClientboundOpenScreen, ClientboundOpenSignEditor, ClientboundPlayerAbilities,
+    ClientboundRecipeBookAdd, ClientboundRemoveEntityEffect, ClientboundRespawn,
+    ClientboundSelectAdvancementsTab, ClientboundSetCursorItem, ClientboundSetEntityData,
+    ClientboundSetExperience, ClientboundSetHealth, ClientboundShowDialog, ClientboundSystemChat,
+    ClientboundUpdateEntityAttributes, ClientboundUpdateEntityEffect, ENTITY_DATA_AIR_SUPPLY_INDEX,
+    EntityAttributeModifier, EntityAttributeSnapshot, EntityDataValue as WireEntityDataValue,
+    EntityEffectFlags, EntityEvent as WireEntityEvent, GameEvent, LevelEvent, MerchantItemCost,
+    MerchantOffer, MobEffectId, PLAYER_DATA_ABSORPTION_INDEX, PlayDisconnect, PlayerInfoActions,
+    PlayerInfoEntry, PlayerInfoRemove, PlayerInfoUpdate, SetEntityMotion,
+    SynchronizePlayerPosition, pack_block_pos,
 };
 
 use super::{PlannedPacket, ViewerState, per_tick, push_reliable};
@@ -475,6 +476,14 @@ fn plan_change(change: &PlayerChange, viewer: &mut ViewerState, out: &mut Vec<Pl
                 },
             );
         }
+        PlayerChange::ShowDialog { dialog } => push_reliable(
+            out,
+            conn,
+            &ClientboundShowDialog {
+                dialog: dialog.clone(),
+            },
+        ),
+        PlayerChange::ClearDialog => push_reliable(out, conn, &ClientboundClearDialog),
         PlayerChange::MenuClosed { window, .. } => push_reliable(
             out,
             conn,

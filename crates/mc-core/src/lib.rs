@@ -49,6 +49,7 @@ pub mod core;
 mod crafter;
 mod creaking;
 pub(crate) mod debt;
+pub mod dialog;
 pub mod dimensions;
 pub(crate) mod dolphin;
 pub mod effects;

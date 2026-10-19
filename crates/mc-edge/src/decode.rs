@@ -21,15 +21,15 @@ use mc_protocol::packets::play::{
     ServerboundChatCommand, ServerboundChunkBatchReceived, ServerboundClientCommand,
     ServerboundClientInformation, ServerboundClientTickEnd, ServerboundCommandSuggestion,
     ServerboundContainerButtonClick, ServerboundContainerClick, ServerboundContainerClose,
-    ServerboundContainerSlotStateChanged, ServerboundCustomPayload, ServerboundInteract,
-    ServerboundKeepAlive, ServerboundMovePlayerPos, ServerboundMovePlayerPosRot,
-    ServerboundMovePlayerRot, ServerboundMovePlayerStatusOnly, ServerboundMoveVehicle,
-    ServerboundPlaceRecipe, ServerboundPlayerAction, ServerboundPlayerCommand,
-    ServerboundPlayerInput, ServerboundPlayerLoaded, ServerboundRenameItem,
-    ServerboundResourcePack, ServerboundSeenAdvancements, ServerboundSelectTrade,
-    ServerboundSetBeacon, ServerboundSetCarriedItem, ServerboundSetCreativeModeSlot,
-    ServerboundSignUpdate, ServerboundSwing, ServerboundUseItem, ServerboundUseItemOn,
-    unpack_block_pos,
+    ServerboundContainerSlotStateChanged, ServerboundCustomClickAction, ServerboundCustomPayload,
+    ServerboundInteract, ServerboundKeepAlive, ServerboundMovePlayerPos,
+    ServerboundMovePlayerPosRot, ServerboundMovePlayerRot, ServerboundMovePlayerStatusOnly,
+    ServerboundMoveVehicle, ServerboundPlaceRecipe, ServerboundPlayerAction,
+    ServerboundPlayerCommand, ServerboundPlayerInput, ServerboundPlayerLoaded,
+    ServerboundRenameItem, ServerboundResourcePack, ServerboundSeenAdvancements,
+    ServerboundSelectTrade, ServerboundSetBeacon, ServerboundSetCarriedItem,
+    ServerboundSetCreativeModeSlot, ServerboundSignUpdate, ServerboundSwing, ServerboundUseItem,
+    ServerboundUseItemOn, unpack_block_pos,
 };
 
 /// Rotation of the last rotation-bearing movement frame, for position-only
@@ -215,6 +215,14 @@ pub fn decode_play_frame(
                 command,
                 // The edge overwrites this with the authenticated session level.
                 permission_level: 0,
+            });
+        }
+        ServerboundCustomClickAction::ID => {
+            let p = read::<ServerboundCustomClickAction>(body)?;
+            out.push(PlayerInput::DialogClick {
+                connection: conn,
+                id: p.id.as_str().to_owned(),
+                payload: p.payload,
             });
         }
         ServerboundSelectTrade::ID => {
