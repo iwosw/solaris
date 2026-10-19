@@ -3785,3 +3785,32 @@ crop neighbours/light/hydration and unavailable villager job sites under-apply.
 Evidence and exact covered checks:
 `.analysis/codex-logs/abstract-sim/result.yaml`; these are correctness receipts,
 not exclusive performance or real-client acceptance.
+
+## Native session auth gate — opt-in plugin login (2026-10-19)
+
+`[auth] require_plugin_login` (default `false`) wires `EdgeConfig.auth` into
+`CoreConfig.require_plugin_login` at edge startup. Default behavior is
+unchanged: native sessions play immediately when the flag is off.
+
+When enabled, each new native play session starts locked and fails closed until
+an admitted plugin `unlock_session(session)` command releases that exact session.
+Only plugin-declared roots `register`, `login`, and `changepassword` may run while
+locked; their arguments reach the owning plugin without native chat echo or
+command logging. All other player gameplay input, including other plugin
+commands and public chat, is refused before native or plugin menu dispatch.
+The native lock also fences movement, damage, mob targeting and item pickup.
+Login prompts belong to the plugin, not core. The lock is connection-local:
+disconnect preserves player custody and a replacement connection starts locked.
+Unlock follows the existing plugin command journal/acknowledgement boundary;
+configuration-off sessions retain their existing behavior.
+
+Guest password work uses synchronous `password_hash(password)` and
+`password_verify(password, phc)` host imports on the existing plugin worker.
+The host produces Argon2id v19 PHC strings with OS-random salts (19 MiB, two
+iterations, one lane); malformed PHC and wrong passwords verify false.
+Verification rejects other algorithms, versions or cost parameters before
+performing native work: guest fuel and store limits cannot bound an import.
+Passwords are capped at 256 UTF-8 bytes before KDF work: oversize hashing
+raises a host error, while verification returns false. These imports never
+log arguments and are refused during precommit hooks, like other non-identity
+imports. They do not run on the native tick owner.

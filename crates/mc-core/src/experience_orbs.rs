@@ -205,7 +205,7 @@ pub(crate) fn run(state: &mut TickState, changes: &mut ChangeSet, events: &mut V
         .players
         .iter()
         .filter_map(|(id, player)| {
-            if player.spectator() {
+            if player.spectator() || state.entity_session_locked(*id) {
                 return None;
             }
             let slot = state.entities.slot_of(*id)?;

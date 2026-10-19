@@ -6665,6 +6665,32 @@ fn orb_despawns_at_six_thousand_ticks() {
 }
 
 #[test]
+fn locked_session_collects_no_xp_and_orb_stays() {
+    let (mut state, player, pos) = flat_player_fixture();
+    state.require_plugin_login = true;
+    let connection = state.players[&player].connection;
+    state.locked_sessions.insert(connection);
+    let mut spawned = Vec::new();
+    crate::experience_orbs::award(&mut state, pos, 7, &mut spawned);
+    let slot = state.entities.slot_of(spawned[0]).unwrap();
+    state.entities.set_vel(slot, [0.0; 3]);
+    crate::experience_orbs::run(
+        &mut state,
+        &mut crate::boundary::ChangeSet::default(),
+        &mut Vec::new(),
+    );
+    assert_eq!(state.players[&player].vitals.experience.total, 0);
+    assert!(state.entities.slot_of(spawned[0]).is_some(), "orb stays");
+    state.locked_sessions.remove(&connection);
+    crate::experience_orbs::run(
+        &mut state,
+        &mut crate::boundary::ChangeSet::default(),
+        &mut Vec::new(),
+    );
+    assert_eq!(state.players[&player].vitals.experience.total, 7);
+}
+
+#[test]
 fn orb_pickup_mends_equipment_before_crediting_xp() {
     let (mut state, player, pos) = flat_player_fixture();
     let pickaxe = state

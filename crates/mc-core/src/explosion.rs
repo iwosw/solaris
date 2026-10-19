@@ -245,6 +245,7 @@ fn hurt_entities(
                     .players
                     .get(&body.id)
                     .is_none_or(|player| player.creative() || player.spectator())
+                    || state.entity_session_locked(body.id)
                 {
                     continue;
                 }

@@ -778,6 +778,7 @@ impl ScriptCommand {
             Self::SendChatMessage { .. }
             | Self::BroadcastChatMessage { .. }
             | Self::DisconnectPlayer { .. }
+            | Self::UnlockSession { .. }
             | Self::OpenClientView { .. }
             | Self::PresentClientView { .. }
             | Self::CloseClientView { .. }
@@ -855,6 +856,8 @@ impl ScriptCommand {
                 reason,
                 MAX_SCRIPT_DISCONNECT_REASON_BYTES,
             ),
+            // The session id is the DTO's own u64: nothing further to bound.
+            Self::UnlockSession { .. } => Ok(()),
             Self::SpawnEntity {
                 request_id,
                 entity_type,

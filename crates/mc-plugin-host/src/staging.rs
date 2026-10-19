@@ -98,6 +98,8 @@ fn command_text_bytes(command: &Command) -> usize {
         Command::SendMessage(message) => message.text.len(),
         Command::Broadcast(message) => message.len(),
         Command::DisconnectPlayer(disconnect) => disconnect.reason.len(),
+        // Unlock carries no text: the session id is a u64, not a string.
+        Command::UnlockSession(_) => 0,
         // The correspondence id is bounded by the contract too, but it is the key
         // and the value that carry the plugin's data, so those are what counts
         // against the batch.

@@ -17,7 +17,7 @@
 //! message passing. Remaining shared locks on the tick path are the plugin
 //! precommit authorization/session boundaries (`build_precommit.rs`).
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -261,6 +261,9 @@ struct CoreInner {
     plugin_packages: Vec<mc_script::PluginPackage>,
     plugin_stats: Arc<crate::plugin::PluginStats>,
     build_gate: crate::build_precommit::Gateway,
+    /// Fail-closed edge projection: only tick-observed unlocked sessions pass.
+    require_plugin_login: bool,
+    unlocked_sessions: Arc<parking_lot::RwLock<BTreeSet<ConnectionId>>>,
 }
 
 fn load_dimension_state(
@@ -454,6 +457,7 @@ fn load_dimension_state(
         i32::from(config.simulation_distance),
         config.player_outbox_cap,
     );
+    tick_state.require_plugin_login = config.require_plugin_login;
     tick_state.config_view_distance = i32::from(config.view_distance);
     tick_state.dimension = dimension;
     tick_state.tick = recovered_tick;
@@ -880,7 +884,9 @@ impl Core {
             })
             .map_err(|err| CoreError::Storage(err.to_string()))?;
 
-        // Tick thread owns TickState; inputs drain each tick.
+        // Only known unlocked sessions pass the edge fence; a connection not
+        // processed by the tick yet must never inherit administrative access.
+        let unlocked_sessions = Arc::new(parking_lot::RwLock::new(BTreeSet::new()));
         let channels = TickChannels {
             checkpoint_every: checkpoint_every.max(1),
             input_rx,
@@ -892,6 +898,7 @@ impl Core {
             work_tx,
             journal_budget,
             generated_busy,
+            unlocked_sessions: Arc::clone(&unlocked_sessions),
             shutdown_rx,
             checkpoint_rx,
         };
@@ -926,6 +933,8 @@ impl Core {
                 plugin_packages,
                 plugin_stats,
                 build_gate,
+                require_plugin_login: config.require_plugin_login,
+                unlocked_sessions,
             }),
         })
     }
@@ -1033,6 +1042,15 @@ impl Core {
     #[must_use]
     pub fn world_spawn(&self) -> [i32; 3] {
         self.inner.world_spawn
+    }
+
+    /// Edge-side effects fail closed until the native tick has observed this
+    /// exact session unlocked. Unknown and not-yet-joined connections are locked
+    /// when authentication is required; configuration-off is unchanged.
+    #[must_use]
+    pub fn session_locked(&self, connection: ConnectionId) -> bool {
+        self.inner.require_plugin_login
+            && !self.inner.unlocked_sessions.read().contains(&connection)
     }
 
     /// Add a remote ticket. Over-budget requests are refused explicitly.
@@ -1409,6 +1427,8 @@ struct TickChannels {
     journal_budget: Arc<JournalBudget>,
     /// A generated-chunk save is queued or running on the journal thread.
     generated_busy: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    /// Edge-visible projection of tick-observed unlocked sessions.
+    unlocked_sessions: Arc<parking_lot::RwLock<BTreeSet<ConnectionId>>>,
     shutdown_rx: std::sync::mpsc::Receiver<()>,
     checkpoint_rx: std::sync::mpsc::Receiver<std::sync::mpsc::Sender<bool>>,
 }
@@ -1547,6 +1567,26 @@ fn tick_loop(mut state: TickState, mut channels: TickChannels) {
                 .outbox
                 .send(drains)
                 .expect("reliable outbox receiver dropped");
+        }
+        if state.require_plugin_login {
+            let mut mirror = channels.unlocked_sessions.write();
+            let worlds = || {
+                std::iter::once(&state).chain(state.other_dimensions.values().map(|world| &**world))
+            };
+            mirror.retain(|connection| {
+                worlds().any(|world| {
+                    world.connections.entity_of(*connection).is_some()
+                        && !world.session_locked(*connection)
+                })
+            });
+            for world in worlds() {
+                mirror.extend(
+                    world
+                        .connections
+                        .all_connections()
+                        .filter(|connection| !world.session_locked(*connection)),
+                );
+            }
         }
         // Broadcast: laggards skip to latest (world state is skippable).
         let mut tick_times = output.times;
@@ -4028,6 +4068,10 @@ mod difficulty_persistence_tests {
 #[cfg(test)]
 #[path = "core_outbox_tests.rs"]
 mod core_outbox_tests;
+
+#[cfg(test)]
+#[path = "core_session_lock_tests.rs"]
+mod core_session_lock_tests;
 
 #[cfg(test)]
 #[path = "core_journal_backpressure_tests.rs"]

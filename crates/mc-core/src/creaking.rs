@@ -26,7 +26,7 @@ pub(crate) fn observed(state: &TickState, slot: EntitySlot) -> bool {
     }
     let pos = state.entities.pos(slot);
     state.players.iter().any(|(id, player)| {
-        if player.creative() || player.spectator() {
+        if player.creative() || player.spectator() || state.session_locked(player.connection) {
             return false;
         }
         let Some(observer) = state.entities.slot_of(*id) else {

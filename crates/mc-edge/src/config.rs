@@ -128,6 +128,11 @@ pub struct AuthSection {
     /// `false` (default): offline mode, no Mojang verification.
     #[serde(default)]
     pub online_mode: bool,
+    /// `false` (default): native sessions play immediately.
+    /// `true`: new native sessions start locked and fail closed until the
+    /// auth plugin unlocks them via `unlock_session`.
+    #[serde(default)]
+    pub require_plugin_login: bool,
 }
 
 /// `[plugins]`: Wasmtime component packages, resolved against the process cwd.
@@ -276,7 +281,7 @@ fn log_unknown_leaves(origin: &str, table: &toml::Table) {
         ),
         ("network", &["bind_address", "port"]),
         ("data", &["world_dir", "seed", "vanilla_data_dir"]),
-        ("auth", &["online_mode"]),
+        ("auth", &["online_mode", "require_plugin_login"]),
         ("plugins", &["directory"]),
         (
             "dashboard",
@@ -305,7 +310,16 @@ mod tests {
         assert_eq!(cfg.server.name, "solaris-edge");
         assert_eq!(cfg.network.port, 25565);
         assert!(!cfg.auth.online_mode);
+        assert!(!cfg.auth.require_plugin_login);
         assert!(!cfg.dashboard.enabled);
+    }
+
+    #[test]
+    fn require_plugin_login_defaults_off_and_parses_on() {
+        let off = EdgeConfig::from_toml("[auth]\nonline_mode = false\n", None).unwrap();
+        assert!(!off.auth.require_plugin_login);
+        let on = EdgeConfig::from_toml("[auth]\nrequire_plugin_login = true\n", None).unwrap();
+        assert!(on.auth.require_plugin_login);
     }
 
     #[test]

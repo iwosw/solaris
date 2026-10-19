@@ -12,7 +12,7 @@
 //! per-connection queues (never skipped; overflow disconnects).
 
 use mc_physics::mth;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use mc_data::statistics::StatType;
 use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
@@ -31,6 +31,8 @@ use crate::intent::{Footprint, Intent, IntentKind, InvClaim, sort_intents};
 use crate::registry::CoreRegistry;
 use crate::world::ChunkWorld;
 
+mod auth;
+pub(crate) use auth::unlock_session;
 mod damage;
 mod elytra;
 mod input;
@@ -44,6 +46,10 @@ mod entity_phase_tests;
 #[cfg(test)]
 #[path = "entity_prephase_tests.rs"]
 mod entity_prephase_tests;
+
+#[cfg(test)]
+#[path = "auth_gate_tests.rs"]
+mod auth_gate_tests;
 
 /// Fixed worker count: derived once from the machine.
 #[must_use]
@@ -291,6 +297,9 @@ pub struct TickState {
     pub(crate) dimension_routes: Vec<crate::dimensions::Dimension>,
     pub entities: EntityStore,
     pub connections: Connections,
+    /// Opt-in native login fence; authorization belongs to the live session.
+    pub(crate) require_plugin_login: bool,
+    pub(crate) locked_sessions: BTreeSet<ConnectionId>,
     /// Player state per player entity (inventory, menus, vitals, mode).
     pub players: HashMap<EntityId, crate::player::PlayerState>,
     /// Recovered offline records by uuid: consumed by Join to restore full
@@ -522,6 +531,8 @@ impl TickState {
             dimension_routes: Vec::new(),
             entities: EntityStore::default(),
             connections: Connections::default(),
+            require_plugin_login: false,
+            locked_sessions: BTreeSet::new(),
             players: HashMap::default(),
             offline_players: HashMap::default(),
             advancement_events: Vec::new(),
@@ -628,6 +639,18 @@ impl TickState {
             settlement_sequence: 0,
             tick_budget: Default::default(),
         }
+    }
+
+    pub(crate) fn session_locked(&self, connection: ConnectionId) -> bool {
+        self.require_plugin_login && self.locked_sessions.contains(&connection)
+    }
+
+    pub(crate) fn entity_session_locked(&self, entity: EntityId) -> bool {
+        self.require_plugin_login
+            && self
+                .players
+                .get(&entity)
+                .is_some_and(|player| self.locked_sessions.contains(&player.connection))
     }
 
     pub(crate) fn next_seq(&mut self, actor: EntityId) -> u32 {
@@ -1374,6 +1397,9 @@ impl TickState {
             }
             let item_id = self.entities.body(item_slot).id;
             let collector_id = self.entities.body(collector_slot).id;
+            if self.entity_session_locked(collector_id) {
+                continue;
+            }
             let item_row = self.entities.row(item_slot).clone();
             if let Some(stack) = item_row.item
                 && let Some(player) = self.players.get_mut(&collector_id)
@@ -4368,6 +4394,9 @@ fn apply_inputs<'a>(
             input::interact::build_preview_fence(fence);
             continue;
         }
+        if auth::refuse_input(state, input) {
+            continue;
+        }
         if let PlayerInput::AuthorizedBuild { authorization } = input {
             crate::build_precommit::apply_authorized(state, authorization, intents);
             continue;
@@ -4748,6 +4777,9 @@ fn tick_players(state: &mut TickState, changes: &mut ChangeSet, intents: &mut Ve
     // Snapshot player entities to avoid borrow issues.
     let players = live_players(state);
     for (_, entity, connection) in players {
+        if state.session_locked(connection) {
+            continue;
+        }
         let Some(slot) = state.entities.slot_of(entity) else {
             continue;
         };
@@ -5738,10 +5770,11 @@ fn run_entity_phase(state: &mut TickState) -> Vec<Intent> {
     let targets: Vec<(EntityId, [f64; 3])> = players
         .iter()
         .filter(|(id, _)| {
-            state
-                .players
-                .get(id)
-                .is_some_and(|player| !player.creative() && !player.spectator())
+            state.players.get(id).is_some_and(|player| {
+                !player.creative()
+                    && !player.spectator()
+                    && !state.session_locked(player.connection)
+            })
         })
         .copied()
         .collect();
@@ -6417,7 +6450,10 @@ fn collect_pickup_intents(state: &TickState, intents: &mut Vec<Intent>) {
     collect_pickup_intents_from(
         state.entities.bodies(),
         state.entities.positions(),
-        state.entities.player_slots(),
+        state
+            .entities
+            .player_slots()
+            .filter(|slot| !state.entity_session_locked(state.entities.body(*slot).id)),
         state.entities.item_slots(),
         &state.seq_counter,
         intents,

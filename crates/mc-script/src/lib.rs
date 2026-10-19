@@ -3345,6 +3345,9 @@ pub enum ScriptCommand {
         player_id: ScriptPlayerId,
         reason: String,
     },
+    UnlockSession {
+        player_id: ScriptPlayerId,
+    },
     SpawnEntity {
         request_id: String,
         actor: ScriptPlayerId,

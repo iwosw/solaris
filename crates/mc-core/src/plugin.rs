@@ -2092,6 +2092,9 @@ fn command_identity(command: &mc_script::ScriptCommand) -> (Option<u64>, String)
         ScriptCommand::CloseInventoryMenu { player_id, menu_id } => {
             (Some(player_id.value()), menu_id.clone())
         }
+        ScriptCommand::UnlockSession { player_id } => {
+            (Some(player_id.value()), "unlock-session".into())
+        }
         ScriptCommand::UpsertZone { zone } => (None, zone.id().into()),
         ScriptCommand::RemoveZone { zone_id } => (None, zone_id.clone()),
         ScriptCommand::ClientSound { player_id, sound } => {

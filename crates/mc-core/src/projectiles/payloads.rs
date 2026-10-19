@@ -795,6 +795,9 @@ fn pearl(
     let Some(owner) = owner_id(state, record) else {
         return;
     };
+    if state.entity_session_locked(owner) {
+        return;
+    }
     let Some(slot) = state.entities.slot_of(owner) else {
         return;
     };

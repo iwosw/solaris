@@ -603,6 +603,9 @@ impl TickState {
         events: &mut Vec<EntityEvent>,
         spawned: &mut Vec<EntityId>,
     ) -> bool {
+        if self.entity_session_locked(self.entities.body(slot).id) {
+            return false;
+        }
         if crate::physical_defense::impact_from_piece(self, slot, piece)
             .is_some_and(|impact| crate::plugin_npcs::absorb_deployed_impact(self, slot, impact))
         {

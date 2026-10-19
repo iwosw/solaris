@@ -158,6 +158,9 @@ fn move_between(
     source.journaled_villagers.remove(&id);
     source.journaled_entity_state.remove(&id);
     if let Some(connection) = connection {
+        if source.locked_sessions.remove(&connection) {
+            destination.locked_sessions.insert(connection);
+        }
         source
             .connections
             .transfer_to(connection, &mut destination.connections);

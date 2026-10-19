@@ -764,6 +764,7 @@ pub(crate) fn resync_input(state: &mut TickState, input: &PlayerInput) {
 /// Packet look belongs to input order, never to a later merge-time repair.
 pub(crate) fn apply_resync(state: &mut TickState, request: &BuildResync) {
     if let CorrectionTarget::Ray { yaw, pitch, .. } = request.target
+        && !state.session_locked(request.connection)
         && let Some(entity) = state.connections.entity_of(request.connection)
         && let Some(slot) = state.entities.slot_of(entity)
     {

@@ -596,6 +596,17 @@ impl<S: HostServices + 'static> Host for InstanceState<S> {
     fn plugin_id(&mut self) -> String {
         self.services().plugin_id().to_owned()
     }
+
+    fn password_hash(&mut self, password: String) -> wasmtime::Result<String> {
+        if !self.allow_import() {
+            return Ok(String::new());
+        }
+        crate::passwords::hash(&password)
+    }
+
+    fn password_verify(&mut self, password: String, phc: String) -> bool {
+        self.allow_import() && crate::passwords::verify(&password, &phc)
+    }
 }
 
 /// Turn a Wasmtime failure into the host's own error, keeping an exhausted

@@ -454,10 +454,11 @@ pub(crate) fn finish_with(
             // this fence before block reads. Only Player-kind rows own `players`
             // entries, so non-player bodies need no map probe.
             let barred = matches!(row.kind, crate::entities::EntityKind::Player { .. })
-                && world
-                    .players
-                    .get(&id)
-                    .is_some_and(|player| player.spectator() || player.vitals.is_dead());
+                && world.players.get(&id).is_some_and(|player| {
+                    player.spectator()
+                        || player.vitals.is_dead()
+                        || world.session_locked(player.connection)
+                });
             if barred {
                 world.portal_contact_stamps[index] = None;
                 continue;

@@ -110,6 +110,22 @@ pub(in crate::tick) fn join(
     state
         .players
         .insert(id, hydrate_player(*connection, offline.as_ref()));
+    if state.require_plugin_login {
+        state.locked_sessions.insert(*connection);
+        if let (Some(player), Some(record)) = (state.players.get_mut(&id), offline.as_ref()) {
+            // Keep custody private until login: returning these stacks now can
+            // overflow a full inventory and expose another player's items.
+            player.inventory_menu.carried = record.carried.clone();
+            player.inventory_menu.grid = record.grid.clone();
+            // Non-crafting menus restore no grid; window zero still has four
+            // input slots. Retain larger grids intact until authenticated close.
+            let slots = player.inventory_menu.grid.len().max(4);
+            player
+                .inventory_menu
+                .grid
+                .resize(slots, mc_data::ItemStack::EMPTY);
+        }
+    }
     if let Some(player) = state.players.get_mut(&id) {
         player.statistics.advance_tick(state.tick);
         player
@@ -127,9 +143,10 @@ pub(in crate::tick) fn join(
     // back through the real `inventory.add`; whatever does not
     // fit spawns as item entities at the player (journaled like
     // any drop). Nothing is merged or lost.
-    if offline
-        .as_ref()
-        .is_some_and(|record| !record.carried.is_empty() || !record.grid.is_empty())
+    if !state.session_locked(*connection)
+        && offline
+            .as_ref()
+            .is_some_and(|record| !record.carried.is_empty() || !record.grid.is_empty())
     {
         let record = offline.as_ref().expect("checked");
         let mut returning = vec![record.carried.clone()];
@@ -256,13 +273,15 @@ pub(in crate::tick) fn leave(
             player.statistics.set_active(false, false, false, false);
             player.warden_warning.set_active(false);
         }
-        let rules = state.registry.item_rules();
-        let effects = state
-            .players
-            .get_mut(&entity)
-            .map(|player| player.close(&rules))
-            .unwrap_or_default();
-        apply_player_effects(state, *connection, entity, effects, changes);
+        if !state.session_locked(*connection) {
+            let rules = state.registry.item_rules();
+            let effects = state
+                .players
+                .get_mut(&entity)
+                .map(|player| player.close(&rules))
+                .unwrap_or_default();
+            apply_player_effects(state, *connection, entity, effects, changes);
+        }
         state.open_containers.remove(&entity);
     }
     // Capture the final player image BEFORE removing the live
@@ -278,6 +297,7 @@ pub(in crate::tick) fn leave(
         state.offline_players.insert(uuid, record);
         state.left_players.push(uuid);
     }
+    state.locked_sessions.remove(connection);
     if let Some(entity) = state.connections.remove_by_connection(*connection) {
         state.sleepers.remove(&entity);
         // `slot_of_any`: a player who leaves while dead must

@@ -32,6 +32,10 @@ pub struct CoreConfig {
     pub vanilla_data_dir: Option<PathBuf>,
     /// Strictly discovered production component package directory supplied by edge.
     pub plugin_directory: Option<PathBuf>,
+    /// `false` (default): native sessions play immediately.
+    /// `true`: new native sessions start locked and fail closed until the
+    /// auth plugin unlocks them. Owned by the AuthGate native gate.
+    pub require_plugin_login: bool,
 }
 
 impl CoreConfig {
@@ -50,6 +54,7 @@ impl CoreConfig {
             checkpoint_every_ticks: 1200,
             vanilla_data_dir: None,
             plugin_directory: None,
+            require_plugin_login: false,
         }
     }
 }

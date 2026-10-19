@@ -161,6 +161,11 @@ fn convert(
             player_id: ScriptPlayerId::new(disconnect.session),
             reason: disconnect.reason,
         }),
+        // Unlock names the exact live connection, like a disconnect does: the
+        // server removes it from its locked set only when still locked.
+        Command::UnlockSession(unlock) => Ok(ScriptCommand::UnlockSession {
+            player_id: ScriptPlayerId::new(unlock.session),
+        }),
         // Storage names no player and needs no lookup: the DTO bounds the key,
         // the value and the correlation id, and the host binds the owner.
         Command::StorageGet(get) => Ok(ScriptCommand::PluginStorageGet {

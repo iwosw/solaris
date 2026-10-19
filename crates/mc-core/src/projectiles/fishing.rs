@@ -179,7 +179,9 @@ fn reel(state: &mut TickState, actor: EntityId, held_slot: usize, rod: &ItemStac
     if !super::weapons::costs_allowed(state, actor, &[], held_slot, wear.as_ref()) {
         return;
     }
-    if let Some(hooked_slot) = hooked_slot {
+    if let Some(hooked_slot) =
+        hooked_slot.filter(|slot| !state.entity_session_locked(state.entities.body(*slot).id))
+    {
         let victim = state.entities.body(hooked_slot).id;
         let at = state.entities.pos(hooked_slot);
         let old = state.entities.vel(hooked_slot);

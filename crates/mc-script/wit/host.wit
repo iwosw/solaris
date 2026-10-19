@@ -14,4 +14,17 @@ interface host {
     /// The plugin id the host bound to this instance. Present for correlation
     /// and for reading its own configuration; it grants nothing.
     plugin-id: func() -> string;
+
+    /// Hash one password with Argon2id and return its PHC string.
+    ///
+    /// Synchronous and host-local: it runs the platform KDF inside the call
+    /// and returns the encoded hash, never logging its argument. Refused in
+    /// hook phases, like every other effect import.
+    password-hash: func(password: string) -> string;
+
+    /// Check one password against its stored PHC hash.
+    ///
+    /// Synchronous and host-local, with the same phase and logging rules as
+    /// `password-hash`. A malformed hash verifies as false, never as an error.
+    password-verify: func(password: string, phc: string) -> bool;
 }

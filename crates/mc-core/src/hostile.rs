@@ -222,10 +222,11 @@ fn admits_target(player: &crate::player::PlayerState) -> bool {
 /// Whether any live player can be targeted this tick, without allocating:
 /// exactly `!player_targets(state).is_empty()`.
 pub(crate) fn has_live_targets(state: &TickState) -> bool {
-    state
-        .players
-        .iter()
-        .any(|(id, player)| admits_target(player) && state.entities.slot_of(*id).is_some())
+    state.players.iter().any(|(id, player)| {
+        admits_target(player)
+            && !state.session_locked(player.connection)
+            && state.entities.slot_of(*id).is_some()
+    })
 }
 
 /// Live players a monster may target: not creative, not spectating.
@@ -233,7 +234,7 @@ fn player_targets(state: &TickState) -> Vec<(EntityId, [f64; 3])> {
     let mut out: Vec<(EntityId, [f64; 3])> = state
         .players
         .iter()
-        .filter(|(_, player)| admits_target(player))
+        .filter(|(_, player)| admits_target(player) && !state.session_locked(player.connection))
         .filter_map(|(id, _)| {
             state
                 .entities

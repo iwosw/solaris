@@ -36,6 +36,15 @@ interface commands {
         reason: string,
     }
 
+    /// Release one locked native session after out-of-band authentication.
+    /// The request names the exact live connection, never a stable identity:
+    /// the server removes it from its locked set only when the login fence is
+    /// enabled and that connection is still locked, and otherwise applies
+    /// nothing. It carries no capability and no answer event.
+    record unlock-session {
+        session: session-id,
+    }
+
     /// One read of this plugin's own durable storage. The host binds the owner;
     /// a plugin cannot name another plugin's key.
     record storage-get {
@@ -507,6 +516,7 @@ interface commands {
         /// A nonempty chat line, at most 4096 UTF-8 bytes, to all online players.
         broadcast(string),
         disconnect-player(disconnect-player),
+        unlock-session(unlock-session),
         /// One timer this plugin owns, scheduled from the tick its callback
         /// observed. The host applies it to the instance's own schedule; the
         /// server never sees it and it needs no capability.

@@ -13,6 +13,10 @@ port = 25565
 # Enable Mojang session authentication for public play.
 # Offline mode cannot authenticate player or operator identities.
 online_mode = false
+# Opt-in native session lock: new sessions stay locked (fail closed,
+# invulnerable and not targetable) until the auth plugin calls `unlock_session`.
+# Login prompts come from the plugin; deploy it before enabling this.
+require_plugin_login = false
 
 [dashboard]
 # Optional read-only operator dashboard; disabled and loopback-only by default.

@@ -44,6 +44,7 @@ pub mod host;
 pub mod instance;
 pub mod limits;
 pub mod package;
+mod passwords;
 pub mod required_features;
 pub mod staging;
 pub mod startup;
@@ -186,8 +187,8 @@ pub use bindings::solaris::plugin::types::LogLevel;
 
 /// The host-side implementation of the contract's imports.
 ///
-/// Imports are only what a callback may do while it runs: log, and read the id
-/// the host bound to the instance. Anything else is a command.
+/// Imports are synchronous worker-local services: bounded diagnostics, plugin
+/// identity, and native password hashing/verification. World effects are commands.
 pub trait HostServices: Send {
     /// One bounded diagnostic line from the guest.
     fn log(&mut self, level: LogLevel, message: &str);
@@ -423,5 +424,8 @@ pub mod bindings {
     wasmtime::component::bindgen!({
         path: "../mc-script/wit",
         world: "plugin",
+        imports: {
+            "solaris:plugin/host/password-hash": trappable,
+        },
     });
 }

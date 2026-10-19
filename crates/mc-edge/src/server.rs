@@ -329,10 +329,17 @@ impl EdgeServer {
         let mut input = body;
         let request = ServerboundCommandSuggestion::decode(&mut input)?;
         anyhow::ensure!(input.is_empty(), "trailing command suggestion data");
+        // Locked sessions render suggestions at level 0: op-list state must
+        // not leak privileged roots to an unauthenticated client.
+        let level = if self.hub.session_locked(id) {
+            0
+        } else {
+            self.admin.session_level(id)
+        };
         let response = crate::command_tree::suggestions(
             request.id,
             &request.command,
-            self.admin.session_level(id),
+            level,
             &self.connections.roster(),
             &self.suggestion_items,
             &self.suggestion_blocks,
@@ -358,12 +365,18 @@ impl EdgeServer {
     }
 
     // Play already resolved the permission for the authoritative input.
+    // A locked (unauthenticated) session must not run any edge-side command
+    // effects: every mutating admin root is fenced here, and anything else
+    // falls through to the native gate, which refuses locked gameplay inputs.
     async fn execute_admin_command(
         &self,
         id: ConnectionId,
         command: &str,
         permission_level: u8,
     ) -> anyhow::Result<bool> {
+        if id != mc_core::command_console::CONNECTION && self.hub.session_locked(id) {
+            return Ok(false);
+        }
         let mut words = command.split_whitespace();
         let root = words.next().unwrap_or_default();
         if self
@@ -517,6 +530,10 @@ impl EdgeServer {
                     self.feedback(id, "No player was found")
                 }
             } else {
+                // A locked session never reaches here: the fence above
+                // returns `Ok(false)`. Username targeting stays as-is so
+                // unlocked operators and the console can manage offline-mode
+                // and not-yet-joined names.
                 let profile = live
                     .as_ref()
                     .map(|s| (s.1, s.2.clone()))
@@ -1293,7 +1310,15 @@ async fn handle_connection(stream: TcpStream, server: Arc<EdgeServer>) -> anyhow
                 }
                 for mut input in inputs.drain(..) {
                     if let PlayerInput::Command { command, permission_level, .. } = &mut input {
-                        *permission_level = server.admin.session_level(id);
+                        // A locked session keeps no edge-cached permission: no
+                        // username or op-list state may escalate it. The fence
+                        // refuses admin roots and the native gate admits only
+                        // login/register roots at level 0.
+                        *permission_level = if server.hub.session_locked(id) {
+                            0
+                        } else {
+                            server.admin.session_level(id)
+                        };
                         match server.execute_admin_command(id, command, *permission_level).await {
                             Ok(true) => continue,
                             Ok(false) => {}
@@ -1838,6 +1863,7 @@ pub fn core_config(cfg: &EdgeConfig) -> mc_core::config::CoreConfig {
     // drops ignore the correct-tool gate.
     core.vanilla_data_dir = Some(cfg.data.vanilla_data_dir.clone());
     core.plugin_directory = cfg.plugins.directory.clone();
+    core.require_plugin_login = cfg.auth.require_plugin_login;
     core
 }
 
@@ -2198,3 +2224,7 @@ mod core_halt_tests;
 #[cfg(test)]
 #[path = "server_view_distance_tests.rs"]
 mod view_distance_tests;
+
+#[cfg(test)]
+#[path = "auth_edge_fence_tests.rs"]
+mod auth_edge_fence_tests;

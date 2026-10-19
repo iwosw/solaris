@@ -39,7 +39,7 @@ pub(crate) fn targets(state: &TickState) -> Vec<(EntityId, [f64; 3])> {
     let mut eligible: HashMap<uuid::Uuid, (EntityId, [f64; 3])> = HashMap::default();
     let mut by_id: HashSet<EntityId> = HashSet::default();
     for (&player_id, player) in &state.players {
-        if player.creative() || player.spectator() {
+        if player.creative() || player.spectator() || state.session_locked(player.connection) {
             continue;
         }
         let Some(player_slot) = state.entities.slot_of(player_id) else {

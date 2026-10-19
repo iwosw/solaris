@@ -124,7 +124,7 @@ pub(crate) fn darkness(state: &mut TickState, pos: [f64; 3], radius: f64) {
     let targets: Vec<_> = state
         .players
         .iter()
-        .filter(|(_, p)| !p.spectator())
+        .filter(|(_, p)| !p.spectator() && !state.session_locked(p.connection))
         .filter_map(|(id, _)| {
             state
                 .entities
@@ -160,7 +160,7 @@ pub(crate) fn vibration(state: &mut TickState, pos: [f64; 3], source: Option<Ent
     if state
         .players
         .get(&source)
-        .is_some_and(|p| p.creative() || p.spectator())
+        .is_some_and(|p| p.creative() || p.spectator() || state.session_locked(p.connection))
     {
         return;
     }

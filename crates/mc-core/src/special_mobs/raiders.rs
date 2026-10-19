@@ -100,7 +100,9 @@ pub(crate) fn run(state: &mut TickState, intents: &mut Vec<Intent>) {
                 EntityKind::Player { .. } => state
                     .players
                     .get(&state.entities.body(s).id)
-                    .is_some_and(|p| !p.creative() && !p.spectator()),
+                    .is_some_and(|p| {
+                        !p.creative() && !p.spectator() && !state.session_locked(p.connection)
+                    }),
                 EntityKind::Mob { type_id } => {
                     row.villager
                         .as_ref()

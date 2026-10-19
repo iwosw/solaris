@@ -158,7 +158,8 @@ pub(crate) fn execute(
         ScriptCommand::PlayerInventoryTransaction { transaction } => Some(transaction.player_id()),
         ScriptCommand::OpenInventoryMenu { player_id, .. }
         | ScriptCommand::CloseInventoryMenu { player_id, .. }
-        | ScriptCommand::ClientSound { player_id, .. } => Some(*player_id),
+        | ScriptCommand::ClientSound { player_id, .. }
+        | ScriptCommand::UnlockSession { player_id } => Some(*player_id),
         _ => None,
     };
     if let Some(session) = session {
@@ -231,6 +232,12 @@ fn execute_local(state: &mut TickState, admitted: AdmittedScriptCommand) -> Opti
             {
                 close_menu(state, connection);
             }
+            None
+        }
+        ScriptCommand::UnlockSession { player_id } => {
+            // Exact-session scoped: the helper removes the lock iff the fence
+            // is enabled and finishes deferred restored custody.
+            crate::tick::unlock_session(state, ConnectionId(player_id.value()));
             None
         }
         ScriptCommand::UpsertZone { .. } => {

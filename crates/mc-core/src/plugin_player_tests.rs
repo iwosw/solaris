@@ -511,6 +511,30 @@ async fn player_effects_route_to_child_world_with_one_global_plugin_authority() 
 }
 
 #[tokio::test]
+async fn unlock_session_removes_the_lock_only_when_the_fence_is_enabled() {
+    for required in [false, true] {
+        let (mut state, _) = fixture();
+        state.require_plugin_login = required;
+        state.locked_sessions.insert(ConnectionId(1));
+        // Journaled plugin command path: admitted through the boundary, then
+        // applied by the native owner.
+        let admitted = admit(
+            "auth",
+            ScriptCommand::UnlockSession {
+                player_id: ScriptPlayerId::new(1),
+            },
+        )
+        .await;
+        assert!(crate::plugin_player::execute(&mut state, admitted).is_none());
+        assert_eq!(
+            state.locked_sessions.contains(&ConnectionId(1)),
+            !required,
+            "config off is a no-op; config on removes the exact session"
+        );
+    }
+}
+
+#[tokio::test]
 async fn unavailable_loader_item_authority_returns_correlated_failure_without_items() {
     let (mut state, actor) = fixture();
     let before = state.players[&actor].inventory.clone();

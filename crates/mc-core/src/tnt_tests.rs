@@ -43,6 +43,42 @@ fn fixture() -> TickState {
 }
 
 #[test]
+fn locked_session_stages_no_blast_damage_or_knockback() {
+    use crate::boundary::{ConnectionId, PlayerInput};
+    let mut state = fixture();
+    let (output, _, _) = run_tick(
+        &mut state,
+        &[PlayerInput::Join {
+            connection: ConnectionId(7),
+            uuid: uuid::Uuid::from_u128(7),
+            name: "locked".into(),
+            permission_level: 0,
+        }],
+    );
+    let _ = output;
+    let player = state.connections.entity_of(ConnectionId(7)).unwrap();
+    let slot = state.entities.slot_of(player).unwrap();
+    state.entities.set_pos(slot, [0.5, 201.0, 0.5]);
+    state.entities.row_mut(slot).protected_until = 0;
+    state.require_plugin_login = true;
+    state.locked_sessions.insert(ConnectionId(7));
+    let health = state.players[&player].vitals.health;
+    crate::explosion::apply(&mut state, None, [0.5, 201.0, 0.5], 4.0, true, None);
+    assert!(
+        state.merge_damage.is_empty(),
+        "locked player stages no blast damage"
+    );
+    let (deaths, _, _, _) = state.commit_merge_effects();
+    assert!(deaths.is_empty());
+    assert_eq!(state.players[&player].vitals.health, health);
+    assert_eq!(state.entities.vel(slot), [0.0; 3]);
+    // Same blast hurts once unlocked: fence is the lock, not the blast.
+    state.locked_sessions.remove(&ConnectionId(7));
+    crate::explosion::apply(&mut state, None, [0.5, 201.0, 0.5], 4.0, true, None);
+    assert!(!state.merge_damage.is_empty());
+}
+
+#[test]
 fn block_prime_is_exactly_once_and_item_prime_never_removes_a_block() {
     let mut state = fixture();
     let tnt = default_block(&state.registry).unwrap();

@@ -493,6 +493,9 @@ pub(crate) fn sync_rider(state: &mut TickState, slot: EntitySlot) {
         return;
     };
     let id = state.entities.body(rider).id;
+    if state.entity_session_locked(id) {
+        return;
+    }
     let old = state.entities.pos(rider);
     let already_mounted = state.entities.row(slot).appearance.passengers.as_slice() == [id];
     state.entities.row_mut(rider).entity_life.mount.vehicle = Some(state.entities.body(slot).id);

@@ -105,6 +105,45 @@ fn offer_uses(state: &TickState, merchant: EntityId) -> i32 {
 }
 
 #[test]
+fn auth_gate_locked_trade_preserves_payment_until_unlock() {
+    let (mut state, player, merchant) = fixture();
+    interact(&mut state, merchant);
+    state.require_plugin_login = true;
+    state.locked_sessions.insert(ConnectionId(1));
+    let before = state.players[&player].clone();
+    run_tick(
+        &mut state,
+        &[PlayerInput::SelectTrade {
+            connection: ConnectionId(1),
+            offer: 0,
+        }],
+    );
+    assert_eq!(state.players[&player].inventory, before.inventory);
+    assert_eq!(state.players[&player].open, before.open);
+    assert_eq!(offer_uses(&state, merchant), 0);
+    state.locked_sessions.remove(&ConnectionId(1));
+    run_tick(
+        &mut state,
+        &[PlayerInput::SelectTrade {
+            connection: ConnectionId(1),
+            offer: 0,
+        }],
+    );
+    let menu = state.players[&player].open.as_ref().unwrap();
+    assert!(!menu.result.is_empty());
+    let click = PlayerInput::ContainerClick {
+        connection: ConnectionId(1),
+        window: menu.window,
+        state_id: menu.state_id,
+        slot: 2,
+        button: 0,
+        mode: ClickMode::Pickup,
+    };
+    run_tick(&mut state, &[click]);
+    assert_eq!(offer_uses(&state, merchant), 1);
+}
+
+#[test]
 fn merchant_titles_keep_native_profession_keys_and_literal_custom_names() {
     let (mut state, _, merchant) = fixture();
     let slot = state.entities.slot_of(merchant).unwrap();

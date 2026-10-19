@@ -110,6 +110,32 @@ fn a_session_target_becomes_a_chat_command() {
     );
 }
 
+#[test]
+fn an_unlock_names_the_exact_session_without_a_lookup() {
+    use mc_plugin_host::bindings::solaris::plugin::commands::UnlockSession;
+    let mut batch = CommandBatch::new();
+    batch
+        .push(
+            Command::UnlockSession(UnlockSession { session: 7 }),
+            &PluginLimits::default(),
+        )
+        .expect("staged");
+    let commands = to_script_batch(
+        batch,
+        NonZeroUsize::new(4).expect("non-zero"),
+        &NoSessions,
+        // Unlock carries no capability, exactly as disconnect does.
+        &CommandCapabilities::none(),
+    )
+    .expect("unlock needs no lookup and no grant");
+    assert_eq!(
+        commands.commands(),
+        [ScriptCommand::UnlockSession {
+            player_id: mc_script::ScriptPlayerId::new(7),
+        }]
+    );
+}
+
 /// A resolver that knows exactly one player, as a live server would.
 struct OneSession(&'static str, u64);
 

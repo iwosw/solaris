@@ -82,7 +82,7 @@ pub use client_presentation::{
 pub use commands::{
     CancelTimer, Command, DisconnectPlayer, InventoryMenu, InventoryMenuSlot,
     InventoryResourceDelta, InventoryStorageTransaction, ListOnlinePlayers, MessageTarget,
-    ScheduleTimer, SendMessage, StorageCas, StorageGet, StorageMutation,
+    ScheduleTimer, SendMessage, StorageCas, StorageGet, StorageMutation, UnlockSession,
 };
 pub use events::{
     ClientSelectionOutcome, ClientSelectionStarted, ClientViewOpened, ClientViewOutcome, Event,
@@ -301,6 +301,16 @@ pub fn disconnect_player(session: types::SessionId, reason: impl Into<String>) -
         session,
         reason: reason.into(),
     })
+}
+
+/// Release one locked native session after out-of-band authentication.
+///
+/// The session is the exact live connection, never a stable identity: the
+/// server removes it from its locked set only when the login fence is enabled
+/// and that connection is still locked, and otherwise applies nothing.
+#[must_use]
+pub fn unlock_session(session: types::SessionId) -> Command {
+    Command::UnlockSession(UnlockSession { session })
 }
 
 /// Read one key of this plugin's own durable storage.
@@ -616,4 +626,35 @@ pub fn log(level: LogLevel, message: &str) {
 #[must_use]
 pub fn plugin_id() -> String {
     host::plugin_id()
+}
+
+/// Hash one password with the host's Argon2id KDF (wasm host only).
+///
+/// Synchronous host call returning the PHC string; never logs its argument.
+/// Panics outside the wasm guest: native unit tests never derive real hashes,
+/// and every live integration runs through the real host function.
+#[must_use]
+pub fn password_hash(password: &str) -> String {
+    #[cfg(target_arch = "wasm32")]
+    return host::password_hash(password);
+
+    #[cfg(not(target_arch = "wasm32"))]
+    let _ = password;
+    #[cfg(not(target_arch = "wasm32"))]
+    panic!("password_hash is a wasm guest host call");
+}
+
+/// Check one password against its stored PHC hash (wasm host only).
+///
+/// A malformed hash verifies as false on the host, never as an error. Panics
+/// outside the wasm guest, exactly as [`password_hash`] does.
+#[must_use]
+pub fn password_verify(password: &str, phc: &str) -> bool {
+    #[cfg(target_arch = "wasm32")]
+    return host::password_verify(password, phc);
+
+    #[cfg(not(target_arch = "wasm32"))]
+    let _ = (password, phc);
+    #[cfg(not(target_arch = "wasm32"))]
+    panic!("password_verify is a wasm guest host call");
 }

@@ -37,10 +37,9 @@ pub(crate) fn target(state: &TickState, slot: EntitySlot) -> Option<EntityId> {
     let target = state.entities.slot_of_uuid(target)?;
     let body = state.entities.body(target);
     (body.alive
-        && state
-            .players
-            .get(&body.id)
-            .is_some_and(|p| !p.creative() && !p.spectator()))
+        && state.players.get(&body.id).is_some_and(|p| {
+            !p.creative() && !p.spectator() && !state.session_locked(p.connection)
+        }))
     .then_some(body.id)
 }
 
@@ -150,7 +149,10 @@ fn looking(state: &TickState, slot: EntitySlot, player: EntityId) -> bool {
     let Some(player_state) = state.players.get(&player) else {
         return false;
     };
-    if player_state.creative() || player_state.spectator() {
+    if player_state.creative()
+        || player_state.spectator()
+        || state.session_locked(player_state.connection)
+    {
         return false;
     }
     let helmet = &player_state.inventory.slots[39];

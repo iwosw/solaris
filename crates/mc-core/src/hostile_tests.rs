@@ -895,3 +895,18 @@ fn has_live_targets_matches_player_targets_presence() {
     state.entities.body_mut(slot).alive = false;
     assert!(!crate::hostile::has_live_targets(&state));
 }
+
+#[test]
+fn locked_session_admits_no_monster_targets_and_unlock_restores() {
+    let (mut state, player, _) = setup(2.0);
+    state.require_plugin_login = true;
+    let connection = state.players[&player].connection;
+    assert!(crate::hostile::has_live_targets(&state));
+    state.locked_sessions.insert(connection);
+    assert!(
+        !crate::hostile::has_live_targets(&state),
+        "locked session is not a live target"
+    );
+    state.locked_sessions.remove(&connection);
+    assert!(crate::hostile::has_live_targets(&state));
+}
