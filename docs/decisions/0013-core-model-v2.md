@@ -3799,6 +3799,10 @@ locked; their arguments reach the owning plugin without native chat echo or
 command logging. All other player gameplay input, including other plugin
 commands and public chat, is refused before native or plugin menu dispatch.
 The native lock also fences movement, damage, mob targeting and item pickup.
+Locked movement is corrected at most once per teleport and only for a pose that
+actually diverges from the server position: clients answer every teleport with
+accept plus their pose, so correcting each input or the echoed pose would be an
+unbounded teleport ping-pong that floods the connection.
 Login prompts belong to the plugin, not core. The lock is connection-local:
 disconnect preserves player custody and a replacement connection starts locked.
 Unlock follows the existing plugin command journal/acknowledgement boundary;
