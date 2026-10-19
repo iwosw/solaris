@@ -242,6 +242,8 @@ fn hydrate_validates_rows_and_keeps_sequence_monotonic() {
                     revision: 1,
                     household_sequence: 0,
                     households: Default::default(),
+                    building_sequence: 0,
+                    buildings: Default::default(),
                     district: None,
                     economy: Default::default(),
                 },
@@ -269,6 +271,8 @@ fn hydrate_validates_rows_and_keeps_sequence_monotonic() {
                 revision: 1,
                 household_sequence: 0,
                 households: Default::default(),
+                building_sequence: 0,
+                buildings: Default::default(),
                 district: None,
                 economy: Default::default(),
             }),
@@ -293,6 +297,8 @@ fn hydrate_validates_rows_and_keeps_sequence_monotonic() {
             revision: 1,
             household_sequence: 0,
             households: Default::default(),
+            building_sequence: 0,
+            buildings: Default::default(),
             district: None,
             economy: Default::default(),
         }),
@@ -311,6 +317,8 @@ fn hydrate_validates_rows_and_keeps_sequence_monotonic() {
             revision: 1,
             household_sequence: 0,
             households: Default::default(),
+            building_sequence: 0,
+            buildings: Default::default(),
             district: None,
             economy: Default::default(),
         }),
@@ -710,6 +718,11 @@ fn sigkill_child_reopen_keeps_identical_records_and_high_water() {
         );
         live.world.set_block(7, 80, 8, foot);
         live.world.set_block(8, 80, 8, head);
+        for x in 3..=5 {
+            for z in 3..=5 {
+                live.world.set_block(x, 79, z, live.registry.states.stone);
+            }
+        }
         let composter = crash_block(&live, "minecraft:composter", &[]);
         live.world.set_block(4, 80, 4, composter);
         live.world.fold_overlay();
@@ -742,6 +755,15 @@ fn sigkill_child_reopen_keeps_identical_records_and_high_water() {
         }
         let settlement = live.settlements.find("killtown").unwrap().id;
         crate::settlements::bind(&mut live, settlement, villager_id).unwrap();
+        crate::settlements::buildings::certify(
+            &mut live,
+            settlement,
+            crate::settlements::buildings::BuildingKind::Workshop(
+                crate::villager::VillagerProfession::Farmer,
+            ),
+            mc_script::ScriptWorldBounds::new([3, 79, 3], [5, 82, 5]).unwrap(),
+        )
+        .expect("bound crash worker has a certified job");
         let family = crate::settlements::households::form(
             &mut live,
             settlement,
@@ -841,6 +863,14 @@ fn sigkill_child_reopen_keeps_identical_records_and_high_water() {
             ([4, 80, 4], composter),
         ] {
             entries.push(JournalEntry::Block { pos, state });
+        }
+        for x in 3..=5 {
+            for z in 3..=5 {
+                entries.push(JournalEntry::Block {
+                    pos: [x, 79, z],
+                    state: live.registry.states.stone,
+                });
+            }
         }
         let mut writer = JournalWriter::open(&dir, 1).expect("writer");
         writer
@@ -949,9 +979,22 @@ fn sigkill_child_reopen_keeps_identical_records_and_high_water() {
         assert_eq!(record.radius, 48);
         assert_eq!(
             record.revision,
-            if record.name == "killtown" { 6 } else { 1 }
+            if record.name == "killtown" { 7 } else { 1 }
         );
     }
+    assert_eq!(
+        records[0].buildings.len(),
+        1,
+        "certificate survives SIGKILL WAL recovery"
+    );
+    assert_eq!(
+        crate::settlements::buildings::job_profession(
+            &reopened.settlements,
+            Some(records[0].id),
+            crate::boundary::BlockPos { x: 4, y: 80, z: 4 },
+        ),
+        Some(crate::villager::VillagerProfession::Farmer),
+    );
     assert_eq!(records[0].name, "killtown");
     assert_eq!(records[1].name, "secondtown");
     assert!(records[1].id.0 > records[0].id.0);

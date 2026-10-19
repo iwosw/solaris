@@ -468,6 +468,8 @@ pub struct TickState {
     pub(crate) generated_entity_initial_scan: bool,
     pub(crate) settlements: crate::settlements::Registry,
     pub(crate) settlement_sequence: u64,
+    /// Per-connection certify-dialog corner marks (transient UI draft, never persisted).
+    pub(crate) settlement_marks: HashMap<ConnectionId, crate::settlements::ui::Marks>,
     pub(crate) tick_budget: crate::tick_budget::Budget,
 }
 
@@ -637,6 +639,7 @@ impl TickState {
             generated_entity_initial_scan: false,
             settlements: Default::default(),
             settlement_sequence: 0,
+            settlement_marks: HashMap::default(),
             tick_budget: Default::default(),
         }
     }

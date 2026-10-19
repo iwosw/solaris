@@ -146,7 +146,12 @@ pub fn reputation(state: &VillagerState, customer: Uuid) -> i32 {
 }
 
 fn unlock(state: &mut VillagerState, registry: &CoreRegistry, level: u8) {
-    let Some(pool) = profession_level_offers_26_1_2(state.data.profession.name(), level) else {
+    let profession = match state.data.profession {
+        VillagerProfession::Miner => VillagerProfession::Toolsmith,
+        VillagerProfession::Lumberjack => VillagerProfession::Fletcher,
+        profession => profession,
+    };
+    let Some(pool) = profession_level_offers_26_1_2(profession.name(), level) else {
         return;
     };
     let mut added = 0;

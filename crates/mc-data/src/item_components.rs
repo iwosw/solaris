@@ -86,6 +86,11 @@ impl ItemFactsTable {
         self.work_recipes.get(id)
     }
 
+    /// Every admitted work recipe in identifier order (settlement production UI).
+    pub fn work_recipes(&self) -> impl Iterator<Item = &crate::recipes::work::WorkRecipe> {
+        self.work_recipes.values()
+    }
+
     #[must_use]
     pub fn from_entries(entries: impl IntoIterator<Item = (Identifier, ItemFacts)>) -> Self {
         Self {

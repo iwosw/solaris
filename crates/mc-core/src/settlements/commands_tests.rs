@@ -86,8 +86,54 @@ fn mutations_require_exact_names_and_uuids_shape() {
     assert!(parse(&["bind"]).is_err());
     assert!(parse(&["bind", "town", "uuid", "extra"]).is_err());
     assert!(parse(&["unbind", "uuid", "extra"]).is_err());
-    assert!(parse(&[]).is_err());
     assert!(parse(&["raze", "town"]).is_err());
+}
+
+#[test]
+fn building_commands_parse_success_and_refusals() {
+    assert_eq!(
+        parse(&[
+            "building", "certify", "house", "0", "64", "0", "4", "66", "4"
+        ])
+        .unwrap(),
+        SettlementCommand::BuildingCertify {
+            kind: "house".into(),
+            min: [0, 64, 0],
+            max: [4, 66, 4],
+        }
+    );
+    assert_eq!(
+        parse(&["building", "upgrade", "4294967297"]).unwrap(),
+        SettlementCommand::BuildingUpgrade { id: 4_294_967_297 }
+    );
+    assert_eq!(
+        parse(&["building", "list"]).unwrap(),
+        SettlementCommand::BuildingList
+    );
+    assert!(parse(&["building"]).is_err());
+    assert!(parse(&["building", "raze"]).is_err());
+    assert!(parse(&["building", "certify", "house", "0", "64", "0", "4", "66"]).is_err());
+    assert!(
+        parse(&[
+            "building", "certify", "house", "0", "64", "0", "4", "66", "4", "extra"
+        ])
+        .is_err()
+    );
+    assert!(
+        parse(&[
+            "building", "certify", "house", "x", "64", "0", "4", "66", "4"
+        ])
+        .is_err()
+    );
+    assert!(parse(&["building", "upgrade"]).is_err());
+    assert!(parse(&["building", "upgrade", "nope"]).is_err());
+    assert!(parse(&["building", "upgrade", "1", "extra"]).is_err());
+    assert!(parse(&["building", "list", "extra"]).is_err());
+    let command = crate::commands::parse("settlement building list", false).unwrap();
+    assert!(matches!(
+        command,
+        crate::commands::Command::Settlement(SettlementCommand::BuildingList)
+    ));
 }
 
 #[test]

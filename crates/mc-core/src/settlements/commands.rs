@@ -61,14 +61,34 @@ pub enum SettlementCommand {
         settlement: String,
         arguments: Vec<String>,
     },
+    BuildingCertify {
+        kind: String,
+        min: [i32; 3],
+        max: [i32; 3],
+    },
+    BuildingUpgrade {
+        id: u64,
+    },
+    BuildingList,
+    /// Open the settlement dialogs (optionally on a named page).
+    Menu {
+        page: Option<String>,
+    },
 }
 
 pub fn parse(args: &[&str]) -> Result<SettlementCommand, CommandError> {
-    let usage: &'static str = "settlement <guide|create|list|info|rename|remove|bind|unbind|relocate|production|commerce|payroll|caravan>";
+    let usage: &'static str = "settlement <guide|create|list|info|rename|remove|bind|unbind|relocate|production|commerce|payroll|caravan|building>";
     let [sub, rest @ ..] = args else {
-        return Err(CommandError::Usage(usage));
+        return Ok(SettlementCommand::Menu { page: None });
     };
     match *sub {
+        "menu" => match rest {
+            [] => Ok(SettlementCommand::Menu { page: None }),
+            [page] => Ok(SettlementCommand::Menu {
+                page: Some((*page).to_owned()),
+            }),
+            _ => Err(CommandError::Usage(usage)),
+        },
         "create" => match rest {
             [name] => Ok(SettlementCommand::Create {
                 name: (*name).to_owned(),
@@ -156,6 +176,30 @@ pub fn parse(args: &[&str]) -> Result<SettlementCommand, CommandError> {
                 arguments: rest[1..].iter().map(|word| (*word).to_owned()).collect(),
             })
         }
+        "building" => match rest {
+            ["certify", kind, x1, y1, z1, x2, y2, z2] => {
+                let parse_triplet = |words: [&str; 3]| -> Result<[i32; 3], CommandError> {
+                    let mut out = [0i32; 3];
+                    for (index, word) in words.iter().enumerate() {
+                        out[index] = word.parse().map_err(|_| CommandError::Usage(usage))?;
+                    }
+                    Ok(out)
+                };
+                let min = parse_triplet([x1, y1, z1])?;
+                let max = parse_triplet([x2, y2, z2])?;
+                Ok(SettlementCommand::BuildingCertify {
+                    kind: (*kind).to_owned(),
+                    min,
+                    max,
+                })
+            }
+            ["upgrade", id] => {
+                let id: u64 = id.parse().map_err(|_| CommandError::Usage(usage))?;
+                Ok(SettlementCommand::BuildingUpgrade { id })
+            }
+            ["list"] => Ok(SettlementCommand::BuildingList),
+            _ => Err(CommandError::Usage(usage)),
+        },
         _ => Err(CommandError::Usage(usage)),
     }
 }

@@ -49,6 +49,11 @@ session-lock fence) and routed by `dialog::route_click` on the owner segment of 
 are ignored. Clients can send any id/payload at any time: re-validate permission, range and state
 in the tick before acting.
 
+Registered owners: `dialog_probe` (test hook) and `settlement` (`settlements::ui`: `/settlement` and
+`/settlement menu [page]`; every click re-resolves the settlement from the `s` payload entry and
+re-checks owner/operator before mutating). Keep forms compact: a vanilla dialog scrolls, but a small
+window at GUI scale 3 shows only ~240 GUI pixels, so put the buttons inside that height.
+
 Wasm plugins do not receive dialog clicks yet (that needs a `solaris:plugin` interface change).
 
 ## Test hook and proof

@@ -33,6 +33,10 @@ pub struct SettlementRecord {
     #[serde(default)]
     pub households: BTreeMap<String, super::households::Household>,
     #[serde(default)]
+    pub building_sequence: u64,
+    #[serde(default)]
+    pub buildings: BTreeMap<super::buildings::BuildingId, super::buildings::Building>,
+    #[serde(default)]
     pub district: Option<super::districts::DistrictPlan>,
     #[serde(default)]
     pub(crate) economy: super::economy::State,
@@ -185,6 +189,14 @@ impl SettlementRecord {
                     + 4 * FIXED
             })
             .sum::<usize>();
+        let buildings = self
+            .buildings
+            .values()
+            .map(|building| {
+                size_of::<super::buildings::Building>()
+                    + building.work_points.capacity() * size_of::<[i32; 3]>()
+            })
+            .sum::<usize>();
         let root = |len: usize, value: usize| tree_root(len, size_of::<String>() + value);
         let roots = root(
             self.households.len(),
@@ -203,6 +215,10 @@ impl SettlementRecord {
             + root(
                 self.economy.caravan.shipments.len(),
                 size_of::<super::caravan::Shipment>(),
+            )
+            + root(
+                self.buildings.len(),
+                size_of::<super::buildings::Building>(),
             );
         self.name.capacity()
             + self.owner.capacity()
@@ -213,6 +229,7 @@ impl SettlementRecord {
             + jobs
             + contracts
             + shipments
+            + buildings
     }
 }
 
@@ -235,6 +252,7 @@ pub fn validate_record(record: &SettlementRecord) -> Result<(), &'static str> {
         return Err("settlement radius must be in 1..=256");
     }
     super::households::validate_record(record)?;
+    super::buildings::validate_record_buildings(record)?;
     if let Some(district) = &record.district {
         super::districts::validate(district)?;
     }
@@ -361,6 +379,8 @@ impl Registry {
             revision: 1,
             household_sequence: 0,
             households: BTreeMap::new(),
+            building_sequence: 0,
+            buildings: BTreeMap::new(),
             district: None,
             economy: super::economy::State::default(),
         };

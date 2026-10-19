@@ -7,6 +7,7 @@
 use super::{Activity, VillagerProfession, VillagerState};
 use crate::boundary::{BlockChange, BlockPos, ChangeSet};
 use crate::entities::EntitySlot;
+use crate::settlements::buildings::{self, BuildingKind};
 use crate::tick::TickState;
 use mc_data::ItemStack;
 
@@ -90,6 +91,10 @@ pub(super) fn work(
         || v.sleeping
         || v.activity != Activity::Work
         || state.tick < v.harvest_at
+        || (v.settlement.is_some()
+            && buildings::building_for_job(state, v).is_none_or(|building| {
+                building.kind != BuildingKind::Workshop(VillagerProfession::Farmer)
+            }))
         || !crate::command_rules::boolean(state, "mob_griefing")
     {
         return;

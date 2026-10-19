@@ -674,6 +674,9 @@ pub(crate) fn route_click(
         .and_then(|rest| rest.split_once('/'));
     match owner_action {
         Some((probe::OWNER, action)) => probe::click(state, connection, action, payload),
+        Some((crate::settlements::ui::OWNER, action)) => {
+            crate::settlements::ui::click(state, connection, action, payload);
+        }
         _ => {
             tracing::debug!(target: "dialog", connection = connection.0, id, "unrouted dialog click")
         }

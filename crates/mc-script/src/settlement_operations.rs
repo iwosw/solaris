@@ -150,9 +150,10 @@ impl ScriptSettlementHouseholdSnapshot {
         Ok(())
     }
 }
-/// One native building certificate bound to a district plan: `kind` names the
-/// certificate family (`structure` or `worksite`), `id` the durable native
-/// structure id, and `purpose` the certified resource id it serves.
+/// One native building certificate: `kind` names the certificate family
+/// (`structure` or `worksite` plugin-ledger certificates bound to a district
+/// plan, or `building` for a player-built native `BuildingId` certificate),
+/// `id` the durable native id, and `purpose` the certified resource id it serves.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 #[non_exhaustive]
@@ -169,7 +170,7 @@ impl ScriptSettlementBuildingRef {
     }
 
     pub fn validate(&self) -> Result<(), ScriptDtoError> {
-        if !matches!(self.kind.as_str(), "structure" | "worksite") {
+        if !matches!(self.kind.as_str(), "structure" | "worksite" | "building") {
             return Err(ScriptDtoError::InvalidBounds);
         }
         validate_structure_id(&self.id)?;

@@ -73,6 +73,8 @@ pub(crate) fn profession_name(profession: Profession) -> &'static str {
         Profession::Shepherd => "пастух",
         Profession::Toolsmith => "инструментальщик",
         Profession::Weaponsmith => "оружейник",
+        Profession::Miner => "шахтёр",
+        Profession::Lumberjack => "лесоруб",
     }
 }
 
@@ -173,7 +175,7 @@ fn key(state: &TickState) -> u64 {
             match poi.kind {
                 PoiKind::Home => 0_i32,
                 PoiKind::Bell => 1,
-                PoiKind::Job(profession) => 2 + profession.profession_id(),
+                PoiKind::Job(profession) => 2 + profession as i32,
             }
             .hash(&mut key);
         }
@@ -360,8 +362,8 @@ fn labels(state: &TickState) -> Vec<SettlementLabel> {
             building
                 .jobs
                 .sort_by(|(left, left_names), (right, right_names)| {
-                    left.profession_id()
-                        .cmp(&right.profession_id())
+                    (*left as u8)
+                        .cmp(&(*right as u8))
                         .then_with(|| left_names.cmp(right_names))
                 });
             for (profession, names) in building.jobs {

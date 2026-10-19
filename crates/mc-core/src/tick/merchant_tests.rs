@@ -144,7 +144,7 @@ fn auth_gate_locked_trade_preserves_payment_until_unlock() {
 }
 
 #[test]
-fn merchant_titles_keep_native_profession_keys_and_literal_custom_names() {
+fn merchant_titles_use_vanilla_look_keys_and_literal_custom_names() {
     let (mut state, _, merchant) = fixture();
     let slot = state.entities.slot_of(merchant).unwrap();
     for profession in VillagerProfession::ALL {
@@ -161,10 +161,15 @@ fn merchant_titles_keep_native_profession_keys_and_literal_custom_names() {
             crate::scoreboard::component(&menu_title(&state, slot, villager)),
             mc_nbt::Tag::Compound(vec![(
                 "translate".into(),
-                mc_nbt::Tag::String(format!("entity.minecraft.villager.{}", profession.name())),
+                mc_nbt::Tag::String(format!(
+                    "entity.minecraft.villager.{}",
+                    profession.title_name()
+                )),
             )]),
         );
     }
+    assert_eq!(VillagerProfession::Miner.title_name(), "toolsmith");
+    assert_eq!(VillagerProfession::Lumberjack.title_name(), "fletcher");
     let name = r#"{"translate":"not.a.profession"}"#;
     Arc::make_mut(&mut state.entities.row_mut(slot).appearance).custom_name = Some(name.into());
     let villager = state.entities.row(slot).villager.as_ref().unwrap();

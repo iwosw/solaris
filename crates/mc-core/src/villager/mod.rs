@@ -13,6 +13,12 @@ mod defense_tests;
 pub(crate) mod doors;
 pub(crate) mod generated;
 pub(crate) mod harvest;
+pub(crate) mod lumber;
+#[cfg(test)]
+mod lumber_tests;
+pub(crate) mod mining;
+#[cfg(test)]
+mod mining_tests;
 pub(crate) use generated::generated_uuid;
 #[cfg(test)]
 mod generated_tests;
@@ -190,9 +196,11 @@ pub enum VillagerProfession {
     Shepherd,
     Toolsmith,
     Weaponsmith,
+    Miner,
+    Lumberjack,
 }
 impl VillagerProfession {
-    pub const ALL: [Self; 15] = [
+    pub const ALL: [Self; 17] = [
         Self::None,
         Self::Armorer,
         Self::Butcher,
@@ -208,6 +216,8 @@ impl VillagerProfession {
         Self::Shepherd,
         Self::Toolsmith,
         Self::Weaponsmith,
+        Self::Miner,
+        Self::Lumberjack,
     ];
     pub fn name(self) -> &'static str {
         [
@@ -226,15 +236,40 @@ impl VillagerProfession {
             "shepherd",
             "toolsmith",
             "weaponsmith",
+            "miner",
+            "lumberjack",
         ][self as usize]
     }
+    /// Vanilla projection shared by merchant titles and Anvil profession ids.
+    pub fn title_name(self) -> &'static str {
+        match self {
+            Self::Miner => Self::Toolsmith.name(),
+            Self::Lumberjack => Self::Fletcher.name(),
+            _ => self.name(),
+        }
+    }
     pub fn from_name(name: &str) -> Option<Self> {
-        Self::ALL
-            .into_iter()
-            .find(|v| v.name() == name.strip_prefix("minecraft:").unwrap_or(name))
+        if let Some(path) = name.strip_prefix("solaris:") {
+            return match path {
+                "miner" => Some(Self::Miner),
+                "lumberjack" => Some(Self::Lumberjack),
+                _ => None,
+            };
+        }
+        if let Some(path) = name.strip_prefix("minecraft:") {
+            if matches!(path, "miner" | "lumberjack") {
+                return None;
+            }
+            return Self::ALL.into_iter().find(|v| v.name() == path);
+        }
+        Self::ALL.into_iter().find(|v| v.name() == name)
     }
     pub const fn profession_id(self) -> i32 {
-        self as i32
+        match self {
+            Self::Miner => Self::Toolsmith as i32,
+            Self::Lumberjack => Self::Fletcher as i32,
+            _ => self as i32,
+        }
     }
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -310,6 +345,9 @@ pub struct VillagerState {
     pub home_dimension: String,
     pub meeting_point_dimension: String,
     pub inventory: [Option<ItemStack>; 8],
+    /// Durable extraction cursors share the entity's inventory/WAL after-image.
+    pub(crate) mining_progress: mining::Progress,
+    pub(crate) lumber_progress: lumber::Progress,
     pub food_level: i32,
     /// Vanilla Age: negative baby growth, positive breeding cooldown.
     pub age: i32,
@@ -386,6 +424,8 @@ impl Default for VillagerState {
             home_dimension: "minecraft:overworld".into(),
             meeting_point_dimension: "minecraft:overworld".into(),
             inventory: std::array::from_fn(|_| None),
+            mining_progress: mining::Progress::default(),
+            lumber_progress: lumber::Progress::default(),
             food_level: 0,
             age: 0,
             last_restock: 0,

@@ -1184,3 +1184,57 @@ fn settlement_nearest_binding_is_bounded_and_preserves_owner_checks() {
         "no target outside eight blocks"
     );
 }
+
+#[test]
+fn settlement_building_commands_select_executor_town_and_enforce_owner() {
+    let (mut state, alice, bob) = fixture();
+    let alice_slot = state.entities.slot_of(alice).unwrap();
+    state.entities.set_pos(alice_slot, [-0.5, 80.0, -0.5]);
+    // Unknown kinds and bad coordinates refuse at parse; execution is never
+    // reached and nothing is created.
+    assert!(parse("settlement building certify castle 0 80 0 4 82 4", true).is_ok());
+    assert!(parse("settlement building certify house 0 80", true).is_err());
+    assert!(parse("settlement building upgrade nope", true).is_err());
+    assert!(parse("settlement building list extra", true).is_err());
+    command(&mut state, alice, "settlement create town");
+    let town = state.settlements.find("town").unwrap().id;
+    // Bob starts at x=10 (fixture) inside the default 48-block sphere: move
+    // him far outside before his list, so no settlement contains him.
+    let bob_slot = state.entities.slot_of(bob).unwrap();
+    state.entities.set_pos(bob_slot, [200.0, 80.0, 0.0]);
+    command(&mut state, bob, "settlement building list");
+    let queue = &state.outbox[&ConnectionId(2)];
+    assert!(
+        queue.iter().any(|change| matches!(
+            change,
+            PlayerChange::Chat { message, .. }
+                if message == "No settlement contains your position."
+        )),
+        "outsiders select no settlement"
+    );
+    // Strangers cannot certify in Alice's town even standing inside it.
+    state.entities.set_pos(bob_slot, [-0.5, 80.0, -0.5]);
+    command(
+        &mut state,
+        bob,
+        "settlement building certify house -4 80 -4 4 82 4",
+    );
+    let record = state.settlements.get(town).unwrap();
+    assert!(record.buildings.is_empty(), "strangers certify nothing");
+    // Alice's own certify reaches the helper (empty dirt volume reports the
+    // native missing-requirements error, not an authorization refusal).
+    command(
+        &mut state,
+        alice,
+        "settlement building certify house -4 80 -4 4 82 4",
+    );
+    let queue = &state.outbox[&ConnectionId(1)];
+    assert!(
+        queue.iter().any(|change| matches!(
+            change,
+            PlayerChange::Chat { message, .. }
+                if !message.contains("Only the owner")
+        )),
+        "owner passes authorization"
+    );
+}

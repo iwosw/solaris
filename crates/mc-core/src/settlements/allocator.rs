@@ -466,7 +466,7 @@ pub(crate) fn confirm_profession(
 ) -> bool {
     matches!(
         state.world.block_at(job.x, job.y, job.z).and_then(|id| cache.kind(id)),
-        Some(PoiKind::Job(p)) if p == profession
+        Some(PoiKind::Job(p)) if p == workstation_profession(profession)
     ) && !cache.claimed(
         owner,
         Poi {
@@ -474,6 +474,14 @@ pub(crate) fn confirm_profession(
             kind: PoiKind::Job(profession),
         },
     )
+}
+
+fn workstation_profession(profession: Profession) -> Profession {
+    match profession {
+        Profession::Miner => Profession::Toolsmith,
+        Profession::Lumberjack => Profession::Fletcher,
+        _ => profession,
+    }
 }
 
 pub(crate) fn clear_pois(v: &mut VillagerState) {
@@ -875,26 +883,30 @@ fn acquire(
     let body = state.entities.body(slot);
     let (owner, half_width, height) = (body.id, body.half_width, body.height);
     let scope = housing_scope(state, v.settlement);
-    if let HousingScope::Bound { anchor, radius } = scope
-        && matches!(kind, PoiKind::Job(_))
-    {
-        // Settlement jobs use the settlement's loaded POIs, not the vanilla
-        // 48-block sensor window. Reuse the same candidate buffer and scope
-        // predicate; do not scan unrelated loaded settlements.
+    if matches!(scope, HousingScope::Bound { .. }) && matches!(kind, PoiKind::Job(_)) {
+        // Only certified slots are settlement jobs. Work-point lists are
+        // bounded at certification; never rescan the settlement radius here.
         cache.candidates.clear();
-        for x in anchor[0].saturating_sub_unsigned(radius).div_euclid(16)
-            ..=anchor[0].saturating_add_unsigned(radius).div_euclid(16)
-        {
-            for z in anchor[2].saturating_sub_unsigned(radius).div_euclid(16)
-                ..=anchor[2].saturating_add_unsigned(radius).div_euclid(16)
-            {
-                let Some(entry) = cache.chunks.get(&ChunkPos { x, z }) else {
+        if let Some(record) = v.settlement.and_then(|id| state.settlements.get(id)) {
+            for building in record.buildings.values() {
+                let Some(profession) = building.kind.profession() else {
                     continue;
                 };
-                for &poi in &entry.pois {
-                    if let PoiKind::Job(profession) = poi.kind
-                        && (!traded(v) || profession == v.data.profession)
-                        && scope_allows(scope, poi.pos)
+                if traded(v) && profession != v.data.profession {
+                    continue;
+                }
+                for &[x, y, z] in building
+                    .work_points
+                    .iter()
+                    .take(super::buildings::job_slots(building.kind, building.level))
+                {
+                    let poi = Poi {
+                        pos: BlockPos { x, y, z },
+                        kind: PoiKind::Job(profession),
+                    };
+                    if state.world.block_at(x, y, z).is_some_and(|id| {
+                        cache.kind(id) == Some(PoiKind::Job(workstation_profession(profession)))
+                    }) && scope_allows(scope, poi.pos)
                         && !cache.claimed(owner, poi)
                     {
                         cache.candidates.push((distance(pos, centre(poi.pos)), poi));
@@ -1170,6 +1182,7 @@ fn validate_changed_claims(state: &mut TickState, cache: &mut PoiCache) -> usize
                 world: &state.world,
                 registry: &state.registry,
                 dimension: state.dimension,
+                settlements: &state.settlements,
             };
             let v = state
                 .entities
@@ -1246,6 +1259,7 @@ struct PoiCtx<'a> {
     world: &'a crate::world::ChunkWorld,
     registry: &'a std::sync::Arc<CoreRegistry>,
     dimension: crate::dimensions::Dimension,
+    settlements: &'a super::Registry,
 }
 
 impl PoiCtx<'_> {
@@ -1354,7 +1368,28 @@ impl PoiCtx<'_> {
         }
         if let Some(pos) = v.job_site {
             let geometry = self.geometry(cache, &mut v.poi_validation, 2, pos);
-            let kind = geometry.block.and_then(|id| cache.kind(id));
+            let mut uncertified = false;
+            let mut kind = geometry.block.and_then(|id| cache.kind(id));
+            if v.settlement.is_some() {
+                let certified =
+                    super::buildings::job_profession(self.settlements, v.settlement, pos);
+                uncertified = certified.is_none();
+                kind = match (kind, certified) {
+                    (Some(PoiKind::Job(actual)), Some(expected))
+                        if actual == workstation_profession(expected) =>
+                    {
+                        Some(PoiKind::Job(expected))
+                    }
+                    (None, Some(expected)) if geometry.block.is_none() => {
+                        Some(PoiKind::Job(expected))
+                    }
+                    _ => None,
+                };
+                // An absent certificate is not an unloaded workstation.
+                if uncertified {
+                    v.job_site = None;
+                }
+            }
             let valid = match kind {
                 Some(PoiKind::Job(p)) => {
                     (!traded(v) || p == v.data.profession)
@@ -1369,11 +1404,15 @@ impl PoiCtx<'_> {
                 None => geometry.block.is_none(),
                 _ => false,
             };
-            if !valid {
+            if !valid || v.job_site.is_none() {
                 v.job_site = None;
-                lose_profession(v);
+                if !uncertified {
+                    lose_profession(v);
+                }
             }
-        } else if v.job_site.is_none() {
+        } else if v.settlement.is_none() {
+            // Only unbound jobless villagers reset here. Bound residents
+            // keep professions/offers while waiting for certification.
             lose_profession(v);
         }
         // A cleared/replaced memory must not retain a verdict for later reuse.
@@ -1411,6 +1450,7 @@ pub(crate) fn validate_pois(
         world: &state.world,
         registry: &state.registry,
         dimension: state.dimension,
+        settlements: &state.settlements,
     }
     .validate(cache, owner, v);
 }

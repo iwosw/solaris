@@ -104,6 +104,34 @@ fn compound_list(elements: Vec<Tag>) -> Tag {
         elements,
     })
 }
+
+/// Solaris worker cursors ride the runtime compound as compact JSON strings;
+/// the NBT path is cold, so the serde allocation stays off the hot tick.
+/// Absent means default; any present-but-undecodable value fails closed.
+fn progress_to_tag<T: Default + PartialEq + serde::Serialize>(
+    progress: &T,
+    name: &'static str,
+) -> Result<Option<Tag>> {
+    if *progress == T::default() {
+        return Ok(None);
+    }
+    serde_json::to_string(progress)
+        .map(|json| Some(Tag::String(json)))
+        .map_err(|_| VillagerNbtError::Invalid(name))
+}
+
+fn progress_from_tag<T: Default + for<'de> serde::Deserialize<'de>>(
+    runtime: &Fields,
+    name: &'static str,
+) -> Result<T> {
+    match field(runtime, name)? {
+        None => Ok(T::default()),
+        Some(Tag::String(json)) => {
+            serde_json::from_str(json).map_err(|_| VillagerNbtError::Invalid(name))
+        }
+        Some(_) => Err(VillagerNbtError::Invalid(name)),
+    }
+}
 fn tick_value(value: i64, name: &'static str) -> Result<u64> {
     u64::try_from(value).map_err(|_| VillagerNbtError::Invalid(name))
 }
@@ -177,6 +205,9 @@ pub(crate) fn validate_state(state: &VillagerState) -> Result<()> {
     }
     if state.xp < 0 || !(0..=127).contains(&state.food_level) || state.restocks_today < 0 {
         return Err(VillagerNbtError::Invalid("villager counters"));
+    }
+    if state.mining_progress.layer > 2 {
+        return Err(VillagerNbtError::Invalid("SolarisMiningProgress.layer"));
     }
     if ![
         &state.job_site_dimension,
@@ -362,6 +393,8 @@ pub(crate) fn journal_eq(left: &VillagerState, right: &VillagerState) -> bool {
         last_gossip_decay,
         conversion_time,
         conversion_player,
+        mining_progress,
+        lumber_progress,
     )
 }
 
@@ -418,6 +451,8 @@ pub(crate) fn journal_image(state: &VillagerState) -> VillagerState {
         last_gossip_decay: state.last_gossip_decay,
         conversion_time: state.conversion_time,
         conversion_player: state.conversion_player,
+        mining_progress: state.mining_progress.clone(),
+        lumber_progress: state.lumber_progress.clone(),
     }
 }
 
@@ -692,6 +727,21 @@ pub(crate) fn villager_to_fields(
         // NBT Long is a signed carrier; preserve all u64 identity bits.
         runtime.push(("birth_sequence".into(), Tag::Long(sequence as i64)));
     }
+    if let Some(tag) = progress_to_tag(&state.mining_progress, "SolarisMiningProgress")? {
+        runtime.push(("SolarisMiningProgress".into(), tag));
+    }
+    if let Some(tag) = progress_to_tag(&state.lumber_progress, "SolarisLumberProgress")? {
+        runtime.push(("SolarisLumberProgress".into(), tag));
+    }
+    if matches!(
+        state.data.profession,
+        VillagerProfession::Miner | VillagerProfession::Lumberjack
+    ) {
+        runtime.push((
+            "profession".into(),
+            Tag::String(state.data.profession.name().into()),
+        ));
+    }
     if let Some(partner) = state.partner {
         runtime.push(("partner".into(), Tag::Int(partner.0)));
     }
@@ -705,7 +755,7 @@ pub(crate) fn villager_to_fields(
                 ),
                 (
                     "profession".into(),
-                    Tag::String(format!("minecraft:{}", state.data.profession.name())),
+                    Tag::String(format!("minecraft:{}", state.data.profession.title_name())),
                 ),
                 ("level".into(), Tag::Int(i32::from(state.data.level))),
             ]),
@@ -821,15 +871,19 @@ pub(crate) fn villager_from_fields(
     let mut state = VillagerState::default();
     if let Some(tag) = field(fields, "VillagerData")? {
         let data = compound(tag, "VillagerData")?;
+        let profession_name = string(data, "profession", "minecraft:none")?;
+        let profession = VillagerProfession::from_name(profession_name)
+            .ok_or(VillagerNbtError::Invalid("VillagerData.profession"))?;
+        if matches!(
+            profession,
+            VillagerProfession::Miner | VillagerProfession::Lumberjack
+        ) {
+            return Err(VillagerNbtError::Invalid("VillagerData.profession"));
+        }
         state.data = VillagerData {
             kind: VillagerKind::from_name(string(data, "type", "minecraft:plains")?)
                 .ok_or(VillagerNbtError::Invalid("VillagerData.type"))?,
-            profession: VillagerProfession::from_name(string(
-                data,
-                "profession",
-                "minecraft:none",
-            )?)
-            .ok_or(VillagerNbtError::Invalid("VillagerData.profession"))?,
+            profession,
             level: u8::try_from(integer(data, "level", 1)?.max(1))
                 .map_err(|_| VillagerNbtError::Invalid("VillagerData.level"))?,
         };
@@ -873,6 +927,17 @@ pub(crate) fn villager_from_fields(
         .map(|tag| compound(tag, "solaris:VillagerRuntime"))
         .transpose()?
         .unwrap_or(&[]);
+    if let Some(tag) = field(runtime, "profession")? {
+        state.data.profession = match tag {
+            Tag::String(role) if role == "miner" => VillagerProfession::Miner,
+            Tag::String(role) if role == "lumberjack" => VillagerProfession::Lumberjack,
+            _ => {
+                return Err(VillagerNbtError::Invalid(
+                    "solaris:VillagerRuntime.profession",
+                ));
+            }
+        };
+    }
     state.wandering = boolean(runtime, "wandering_trader", false)?;
     state.despawn_at = match field(runtime, "despawn_at")? {
         Some(Tag::Long(at)) => Some(tick_value(*at, "despawn_at")?),
@@ -1040,6 +1105,8 @@ pub(crate) fn villager_from_fields(
     if field(runtime, "partner")?.is_some() {
         state.partner = Some(EntityId(integer(runtime, "partner", 0)?));
     }
+    state.mining_progress = progress_from_tag(runtime, "SolarisMiningProgress")?;
+    state.lumber_progress = progress_from_tag(runtime, "SolarisLumberProgress")?;
     if field(fields, "ConversionTime")?.is_some() {
         state.conversion_time = Some(integer(fields, "ConversionTime", -1)?);
     }

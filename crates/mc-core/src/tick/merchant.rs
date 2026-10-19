@@ -28,7 +28,7 @@ fn menu_title(
     }
     format!(
         r#"{{"translate":"entity.minecraft.villager.{}"}}"#,
-        villager.data.profession.name()
+        villager.data.profession.title_name()
     )
 }
 

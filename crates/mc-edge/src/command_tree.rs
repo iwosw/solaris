@@ -80,6 +80,14 @@ const ROOTS: &[(&str, u8)] = &[
 const SETTLEMENT_HELP: &[(&str, &str)] = &[
     ("guide", "Step-by-step in-game settlement tutorial."),
     (
+        "menu",
+        "Open the settlement dialogs (also: /settlement alone). Pages: main, buildings, certify, residents, production, settings.",
+    ),
+    (
+        "building",
+        "Certify or upgrade player-built buildings: list | certify <kind> <x1 y1 z1 x2 y2 z2> | upgrade <id>.",
+    ),
+    (
         "create",
         "Found a settlement here; optional radius 1-256 (default 48).",
     ),
@@ -123,6 +131,7 @@ const SETTLEMENT_HELP: &[(&str, &str)] = &[
 pub(crate) const SETTLEMENT_GUIDE: &str = concat!(
     "Settlements / Поселения — quick start:\n",
     "1. Stand at your town centre: /settlement create Oak (optional radius 1-256; default 48).\n",
+    "   Then /settlement (or /settlement menu) opens the dialogs: buildings (certify/upgrade), residents & jobs, production orders, settings.\n",
     "2. Place beds and workstations: composter=Farmer, lectern=Librarian, barrel=Fisherman; /help settlement lists all jobs.\n",
     "3. Keep the village loaded: adults take free stations during day ticks 2000-8999, within 48 blocks via a walkable path. Nitwits never work; traded villagers keep their profession.\n",
     "4. Stand next to a villager: /settlement bind Oak (nearest within 8 blocks). /settlement unbind releases the nearest; optional native UUID targets one explicitly. Villagers work without binding; bound villagers search inside the town.\n",
@@ -941,6 +950,32 @@ pub(crate) fn tree(op_level: u8, plugins: &[(String, u8)]) -> ClientboundCommand
 
 fn settlement_tree(t: &mut Tree, root: i32) {
     t.literal(root, "guide", true);
+    let menu = t.literal(root, "menu", true);
+    t.argument(
+        menu,
+        "page",
+        Parser::String(CommandStringKind::SingleWord),
+        true,
+    );
+    let building = t.literal(root, "building", false);
+    t.literal(building, "list", true);
+    let certify = t.literal(building, "certify", false);
+    let mut previous = t.argument(
+        certify,
+        "kind",
+        Parser::String(CommandStringKind::SingleWord),
+        false,
+    );
+    for (index, name) in ["x1", "y1", "z1", "x2", "y2", "z2"].into_iter().enumerate() {
+        previous = t.argument(previous, name, integer(None, None), index == 5);
+    }
+    let upgrade = t.literal(building, "upgrade", false);
+    t.argument(
+        upgrade,
+        "id",
+        Parser::String(CommandStringKind::SingleWord),
+        true,
+    );
     let word = Parser::String(CommandStringKind::SingleWord);
     let create = t.literal(root, "create", false);
     let name = t.argument(create, "name", word.clone(), true);

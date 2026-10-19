@@ -2896,10 +2896,17 @@ pub(crate) fn tick(state: &mut TickState, changes: &mut ChangeSet) {
             && v.age >= 0
             && !crate::settlements::allocator::traded(&v)
             && distance(pos, centre(job)) <= JOB_SITE_REACH_SQUARED
-            && let Some(PoiKind::Job(profession)) = state
-                .world
-                .block_at(job.x, job.y, job.z)
-                .and_then(|id| cache.kind(id))
+            && let Some(profession) = if v.settlement.is_some() {
+                crate::settlements::buildings::job_profession(&state.settlements, v.settlement, job)
+            } else {
+                state
+                    .world
+                    .block_at(job.x, job.y, job.z)
+                    .and_then(|id| match cache.kind(id) {
+                        Some(PoiKind::Job(profession)) => Some(profession),
+                        _ => None,
+                    })
+            }
             && v.data.profession != profession
             && crate::settlements::allocator::confirm_profession(state, &cache, id, job, profession)
         {
@@ -2995,6 +3002,15 @@ pub(crate) fn tick(state: &mut TickState, changes: &mut ChangeSet) {
                 super::harvest::work(state, slot, &mut v, changes);
                 share_food(state, &cache.food, slot, &mut v, changes)
             });
+            let worker_target = if merchant_busy {
+                None
+            } else {
+                match v.data.profession {
+                    Profession::Miner => super::mining::work(state, slot, &mut v, changes),
+                    Profession::Lumberjack => super::lumber::work(state, slot, &mut v, changes),
+                    _ => None,
+                }
+            };
             let mut short_wander = false;
             let mut exact_target = false;
             let target = if v.activity == Activity::Panic {
@@ -3028,6 +3044,14 @@ pub(crate) fn tick(state: &mut TickState, changes: &mut ChangeSet) {
                 Some(target)
             } else if let Some(partner) = v.partner.and_then(|id| state.entities.slot_of(id)) {
                 Some(at(state.entities.pos(partner)))
+            } else if worker_target.is_some()
+                || (v.activity == Activity::Work
+                    && matches!(
+                        v.data.profession,
+                        Profession::Miner | Profession::Lumberjack
+                    ))
+            {
+                worker_target
             } else {
                 match v.activity {
                     Activity::Work

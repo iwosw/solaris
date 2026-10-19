@@ -708,3 +708,327 @@ fn retained_trade_and_inventory_counts_must_fit_one_to_sixty_four() {
         );
     }
 }
+
+#[test]
+fn miner_progress_persists_through_nbt_and_durable_projection() {
+    use crate::villager::mining::Progress as MiningProgress;
+    let items = mc_data::items::solaris_required_items();
+    let mut state = fixture(&items);
+    state.data.profession = VillagerProfession::Miner;
+    state.mining_progress = MiningProgress {
+        building: 9,
+        revision: 3,
+        bounds: Some(mc_script::ScriptWorldBounds::new([0, 0, 0], [8, 16, 8]).unwrap()),
+        last_open: Some([1, 2, 3]),
+        lane: 2,
+        cell: 42,
+        layer: 2,
+        returning: true,
+    };
+    let fields = villager_to_fields(&items, &state, 100).unwrap();
+    let Tag::Compound(runtime) = field(&fields, "solaris:VillagerRuntime").unwrap().unwrap() else {
+        panic!("runtime compound");
+    };
+    let Some(Tag::String(json)) = runtime
+        .iter()
+        .find_map(|(name, tag)| (name == "SolarisMiningProgress").then_some(tag))
+    else {
+        panic!("SolarisMiningProgress tag");
+    };
+    let value: serde_json::Value = serde_json::from_str(json).unwrap();
+    assert_eq!(
+        value,
+        serde_json::json!({
+            "building": 9,
+            "revision": 3,
+            "bounds": {"min": [0, 0, 0], "max": [8, 16, 8]},
+            "last_open": [1, 2, 3],
+            "lane": 2,
+            "cell": 42,
+            "layer": 2,
+            "returning": true,
+        })
+    );
+    // Default lumber progress stays absent; no backward-compat placeholders.
+    assert!(
+        runtime
+            .iter()
+            .all(|(name, _)| name != "SolarisLumberProgress"),
+        "default lumber progress must not emit a tag"
+    );
+    let loaded = villager_from_fields(&items, &fields, 100).unwrap();
+    assert_eq!(loaded, state);
+    assert_eq!(loaded.mining_progress, state.mining_progress);
+    // The durable projection retains the cursor and notices changes to it.
+    let image = journal_image(&state);
+    assert!(journal_eq(&state, &image));
+    assert_eq!(image.mining_progress, state.mining_progress);
+    let mut moved = image.clone();
+    moved.mining_progress.cell += 1;
+    assert!(!journal_eq(&moved, &image));
+    // The serde journal/checkpoint image retains progress as well.
+    let journal: VillagerState =
+        serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+    assert_eq!(journal, state);
+}
+
+#[test]
+fn lumberjack_progress_persists_through_nbt_and_durable_projection() {
+    use crate::villager::lumber::Progress as LumberProgress;
+    let items = mc_data::items::solaris_required_items();
+    let mut state = fixture(&items);
+    state.data.profession = VillagerProfession::Lumberjack;
+    state.lumber_progress = LumberProgress {
+        building: 5,
+        revision: 2,
+        cursor: 17,
+        vertical: 2,
+        base: [3, 64, -8],
+        sapling: 11,
+        height: 6,
+        layer: 3,
+        has_target: true,
+        returning: false,
+    };
+    let fields = villager_to_fields(&items, &state, 100).unwrap();
+    let Tag::Compound(runtime) = field(&fields, "solaris:VillagerRuntime").unwrap().unwrap() else {
+        panic!("runtime compound");
+    };
+    let Some(Tag::String(json)) = runtime
+        .iter()
+        .find_map(|(name, tag)| (name == "SolarisLumberProgress").then_some(tag))
+    else {
+        panic!("SolarisLumberProgress tag");
+    };
+    let value: serde_json::Value = serde_json::from_str(json).unwrap();
+    assert_eq!(
+        value,
+        serde_json::json!({
+            "building": 5,
+            "revision": 2,
+            "cursor": 17,
+            "vertical": 2,
+            "base": [3, 64, -8],
+            "sapling": 11,
+            "height": 6,
+            "layer": 3,
+            "has_target": true,
+            "returning": false,
+        })
+    );
+    let loaded = villager_from_fields(&items, &fields, 100).unwrap();
+    assert_eq!(loaded, state);
+    let image = journal_image(&state);
+    assert!(journal_eq(&state, &image));
+    assert_eq!(image.lumber_progress, state.lumber_progress);
+    let mut moved = image.clone();
+    moved.lumber_progress.cursor += 1;
+    assert!(!journal_eq(&moved, &image));
+    let journal: VillagerState =
+        serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+    assert_eq!(journal, state);
+}
+
+#[test]
+fn default_worker_progress_omitted_and_invalid_present_data_fails_closed() {
+    let items = mc_data::items::solaris_required_items();
+    let state = fixture(&items);
+    let fields = villager_to_fields(&items, &state, 100).unwrap();
+    let Tag::Compound(runtime) = field(&fields, "solaris:VillagerRuntime").unwrap().unwrap() else {
+        panic!("runtime compound");
+    };
+    assert!(
+        runtime
+            .iter()
+            .all(|(name, _)| name != "SolarisMiningProgress" && name != "SolarisLumberProgress"),
+        "default worker progress must not emit tags"
+    );
+    let cases: [(&str, Tag); 8] = [
+        ("SolarisMiningProgress", Tag::String("not json".into())),
+        ("SolarisMiningProgress", Tag::String("{}".into())),
+        (
+            "SolarisMiningProgress",
+            Tag::String(
+                r#"{"building":1,"revision":1,"bounds":{"min":[0,0,0],"max":[8,16,8]},"last_open":[1,2,3],"lane":2,"cell":1,"layer":1,"returning":false,"bogus":1}"#
+                    .into(),
+            ),
+        ),
+        ("SolarisMiningProgress", Tag::Int(1)),
+        ("SolarisLumberProgress", Tag::String("not json".into())),
+        ("SolarisLumberProgress", Tag::String("{}".into())),
+        (
+            "SolarisLumberProgress",
+            Tag::String(
+                r#"{"building":1,"revision":1,"cursor":1,"vertical":1,"base":[0,0,0],"sapling":1,"height":1,"layer":1,"has_target":false,"returning":false,"bogus":1}"#
+                    .into(),
+            ),
+        ),
+        ("SolarisLumberProgress", Tag::Int(0)),
+    ];
+    for (index, (key, bad)) in cases.into_iter().enumerate() {
+        let mut bad_fields = fields.clone();
+        let Tag::Compound(runtime) = &mut bad_fields
+            .iter_mut()
+            .find(|(name, _)| name == "solaris:VillagerRuntime")
+            .unwrap()
+            .1
+        else {
+            panic!("runtime compound");
+        };
+        replace(runtime, key, bad);
+        assert!(
+            villager_from_fields(&items, &bad_fields, 100).is_err(),
+            "reject present-but-invalid {key} case {index}"
+        );
+    }
+    // Absent tags still decode to the default cursor.
+    let loaded = villager_from_fields(&items, &fields, 100).unwrap();
+    assert_eq!(loaded.mining_progress, state.mining_progress);
+    assert_eq!(loaded.lumber_progress, state.lumber_progress);
+}
+
+#[test]
+fn worker_anvil_projection_is_vanilla_and_runtime_role_wins_on_import() {
+    let items = mc_data::items::solaris_required_items();
+    for (profession, vanilla, vanilla_id, role) in [
+        (
+            VillagerProfession::Miner,
+            VillagerProfession::Toolsmith,
+            "minecraft:toolsmith",
+            "miner",
+        ),
+        (
+            VillagerProfession::Lumberjack,
+            VillagerProfession::Fletcher,
+            "minecraft:fletcher",
+            "lumberjack",
+        ),
+    ] {
+        let mut state = fixture(&items);
+        state.data.profession = profession;
+        let fields = villager_to_fields(&items, &state, 100).unwrap();
+        let Tag::Compound(data) = field(&fields, "VillagerData").unwrap().unwrap() else {
+            panic!("VillagerData compound");
+        };
+        assert_eq!(
+            field(data, "profession").unwrap(),
+            Some(&Tag::String(vanilla_id.into()))
+        );
+        let Tag::Compound(runtime) = field(&fields, "solaris:VillagerRuntime").unwrap().unwrap()
+        else {
+            panic!("runtime compound");
+        };
+        assert_eq!(
+            field(runtime, "profession").unwrap(),
+            Some(&Tag::String(role.into()))
+        );
+        assert_eq!(
+            villager_from_fields(&items, &fields, 100)
+                .unwrap()
+                .data
+                .profession,
+            profession
+        );
+        let mut vanilla_only = fields.clone();
+        let Tag::Compound(runtime) = &mut vanilla_only
+            .iter_mut()
+            .find(|(key, _)| key == "solaris:VillagerRuntime")
+            .unwrap()
+            .1
+        else {
+            panic!("runtime compound");
+        };
+        runtime.retain(|(key, _)| key != "profession");
+        assert_eq!(
+            villager_from_fields(&items, &vanilla_only, 100)
+                .unwrap()
+                .data
+                .profession,
+            vanilla,
+            "a vanilla import without Solaris runtime must keep its actual vanilla role"
+        );
+        let mut overridden = fields.clone();
+        let Tag::Compound(data) = &mut overridden
+            .iter_mut()
+            .find(|(key, _)| key == "VillagerData")
+            .unwrap()
+            .1
+        else {
+            panic!("VillagerData compound");
+        };
+        replace(
+            data,
+            "profession",
+            Tag::String("minecraft:librarian".into()),
+        );
+        assert_eq!(
+            villager_from_fields(&items, &overridden, 100)
+                .unwrap()
+                .data
+                .profession,
+            profession,
+            "the native runtime role wins over a valid vanilla presentation"
+        );
+        let journal: VillagerState =
+            serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+        assert_eq!(journal.data.profession, profession);
+    }
+}
+
+#[test]
+fn custom_roles_are_rejected_in_vanilla_nbt_and_invalid_runtime_roles_fail_closed() {
+    let items = mc_data::items::solaris_required_items();
+    let state = fixture(&items);
+    let fields = villager_to_fields(&items, &state, 100).unwrap();
+    for name in [
+        "minecraft:miner",
+        "minecraft:lumberjack",
+        "solaris:miner",
+        "solaris:lumberjack",
+        "miner",
+        "lumberjack",
+        "minecraft:archaeologist",
+        "solaris:archaeologist",
+    ] {
+        let mut bad = fields.clone();
+        let Tag::Compound(data) = &mut bad
+            .iter_mut()
+            .find(|(key, _)| key == "VillagerData")
+            .unwrap()
+            .1
+        else {
+            panic!("VillagerData compound");
+        };
+        replace(data, "profession", Tag::String(name.into()));
+        assert!(
+            villager_from_fields(&items, &bad, 100).is_err(),
+            "reject vanilla registry id {name}"
+        );
+    }
+    for bad_role in [
+        Tag::Int(1),
+        Tag::String("unknown".into()),
+        Tag::String("toolsmith".into()),
+        Tag::String("solaris:miner".into()),
+    ] {
+        let mut bad = fields.clone();
+        let Tag::Compound(runtime) = &mut bad
+            .iter_mut()
+            .find(|(key, _)| key == "solaris:VillagerRuntime")
+            .unwrap()
+            .1
+        else {
+            panic!("runtime compound");
+        };
+        replace(runtime, "profession", bad_role);
+        assert!(villager_from_fields(&items, &bad, 100).is_err());
+    }
+    assert_eq!(
+        VillagerProfession::from_name("miner"),
+        Some(VillagerProfession::Miner)
+    );
+    assert_eq!(
+        VillagerProfession::from_name("lumberjack"),
+        Some(VillagerProfession::Lumberjack)
+    );
+}

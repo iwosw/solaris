@@ -164,15 +164,45 @@ fn worker_pos(world: &TickState, worker: Uuid) -> Option<[f64; 3]> {
     Some(world.entities.pos(slot))
 }
 
-/// Live certificate + intact native building. The certificate must be in the
-/// live district plan; its generic owner (`DistrictPlan.owner`) queries the
-/// native ledger, never the town owner.
+/// Player-built certificate (`kind == "building"`): the live record's
+/// production building (`Workshop`/`Mine`/`LumberCamp`) bounds are the
+/// footprint; the station is checked against the live block by [`station_live`].
+fn native_building_facts(
+    world: &TickState,
+    settlement: SettlementId,
+    reference: &ScriptSettlementBuildingRef,
+) -> Result<crate::plugin_structures::BuildingFacts, Failure> {
+    let id = super::buildings::BuildingId(reference.id.parse().map_err(|_| Failure::NotFound)?);
+    let building = world
+        .settlements
+        .get(settlement)
+        .and_then(|record| record.buildings.get(&id))
+        .ok_or(Failure::NotFound)?;
+    if building.kind.profession().is_none()
+        || reference.purpose.strip_prefix("solaris:") != Some(building.kind.name())
+    {
+        return Err(Failure::NotFound);
+    }
+    Ok(crate::plugin_structures::BuildingFacts {
+        dimension: world.dimension.name().to_owned(),
+        footprint: building.bounds,
+        points: Vec::new(),
+        blueprint: None,
+    })
+}
+
+/// Live certificate + intact native building. A plugin-ledger certificate must
+/// be in the live district plan; its generic owner (`DistrictPlan.owner`)
+/// queries the native ledger, never the town owner.
 fn building_facts(
     world: &mut TickState,
     settlement: SettlementId,
     reference: &ScriptSettlementBuildingRef,
 ) -> Result<crate::plugin_structures::BuildingFacts, Failure> {
     reference.validate().map_err(|_| Failure::InvalidRequest)?;
+    if reference.kind == "building" {
+        return native_building_facts(world, settlement, reference);
+    }
     let record = world.settlements.get(settlement).ok_or(Failure::NotFound)?;
     let district = record.district.as_ref().ok_or(Failure::NotFound)?;
     if !district.buildings.iter().any(|bound| {

@@ -1182,6 +1182,9 @@ fn settlement(
                 Err(message) => error(state, connection, message),
             }
         }
+        SettlementCommand::Menu { page } => {
+            crate::settlements::ui::open_menu(state, connection, page.as_deref());
+        }
         SettlementCommand::List => {
             let mut names: Vec<&str> = state
                 .settlements
@@ -1423,6 +1426,37 @@ fn settlement(
                     connection,
                     format!("Native settlement action refused: {failure:?}."),
                 ),
+            }
+        }
+        SettlementCommand::BuildingCertify { kind, min, max } => {
+            match crate::settlements::building_commands::certify(
+                state,
+                executor,
+                actor.as_deref(),
+                operator,
+                kind,
+                *min,
+                *max,
+            ) {
+                Ok(message) => error(state, connection, message),
+                Err(message) => error(state, connection, message),
+            }
+        }
+        SettlementCommand::BuildingUpgrade { id } => {
+            match crate::settlements::building_commands::upgrade(
+                state,
+                actor.as_deref(),
+                operator,
+                *id,
+            ) {
+                Ok(message) => error(state, connection, message),
+                Err(message) => error(state, connection, message),
+            }
+        }
+        SettlementCommand::BuildingList => {
+            match crate::settlements::building_commands::list(state, executor) {
+                Ok(message) => error(state, connection, message),
+                Err(message) => error(state, connection, message),
             }
         }
     }

@@ -330,6 +330,20 @@ Plugin customization exposes `query-settlement` and
 `settlement-changed` notification is introduced. The old settlements package
 is removed from deployment and its S1 live-gate coverage moves to native
 regression tests. S4 also retires its sibling source and remaining package assets.
+Certified buildings persist with the settlement row: `building_sequence: u64`
+and `buildings: BTreeMap<BuildingId, Building>` ride the touched settlement
+post-image and per-record checkpoint row under `serde(default)`, so legacy
+rows decode to an empty map. Building IDs are `(settlement.0 << 32) | local`
+with 32-bit halves; row/WAL validation is shape-only (ID linkage, level
+1..=3, bounded bounds inside the anchor radius, sorted in-bounds work points
+with counts level..=64 for Storage / exactly level for jobs). The allocator's certified
+work-point list is the only job-slot authority; certification never runs at
+row validation time. Upgrade rechecks the reserved bounds; explicit
+same-kind re-certification may expand those bounds while retaining ID/level.
+There is no legacy job authority for empty building maps: an uncertified
+bound job claim is released, while its profession and trade offers survive
+until a certified slot can be acquired. Missing certification alone must not
+erase the resident's profession/offers on later jobless validations.
 Other existing NPC API consumers retain their current interfaces until the
 last consumer is migrated; S1 does not remove unrelated NPC customization.
 
@@ -348,6 +362,7 @@ only the former package's registry/housing/binding scope, not S2–S5 gameplay:
 | Global owner/dimension admission fairness | `overworld_allocator_backlog_cannot_starve_nether_brains`, `allocator_backlog_cannot_zero_brain_guarantees_in_the_same_dimension` |
 | Late dimension activation after a saturated history | `newly_populated_nether_receives_brain_admission_after_overworld_only_history` |
 | Paid brain routing under a full decision batch | `admitted_brain_path_does_not_pay_a_second_decision` |
+| Certified building persistence with settlement row | `nonempty_building_roundtrips_touched_wal_and_checkpoint_row`, `legacy_row_without_buildings_decodes_to_empty_map` |
 
 The remaining complete-deployment catalog gate still checks the six retained
 packages plus the native physical catalog. Town build protection remains
@@ -3840,3 +3855,13 @@ Passwords are capped at 256 UTF-8 bytes before KDF work: oversize hashing
 raises a host error, while verification returns false. These imports never
 log arguments and are refused during precommit hooks, like other non-identity
 imports. They do not run on the native tick owner.
+
+## Settlement extraction workers — miner and lumberjack (2026-10-19)
+
+Miner and lumberjack work is native tick authority like other villager work.
+Their durable excavation and felling cursors (`mining_progress`,
+`lumber_progress`) travel with the villager carry in the same entity/WAL
+after-image; there is no second store. Block breaks and replanting go through
+the journaled `world.set_block` + `ChangeSet` path, deposits through the
+canonical settlement inventory fences. Each work attempt scans a bounded
+number of cells, so per-tick cost does not grow with settlement radius.

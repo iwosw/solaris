@@ -27,6 +27,25 @@ fn settlement_is_native_player_command_with_typed_arguments_and_help() {
     assert!(node(&["settlement", "bind", "settlement"]).executable);
     assert!(node(&["settlement", "unbind"]).executable);
     assert!(node(&["settlement", "create", "name"]).executable);
+    assert!(node(&["settlement", "menu"]).executable);
+    assert!(node(&["settlement", "menu", "page"]).executable);
+    assert!(node(&["settlement", "building", "list"]).executable);
+    assert!(
+        node(&[
+            "settlement",
+            "building",
+            "certify",
+            "kind",
+            "x1",
+            "y1",
+            "z1",
+            "x2",
+            "y2",
+            "z2"
+        ])
+        .executable
+    );
+    assert!(node(&["settlement", "building", "upgrade", "id"]).executable);
     assert!(matches!(
         node(&["settlement", "create", "name", "radius"]).kind,
         CommandNodeKind::Argument {
@@ -75,6 +94,8 @@ fn settlement_is_native_player_command_with_typed_arguments_and_help() {
     let help = help(Some("settlement"), 0, &[]).unwrap();
     for sub in [
         "guide",
+        "menu",
+        "building",
         "create",
         "list",
         "info",

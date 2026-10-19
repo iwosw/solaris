@@ -352,3 +352,7 @@ pub(crate) fn finish_recovery(state: &mut TickState) -> Result<(), CoreError> {
 #[cfg(test)]
 #[path = "persistence_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "building_persistence_tests.rs"]
+mod building_persistence_tests;

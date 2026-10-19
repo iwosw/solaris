@@ -6,6 +6,8 @@ pub use registry::{
 };
 
 pub(crate) mod allocator;
+pub(crate) mod building_commands;
+pub mod buildings;
 mod caravan;
 pub(crate) mod commands;
 mod commerce;
@@ -19,6 +21,7 @@ pub mod districts;
 pub mod households;
 pub(crate) mod persistence;
 pub mod startup;
+pub(crate) mod ui;
 pub(crate) use allocator::tick;
 
 use crate::boundary::EntityId;

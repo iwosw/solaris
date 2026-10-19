@@ -59,6 +59,13 @@ fn distant_claim_fixture() -> (TickState, EntitySlot, BlockPos) {
         )
         .unwrap();
     state.settlement_sequence = sequence;
+    crate::settlements::buildings::certify(
+        &mut state,
+        town,
+        crate::settlements::buildings::BuildingKind::Workshop(Profession::Farmer),
+        mc_script::ScriptWorldBounds::new([56, 200, 7], [58, 203, 9]).unwrap(),
+    )
+    .unwrap();
     state
         .entities
         .row_mut(slot)

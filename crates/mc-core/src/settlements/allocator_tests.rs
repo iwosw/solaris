@@ -328,8 +328,8 @@ fn allocator_rebuilds_member_counts_from_live_columns() {
 fn allocator_scopes_acquisition_to_bound_settlement_radius() {
     let mut state = test_state();
     let slot = villager(&mut state, [8.5, 201.0, 8.5]);
-    // In-settlement workstation vs a closer out-of-settlement one: the bound
-    // villager must skip the closer POI and claim inside its radius.
+    // Certified in-settlement workstation vs a closer uncertified one:
+    // the bound villager must skip the closer POI and claim the building slot.
     let far = block(&state, "minecraft:composter", &[]);
     state.world.set_block(9, 201, 8, far);
     let near = block(&state, "minecraft:composter", &[]);
@@ -347,6 +347,13 @@ fn allocator_scopes_acquisition_to_bound_settlement_radius() {
         )
         .unwrap();
     state.settlement_sequence = sequence;
+    crate::settlements::buildings::certify(
+        &mut state,
+        id,
+        crate::settlements::buildings::BuildingKind::Workshop(Profession::Farmer),
+        mc_script::ScriptWorldBounds::new([13, 200, 7], [15, 203, 9]).unwrap(),
+    )
+    .unwrap();
     state
         .entities
         .row_mut(slot)
