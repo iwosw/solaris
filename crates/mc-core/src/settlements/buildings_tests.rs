@@ -147,6 +147,127 @@ fn roofed_enclosed_house_with_real_bed_certifies() {
 }
 
 #[test]
+fn ordinary_sleep_bed_certifies_without_breeding_headroom() {
+    let mut state = test_state();
+    let id = town(&mut state);
+    let stone = state.registry.states.stone;
+    for x in 3..=7 {
+        for z in 3..=7 {
+            state.world.set_block(x, 203, z, stone);
+            if x == 3 || x == 7 || z == 3 || z == 7 {
+                for y in 201..203 {
+                    state.world.set_block(x, y, z, stone);
+                }
+            }
+        }
+    }
+    let lower = block(&state, "minecraft:oak_door", &[("half", "lower")]);
+    let upper = block(&state, "minecraft:oak_door", &[("half", "upper")]);
+    state.world.set_block(3, 201, 5, lower);
+    state.world.set_block(3, 202, 5, upper);
+    let home = crate::settlements::allocator::tests::bed(&mut state, 5, 5);
+    state.world.fold_overlay();
+    assert!(!crate::settlements::allocator::bed_has_baby_space(
+        &state, home
+    ));
+    let bounds = ScriptWorldBounds::new([3, 200, 3], [7, 203, 7]).unwrap();
+    let result = certify(&mut state, id, BuildingKind::House, bounds);
+    assert!(result.is_ok(), "{result:?}");
+    state.day_time = 18000;
+    let slot = villager(&mut state, [6.0, 201.0, 6.0]);
+    let entity = state.entities.body(slot).id;
+    crate::settlements::bind(&mut state, id, entity).unwrap();
+    for _ in 0..300 {
+        crate::tick::run_tick(&mut state, &[]);
+    }
+    let resident = state.entities.row(slot).villager.as_ref().unwrap();
+    assert_eq!(resident.home, Some(home));
+    assert!(
+        resident.sleeping,
+        "valid low-roof bed must be usable for sleeping"
+    );
+}
+
+#[test]
+fn malformed_bed_pair_does_not_count_as_house_bed() {
+    let mut state = test_state();
+    let id = town(&mut state);
+    let head = block(
+        &state,
+        "minecraft:red_bed",
+        &[("part", "head"), ("facing", "east")],
+    );
+    let foot = block(
+        &state,
+        "minecraft:red_bed",
+        &[("part", "foot"), ("facing", "east")],
+    );
+    // Original village-qa fixture: the east-facing head was west of its foot.
+    state.world.set_block(4, 201, 4, head);
+    state.world.set_block(5, 201, 4, foot);
+    state.world.fold_overlay();
+    let error = certify(&mut state, id, BuildingKind::House, bounds()).unwrap_err();
+    assert!(
+        error
+            .missing
+            .iter()
+            .any(|r| r.description == "beds" && r.found == 0)
+    );
+}
+
+#[test]
+fn roof_intersecting_villagers_die_and_release_membership_not_despawn() {
+    let mut state = test_state();
+    let settlement = town(&mut state);
+    let stone = state.registry.states.stone;
+    let mut ids = Vec::new();
+    for x in [3, 6, 9, 12] {
+        let slot = villager(&mut state, [f64::from(x) + 0.5, 202.0, 4.5]);
+        let entity = state.entities.body(slot).id;
+        crate::settlements::bind(&mut state, settlement, entity).unwrap();
+        ids.push(entity);
+        if x != 12 {
+            // A full station beneath the feet and a roof at eye height,
+            // exactly as the original farmer/lumberjack/sleeper summon cells.
+            state.world.set_block(x, 201, 4, stone);
+            state.world.set_block(x, 203, 4, stone);
+        }
+    }
+    state.world.fold_overlay();
+    assert_eq!(state.settlements.member_count(settlement), 4);
+    let mut intents = Vec::new();
+    crate::contact_hazards::run(&mut state, &mut intents);
+    for (index, &id) in ids.iter().enumerate() {
+        let suffocating = intents.iter().any(|intent| {
+            matches!(
+                intent.kind,
+                crate::intent::IntentKind::DamageEntity {
+                    target,
+                    kind: crate::survival::DamageKind::Suffocation,
+                    ..
+                } if target == id
+            )
+        });
+        assert_eq!(suffocating, index < 3);
+    }
+    for _ in 0..440 {
+        crate::tick::run_tick(&mut state, &[]);
+    }
+    for &id in &ids[..3] {
+        assert!(
+            state.entities.slot_of(id).is_none(),
+            "{id:?} should have died"
+        );
+    }
+    let survivor = state
+        .entities
+        .slot_of(ids[3])
+        .expect("unroofed villager lives");
+    assert_eq!(state.entities.row(survivor).health, 20.0);
+    assert_eq!(state.settlements.member_count(settlement), 1);
+}
+
+#[test]
 fn every_vanilla_workshop_maps_only_its_matching_station() {
     let mut state = test_state();
     let id = town(&mut state);

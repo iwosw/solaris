@@ -311,7 +311,12 @@ pub(crate) fn inspect(
                 }
                 if name.ends_with("_bed")
                     && prop("part", "head")
-                    && super::allocator::bed_has_baby_space(state, BlockPos { x, y, z })
+                    && super::allocator::bed_pair(
+                        &state.world,
+                        &state.registry,
+                        BlockPos { x, y, z },
+                    )
+                    .is_some()
                 {
                     beds += 1;
                 }

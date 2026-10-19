@@ -181,6 +181,137 @@ fn miner_staircase_and_branches_stay_inside_zone_and_one_break_per_attempt() {
 }
 
 #[test]
+fn native_miner_changes_publish_the_same_tick_chunk_afterimage() {
+    let (mut state, slot, v) = fixture(BuildingKind::Mine);
+    state.entities.row_mut(slot).villager = Some(v);
+    state
+        .tickets
+        .insert("miner-publication".into(), (ChunkPos { x: 0, z: 0 }, 0));
+    state.refresh_active_chunks(state.tick);
+    for _ in 0..200 {
+        let revision = state.world.chunk_revision(0, 0);
+        let route_revision = state.world.villager_route_revision(0, 0);
+        let (output, _, _) = crate::tick::run_tick(&mut state, &[]);
+        let Some(change) = output.changes.blocks.iter().find(|change| {
+            change.position == BlockPos { x: 4, y: 200, z: 3 }
+                && change.state == state.registry.states.air
+        }) else {
+            continue;
+        };
+        assert_eq!(state.world.block_at(4, 200, 3), Some(change.state));
+        let snapshot = output
+            .snapshot
+            .chunks
+            .iter()
+            .find(|chunk| chunk.pos == ChunkPos { x: 0, z: 0 })
+            .unwrap();
+        assert_eq!(
+            snapshot.chunk.get_block(4, 200, 3).unwrap().0,
+            change.state,
+            "the client must not receive an old full chunk after the miner's air delta"
+        );
+        assert!(
+            snapshot.revision > revision,
+            "late edits advance the wire revision"
+        );
+        assert!(
+            state.world.villager_route_revision(0, 0) > route_revision,
+            "folding the pending route edits must retain route invalidation"
+        );
+        let entries = crate::core::journal_entries_for_tick(&mut state, &output);
+        let directory = tempfile::tempdir().unwrap();
+        {
+            let mut writer = crate::journal::JournalWriter::open(directory.path(), 1).unwrap();
+            writer.append(1, output.tick, &entries).unwrap();
+        }
+        let batches =
+            crate::journal::read_complete_batches_after(&directory.path().join("journal"), 0)
+                .unwrap();
+        let replay = crate::journal::replay_batches(crate::journal::Replay::default(), &batches);
+        assert_eq!(replay.tick, output.tick);
+        assert_eq!(
+            replay.blocks.get(&(4, 200, 3)),
+            Some(&state.registry.states.air),
+            "the same committed mined afterimage survives a closed writer and disk WAL replay"
+        );
+        return;
+    }
+    panic!("miner never excavated its first staircase floor");
+}
+
+#[test]
+fn surface_mine_uses_clear_headroom_without_digging_outside_certificate() {
+    let (mut state, slot, mut v) = fixture(BuildingKind::Mine);
+    let settlement = v.settlement.unwrap();
+    let building = crate::settlements::buildings::building_for_job(&state, &v)
+        .unwrap()
+        .id;
+    state
+        .settlements
+        .get_mut(settlement)
+        .unwrap()
+        .buildings
+        .get_mut(&building)
+        .unwrap()
+        .bounds
+        .max[1] = v.job_site.unwrap().y;
+    let bounds = crate::settlements::buildings::building_for_job(&state, &v)
+        .unwrap()
+        .bounds;
+    let mut changes = ChangeSet::default();
+    for tick in 0..6 {
+        state.tick = tick * 20;
+        mining::work(&mut state, slot, &mut v, &mut changes);
+    }
+    assert!(
+        !changes.blocks.is_empty(),
+        "surface entrance must start its staircase"
+    );
+    assert!(
+        changes
+            .blocks
+            .iter()
+            .all(|change| change.position.y <= bounds.max[1])
+    );
+    assert!(v.inventory.iter().flatten().any(|stack| stack.count > 0));
+}
+
+#[test]
+fn surface_mine_never_clears_solid_headroom_above_certificate() {
+    let (mut state, slot, mut v) = fixture(BuildingKind::Mine);
+    let settlement = v.settlement.unwrap();
+    let building = crate::settlements::buildings::building_for_job(&state, &v)
+        .unwrap()
+        .id;
+    state
+        .settlements
+        .get_mut(settlement)
+        .unwrap()
+        .buildings
+        .get_mut(&building)
+        .unwrap()
+        .bounds
+        .max[1] = v.job_site.unwrap().y;
+    state
+        .world
+        .set_block(4, 202, 3, state.registry.states.stone);
+    let mut changes = ChangeSet::default();
+    mining::work(&mut state, slot, &mut v, &mut changes);
+    assert!(
+        changes.blocks.is_empty(),
+        "a certificate never authorizes breaking above it"
+    );
+    assert_eq!(
+        state.world.block_at(4, 202, 3),
+        Some(state.registry.states.stone)
+    );
+    assert_eq!(
+        v.mining_progress.lane, 1,
+        "solid headroom abandons the unsafe lane"
+    );
+}
+
+#[test]
 fn miner_refuses_fluids_adjacent_fluids_and_air_pockets_before_breaking() {
     for (position, path) in [
         ([4, 200, 3], "water"),

@@ -2776,6 +2776,10 @@ fn run_dimension_tick_inner<'a>(
     // 6. Publish: chunk list + entity wire views + per-connection outbox
     // drain. Readers hold the snapshot `Arc`; unchanged chunks share theirs.
     let publish_start = std::time::Instant::now();
+    // Native commit-tail owners (including villager work and doors) can write
+    // after the main block fold. Publish their actual chunk afterimages, not
+    // an older chunk beside newer block deltas.
+    state.world.fold_overlay();
     let chunks = state.world.snapshot();
     let snapshot_time = publish_start.elapsed();
     let views_start = std::time::Instant::now();

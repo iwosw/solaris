@@ -486,6 +486,10 @@ Tick `t -> t+1`:
    content revisions. Private block-entity inventory and timer images remain
    durable without invalidating encoded client chunks; block/light changes
    and public block-entity payload changes advance the wire revision.
+   Commit-tail native owners (villager harvesting, extraction, replanting and
+   doors included) may write after the main block-phase fold. Their remaining
+   block overlay is folded before immutable chunk publication, so same-tick
+   block deltas and the chunks used for deferred delivery share one afterimage.
 6. **Publish.** Network fanout (tracking, chunk/entity/inventory packets) is
    computed from snapshot `t+1` and the change set in parallel per viewer on
    the edge's own worker pool (never the core's), and handed to I/O threads.

@@ -3051,6 +3051,51 @@ fn villager_walks_onto_one_block_rise_and_settles_at_target() {
 }
 
 #[test]
+fn canonical_ticks_finish_work_approach_through_a_raised_door() {
+    let mut state = test_state();
+    state.day_time = 3000;
+    for x in 8..12 {
+        for z in 1..15 {
+            state
+                .world
+                .set_block(x, 201, z, state.registry.states.stone);
+        }
+    }
+    for z in 0..16 {
+        for y in 202..=204 {
+            state.world.set_block(8, y, z, state.registry.states.stone);
+        }
+    }
+    for (y, half) in [(202, "lower"), (203, "upper")] {
+        let door = block(
+            &state,
+            "minecraft:oak_door",
+            &[("half", half), ("facing", "west"), ("open", "false")],
+        );
+        state.world.set_block(8, y, 8, door);
+    }
+    let stairs = block(&state, "minecraft:oak_stairs", &[("facing", "east")]);
+    state.world.set_block(7, 201, 8, stairs);
+    let composter = block(&state, "minecraft:composter", &[]);
+    state.world.set_block(10, 202, 8, composter);
+    let slot = villager(&mut state, [5.5, 201.0, 8.5]);
+    for _ in 0..400 {
+        crate::tick::run_tick(&mut state, &[]);
+        let pos = state.entities.pos(slot);
+        if pos[0] > 8.0 && pos[1] >= 202.0 {
+            break;
+        }
+    }
+    let pos = state.entities.pos(slot);
+    let v = state.entities.row(slot).villager.as_ref().unwrap();
+    assert!(
+        pos[0] > 8.0 && pos[1] >= 202.0,
+        "native tick must finish its valid workstation approach: pos={pos:?}"
+    );
+    assert_eq!(v.data.profession, Profession::Farmer);
+}
+
+#[test]
 fn short_wander_matches_astar_step_drop_and_shaped_clearance() {
     let mut state = test_state();
     let start = [7.5, 201.0, 8.5];

@@ -343,6 +343,12 @@ def run_dialogs(ctx: ProfileContext) -> dict[str, Any]:
     from .backends import dialogs
 
     return dialogs.run(ctx)
+def run_village_qa(ctx: ProfileContext) -> dict[str, Any]:
+    """Issue #1 settlement acceptance on the native client (windowed for evidence)."""
+    from .backends import village_qa
+
+    return village_qa.run(ctx)
+
 
 def run_core_client(ctx: ProfileContext) -> dict[str, Any]:
     from .backends import client_probes
@@ -682,6 +688,11 @@ PROFILES: dict[str, dict[str, Any]] = {
         "scope": "real-client",
         "description": "Native Title screen type-address+name, Connect, disconnect-back-to-Title (--client native, windowed for screenshots)",
         "run": run_title_connect,
+    },
+    "village-qa": {
+        "scope": "real-client",
+        "description": "Issue #1 settlement acceptance: house/workshop/storage/mine/camp, bind, door/sleep/harvest/mine/lumber PASS-FAIL (native --client, windowed for screenshots)",
+        "run": run_village_qa,
     },
     "dialogs": {
         "scope": "real-client",

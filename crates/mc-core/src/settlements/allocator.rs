@@ -412,7 +412,7 @@ pub(crate) fn active(state: &TickState, slot: EntitySlot) -> bool {
             )
         }
 }
-fn bed_pair(
+pub(crate) fn bed_pair(
     world: &crate::world::ChunkWorld,
     registry: &std::sync::Arc<CoreRegistry>,
     pos: BlockPos,

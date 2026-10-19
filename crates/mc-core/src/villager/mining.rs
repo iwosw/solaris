@@ -229,8 +229,7 @@ fn cell(bounds: ScriptWorldBounds, entrance: BlockPos, index: u32) -> Option<Blo
             z: entrance.z + z_direction * (row as i32 * 3 + (offset as i32 + 1).min(3)),
         }
     };
-    (inside(bounds, p) && p.z > bounds.min[2] && p.z < bounds.max[2] && p.y + 2 <= bounds.max[1])
-        .then_some(p)
+    (inside(bounds, p) && p.z > bounds.min[2] && p.z < bounds.max[2]).then_some(p)
 }
 
 fn block_path(state: &TickState, pos: BlockPos) -> Option<&str> {
@@ -325,10 +324,12 @@ fn safe(
 ) -> Result<(), Obstruction> {
     for y in current.y..current.y + height {
         let p = BlockPos { y, ..current };
-        if !inside(bounds, p) {
+        let (id, path) = probe(state, p)?;
+        // Surface entrances can use air above the certificate, never excavate
+        // that space. Every actual block removal remains inside the mine.
+        if !inside(bounds, p) && !clear(path) {
             return Err(Obstruction::Permanent);
         }
-        let (id, path) = probe(state, p)?;
         if unsafe_fluid(state, id, path) {
             return Err(Obstruction::Permanent);
         }
