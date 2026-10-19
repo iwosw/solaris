@@ -387,14 +387,7 @@ fn convert(
         if destination.try_exists().map_err(fail)? {
             return Err(fail("destination appeared during conversion"));
         }
-        rustix::fs::renameat_with(
-            rustix::fs::CWD,
-            &stage,
-            rustix::fs::CWD,
-            &destination,
-            rustix::fs::RenameFlags::NOREPLACE,
-        )
-        .map_err(fail)?;
+        publish_no_replace(&stage, &destination).map_err(fail)?;
         staging = None;
         crate::journal::fsync_dir(&parent).map_err(fail)?;
         receipt.status = "PASS".into();
@@ -427,6 +420,42 @@ pub(super) fn fail(error: impl std::fmt::Display) -> CoreError {
     CoreError::Storage(format!("world conversion: {error}"))
 }
 
+/// Rename `stage` to a destination that must not exist.
+#[cfg(unix)]
+fn publish_no_replace(stage: &Path, destination: &Path) -> std::io::Result<()> {
+    rustix::fs::renameat_with(
+        rustix::fs::CWD,
+        stage,
+        rustix::fs::CWD,
+        destination,
+        rustix::fs::RenameFlags::NOREPLACE,
+    )
+    .map_err(std::io::Error::from)
+}
+
+/// Windows has no `NOREPLACE` rename flag; the caller has just verified the
+/// destination is absent and `rename` onto a non-empty directory fails.
+#[cfg(not(unix))]
+fn publish_no_replace(stage: &Path, destination: &Path) -> std::io::Result<()> {
+    fs::rename(stage, destination)
+}
+
+/// POSIX record lock on Unix (Java `FileChannel.tryLock` uses fcntl locks).
+#[cfg(unix)]
+fn lock_shared_nonblocking(file: &File) -> std::io::Result<()> {
+    rustix::fs::fcntl_lock(file, rustix::fs::FlockOperation::NonBlockingLockShared)
+        .map_err(std::io::Error::from)
+}
+
+/// `LockFileEx` on Windows, which is what Java `FileChannel.tryLock` uses.
+#[cfg(not(unix))]
+fn lock_shared_nonblocking(file: &File) -> std::io::Result<()> {
+    file.try_lock_shared().map_err(|error| match error {
+        std::fs::TryLockError::Error(error) => error,
+        std::fs::TryLockError::WouldBlock => std::io::ErrorKind::WouldBlock.into(),
+    })
+}
+
 /// Read-only POSIX record lease interoperating with Java FileChannel.tryLock.
 /// A missing session.lock means the world has not been opened by Java.
 struct JavaLease {
@@ -440,12 +469,11 @@ impl JavaLease {
             Err(error) => return Err(fail(error)),
         };
         if let Some(file) = &file {
-            rustix::fs::fcntl_lock(file, rustix::fs::FlockOperation::NonBlockingLockShared)
-                .map_err(|error| {
-                    fail(format!(
-                        "Anvil source must be stopped; POSIX session lock refused: {error}"
-                    ))
-                })?;
+            lock_shared_nonblocking(file).map_err(|error| {
+                fail(format!(
+                    "Anvil source must be stopped; session lock refused: {error}"
+                ))
+            })?;
         }
         Ok(Self { _file: file })
     }

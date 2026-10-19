@@ -1696,7 +1696,6 @@ dependencies = [
  "thiserror 2.0.18",
  "uuid",
  "wide",
- "windows-sys 0.61.2",
 ]
 
 [[package]]
