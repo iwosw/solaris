@@ -62,6 +62,23 @@ villager/settlement/journal gates. Measured acceptance and exact command/binary
 identities live in `.analysis/codex-logs/g1a/result.yaml`; these fixture receipts
 do not replace the next real-scene/1–2-core native-client tick gate.
 
+## Villager door route and collision proofs (2026-10-19)
+
+Villager paths may traverse wooden doors, so a pure wooden-door `open` flip
+does not invalidate their route. The world retains a per-chunk villager route
+revision and pending structural-write set alongside its existing wire revision;
+admission, unload/reload, door replacement/orientation changes and other block
+edits still invalidate the route. Generic NPC routes keep the physical/wire
+fence because they do not share the villager door interaction.
+
+Physical motion/standing caches always observe real wire revisions and pending
+block writes, including door flips. Preserving a route must never reuse an old
+closed/open door collision shape. These fences are transient tick-owner caches;
+block updates still use the existing client projection, WAL and checkpoint.
+Forty-tick retries preserve progressing routes, but a non-progressing villager
+replans from its current position. Door closure waits for other villagers whose
+bodies or next two path cells occupy the doorway.
+
 ## G1/G2 measured row-custody costs (2026-10-16)
 
 The frozen G2 journal compared all 11,557 scene rows each tick despite the

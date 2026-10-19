@@ -879,7 +879,7 @@ pub(super) fn navigate(
         }
         if reachable {
             villager.navigation_target = Some(target);
-            crate::settlements::allocator::capture_route(state, &mut villager, pos);
+            crate::settlements::allocator::capture_route(state, &mut villager, pos, false);
         }
     }
     while villager.navigation_path.last().is_some_and(|next| {

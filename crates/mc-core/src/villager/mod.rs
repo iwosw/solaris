@@ -10,7 +10,9 @@ mod conversion_tests;
 pub(crate) mod defense;
 #[cfg(test)]
 mod defense_tests;
+pub(crate) mod doors;
 pub(crate) mod generated;
+pub(crate) mod harvest;
 pub(crate) use generated::generated_uuid;
 #[cfg(test)]
 mod generated_tests;
@@ -335,6 +337,20 @@ pub struct VillagerState {
     #[serde(skip)]
     pub(crate) navigation_repath_at: u64,
     #[serde(skip)]
+    pub(crate) navigation_can_open_doors: bool,
+    #[serde(skip)]
+    pub(crate) navigation_progress_len: usize,
+    #[serde(skip)]
+    pub(crate) navigation_progress_next: Option<BlockPos>,
+    #[serde(skip)]
+    pub(crate) navigation_progress_dist_sq: f64,
+    /// Wooden doors opened by this brain, closed again after passage.
+    #[serde(skip)]
+    pub(crate) opened_doors: Vec<BlockPos>,
+    /// Earliest tick of this farmer's next harvest attempt.
+    #[serde(skip)]
+    pub(crate) harvest_at: u64,
+    #[serde(skip)]
     pub(crate) poi_validation: crate::settlements::allocator::PoiValidation,
     #[serde(skip)]
     pub(crate) trade_work: Option<trades::WorkState>,
@@ -388,6 +404,12 @@ impl Default for VillagerState {
             navigation_chunks: Vec::new(),
             motion_geometry: brain::MotionGeometryCache::default(),
             navigation_repath_at: 0,
+            navigation_can_open_doors: false,
+            navigation_progress_len: 0,
+            navigation_progress_next: None,
+            navigation_progress_dist_sq: 0.0,
+            opened_doors: Vec::new(),
+            harvest_at: 0,
             poi_validation: crate::settlements::allocator::PoiValidation::default(),
             trade_work: None,
             panic_until: 0,

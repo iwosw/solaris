@@ -551,6 +551,17 @@ pub(crate) fn clear_body(
     width: f64,
     height: f64,
 ) -> bool {
+    clear_body_for_route(world, registry, pos, width, height, false)
+}
+
+pub(crate) fn clear_body_for_route(
+    world: &crate::world::ChunkWorld,
+    registry: &std::sync::Arc<CoreRegistry>,
+    pos: [f64; 3],
+    width: f64,
+    height: f64,
+    can_open_doors: bool,
+) -> bool {
     let min = [pos[0] - width, pos[1] + 1e-6, pos[2] - width];
     let max = [pos[0] + width, pos[1] + height - 1e-6, pos[2] + width];
     for x in min[0].floor() as i32..=max[0].floor() as i32 {
@@ -576,6 +587,7 @@ pub(crate) fn clear_body(
                         && max[1] > f64::from(y) + b[1] + 1e-6
                         && min[2] < f64::from(z) + b[5] - 1e-6
                         && max[2] > f64::from(z) + b[2] + 1e-6
+                        && !(can_open_doors && crate::villager::doors::wooden(registry, id))
                     {
                         return false;
                     }
@@ -592,6 +604,17 @@ pub(crate) fn standing(
     width: f64,
     height: f64,
 ) -> Option<[f64; 3]> {
+    standing_for_route(world, registry, cell, width, height, false)
+}
+
+pub(crate) fn standing_for_route(
+    world: &crate::world::ChunkWorld,
+    registry: &std::sync::Arc<CoreRegistry>,
+    cell: BlockPos,
+    width: f64,
+    height: f64,
+    can_open_doors: bool,
+) -> Option<[f64; 3]> {
     let id = world.block_at(cell.x, cell.y - 1, cell.z)?;
     let shapes = registry.collision_boxes.get(id as usize)?;
     let top = shapes
@@ -607,7 +630,7 @@ pub(crate) fn standing(
         f64::from(cell.y - 1) + top,
         f64::from(cell.z) + 0.5,
     ];
-    clear_body(world, registry, pos, width, height).then_some(pos)
+    clear_body_for_route(world, registry, pos, width, height, can_open_doors).then_some(pos)
 }
 fn heuristic(a: BlockPos, b: BlockPos) -> u32 {
     (a.x.abs_diff(b.x) + a.z.abs_diff(b.z) + a.y.abs_diff(b.y)).saturating_mul(10)
@@ -624,7 +647,7 @@ pub(crate) fn find_path(
 ) -> bool {
     let mut ctx = RouteCtx::tick(state, Consumer::Allocator);
     find_path_ctx(
-        &mut ctx, cache, start, target, width, height, path, false, 48, 16,
+        &mut ctx, cache, start, target, width, height, path, false, 48, 16, true,
     )
 }
 
@@ -662,7 +685,7 @@ pub(crate) fn find_path_exact_ctx(
         .clamp(48, 128);
     let vertical = cell.y.abs_diff(target.y).saturating_add(4).clamp(16, 128);
     find_path_ctx(
-        ctx, cache, start, target, width, height, path, true, horizontal, vertical,
+        ctx, cache, start, target, width, height, path, true, horizontal, vertical, false,
     )
 }
 
@@ -679,6 +702,7 @@ pub(crate) fn find_path_ctx(
     exact: bool,
     horizontal: u32,
     vertical: u32,
+    can_open_doors: bool,
 ) -> bool {
     path.clear();
     cache.nodes.clear();
@@ -723,8 +747,8 @@ pub(crate) fn find_path_ctx(
         if cache.nodes.len() >= 8_192 {
             break;
         }
-        let begin =
-            standing_memo(ctx, cache, node.pos, width, height).unwrap_or_else(|| centre(node.pos));
+        let begin = standing_memo(ctx, cache, node.pos, width, height, can_open_doors)
+            .unwrap_or_else(|| centre(node.pos));
         for (dx, dz) in [(1, 0), (-1, 0), (0, 1), (0, -1)] {
             for dy in [0, 1, -1, -2, -3] {
                 let next = BlockPos {
@@ -738,19 +762,21 @@ pub(crate) fn find_path_ctx(
                 {
                     continue;
                 }
-                let Some(end) = standing_memo(ctx, cache, next, width, height) else {
+                let Some(end) = standing_memo(ctx, cache, next, width, height, can_open_doors)
+                else {
                     continue;
                 };
                 // A jump requires headroom over the starting column; a drop
                 // traverses the edge horizontally before falling.
                 let travel_y = begin[1].max(end[1]);
-                if !clear_body(
+                if !clear_body_for_route(
                     ctx.world,
                     ctx.registry,
                     [begin[0], travel_y, begin[2]],
                     width,
                     height,
-                ) || !clear_body(
+                    can_open_doors,
+                ) || !clear_body_for_route(
                     ctx.world,
                     ctx.registry,
                     [
@@ -760,6 +786,7 @@ pub(crate) fn find_path_ctx(
                     ],
                     width,
                     height,
+                    can_open_doors,
                 ) {
                     continue;
                 }
@@ -847,14 +874,48 @@ fn acquire(
     let pos = state.entities.pos(slot);
     let body = state.entities.body(slot);
     let (owner, half_width, height) = (body.id, body.half_width, body.height);
-    cache.nearby(pos, owner, |candidate| match (kind, candidate) {
-        (PoiKind::Job(_), PoiKind::Job(p)) => !traded(v) || p == v.data.profession,
-        _ => candidate == kind,
-    });
     let scope = housing_scope(state, v.settlement);
-    cache
-        .candidates
-        .retain(|(_, poi)| scope_allows(scope, poi.pos));
+    if let HousingScope::Bound { anchor, radius } = scope
+        && matches!(kind, PoiKind::Job(_))
+    {
+        // Settlement jobs use the settlement's loaded POIs, not the vanilla
+        // 48-block sensor window. Reuse the same candidate buffer and scope
+        // predicate; do not scan unrelated loaded settlements.
+        cache.candidates.clear();
+        for x in anchor[0].saturating_sub_unsigned(radius).div_euclid(16)
+            ..=anchor[0].saturating_add_unsigned(radius).div_euclid(16)
+        {
+            for z in anchor[2].saturating_sub_unsigned(radius).div_euclid(16)
+                ..=anchor[2].saturating_add_unsigned(radius).div_euclid(16)
+            {
+                let Some(entry) = cache.chunks.get(&ChunkPos { x, z }) else {
+                    continue;
+                };
+                for &poi in &entry.pois {
+                    if let PoiKind::Job(profession) = poi.kind
+                        && (!traded(v) || profession == v.data.profession)
+                        && scope_allows(scope, poi.pos)
+                        && !cache.claimed(owner, poi)
+                    {
+                        cache.candidates.push((distance(pos, centre(poi.pos)), poi));
+                    }
+                }
+            }
+        }
+        cache.candidates.sort_unstable_by(|a, b| {
+            b.0.total_cmp(&a.0).then_with(|| {
+                (b.1.pos.x, b.1.pos.y, b.1.pos.z).cmp(&(a.1.pos.x, a.1.pos.y, a.1.pos.z))
+            })
+        });
+    } else {
+        cache.nearby(pos, owner, |candidate| match (kind, candidate) {
+            (PoiKind::Job(_), PoiKind::Job(p)) => !traded(v) || p == v.data.profession,
+            _ => candidate == kind,
+        });
+        cache
+            .candidates
+            .retain(|(_, poi)| scope_allows(scope, poi.pos));
+    }
     // A blocked workstation must not trigger unbounded repeated A* searches.
     for _ in 0..5 {
         let (_, poi) = cache.candidates.pop()?;
@@ -864,8 +925,17 @@ fn acquire(
         }
         let mut path = std::mem::take(&mut cache.candidate_path);
         // Disjoint field borrows: route search reads world/registry while
-        // charging the shared budget pool.
+        // charging the shared budget pool. The search window follows the
+        // settlement claim, not the flat 48-block stroll window.
         let tick_now = state.tick;
+        let from = at(pos);
+        let horizontal = from
+            .x
+            .abs_diff(poi.pos.x)
+            .max(from.z.abs_diff(poi.pos.z))
+            .saturating_add(8)
+            .clamp(48, 512);
+        let vertical = from.y.abs_diff(poi.pos.y).saturating_add(4).clamp(16, 512);
         let mut ctx = RouteCtx {
             world: &state.world,
             registry: &state.registry,
@@ -874,7 +944,8 @@ fn acquire(
             budget: &mut state.tick_budget,
         };
         let reached = find_path_ctx(
-            &mut ctx, cache, pos, poi.pos, half_width, height, &mut path, false, 48, 16,
+            &mut ctx, cache, pos, poi.pos, half_width, height, &mut path, false, horizontal,
+            vertical, true,
         );
         let nodes_empty = ctx
             .budget
@@ -888,7 +959,7 @@ fn acquire(
         cache.candidate_path = path;
         if reached {
             v.navigation_target = Some(poi.pos);
-            capture_route(state, v, pos);
+            capture_route(state, v, pos, true);
             v.navigation_repath_at = tick_now + 40;
             return Some(poi.pos);
         }
@@ -1038,7 +1109,7 @@ pub(crate) fn free_bed(
             budget: &mut state.tick_budget,
         };
         if find_path_ctx(
-            &mut ctx, cache, pos, poi.pos, half_width, height, path, false, 48, 16,
+            &mut ctx, cache, pos, poi.pos, half_width, height, path, false, 48, 16, true,
         ) {
             return Some(poi.pos);
         }
@@ -1353,9 +1424,20 @@ fn lose_profession(v: &mut VillagerState) {
 }
 
 /// Capture the sole route proof, including support and swept-body chunk halos.
-pub(crate) fn capture_route(state: &TickState, v: &mut VillagerState, start: [f64; 3]) {
+pub(crate) fn capture_route(
+    state: &TickState,
+    v: &mut VillagerState,
+    start: [f64; 3],
+    can_open_doors: bool,
+) {
+    v.navigation_can_open_doors = can_open_doors;
     v.navigation_chunks.clear();
     v.motion_geometry.clear();
+    v.navigation_progress_len = v.navigation_path.len();
+    v.navigation_progress_next = v.navigation_path.last().copied();
+    v.navigation_progress_dist_sq = v
+        .navigation_progress_next
+        .map_or(0.0, |cell| distance(start, centre(cell)));
     let origin = BlockPos {
         x: start[0].floor() as i32,
         y: start[1].floor() as i32,
@@ -1371,8 +1453,12 @@ pub(crate) fn capture_route(state: &TickState, v: &mut VillagerState, start: [f6
             {
                 let chunk = ChunkPos { x, z };
                 if !v.navigation_chunks.iter().any(|&(pos, _)| pos == chunk) {
-                    v.navigation_chunks
-                        .push((chunk, state.world.chunk_revision(x, z)));
+                    let revision = if can_open_doors {
+                        state.world.villager_route_revision(x, z)
+                    } else {
+                        state.world.chunk_revision(x, z)
+                    };
+                    v.navigation_chunks.push((chunk, revision));
                 }
             }
         }
@@ -1380,12 +1466,22 @@ pub(crate) fn capture_route(state: &TickState, v: &mut VillagerState, start: [f6
 }
 
 pub(crate) fn route_changed(state: &TickState, v: &VillagerState) -> bool {
+    let pending = if v.navigation_can_open_doors {
+        state.world.pending_villager_route_chunks()
+    } else {
+        state.world.pending_block_chunks()
+    };
     v.navigation_chunks.is_empty()
         || v.navigation_chunks.iter().any(|&(chunk, revision)| {
+            let current = if v.navigation_can_open_doors {
+                state.world.villager_route_revision(chunk.x, chunk.z)
+            } else {
+                state.world.chunk_revision(chunk.x, chunk.z)
+            };
             revision == u64::MAX
                 || !state.world.has_chunk(chunk.x, chunk.z)
-                || state.world.chunk_revision(chunk.x, chunk.z) != revision
-                || state.world.pending_block_chunks().contains(&chunk)
+                || current != revision
+                || pending.contains(&chunk)
         })
 }
 
@@ -1395,13 +1491,13 @@ fn standing_memo(
     cell: BlockPos,
     width: f64,
     height: f64,
+    can_open_doors: bool,
 ) -> Option<[f64; 3]> {
     #[cfg(test)]
     if cache.disable_standing_memo {
-        return standing(ctx.world, ctx.registry, cell, width, height);
+        return standing_for_route(ctx.world, ctx.registry, cell, width, height, can_open_doors);
     }
-    *cache
-        .standing_cache
-        .entry(cell)
-        .or_insert_with(|| standing(ctx.world, ctx.registry, cell, width, height))
+    *cache.standing_cache.entry(cell).or_insert_with(|| {
+        standing_for_route(ctx.world, ctx.registry, cell, width, height, can_open_doors)
+    })
 }

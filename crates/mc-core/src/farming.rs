@@ -841,7 +841,7 @@ pub(crate) fn with_prop(
 }
 
 /// `(age, max age)` of a crop state.
-fn age_of(blocks: &BlockRegistry, state: u32) -> Option<(u32, u32)> {
+pub(crate) fn age_of(blocks: &BlockRegistry, state: u32) -> Option<(u32, u32)> {
     let age = prop(blocks, state, "age")?.parse().ok()?;
     let values = &blocks
         .by_id(BlockStateId(state))?

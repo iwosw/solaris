@@ -221,6 +221,7 @@ pub(crate) fn rebuild_counts(state: &mut TickState) {
             );
         }
     }
+    state.settlements.grow_radii();
 }
 
 /// Incremental twin of [`rebuild_counts`]: refresh only the entities the
@@ -251,6 +252,7 @@ pub(crate) fn refresh_counts(state: &mut TickState, changed: impl IntoIterator<I
         });
         state.settlements.update_household(entity, household, true);
     }
+    state.settlements.grow_radii();
 }
 
 /// Run only after all dimension registries and entity columns have hydrated.

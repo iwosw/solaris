@@ -8,6 +8,18 @@ use mc_physics::BlockSampler;
 use rustc_hash::FxHashMap;
 use std::sync::Arc;
 
+#[path = "door_tests.rs"]
+mod door_tests;
+
+#[path = "breeding_tests.rs"]
+mod breeding_tests;
+
+#[path = "job_memory_tests.rs"]
+mod job_memory_tests;
+
+#[path = "route_continuation_tests.rs"]
+mod route_continuation_tests;
+
 fn test_state() -> TickState {
     let registry = Arc::new(CoreRegistry::load(None).expect("registry"));
     let generator: Arc<dyn mc_world::ChunkGenerator> = Arc::new(
@@ -1022,7 +1034,7 @@ fn foreign_dimension_pois_do_not_steer_overworld_villagers() {
     v.data.profession = Profession::Farmer;
     v.navigation_path.push(home);
     v.navigation_target = Some(home);
-    capture_route(&state, &mut v, centre(home));
+    capture_route(&state, &mut v, centre(home), true);
     v.navigation_repath_at = state.tick + 40;
     let mut cache = PoiCache::default();
     cache.refresh(&state);
@@ -1655,7 +1667,7 @@ fn villager_brain_activity_scale_benchmark() {
                             z,
                         })
                         .collect();
-                    capture_route(&state, &mut v, start);
+                    capture_route(&state, &mut v, start, true);
                     state.entities.row_mut(slot).villager = Some(v);
                     movers.push((state.entities.body(slot).id, start));
                 }
@@ -2859,7 +2871,7 @@ fn route_chunk_revisions_cover_boundary_halo_and_unloaded_target() {
         }),
         ..VillagerState::default()
     };
-    capture_route(&state, &mut v, [8.5, 201.0, 8.5]);
+    capture_route(&state, &mut v, [8.5, 201.0, 8.5], true);
     assert!(
         v.navigation_chunks
             .iter()
@@ -2912,6 +2924,7 @@ fn standing_memo_preserves_paths_budgets_and_resets_between_searches() {
                         exact,
                         48,
                         16,
+                        true,
                     );
                     (found, budget.remaining(Kind::PathNode))
                 };
@@ -3166,7 +3179,7 @@ fn skipped_panic_path_consumes_reached_steps_without_cold_row_dirty_marks() {
         navigation_repath_at: u64::MAX,
         ..VillagerState::default()
     };
-    capture_route(&state, &mut v, start);
+    capture_route(&state, &mut v, start, true);
     state.entities.row_mut(slot).villager = Some(Box::new(v));
     let mut changed = FxHashSet::default();
     state.entities.swap_brain_changes(&mut changed);
@@ -4165,7 +4178,7 @@ fn motion_geometry_fixture() -> (TickState, EntitySlot, VillagerState) {
             .collect(),
         ..VillagerState::default()
     };
-    capture_route(&state, &mut v, start);
+    capture_route(&state, &mut v, start, true);
     (state, slot, v)
 }
 
@@ -4241,7 +4254,7 @@ fn motion_geometry_body_size_and_domain_fences_keep_live_shapes() {
         .world
         .set_block(9, 202, 8, state.registry.states.stone);
     state.world.fold_overlay();
-    capture_route(&state, &mut v, state.entities.pos(slot));
+    capture_route(&state, &mut v, state.entities.pos(slot), true);
     let mut geometry = std::mem::take(&mut v.motion_geometry);
     let cell = *v.navigation_path.last().unwrap();
     let unchanged = geometry.begin(&state, &v, 0.15, 0.975);
@@ -4308,7 +4321,7 @@ fn motion_geometry_body_size_and_domain_fences_keep_live_shapes() {
     state.world.set_block(9, 201, 8, u32::MAX);
     state.world.fold_overlay();
     v.motion_geometry = geometry;
-    capture_route(&state, &mut v, state.entities.pos(slot));
+    capture_route(&state, &mut v, state.entities.pos(slot), true);
     let mut geometry = std::mem::take(&mut v.motion_geometry);
     let unchanged = geometry.begin(&state, &v, 0.3, 1.95);
     let unknown = resolve_body_motion(
@@ -4376,7 +4389,7 @@ fn skipped_motion_geometry_and_journal_clones_stay_transient() {
     cloned.motion_geometry =
         std::mem::take(state.entities.villager_motion_geometry_mut(slot).unwrap());
     let capacity = cloned.motion_geometry.blocks.capacity();
-    capture_route(&state, &mut cloned, state.entities.pos(slot));
+    capture_route(&state, &mut cloned, state.entities.pos(slot), true);
     assert!(cloned.motion_geometry.blocks.is_empty());
     assert!(cloned.motion_geometry.standing.is_none());
     assert_eq!(cloned.motion_geometry.blocks.capacity(), capacity);
@@ -4460,7 +4473,7 @@ fn motion_geometry_on_and_off_match_every_physical_tick() {
             cloned.motion_geometry.disable,
             "cloning preserves test reference mode"
         );
-        capture_route(&state, &mut cloned, state.entities.pos(live_slot));
+        capture_route(&state, &mut cloned, state.entities.pos(live_slot), true);
         assert!(
             cloned.motion_geometry.disable,
             "new captures preserve test reference mode"

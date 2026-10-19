@@ -100,6 +100,12 @@ pub struct CoreRegistry {
     /// state id. Water covers every level; berry only `age != 0` states and
     /// campfire only `lit == true` states, so the tick needs no properties.
     pub(crate) hazard_flags: Vec<u8>,
+    /// Dense per-state wooden-door flags indexed by global state id, built
+    /// once at load so the A* hot path needs no registry lookup or 12-way
+    /// string match. The embedded registry lacks the `wooden_doors` tag, so
+    /// the table uses the exact 12-family match in both registry modes.
+    /// Shared (`Arc`) so world constructors clone without copying the table.
+    pub(crate) wooden_doors: Arc<[bool]>,
     /// Native world-fire state, attachment, support and ignition tables.
     pub(crate) fire_states: crate::fire::FireStates,
     /// Per-state blast resistance (`reports/block_explosion.json`); absent
@@ -305,6 +311,7 @@ impl CoreRegistry {
             .max()
             .unwrap_or(0);
         let mut hazard_flags = vec![0u8; state_count];
+        let mut wooden_doors = vec![false; state_count];
         for state in blocks.states() {
             let name = state.block.id.as_str();
             let mut flags = 0u8;
@@ -334,7 +341,25 @@ impl CoreRegistry {
                 flags |= HAZARD_MAGMA;
             }
             hazard_flags[state.id.0 as usize] = flags;
+            // Embedded tags lack `wooden_doors`; the exact 12-family match
+            // covers both registry modes (iron/copper excluded).
+            wooden_doors[state.id.0 as usize] = matches!(
+                state.block.id.path(),
+                "oak_door"
+                    | "spruce_door"
+                    | "birch_door"
+                    | "jungle_door"
+                    | "acacia_door"
+                    | "dark_oak_door"
+                    | "pale_oak_door"
+                    | "crimson_door"
+                    | "warped_door"
+                    | "mangrove_door"
+                    | "bamboo_door"
+                    | "cherry_door"
+            );
         }
+        let wooden_doors: Arc<[bool]> = wooden_doors.into();
         let mut collision_boxes = vec![Box::default(); state_count];
         let outline_shapes = mc_data::outline_shapes::vanilla_outline_shapes();
         let mut outlines = vec![crate::pov_ray::OutlineState::default(); state_count];
@@ -441,6 +466,7 @@ impl CoreRegistry {
             enchantments,
             farming,
             hazard_flags,
+            wooden_doors,
             fire_states,
             plugin_rules: None,
             plugin_ore_profile: None,
@@ -588,6 +614,52 @@ mod tests {
         assert_eq!(third.tags.registries, second.tags.registries);
     }
 
+    #[test]
+    fn wooden_doors_table_matches_exact_families() {
+        let registry = CoreRegistry::load(None).expect("embedded registry");
+        let mut wooden = 0usize;
+        for state in registry.blocks.states() {
+            let expected = matches!(
+                state.block.id.path(),
+                "oak_door"
+                    | "spruce_door"
+                    | "birch_door"
+                    | "jungle_door"
+                    | "acacia_door"
+                    | "dark_oak_door"
+                    | "pale_oak_door"
+                    | "crimson_door"
+                    | "warped_door"
+                    | "mangrove_door"
+                    | "bamboo_door"
+                    | "cherry_door"
+            );
+            assert_eq!(
+                registry.wooden_doors.get(state.id.0 as usize).copied(),
+                Some(expected),
+                "wooden_doors mismatch for {}",
+                state.block.id
+            );
+            wooden += usize::from(expected);
+        }
+        assert!(wooden > 0, "expected wooden door states in the registry");
+        // Iron/copper doors (every oxidation/wax state) stay excluded, open or
+        // closed, lower or upper.
+        for name in ["minecraft:iron_door", "minecraft:copper_door"] {
+            let id = mc_data::Identifier::parse(name).expect("door id parses");
+            let block = registry.blocks.block(&id).expect("door block present");
+            assert!(!block.states.is_empty(), "{name} has states");
+            for state_id in &block.states {
+                assert_eq!(
+                    registry.wooden_doors.get(state_id.0 as usize).copied(),
+                    Some(false),
+                    "{name} state {} must stay excluded",
+                    state_id.0
+                );
+            }
+        }
+        assert_eq!(registry.wooden_doors.get(usize::MAX).copied(), None);
+    }
     #[test]
     fn selected_root_must_supply_catalogs_even_after_a_fixture_loaded() {
         let _fixture = CoreRegistry::load(None).expect("local vanilla fixture");

@@ -143,11 +143,12 @@ impl ResidentBrain {
             .panic_until
             .max(body.hurt_at.map_or(0, |at| at.saturating_add(100)));
         brain.reactive = v.partner.is_some() || !v.navigation_path.is_empty();
-        brain.motion = !v.sleeping
-            && (!state.entities.ground(slot)
-                || state.entities.vel(slot) != [0.0; 3]
-                || state.entities.horizontal_impulse(slot) != [0.0; 2]
-                || !v.navigation_path.is_empty());
+        brain.motion = !v.opened_doors.is_empty()
+            || (!v.sleeping
+                && (!state.entities.ground(slot)
+                    || state.entities.vel(slot) != [0.0; 3]
+                    || state.entities.horizontal_impulse(slot) != [0.0; 2]
+                    || !v.navigation_path.is_empty()));
         if body.alive && v.conversion_time.is_none() {
             let dimension = state.dimension.name();
             brain.claims = [
@@ -1172,7 +1173,7 @@ impl PoiCache {
     }
 }
 
-fn bodies_near(
+pub(super) fn bodies_near(
     state: &TickState,
     pos: [f64; 3],
     radius: f64,
@@ -1229,13 +1230,14 @@ fn clear_step(state: &TickState, begin: [f64; 3], end: [f64; 3], width: f64, hei
     // A jump needs headroom over the starting column; a drop crosses the
     // edge horizontally before falling. Keep A* and short strolls identical.
     let travel_y = begin[1].max(end[1]);
-    allocator::clear_body(
+    allocator::clear_body_for_route(
         &(state).world,
         &(state).registry,
         [begin[0], travel_y, begin[2]],
         width,
         height,
-    ) && allocator::clear_body(
+        true,
+    ) && allocator::clear_body_for_route(
         &(state).world,
         &(state).registry,
         [
@@ -1245,6 +1247,7 @@ fn clear_step(state: &TickState, begin: [f64; 3], end: [f64; 3], width: f64, hei
         ],
         width,
         height,
+        true,
     )
 }
 
@@ -1286,21 +1289,28 @@ fn wander_to(
                         walked_z += 1;
                         (0, (target.z - cell.z).signum())
                     };
-                    let begin =
-                        allocator::standing(&(state).world, &(state).registry, cell, width, height)
-                            .unwrap_or_else(|| centre(cell));
+                    let begin = allocator::standing_for_route(
+                        &(state).world,
+                        &(state).registry,
+                        cell,
+                        width,
+                        height,
+                        true,
+                    )
+                    .unwrap_or_else(|| centre(cell));
                     let next = [0, 1, -1, -2, -3].into_iter().find_map(|dy| {
                         let next = BlockPos {
                             x: cell.x + dx,
                             y: cell.y + dy,
                             z: cell.z + dz,
                         };
-                        let end = allocator::standing(
+                        let end = allocator::standing_for_route(
                             &(state).world,
                             &(state).registry,
                             next,
                             width,
                             height,
+                            true,
                         )?;
                         clear_step(state, begin, end, width, height).then_some(next)
                     });
@@ -1318,7 +1328,7 @@ fn wander_to(
             if new_target || due {
                 v.navigation_repath_at = state.tick + 40;
             }
-            capture_route(state, v, pos);
+            capture_route(state, v, pos, true);
             unchanged = !route_changed(state, v);
         }
     } else {
@@ -1362,6 +1372,8 @@ pub(crate) struct MotionGeometryCache {
     max: [i32; 3],
     body: [f64; 2],
     standing: Option<(BlockPos, Option<[f64; 3]>)>,
+    revision: u64,
+    pending: bool,
     #[cfg(test)]
     disable: bool,
     #[cfg(test)]
@@ -1414,15 +1426,38 @@ impl MotionGeometryCache {
 
     fn begin(&mut self, state: &TickState, v: &VillagerState, width: f64, height: f64) -> bool {
         let unchanged = !route_changed(state, v);
-        self.begin_route(width, height, unchanged);
+        self.begin_route(state, v, width, height, unchanged);
         unchanged
     }
 
-    fn begin_route(&mut self, width: f64, height: f64, unchanged: bool) {
-        if !unchanged || self.body != [width, height] || !self.enabled() {
+    fn begin_route(
+        &mut self,
+        state: &TickState,
+        v: &VillagerState,
+        width: f64,
+        height: f64,
+        unchanged: bool,
+    ) {
+        // Door flips preserve a villager's route, not its physical shapes.
+        let pending = !state.world.overlay_is_empty()
+            && v.navigation_chunks
+                .iter()
+                .any(|&(chunk, _)| state.world.pending_block_chunks().contains(&chunk));
+        let physical_changed = self.pending
+            || pending
+            || (state.world.revision_now() != self.revision
+                && v.navigation_chunks.iter().any(|&(chunk, _)| {
+                    let revision = state.world.chunk_revision(chunk.x, chunk.z);
+                    revision == u64::MAX || revision > self.revision
+                }));
+        if !unchanged || physical_changed || self.body != [width, height] || !self.enabled() {
             self.clear();
             self.body = [width, height];
         }
+        self.revision = state.world.revision_now();
+        // A cache sampled from the overlay cannot survive its fold, even when
+        // a second toggle restores the original state without a wire revision.
+        self.pending = pending;
     }
 
     fn standing(
@@ -1565,8 +1600,8 @@ impl MotionGeometryCache {
     }
 }
 
-/// Coverage is only a scope fence; revision/pending/unload validity is always
-/// supplied by route_changed, never by a separate geometry invalidation epoch.
+/// Coverage is only a scope fence. Route validity uses the capability-aware
+/// world proof; physical caches separately observe wire revisions and pending edits.
 fn route_covers_columns(v: &VillagerState, min: [i32; 2], max: [i32; 2]) -> bool {
     (min[0].div_euclid(16)..=max[0].div_euclid(16)).all(|x| {
         (min[1].div_euclid(16)..=max[1].div_euclid(16)).all(|z| {
@@ -1633,7 +1668,34 @@ fn move_to(
         let due = state.tick >= v.navigation_repath_at;
         let changed = route_changed(state, v);
         unchanged = !changed;
-        if (new_target || due || changed) && cache.spend_path(state, Consumer::Brain) {
+        // Progress is observed only at due checks, never every brain step: a
+        // shorter path or a closer next cell means the villager is still
+        // walking its route. A pushed or blocked villager stalls and must
+        // replan from its actual position instead of keeping a stale route.
+        let mut stalled = false;
+        if due && !new_target && !changed && !v.navigation_path.is_empty() {
+            let next = v.navigation_path.last().copied();
+            let dist_sq = next.map(|cell| distance(pos, centre(cell))).unwrap_or(0.0);
+            stalled = !(v.navigation_path.len() < v.navigation_progress_len
+                || (next == v.navigation_progress_next && dist_sq < v.navigation_progress_dist_sq));
+            v.navigation_progress_len = v.navigation_path.len();
+            v.navigation_progress_next = next;
+            v.navigation_progress_dist_sq = dist_sq;
+        }
+        // A due route is reused only while progressing; a stalled villager
+        // replans from its current position even when the world is unchanged.
+        if (new_target || changed || (due && v.navigation_path.is_empty()) || stalled)
+            && cache.spend_path(state, Consumer::Brain)
+        {
+            let from = at(pos);
+            let horizontal = from
+                .x
+                .abs_diff(target.x)
+                .max(from.z.abs_diff(target.z))
+                .saturating_add(8)
+                .clamp(48, 512);
+            let vertical = from.y.abs_diff(target.y).saturating_add(4).clamp(16, 512);
+            let mut seek_path = std::mem::take(&mut cache.candidate_path);
             let mut ctx = allocator::RouteCtx {
                 world: &state.world,
                 registry: &state.registry,
@@ -1641,20 +1703,32 @@ fn move_to(
                 consumer: Consumer::Brain,
                 budget: &mut state.tick_budget,
             };
-            allocator::find_path_ctx(
+            let found = allocator::find_path_ctx(
                 &mut ctx,
                 cache,
                 pos,
                 target,
                 width,
                 height,
-                &mut v.navigation_path,
+                &mut seek_path,
                 exact,
-                48,
-                16,
+                horizontal,
+                vertical,
+                true,
             );
-            v.navigation_target = Some(target);
-            capture_route(state, v, pos);
+            let exhausted = ctx
+                .budget
+                .allowance(ctx.dimension, ctx.consumer, Kind::PathNode)
+                == 0;
+            // Preserve only a budget-denied route whose target and geometry
+            // remain valid. Successful zero-step arrival clears the old path.
+            if found || !exhausted || new_target || changed || v.navigation_path.is_empty() {
+                std::mem::swap(&mut seek_path, &mut v.navigation_path);
+                v.navigation_target = Some(target);
+                capture_route(state, v, pos, true);
+            }
+            seek_path.clear();
+            cache.candidate_path = seek_path;
             unchanged = !route_changed(state, v);
             // A world change invalidates the route, not the activity's target
             // deadline. Renewing it on every chunk admission freezes a villager
@@ -1667,6 +1741,9 @@ fn move_to(
             v.navigation_path.clear();
             v.navigation_chunks.clear();
             unchanged = false;
+        } else if due && !v.navigation_path.is_empty() {
+            // Keep the brain's next wake bounded without rerunning A*.
+            v.navigation_repath_at = state.tick + 40;
         }
     } else {
         v.navigation_path.clear();
@@ -1701,7 +1778,7 @@ fn move_committed_with_route(
     let body = state.entities.body(slot);
     let (width, height) = (body.half_width, body.height);
     let mut geometry = std::mem::take(&mut v.motion_geometry);
-    geometry.begin_route(width, height, unchanged);
+    geometry.begin_route(state, v, width, height, unchanged);
     let next = loop {
         let Some(&cell) = v.navigation_path.last() else {
             break None;
@@ -1960,7 +2037,7 @@ fn eat_for_birth(food: &FoodTable, v: &mut VillagerState) {
     }
     v.food_level -= 12;
 }
-fn add_inventory(v: &mut VillagerState, moving: &mut ItemStack, maximum: i32) -> i32 {
+pub(super) fn add_inventory(v: &mut VillagerState, moving: &mut ItemStack, maximum: i32) -> i32 {
     let before = moving.count;
     if before <= 0 || maximum <= 0 {
         return 0;
@@ -2723,6 +2800,22 @@ pub(crate) fn tick(state: &mut TickState, changes: &mut ChangeSet) {
             cache.resident_data[index].profession,
             state.day_time,
         );
+        if state
+            .entities
+            .row(slot)
+            .villager
+            .as_ref()
+            .is_some_and(|v| !v.opened_doors.is_empty() || !v.navigation_path.is_empty())
+        {
+            let mut v = state
+                .entities
+                .row_mut_unmarked(slot)
+                .villager
+                .take()
+                .unwrap();
+            super::doors::interact(state, slot, &mut v, changes);
+            state.entities.row_mut_unmarked(slot).villager = Some(v);
+        }
         if !cache.admitted(slot) {
             let brain = &mut cache.resident_data[index];
             if brain.clock_changes {
@@ -2762,11 +2855,12 @@ pub(crate) fn tick(state: &mut TickState, changes: &mut ChangeSet) {
                 );
                 let row = state.entities.row(slot);
                 brain.motion = row.villager.as_ref().is_some_and(|v| {
-                    !v.sleeping
-                        && (!state.entities.ground(slot)
-                            || state.entities.vel(slot) != [0.0; 3]
-                            || state.entities.horizontal_impulse(slot) != [0.0; 2]
-                            || !v.navigation_path.is_empty())
+                    !v.opened_doors.is_empty()
+                        || (!v.sleeping
+                            && (!state.entities.ground(slot)
+                                || state.entities.vel(slot) != [0.0; 3]
+                                || state.entities.horizontal_impulse(slot) != [0.0; 2]
+                                || !v.navigation_path.is_empty()))
                 });
             }
             cache.update_execution(index);
@@ -2897,11 +2991,10 @@ pub(crate) fn tick(state: &mut TickState, changes: &mut ChangeSet) {
                     changes,
                 )
             });
-            decision_phase!(
-                cache,
-                4,
+            decision_phase!(cache, 4, {
+                super::harvest::work(state, slot, &mut v, changes);
                 share_food(state, &cache.food, slot, &mut v, changes)
-            );
+            });
             let mut short_wander = false;
             let mut exact_target = false;
             let target = if v.activity == Activity::Panic {
@@ -3012,6 +3105,7 @@ pub(crate) fn tick(state: &mut TickState, changes: &mut ChangeSet) {
                 }
             );
         }
+        super::doors::interact(state, slot, &mut v, changes);
         let appearance_changed =
             was_sleeping != v.sleeping || baby != (v.age < 0) || old_data != v.data;
         state.entities.row_mut(slot).villager = Some(v);

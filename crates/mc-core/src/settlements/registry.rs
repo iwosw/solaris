@@ -6,6 +6,10 @@ use serde::{Deserialize, Serialize};
 use crate::boundary::EntityId;
 
 pub(crate) const MAX_RADIUS: u32 = 256;
+/// Population growth rule: a settlement is at least `GROWTH_PER_RESIDENT *
+/// residents` blocks wide, capped at `MAX_RADIUS`. The record's radius only
+/// ever rises, so the created radius is a floor.
+pub(crate) const GROWTH_PER_RESIDENT: u32 = 4;
 
 /// Global, monotonically allocated identity; names may change, IDs never do.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -62,6 +66,9 @@ pub struct Registry {
     household_changes: BTreeSet<String>,
     /// Derived work queue: no idle-town or terminal-receipt tick scan.
     economic_active: BTreeSet<SettlementId>,
+    /// Derived work queue: settlements whose resident count changed and whose
+    /// radius must be re-checked against the growth rule.
+    radius_pending: BTreeSet<SettlementId>,
 }
 
 impl SettlementRecord {
@@ -469,6 +476,25 @@ impl Registry {
 
     pub(super) fn count_member(&mut self, id: SettlementId) {
         *self.counts.entry(id).or_default() += 1;
+        self.radius_pending.insert(id);
+    }
+
+    /// Raise radii whose resident count outgrew them; persisted through the
+    /// normal record image like every other record change.
+    pub(super) fn grow_radii(&mut self) {
+        while let Some(id) = self.radius_pending.pop_first() {
+            let residents = u32::try_from(self.member_count(id)).unwrap_or(u32::MAX);
+            let wanted = GROWTH_PER_RESIDENT
+                .saturating_mul(residents)
+                .min(MAX_RADIUS);
+            if let Some(record) = self.records.get_mut(&id)
+                && record.radius < wanted
+            {
+                record.radius = wanted;
+                record.revision = record.revision.saturating_add(1);
+                self.touched.insert(id);
+            }
+        }
     }
 
     /// Change the occupancy projection only when this entity's share changes.

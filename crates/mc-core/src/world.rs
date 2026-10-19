@@ -53,6 +53,8 @@ pub struct ChunkWorld {
     block_entity_replaced: HashSet<(i32, i32, i32)>,
     /// Overlay-touched chunk positions, drained by `fold_overlay`.
     touched: Vec<ChunkPos>,
+    /// Pending structural edits for villagers that can open wooden doors.
+    route_touched: Vec<ChunkPos>,
     /// Chunks whose content or deferred inhabited image is newer than their
     /// native checkpoint (block edits, block-entity storage, counter intervals).
     /// Kept outside `Chunk`, so clearing it never copies a shared snapshot.
@@ -106,6 +108,9 @@ pub struct ChunkWorld {
     /// Client-visible content revision; private custody does not invalidate
     /// framed chunk packets or the collision/activation footprint.
     wire_revisions: HashMap<ChunkPos, u64>,
+    /// Route geometry for door-opening villagers; physical/wire revisions stay separate.
+    villager_route_revisions: HashMap<ChunkPos, u64>,
+    wooden_doors: Arc<[bool]>,
     /// Pushed POI revision events since the last [`Self::swap_poi_revisions`]
     /// consume. Every `bump_revision` and every resident unload inserts its
     /// chunk (reloads report via `bump_revision`); entries coalesce per chunk
@@ -351,6 +356,7 @@ impl ChunkWorld {
             air,
             world_spawn,
             Arc::clone(&registry.light),
+            Arc::clone(&registry.wooden_doors),
         )
     }
 
@@ -382,6 +388,7 @@ impl ChunkWorld {
             air,
             world_spawn,
             Arc::clone(&registry.light),
+            Arc::clone(&registry.wooden_doors),
         )
     }
 
@@ -391,6 +398,7 @@ impl ChunkWorld {
         air: BlockStateId,
         world_spawn: [i32; 3],
         light: Arc<mc_data::block_light::BlockLightTable>,
+        wooden_doors: Arc<[bool]>,
     ) -> Self {
         // Half the cores: with one worker per core, exploring players kept
         // generation at the whole CPU budget (3.2 of 6 cores measured, with
@@ -416,6 +424,7 @@ impl ChunkWorld {
             block_entity_removed: Vec::new(),
             block_entity_replaced: HashSet::default(),
             touched: Vec::new(),
+            route_touched: Vec::new(),
             dirty: HashSet::default(),
             dirty_absent: HashSet::default(),
             inhabited_time: HashMap::default(),
@@ -430,6 +439,8 @@ impl ChunkWorld {
             revisions: HashMap::default(),
             next_revision: 0,
             wire_revisions: HashMap::default(),
+            villager_route_revisions: HashMap::default(),
+            wooden_doors,
             poi_revisions: HashSet::default(),
             hydration_pending: HashSet::default(),
             eviction_check: HashSet::default(),
@@ -642,6 +653,7 @@ impl ChunkWorld {
         self.in_flight.remove(&pos);
         self.revisions.remove(&pos);
         self.wire_revisions.remove(&pos);
+        self.villager_route_revisions.remove(&pos);
         self.light.remove(pos);
         self.published = None;
         self.generated.retain(|(chunk, _, _)| *chunk != pos);
@@ -789,6 +801,12 @@ impl ChunkWorld {
 
     /// New client-visible content, including load, block edits and baked light.
     fn bump_revision(&mut self, pos: ChunkPos) {
+        self.bump_wire_revision(pos);
+        self.villager_route_revisions
+            .insert(pos, self.next_revision);
+    }
+
+    fn bump_wire_revision(&mut self, pos: ChunkPos) {
         self.bump_storage_revision(pos);
         self.wire_revisions.insert(pos, self.next_revision);
         self.poi_revisions.insert(pos);
@@ -815,6 +833,17 @@ impl ChunkWorld {
             .get(&ChunkPos { x: cx, z: cz })
             .copied()
             .unwrap_or(u64::MAX)
+    }
+
+    pub(crate) fn villager_route_revision(&self, cx: i32, cz: i32) -> u64 {
+        self.villager_route_revisions
+            .get(&ChunkPos { x: cx, z: cz })
+            .copied()
+            .unwrap_or(u64::MAX)
+    }
+
+    pub(crate) fn pending_villager_route_chunks(&self) -> &[ChunkPos] {
+        &self.route_touched
     }
 
     /// Storage ACK fence for in-memory fixtures which have no checkpoint store.
@@ -1114,6 +1143,7 @@ impl ChunkWorld {
         for pos in &evicted {
             self.revisions.remove(pos);
             self.wire_revisions.remove(pos);
+            self.villager_route_revisions.remove(pos);
             self.inhabited_time.remove(pos);
             self.sim_debt.remove(pos);
             self.activity_changes.entry(*pos).or_insert(None);
@@ -1723,6 +1753,24 @@ impl ChunkWorld {
         ))
     }
 
+    fn wooden_door_toggle(&self, previous: Option<u32>, state: u32) -> bool {
+        self.wooden_doors
+            .get(state as usize)
+            .copied()
+            .unwrap_or(false)
+            && previous
+                .and_then(|id| self.source.registry.by_id(BlockStateId(id)))
+                .zip(self.source.registry.by_id(BlockStateId(state)))
+                .is_some_and(|(before, after)| {
+                    before.block.id == after.block.id
+                        && before
+                            .properties
+                            .iter()
+                            .zip(&after.properties)
+                            .all(|(a, b)| a == b || (a.0 == "open" && b.0 == "open"))
+                })
+    }
+
     /// Apply one authoritative block write.
     pub fn set_block(&mut self, x: i32, y: i32, z: i32, state: u32) {
         self.cancel_simulation_debt(ChunkPos {
@@ -1772,6 +1820,9 @@ impl ChunkWorld {
                 self.bump_revision(chunk);
             }
         }
+        if !self.wooden_door_toggle(previous, state) && !self.route_touched.contains(&chunk) {
+            self.route_touched.push(chunk);
+        }
         self.overlay.insert((x, y, z), state);
         if !self.touched.contains(&chunk) {
             self.touched.push(chunk);
@@ -1782,6 +1833,7 @@ impl ChunkWorld {
     pub fn fold_overlay(&mut self) {
         if self.overlay.is_empty() {
             self.touched.clear();
+            self.route_touched.clear();
             return;
         }
         let mut revised = HashSet::default();
@@ -1836,9 +1888,14 @@ impl ChunkWorld {
             revised.extend(self.install_light(updates));
         }
         for pos in revised {
-            self.bump_revision(pos);
+            self.bump_wire_revision(pos);
+            if self.route_touched.contains(&pos) {
+                self.villager_route_revisions
+                    .insert(pos, self.next_revision);
+            }
         }
         self.touched.clear();
+        self.route_touched.clear();
     }
 
     pub(crate) fn take_block_entity_removals(&mut self) -> Vec<mc_world::BlockPos> {

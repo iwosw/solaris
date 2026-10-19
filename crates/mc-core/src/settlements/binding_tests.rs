@@ -295,3 +295,43 @@ fn incremental_change_death_and_removal_match_rebuild() {
     rebuild_counts(&mut state);
     assert_eq!(state.settlements.member_count(town), oracle);
 }
+
+#[test]
+fn radius_grows_with_population_persists_and_never_shrinks() {
+    let mut state = state();
+    let town = state
+        .settlements
+        .create(
+            &mut state.settlement_sequence,
+            "growing".into(),
+            "owner".into(),
+            [0, 64, 0],
+            8,
+        )
+        .unwrap();
+    let mut people = Vec::new();
+    for _ in 0..5 {
+        let id = resident(&mut state, [1.0, 64.0, 1.0]);
+        bind(&mut state, town, id).unwrap();
+        people.push(id);
+    }
+    state.settlements.take_images();
+    assert_eq!(state.settlements.get(town).unwrap().radius, 20);
+    let id = resident(&mut state, [1.0, 64.0, 1.0]);
+    bind(&mut state, town, id).unwrap();
+    let images = state.settlements.take_images();
+    let record = images[0].value.as_ref().expect("grown record is journaled");
+    assert_eq!(record.radius, 24);
+    assert!(validate_record(record).is_ok());
+    unbind(&mut state, people[0]).unwrap();
+    assert_eq!(
+        state.settlements.get(town).unwrap().radius,
+        24,
+        "the radius is monotonic"
+    );
+    for _ in 0..70 {
+        let id = resident(&mut state, [1.0, 64.0, 1.0]);
+        bind(&mut state, town, id).unwrap();
+    }
+    assert_eq!(state.settlements.get(town).unwrap().radius, 256);
+}
