@@ -214,3 +214,23 @@ fn extraction_selects_consumed_content_and_rejects_path_traversal() {
     assert!(wanted_data_entry("data/minecraft/tags/../../escape.json").is_none());
     assert!(wanted_data_entry("../data/minecraft/recipe/stick.json").is_none());
 }
+
+#[test]
+fn tool_file_name_adds_the_exe_suffix_only_on_windows() {
+    assert_eq!(super::tool_file_name("javac", true), "javac.exe");
+    assert_eq!(super::tool_file_name("javac", false), "javac");
+}
+
+#[test]
+fn classpath_round_trips_through_the_platform_separator() {
+    let entries = vec![
+        std::path::PathBuf::from("classes"),
+        std::path::PathBuf::from("server-26.1.2.jar"),
+        std::path::PathBuf::from("libs").join("netty.jar"),
+    ];
+    let joined = super::join_classpath(&entries).unwrap();
+    let split: Vec<_> = std::env::split_paths(&joined).collect();
+    assert_eq!(split, entries);
+    let separator = if cfg!(windows) { ";" } else { ":" };
+    assert_eq!(joined.to_string_lossy().matches(separator).count(), 2);
+}

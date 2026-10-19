@@ -35,6 +35,9 @@ async fn run(cli: Cli, mut cfg: mc_edge::config::EdgeConfig) -> anyhow::Result<(
     let data = mc_edge::server::load_vanilla_data(&cfg)?;
     let tags = mc_edge::server::load_tags(&cfg, &data)?;
     let core_config = mc_edge::server::core_config(&cfg);
+    // Registered before the core opens: a stop requested during startup must
+    // still reach the clean shutdown below instead of the default signal kill.
+    let shutdown = shutdown_signal();
     // Recovery can wait for chunk workers while folding durable block overlays.
     let core = std::sync::Arc::new(
         tokio::task::spawn_blocking(move || mc_core::Core::open(core_config)).await??,
@@ -82,7 +85,7 @@ async fn run(cli: Cli, mut cfg: mc_edge::config::EdgeConfig) -> anyhow::Result<(
             shutdown_core.shutdown();
             result
         }
-        _ = shutdown_signal() => {
+        _ = shutdown => {
             shutdown_core.shutdown();
             info!("shutdown requested; core stopped");
             Ok(())
@@ -91,17 +94,29 @@ async fn run(cli: Cli, mut cfg: mc_edge::config::EdgeConfig) -> anyhow::Result<(
 }
 
 /// Ctrl-C or SIGTERM: either requests shutdown, then the process exits.
-async fn shutdown_signal() {
+/// Handlers are installed when this is called, not when the future is polled.
+fn shutdown_signal() -> impl Future<Output = ()> {
     #[cfg(unix)]
     {
-        let mut term = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate());
-        if let Ok(term) = term.as_mut() {
-            tokio::select! {
-                _ = tokio::signal::ctrl_c() => {},
-                _ = term.recv() => {},
+        use tokio::signal::unix::{SignalKind, signal};
+        let streams = signal(SignalKind::terminate())
+            .and_then(|term| signal(SignalKind::interrupt()).map(|interrupt| (term, interrupt)));
+        async move {
+            match streams {
+                Ok((mut term, mut interrupt)) => {
+                    tokio::select! {
+                        _ = term.recv() => {},
+                        _ = interrupt.recv() => {},
+                    }
+                }
+                Err(_) => {
+                    let _ = tokio::signal::ctrl_c().await;
+                }
             }
-            return;
         }
     }
-    let _ = tokio::signal::ctrl_c().await;
+    #[cfg(not(unix))]
+    async {
+        let _ = tokio::signal::ctrl_c().await;
+    }
 }

@@ -711,7 +711,8 @@ fn run_java_extractors(
     work: &Path,
     staging: &Path,
 ) -> Result<()> {
-    let classpath = classpath(bundle);
+    let bundle_entries = classpath_entries(bundle);
+    let classpath = join_classpath(&bundle_entries)?;
     let sources = work.join("extractors");
     let classes = sources.join("classes");
     fs::create_dir_all(&classes).with_context(|| format!("create {}", classes.display()))?;
@@ -744,9 +745,10 @@ fn run_java_extractors(
         if let Some(parent) = out.parent() {
             fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
         }
+        let run_classpath = join_classpath(std::iter::once(&classes).chain(&bundle_entries))?;
         let run = Command::new(java)
             .arg("-cp")
-            .arg(format!("{}:{classpath}", classes.display()))
+            .arg(&run_classpath)
             .arg(extractor.class_name)
             .arg(&out)
             .current_dir(&sources)
@@ -784,15 +786,24 @@ async fn capture_registry_payloads(
     .map_err(|error| anyhow::anyhow!("{error}"))
 }
 
-fn classpath(bundle: &UnpackedBundle) -> String {
-    let mut parts = vec![bundle.inner_jar.display().to_string()];
-    parts.extend(
-        bundle
-            .libraries
-            .iter()
-            .map(|path| path.display().to_string()),
-    );
-    parts.join(":")
+fn classpath_entries(bundle: &UnpackedBundle) -> Vec<PathBuf> {
+    let mut entries = vec![bundle.inner_jar.clone()];
+    entries.extend(bundle.libraries.iter().cloned());
+    entries
+}
+
+/// A Java classpath joined with the platform separator (`:` or `;`).
+fn join_classpath<'a>(entries: impl IntoIterator<Item = &'a PathBuf>) -> Result<OsString> {
+    std::env::join_paths(entries).context("build the Java classpath")
+}
+
+/// `name` with the platform executable suffix; the platform is data so it is testable anywhere.
+fn tool_file_name(name: &str, windows: bool) -> String {
+    if windows {
+        format!("{name}.exe")
+    } else {
+        name.to_owned()
+    }
 }
 
 fn java_command() -> Result<OsString> {
@@ -803,7 +814,7 @@ fn javac_command(java: &OsStr) -> OsString {
     if let Some(value) = std::env::var_os("JAVAC") {
         return value;
     }
-    let sibling = Path::new(java).with_file_name("javac");
+    let sibling = Path::new(java).with_file_name(tool_file_name("javac", cfg!(windows)));
     if sibling.is_file() {
         return sibling.into_os_string();
     }
