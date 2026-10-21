@@ -279,6 +279,12 @@ impl VillagePlan {
                     },
                     position: piece.position,
                     rotation: piece.rotation.quarter_turns(),
+                    bounds: matches!(&piece.element, PlanElement::Single { .. })
+                        .then_some((piece.bounds_min, piece.bounds_max)),
+                    entity_owner: match &piece.element {
+                        PlanElement::Single { owner, .. } => Some(owner.to_string()),
+                        PlanElement::Feature { .. } => None,
+                    },
                 })
                 .collect(),
         }
@@ -1069,7 +1075,28 @@ impl VillagePlanSource {
                 registry: self.blocks.as_ref(),
                 inhabitants: &mut inhabitants,
             };
-            for piece in plan.pieces() {
+            // `terrain_matching` pieces (streets) are projected onto the terrain
+            // surface, which a hillside house can occupy: the street's box and the
+            // house's do not overlap, yet its blocks land inside the house and
+            // would overwrite a door's upper half or a wall. They are written
+            // first so the rigid pieces and decor keep their blocks. Streets
+            // carry no chest and draw nothing from the structure random, so the
+            // order leaves its stream untouched.
+            let terrain_matching = |piece: &&PlanPiece| {
+                matches!(
+                    piece.element,
+                    PlanElement::Single {
+                        projection: Projection::TerrainMatching,
+                        ..
+                    }
+                )
+            };
+            let ordered = plan.pieces().iter().filter(terrain_matching).chain(
+                plan.pieces()
+                    .iter()
+                    .filter(|piece| !terrain_matching(piece)),
+            );
+            for piece in ordered {
                 if !intersects(piece.bounds_min, piece.bounds_max, writable) {
                     continue;
                 }
@@ -1236,6 +1263,10 @@ impl ProcessLevel for ChunkPieceWriter<'_, '_> {
         self.local(pos)
             .and_then(|(lx, lz)| self.chunk.get_block(lx, pos.y, lz))
             .unwrap_or(self.air)
+    }
+
+    fn in_view(&self, pos: BlockPos) -> bool {
+        self.local(pos).is_some()
     }
 
     fn height(&self, _heightmap: HeightmapType, x: i32, z: i32) -> i32 {

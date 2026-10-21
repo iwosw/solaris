@@ -1,0 +1,37 @@
+{
+  "id": "wall",
+  "kind": "wall",
+  "palette": {
+    "C": "cobblestone_stairs[facing=east,half=bottom]",
+    "c": "cobblestone",
+    "p": "cobblestone_wall",
+    "t": "torch"
+  },
+  "levels": [
+    {
+      "cert": [9, 4, 3],
+      "entrance": [1, 1, 3],
+      "layers": [
+        ["ccccccccc", "ccccccccc", "ccccccccc", "........."],
+        ["ccccccccc", "ccccccccc", "ccccccccc", ".Ccc....."],
+        ["ccccccccc", "ccccccccc", "ccccccccc", "..Cc....."],
+        ["ccccccccc", "ccccccccc", "ccccccccc", "...C....."],
+        ["cpcpcpcpc", ".........", ".........", "........."],
+        ["c.c.c.c.c", ".........", "t.......t", "........."]
+      ]
+    },
+    {
+      "cert": [11, 5, 3],
+      "entrance": [1, 1, 3],
+      "layers": [
+        ["ccccccccccc", "ccccccccccc", "ccccccccccc", "..........."],
+        ["ccccccccccc", "ccccccccccc", "ccccccccccc", ".Cccc......"],
+        ["ccccccccccc", "ccccccccccc", "ccccccccccc", "..Ccc......"],
+        ["ccccccccccc", "ccccccccccc", "ccccccccccc", "...Cc......"],
+        ["ccccccccccc", "ccccccccccc", "ccccccccccc", "....C......"],
+        ["cpcpcpcpcpc", "...........", ".ppp.ppppp.", "..........."],
+        ["c.c.c.c.c.c", "...........", "t....t....t", "..........."]
+      ]
+    }
+  ]
+}

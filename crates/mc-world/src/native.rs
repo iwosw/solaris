@@ -10,7 +10,7 @@ mod state;
 mod ticks;
 pub use checkpoint::{
     NativeCheckpoint, NativeCheckpointImage, NativeCheckpointIo, NativeCheckpointReader,
-    NativeDomainRecord, NativePlayerSnapshot,
+    NativeDomainRecord, NativeGenerationContract, NativePlayerSnapshot,
 };
 #[cfg(test)]
 mod checkpoint_tests;

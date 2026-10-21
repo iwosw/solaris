@@ -17,13 +17,13 @@ use mc_protocol::packets::play::{
     ClientboundOpenScreen, ClientboundOpenSignEditor, ClientboundPlayerAbilities,
     ClientboundRecipeBookAdd, ClientboundRemoveEntityEffect, ClientboundRespawn,
     ClientboundSelectAdvancementsTab, ClientboundSetCursorItem, ClientboundSetEntityData,
-    ClientboundSetExperience, ClientboundSetHealth, ClientboundShowDialog, ClientboundSystemChat,
-    ClientboundUpdateEntityAttributes, ClientboundUpdateEntityEffect, ENTITY_DATA_AIR_SUPPLY_INDEX,
-    EntityAttributeModifier, EntityAttributeSnapshot, EntityDataValue as WireEntityDataValue,
-    EntityEffectFlags, EntityEvent as WireEntityEvent, GameEvent, LevelEvent, MerchantItemCost,
-    MerchantOffer, MobEffectId, PLAYER_DATA_ABSORPTION_INDEX, PlayDisconnect, PlayerInfoActions,
-    PlayerInfoEntry, PlayerInfoRemove, PlayerInfoUpdate, SetEntityMotion,
-    SynchronizePlayerPosition, pack_block_pos,
+    ClientboundSetExperience, ClientboundSetHealth, ClientboundShowDialog, ClientboundSound,
+    ClientboundSystemChat, ClientboundUpdateEntityAttributes, ClientboundUpdateEntityEffect,
+    ENTITY_DATA_AIR_SUPPLY_INDEX, EntityAttributeModifier, EntityAttributeSnapshot,
+    EntityDataValue as WireEntityDataValue, EntityEffectFlags, EntityEvent as WireEntityEvent,
+    GameEvent, LevelEvent, MerchantItemCost, MerchantOffer, MobEffectId,
+    PLAYER_DATA_ABSORPTION_INDEX, PlayDisconnect, PlayerInfoActions, PlayerInfoEntry,
+    PlayerInfoRemove, PlayerInfoUpdate, SetEntityMotion, SynchronizePlayerPosition, pack_block_pos,
 };
 
 use super::{PlannedPacket, ViewerState, per_tick, push_reliable};
@@ -423,6 +423,20 @@ fn plan_change(change: &PlayerChange, viewer: &mut ViewerState, out: &mut Vec<Pl
                 },
             );
         }
+        PlayerChange::BellRung { position } => push_reliable(
+            out,
+            conn,
+            &ClientboundSound {
+                sound: Identifier::parse("minecraft:block.bell.use")
+                    .expect("static bell sound identifier"),
+                fixed_range: None,
+                source: 4,
+                position: [position.x * 8 + 4, position.y * 8 + 4, position.z * 8 + 4],
+                volume: 2.0,
+                pitch: 1.0,
+                seed: 0,
+            },
+        ),
         PlayerChange::MenuOpened {
             window,
             menu_type,

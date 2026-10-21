@@ -1,0 +1,48 @@
+{
+  "id": "mason",
+  "kind": "builder",
+  "palette": {
+    "C": "cobblestone",
+    "D": "oak_fence_gate[facing=south,open=true]",
+    "L": "oak_log[axis=y]",
+    "O": "oak_door[facing=north,half=upper]",
+    "P": "crafting_table",
+    "S": "oak_stairs[facing=north,half=bottom]",
+    "X": "oak_planks",
+    "Z": "oak_slab[type=top]",
+    "c": "chest[facing=west]",
+    "d": "oak_fence",
+    "f": "furnace[facing=west]",
+    "o": "oak_door[facing=north,half=lower]",
+    "p": "cobblestone_wall",
+    "t": "torch",
+    "w": "wall_torch[facing=east]",
+    "x": "oak_stairs[facing=south,half=bottom]"
+  },
+  "levels": [
+    {
+      "cert": [7, 4, 5],
+      "entrance": [3, 1, 4],
+      "layers": [
+        ["CCCCCCC", "CCCCCCC", "CCCCCCC", "CCCCCCC", "CCCCCCC", ".......", ".......", ".......", "......."],
+        ["LCCCCCL", "CP...fC", "C.....C", "CP...cC", "LCCoCCL", "p.....p", "pCC.CCp", "p.....p", "pppDppp"],
+        ["LCdCdCL", "C.....C", "Cw....C", "C.....C", "LdCOCdL", ".......", ".C...C.", ".......", "t.....t"],
+        ["xxxxxxx", "XZZZZZX", "XZZZZZX", "XZZZZZX", "SSSSSSS", ".......", ".......", ".......", "......."],
+        [".......", "xxxxxxx", "X.....X", "SSSSSSS", ".......", ".......", ".......", ".......", "......."],
+        [".......", ".......", "XXXXXXX", ".......", ".......", ".......", ".......", ".......", "......."]
+      ]
+    },
+    {
+      "cert": [9, 4, 5],
+      "entrance": [3, 1, 4],
+      "layers": [
+        ["CCCCCCCCC", "CCCCCCCCC", "CCCCCCCCC", "CCCCCCCCC", "CCCCCCCCC", ".........", ".........", ".........", "........."],
+        ["LCCCCCCCL", "CP.P...fC", "C.......C", "CP.....cC", "LCCoCCCCL", "p.......p", "pCC...CCp", "p.......p", "pppDppppp"],
+        ["LCdCdCdCL", "C.......C", "Cw......C", "C.......C", "LdCOCdCdL", ".........", ".C.....C.", ".........", "t.......t"],
+        ["xxxxxxxxx", "XZZZZZZZX", "XZZZZZZZX", "XZZZZZZZX", "SSSSSSSSS", ".........", ".........", ".........", "........."],
+        [".........", "xxxxxxxxx", "X.......X", "SSSSSSSSS", ".........", ".........", ".........", ".........", "........."],
+        [".........", ".........", "XXXXXXXXX", ".........", ".........", ".........", ".........", ".........", "........."]
+      ]
+    }
+  ]
+}

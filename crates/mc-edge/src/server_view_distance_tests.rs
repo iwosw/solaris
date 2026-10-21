@@ -29,10 +29,14 @@ fn server(root: &std::path::Path) -> Arc<EdgeServer> {
 }
 
 fn information(distance: i8) -> Vec<u8> {
+    information_language("en_us", distance)
+}
+
+fn information_language(language: &str, distance: i8) -> Vec<u8> {
     let mut body = Vec::new();
     ServerboundClientInformation {
         information: ClientInformation {
-            language: "en_us".into(),
+            language: language.into(),
             view_distance: distance,
             chat_visibility: ChatVisibility::Full,
             chat_colors: true,
@@ -85,7 +89,9 @@ async fn client_view_distance_join_grow_and_shrink() {
     server
         .connections
         .stash_join(id, (entity, spawn, 0, Default::default()));
-    wait_for_join(&server, id, "View", 4).await.unwrap();
+    wait_for_join(&server, id, "View", 4, "en_us")
+        .await
+        .unwrap();
     let (reliable_tx, mut reliable_rx) = mpsc::channel(512);
     let (world_tx, mut world_rx) = mpsc::channel(512);
     server.connections.register(
@@ -225,4 +231,54 @@ async fn client_view_distance_join_grow_and_shrink() {
             .contains_key(&id)
     );
     server.hub.shutdown();
+}
+
+/// The vanilla play-phase `Client Information` is where a client can change
+/// language mid-session: the edge admits it as `PlayerInput::SetLocale` and
+/// deduplicates an unchanged locale.
+#[tokio::test]
+async fn play_client_information_admits_the_client_locale() {
+    let root = tempfile::tempdir().unwrap();
+    let server = server(root.path());
+    let id = server.connections.alloc_id();
+    server
+        .connections
+        .stash_join(id, (EntityId(1), [8.0, 64.0, 8.0], 0, Default::default()));
+    wait_for_join(&server, id, "Locale", 4, "en_us")
+        .await
+        .unwrap();
+    assert_eq!(locale(&server, id), Some("en_us".to_owned()));
+
+    assert!(
+        server
+            .handle_edge_frame(
+                id,
+                ServerboundClientInformation::ID,
+                &information_language("ru_ru", 4)
+            )
+            .await
+            .unwrap()
+    );
+    assert_eq!(locale(&server, id), Some("ru_ru".to_owned()));
+
+    // A repeated locale is not admitted again and does not disturb the radius.
+    assert!(
+        server
+            .handle_edge_frame(
+                id,
+                ServerboundClientInformation::ID,
+                &information_language("ru_ru", 4)
+            )
+            .await
+            .unwrap()
+    );
+    assert_eq!(locale(&server, id), Some("ru_ru".to_owned()));
+
+    server.connections.remove(id);
+    assert_eq!(locale(&server, id), None);
+    server.hub.shutdown();
+}
+
+fn locale(server: &EdgeServer, id: ConnectionId) -> Option<String> {
+    server.connections.inner.lock().locales.get(&id).cloned()
 }

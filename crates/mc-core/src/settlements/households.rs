@@ -304,13 +304,19 @@ fn reconcile(world: &mut TickState, owner: SettlementId, household: &str, size: 
                 .household = None;
         } else if v.settlement != Some(owner) {
             let id = body.id;
-            world
-                .entities
-                .row_mut(slot)
-                .villager
-                .as_mut()
-                .unwrap()
-                .settlement = Some(owner);
+            let v = world.entities.row_mut(slot).villager.as_mut().unwrap();
+            let profession = v.data.profession;
+            super::construction::detach(v);
+            v.settlement = Some(owner);
+            // A sibling dimension can be outside command admission's view.
+            // Retire foreign barracks custody without deleting its equipment.
+            v.soldier = None;
+            if v.data.profession == crate::villager::VillagerProfession::Soldier {
+                v.data.profession = crate::villager::VillagerProfession::None;
+            }
+            if v.data.profession != profession {
+                crate::villager::sync_appearance(world, slot);
+            }
             moved.push(id);
         }
     }
@@ -380,6 +386,21 @@ pub(crate) fn relocate(
     if members.is_empty() {
         return Err("household has no living members");
     }
+    if std::iter::once(&*state)
+        .chain(state.other_dimensions.values().map(|world| &**world))
+        .any(|world| {
+            world.entities.slots().any(|slot| {
+                world.entities.body(slot).alive
+                    && world.entities.row(slot).villager.as_ref().is_some_and(|v| {
+                        v.settlement == Some(source)
+                            && v.household.as_deref() == Some(household)
+                            && v.soldier.is_some()
+                    })
+            })
+        })
+    {
+        return Err("Dismiss soldiers before relocating their household");
+    }
     let mut family = state
         .settlements
         .get_mut(source)
@@ -395,13 +416,13 @@ pub(crate) fn relocate(
     to.households.insert(household.to_owned(), family);
     for &entity in &members {
         let slot = state.entities.slot_of(entity).unwrap();
-        state
-            .entities
-            .row_mut(slot)
-            .villager
-            .as_mut()
-            .unwrap()
-            .settlement = Some(destination);
+        let v = state.entities.row_mut(slot).villager.as_mut().unwrap();
+        let profession = v.data.profession;
+        super::construction::detach(v);
+        v.settlement = Some(destination);
+        if v.data.profession != profession {
+            crate::villager::sync_appearance(state, slot);
+        }
     }
     state
         .settlements

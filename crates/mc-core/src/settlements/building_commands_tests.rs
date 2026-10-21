@@ -226,3 +226,117 @@ fn list_is_public_and_shows_id_kind_level_bounds() {
     let outsider = player(&mut state, [200.0, 201.0, 0.0]);
     assert_eq!(list(&state, outsider).unwrap_err(), NO_SETTLEMENT);
 }
+
+#[test]
+fn overlapping_village_resolution_refusal_names_the_claim_requirement() {
+    // Real-client QA receipt (20261020T095116-buildings-qa): a town founded
+    // inside a generated village sphere resolved the nearer, autonomous
+    // village for certify while the founder stood mid-way, and the refusal
+    // claimed owner/operator rights that an unclaimed settlement never grants.
+    let mut state = test_state();
+    raise_workshop(&mut state);
+    let village = state
+        .settlements
+        .adopt_village(
+            &mut state.settlement_sequence,
+            "minecraft:overworld:4:201:4",
+            [4, 201, 4],
+        )
+        .unwrap();
+    town(&mut state, "bqa_barracks", "alice", [20, 201, 20]);
+    let midway = player(&mut state, [8.0, 201.0, 8.0]);
+    assert_eq!(
+        containing(&state, midway),
+        Some(village),
+        "the autonomous village anchor is nearer"
+    );
+    let bounds = workshop_bounds();
+    let name = state.settlements.get(village).unwrap().name.clone();
+    assert_eq!(
+        certify(
+            &mut state,
+            midway,
+            Some("alice"),
+            false,
+            "farmer",
+            bounds.min,
+            bounds.max,
+        )
+        .unwrap_err(),
+        format!("{name} is an autonomous settlement; claim it before managing it."),
+    );
+    // Standing on the town's own anchor resolves the town and admits its
+    // founder; certification permission itself is unchanged.
+    let founder = player(&mut state, [20.0, 201.0, 20.0]);
+    let reply = certify(
+        &mut state,
+        founder,
+        Some("alice"),
+        false,
+        "farmer",
+        bounds.min,
+        bounds.max,
+    )
+    .unwrap();
+    assert!(reply.starts_with("Certified farmer #"), "{reply}");
+}
+
+#[test]
+fn autonomous_village_refuses_certify_until_claimed() {
+    let mut state = test_state();
+    raise_workshop(&mut state);
+    let village = state
+        .settlements
+        .adopt_village(
+            &mut state.settlement_sequence,
+            "minecraft:overworld:8:201:8",
+            [8, 201, 8],
+        )
+        .unwrap();
+    let executor = player(&mut state, [8.0, 201.0, 8.0]);
+    let bounds = workshop_bounds();
+    let name = state.settlements.get(village).unwrap().name.clone();
+    let refusal = format!("{name} is an autonomous settlement; claim it before managing it.");
+    assert_eq!(
+        certify(
+            &mut state,
+            executor,
+            Some("carol"),
+            false,
+            "farmer",
+            bounds.min,
+            bounds.max,
+        )
+        .unwrap_err(),
+        refusal,
+    );
+    assert_eq!(
+        certify(
+            &mut state,
+            executor,
+            Some("carol"),
+            true,
+            "farmer",
+            bounds.min,
+            bounds.max,
+        )
+        .unwrap_err(),
+        refusal,
+        "operators cannot manage an unclaimed settlement either"
+    );
+    state
+        .settlements
+        .claim(village, "carol".to_owned(), [8, 201, 8])
+        .unwrap();
+    let reply = certify(
+        &mut state,
+        executor,
+        Some("carol"),
+        false,
+        "farmer",
+        bounds.min,
+        bounds.max,
+    )
+    .unwrap();
+    assert!(reply.starts_with("Certified farmer #"), "{reply}");
+}

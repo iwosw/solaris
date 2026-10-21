@@ -14,6 +14,8 @@ use crate::tick::TickState;
 
 #[path = "plugin_structures/features.rs"]
 mod features;
+#[path = "plugin_structures/settlement_builds.rs"]
+pub(crate) mod settlement_builds;
 #[path = "plugin_structures/worksites.rs"]
 mod worksites;
 
@@ -146,10 +148,17 @@ struct Cell {
     at: [i32; 3],
     state: u32,
     resource: Option<String>,
+    #[serde(default = "default_cell_quantity")]
+    quantity: u32,
+}
+fn default_cell_quantity() -> u32 {
+    1
 }
 #[derive(Clone, Serialize, Deserialize)]
 struct Structure {
     owner: String,
+    #[serde(default)]
+    settlement: Option<crate::settlements::SettlementId>,
     snapshot: ScriptStructureSnapshot,
     blueprint_hash: String,
     image: String,
@@ -251,18 +260,30 @@ fn overlaps(a: ScriptWorldBounds, b: ScriptWorldBounds) -> bool {
 fn contains(a: ScriptWorldBounds, b: ScriptWorldBounds) -> bool {
     (0..3).all(|i| a.min[i] <= b.min[i] && b.max[i] <= a.max[i])
 }
-fn fingerprint(state: &TickState, bounds: ScriptWorldBounds) -> Result<String, Failure> {
+/// Native settlements fence block identity so crops and shape/interaction
+/// properties can evolve during work. Generic plugin/survey fences stay exact.
+fn fingerprint(
+    state: &TickState,
+    bounds: ScriptWorldBounds,
+    block_identity: bool,
+) -> Result<String, Failure> {
     let mut hash = Sha256::new();
     for z in bounds.min[2]..=bounds.max[2] {
         for x in bounds.min[0]..=bounds.max[0] {
             for y in bounds.min[1]..=bounds.max[1] {
-                hash.update(
+                let state_id = state.world.block_at(x, y, z).ok_or(Failure::Unloaded)?;
+                let identity = if block_identity {
                     state
-                        .world
-                        .block_at(x, y, z)
-                        .ok_or(Failure::Unloaded)?
-                        .to_le_bytes(),
-                );
+                        .registry
+                        .blocks
+                        .by_id(mc_world::BlockStateId(state_id))
+                        .ok_or(Failure::InvalidRequest)?
+                        .block
+                        .raw_id as u32
+                } else {
+                    state_id
+                };
+                hash.update(identity.to_le_bytes());
             }
         }
     }
@@ -290,7 +311,7 @@ fn validate_survey(
     if !contains(survey.snapshot.bounds, bounds) {
         return Err(Failure::InvalidRequest);
     }
-    if fingerprint(world(state, dimension)?, survey.snapshot.bounds)? != survey.image {
+    if fingerprint(world(state, dimension)?, survey.snapshot.bounds, false)? != survey.image {
         return Err(Failure::StaleRevision);
     }
     Ok(())
@@ -359,6 +380,7 @@ fn planned_cells(
                     at: block.pos,
                     state: block.state.0,
                     resource,
+                    quantity: 1,
                 },
             );
         }
@@ -369,7 +391,7 @@ fn planned_cells(
         let mut counts = BTreeMap::new();
         for cell in &cells {
             if let Some(resource) = &cell.resource {
-                *counts.entry(resource.clone()).or_insert(0) += 1_u64;
+                *counts.entry(resource.clone()).or_insert(0) += u64::from(cell.quantity);
                 resources.insert(resource.clone());
             }
         }
@@ -514,7 +536,7 @@ pub(crate) fn prepare_structure_build(
         return Err(Failure::Forbidden);
     }
     let target = world(state, &record.snapshot.dimension)?;
-    if fingerprint(target, bounds)? != record.image {
+    if fingerprint(target, bounds, record.settlement.is_some())? != record.image {
         return Ok(None);
     }
     let mut edits = Vec::with_capacity(portion.len());
@@ -569,7 +591,7 @@ fn survey(
 ) -> Result<(u64, ScriptWorldStructureResult), Failure> {
     let mut ledger = ledger(state)?;
     let target = world(state, dimension)?;
-    let image = fingerprint(target, bounds)?;
+    let image = fingerprint(target, bounds, false)?;
     let revision = next(ledger.revision)?;
     let mut usable = 0_u32;
     let mut water = 0_u32;
@@ -832,12 +854,13 @@ fn execute_operation(
                 interaction_points,
             );
             snapshot.validate().map_err(|_| Failure::InvalidRequest)?;
-            let image = fingerprint(target, bounds)?;
+            let image = fingerprint(target, bounds, false)?;
             ledger.revision = revision;
             ledger.structures.insert(
                 id,
                 Structure {
                     owner: owner.to_owned(),
+                    settlement: None,
                     snapshot: snapshot.clone(),
                     blueprint_hash: blueprint.content_hash().to_owned(),
                     image,
@@ -881,22 +904,28 @@ fn execute_operation(
                 *work_units,
             )?;
             let index = record.snapshot.current_stage_index as usize;
-            let blueprint = blueprint(state, owner, &record.snapshot.blueprint_id)?;
-            if blueprint.content_hash() != record.blueprint_hash {
-                return Err(Failure::StaleRevision);
+            if record.settlement.is_none() {
+                let blueprint = blueprint(state, owner, &record.snapshot.blueprint_id)?;
+                if blueprint.content_hash() != record.blueprint_hash {
+                    return Err(Failure::StaleRevision);
+                }
+            } else if !settlement_builds::authorized(state, &record) {
+                return Err(Failure::Forbidden);
             }
             let bounds = bounds_of_structure(&record)?;
-            if !crate::plugin_player::allows_plugin_bounds(
-                state,
-                owner,
-                &record.snapshot.dimension,
-                bounds.min,
-                bounds.max,
-            ) {
+            if record.settlement.is_none()
+                && !crate::plugin_player::allows_plugin_bounds(
+                    state,
+                    owner,
+                    &record.snapshot.dimension,
+                    bounds.min,
+                    bounds.max,
+                )
+            {
                 return Err(Failure::Forbidden);
             }
             let target = world(state, &record.snapshot.dimension)?;
-            if fingerprint(target, bounds)? != record.image {
+            if fingerprint(target, bounds, record.settlement.is_some())? != record.image {
                 record.snapshot.state = ScriptStructureState::Paused;
                 record.snapshot.pause_reason = Some("footprint_changed".to_owned());
                 ledger.revision = next(ledger.revision)?;
@@ -926,12 +955,14 @@ fn execute_operation(
                     return Err(Failure::Blocked);
                 }
                 if let Some(resource) = &cell.resource {
-                    *consumed.entry(resource.clone()).or_insert(0) += 1_u64;
+                    *consumed.entry(resource.clone()).or_insert(0) += u64::from(cell.quantity);
                 }
             }
-            let reservation = inventories::reservation(state, owner, reservation_ref)?;
-            if reservation.snapshot.resource_plan_hash != record.snapshot.resource_plan_hash {
-                return Err(Failure::Blocked);
+            if record.settlement.is_none() {
+                let reservation = inventories::reservation(state, owner, reservation_ref)?;
+                if reservation.snapshot.resource_plan_hash != record.snapshot.resource_plan_hash {
+                    return Err(Failure::Blocked);
+                }
             }
             let revision = next(ledger.revision)?;
             let sequence = next(record.snapshot.watermark)?;
@@ -947,7 +978,18 @@ fn execute_operation(
             receipt.validate().map_err(|_| Failure::InvalidRequest)?;
             // Debit and placement are preflighted on the same single tick owner.
             // Their queues and the durable receipt join the root tick WAL image.
-            inventories::commit_reserved_debit(state, owner, reservation, &consumed, structure_id)?;
+            if let Some(settlement) = record.settlement {
+                settlement_builds::debit(state, settlement, reservation_ref, &consumed)?;
+            } else {
+                let reservation = inventories::reservation(state, owner, reservation_ref)?;
+                inventories::commit_reserved_debit(
+                    state,
+                    owner,
+                    reservation,
+                    &consumed,
+                    structure_id,
+                )?;
+            }
             let target = world_mut(state, &record.snapshot.dimension).expect("preflight dimension");
             for cell in portion {
                 let pos = BlockPos {
@@ -962,11 +1004,14 @@ fn execute_operation(
                 crate::block_entity_defaults::after_blocks(target, &[(pos, cell.state)]);
                 target.plugin_block_writes.push((pos, cell.state));
             }
-            record.image = fingerprint(target, bounds).expect("preflight native footprint");
+            record.image = fingerprint(target, bounds, record.settlement.is_some())
+                .expect("preflight native footprint");
             record.snapshot.state = ScriptStructureState::Running;
             record.snapshot.revision = revision;
             record.snapshot.watermark = sequence;
-            record.snapshot.reservation_ref = Some(reservation_ref.clone());
+            if record.settlement.is_none() {
+                record.snapshot.reservation_ref = Some(reservation_ref.clone());
+            }
             record.snapshot.completed_work_units += count as u64;
             let mut totals: BTreeMap<_, _> = record
                 .snapshot
@@ -978,14 +1023,17 @@ fn execute_operation(
                 *totals.entry(name).or_insert(0) += n;
             }
             record.snapshot.consumed = materials(&totals);
-            let current = inventories::reservation(state, owner, reservation_ref)?;
-            record.snapshot.remaining = current
-                .snapshot
-                .quantities
-                .iter()
-                .filter(|q| q.remaining > 0)
-                .map(|q| ScriptStructureMaterial::new(q.resource_id.clone(), q.remaining))
-                .collect();
+            record.snapshot.remaining = if record.settlement.is_some() {
+                settlement_builds::remaining(&record)
+            } else {
+                inventories::reservation(state, owner, reservation_ref)?
+                    .snapshot
+                    .quantities
+                    .iter()
+                    .filter(|q| q.remaining > 0)
+                    .map(|q| ScriptStructureMaterial::new(q.resource_id.clone(), q.remaining))
+                    .collect()
+            };
             if record.snapshot.completed_work_units == record.snapshot.stages[index].work_units {
                 record.snapshot.current_stage_index += 1;
                 record.snapshot.completed_work_units = 0;
@@ -1043,6 +1091,7 @@ fn execute_operation(
                     if fingerprint(
                         world(state, &record.snapshot.dimension)?,
                         bounds_of_structure(&record)?,
+                        record.settlement.is_some(),
                     )? != record.image
                     {
                         return Err(Failure::Blocked);
@@ -1293,18 +1342,41 @@ pub(crate) fn validate(state: &TickState) -> Result<(), crate::config::CoreError
                 {
                     return Err(malformed());
                 }
-                if let Some(resource) = &cell.resource {
+                if record.settlement.is_some() {
+                    let cost = crate::settlements::blueprints::material_for(
+                        &state.registry,
+                        mc_world::BlockStateId(cell.state),
+                    );
+                    let valid = match (cost, cell.resource.as_deref()) {
+                        (Some((item, quantity)), Some(resource)) => {
+                            quantity == cell.quantity
+                                && state
+                                    .registry
+                                    .items
+                                    .name_of(item)
+                                    .is_some_and(|name| name.as_str() == resource)
+                        }
+                        (None, None) => cell.quantity == 0,
+                        _ => false,
+                    };
+                    if !valid {
+                        return Err(malformed());
+                    }
+                } else if let Some(resource) = &cell.resource {
                     let definition = state
                         .registry
                         .blocks
                         .by_id(mc_world::BlockStateId(cell.state))
                         .expect("validated state");
                     if definition.block.id.as_str() != resource
+                        || cell.quantity != 1
                         || state.registry.items.id_of(&definition.block.id).is_none()
                     {
                         return Err(malformed());
                     }
-                    *counts.entry(resource.clone()).or_insert(0) += 1;
+                }
+                if let Some(resource) = &cell.resource {
+                    *counts.entry(resource.clone()).or_insert(0) += u64::from(cell.quantity);
                 }
             }
             if materials(&counts) != stage.materials {

@@ -942,3 +942,46 @@ fn slime_sizes_scale_health_attack_hitboxes_and_spawn_only_vanilla_sizes() {
         assert_eq!(seen, [1, 2, 4].into_iter().collect());
     }
 }
+
+#[test]
+fn villager_carry_drops_once_on_death() {
+    let mut state = state();
+    let villager = mob(&mut state, "minecraft:villager", 20.0);
+    let slot = state.entities.slot_of(villager).unwrap();
+    let cobble = state
+        .registry
+        .items
+        .id_of(&id("minecraft:cobblestone"))
+        .unwrap();
+    let planks = state
+        .registry
+        .items
+        .id_of(&id("minecraft:oak_planks"))
+        .unwrap();
+    let mut carrier = crate::villager::VillagerState::default();
+    carrier.inventory[0] = Some(ItemStack::new(cobble, 12));
+    carrier.inventory[3] = Some(ItemStack::new(planks, 5));
+    state.entities.row_mut(slot).villager = Some(Box::new(carrier));
+    state.merge_damage.push((
+        slot,
+        DamagePiece {
+            physical: None,
+            custom_armor: false,
+            amount: 100.0,
+            kind: DamageKind::Void,
+            source: None,
+        },
+    ));
+    let (_, _, dropped, _) = state.commit_merge_effects();
+    let mut items: Vec<_> = dropped
+        .iter()
+        .filter_map(|entity| state.entities.slot_of(*entity))
+        .filter_map(|slot| state.entities.row(slot).item.clone())
+        .map(|stack| (stack.item_id, stack.count))
+        .collect();
+    items.sort_unstable();
+    let mut expected = vec![(cobble, 12), (planks, 5)];
+    expected.sort_unstable();
+    assert_eq!(items, expected);
+    assert!(state.commit_merge_effects().2.is_empty());
+}

@@ -235,7 +235,7 @@ fn hydrate_validates_rows_and_keeps_sequence_monotonic() {
                 value: SettlementRecord {
                     id: SettlementId(1000),
                     name: "mismatch".into(),
-                    owner: "owner".into(),
+                    owner: Some("owner".into()),
                     owner_name: None,
                     anchor: [0, 64, 0],
                     radius: 48,
@@ -246,6 +246,10 @@ fn hydrate_validates_rows_and_keeps_sequence_monotonic() {
                     buildings: Default::default(),
                     district: None,
                     economy: Default::default(),
+                    village_source: None,
+                    bootstrap_storage: None,
+                    project: None,
+                    construction_cursor: 0,
                 },
             })
             .unwrap(),
@@ -264,7 +268,7 @@ fn hydrate_validates_rows_and_keeps_sequence_monotonic() {
             value: Some(SettlementRecord {
                 id,
                 name: "same".into(),
-                owner: "owner".into(),
+                owner: Some("owner".into()),
                 owner_name: None,
                 anchor: [0, 64, 0],
                 radius: 48,
@@ -275,6 +279,10 @@ fn hydrate_validates_rows_and_keeps_sequence_monotonic() {
                 buildings: Default::default(),
                 district: None,
                 economy: Default::default(),
+                village_source: None,
+                bootstrap_storage: None,
+                project: None,
+                construction_cursor: 0,
             }),
         });
     }
@@ -290,7 +298,7 @@ fn hydrate_validates_rows_and_keeps_sequence_monotonic() {
         value: Some(SettlementRecord {
             id: SettlementId(201),
             name: "same".into(),
-            owner: "owner".into(),
+            owner: Some("owner".into()),
             owner_name: None,
             anchor: [0, 64, 0],
             radius: 48,
@@ -301,6 +309,10 @@ fn hydrate_validates_rows_and_keeps_sequence_monotonic() {
             buildings: Default::default(),
             district: None,
             economy: Default::default(),
+            village_source: None,
+            bootstrap_storage: None,
+            project: None,
+            construction_cursor: 0,
         }),
     });
     let mut child = self::state();
@@ -310,7 +322,7 @@ fn hydrate_validates_rows_and_keeps_sequence_monotonic() {
         value: Some(SettlementRecord {
             id: SettlementId(202),
             name: "same".into(),
-            owner: "owner".into(),
+            owner: Some("owner".into()),
             owner_name: None,
             anchor: [8, 64, 8],
             radius: 32,
@@ -321,6 +333,10 @@ fn hydrate_validates_rows_and_keeps_sequence_monotonic() {
             buildings: Default::default(),
             district: None,
             economy: Default::default(),
+            village_source: None,
+            bootstrap_storage: None,
+            project: None,
+            construction_cursor: 0,
         }),
     });
     multi
@@ -639,6 +655,49 @@ fn two_dimension_equal_name_checkpoint_and_tail_roundtrip() {
     assert_eq!(
         fresh_root.other_dimensions[&Dimension::Nether].settlement_sequence,
         sequence.max(nether_id.0)
+    );
+}
+
+#[test]
+fn autonomous_row_and_claim_wal_tail_recover_with_the_same_worldgen_identity() {
+    let mut state = state();
+    let source = "minecraft:overworld:12:64:12";
+    let id = state
+        .settlements
+        .adopt_village(&mut state.settlement_sequence, source, [12, 64, 12])
+        .unwrap();
+    let rows = checkpoint_rows(&state, 21).unwrap();
+    let sequence = state.settlement_sequence;
+    state.settlements.take_images();
+    let mut unclaimed = self::state();
+    hydrate_dimension(&mut unclaimed, &rows, &Replay::default(), sequence).unwrap();
+    assert!(unclaimed.settlements.get(id).unwrap().owner.is_none());
+    state
+        .settlements
+        .claim(id, "alice".into(), [12, 64, 12])
+        .unwrap();
+    let mut entries = Vec::new();
+    journal_entries(&mut state, 22, &mut entries);
+    let replay = crate::journal::apply_batch_images(Replay::default(), &[(22, 22, entries)]);
+    let mut reopened = self::state();
+    hydrate_dimension(&mut reopened, &rows, &replay, sequence).unwrap();
+    finish_recovery(&mut reopened).unwrap();
+    assert_eq!(
+        reopened.settlements.get(id).unwrap().owner.as_deref(),
+        Some("alice")
+    );
+    assert_eq!(
+        reopened
+            .settlements
+            .adopt_village(&mut reopened.settlement_sequence, source, [12, 64, 12]),
+        Ok(id)
+    );
+    assert_eq!(reopened.settlements.records().count(), 1);
+    assert!(
+        reopened
+            .settlements
+            .claim(id, "bob".into(), [12, 64, 12])
+            .is_err()
     );
 }
 
@@ -974,7 +1033,7 @@ fn sigkill_child_reopen_keeps_identical_records_and_high_water() {
     records.sort_by_key(|record| record.id);
     assert_eq!(records.len(), 2);
     for record in &records {
-        assert_eq!(record.owner, "owner");
+        assert_eq!(record.owner.as_deref(), Some("owner"));
         assert_eq!(record.anchor, [0, 64, 0]);
         assert_eq!(record.radius, 48);
         assert_eq!(

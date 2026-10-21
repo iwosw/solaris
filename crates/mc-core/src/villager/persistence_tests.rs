@@ -721,9 +721,12 @@ fn miner_progress_persists_through_nbt_and_durable_projection() {
         bounds: Some(mc_script::ScriptWorldBounds::new([0, 0, 0], [8, 16, 8]).unwrap()),
         last_open: Some([1, 2, 3]),
         lane: 2,
+        level: 1,
+        pass: 2,
         cell: 42,
         layer: 2,
         returning: true,
+        stalled_since: 777,
     };
     let fields = villager_to_fields(&items, &state, 100).unwrap();
     let Tag::Compound(runtime) = field(&fields, "solaris:VillagerRuntime").unwrap().unwrap() else {
@@ -744,9 +747,12 @@ fn miner_progress_persists_through_nbt_and_durable_projection() {
             "bounds": {"min": [0, 0, 0], "max": [8, 16, 8]},
             "last_open": [1, 2, 3],
             "lane": 2,
+            "level": 1,
+            "pass": 2,
             "cell": 42,
             "layer": 2,
             "returning": true,
+            "stalled_since": 777,
         })
     );
     // Default lumber progress stays absent; no backward-compat placeholders.
@@ -782,7 +788,6 @@ fn lumberjack_progress_persists_through_nbt_and_durable_projection() {
         building: 5,
         revision: 2,
         cursor: 17,
-        vertical: 2,
         base: [3, 64, -8],
         sapling: 11,
         height: 6,
@@ -807,7 +812,6 @@ fn lumberjack_progress_persists_through_nbt_and_durable_projection() {
             "building": 5,
             "revision": 2,
             "cursor": 17,
-            "vertical": 2,
             "base": [3, 64, -8],
             "sapling": 11,
             "height": 6,
@@ -849,7 +853,7 @@ fn default_worker_progress_omitted_and_invalid_present_data_fails_closed() {
         (
             "SolarisMiningProgress",
             Tag::String(
-                r#"{"building":1,"revision":1,"bounds":{"min":[0,0,0],"max":[8,16,8]},"last_open":[1,2,3],"lane":2,"cell":1,"layer":1,"returning":false,"bogus":1}"#
+                r#"{"building":1,"revision":1,"bounds":{"min":[0,0,0],"max":[8,16,8]},"last_open":[1,2,3],"lane":2,"level":0,"cell":1,"layer":1,"returning":false,"bogus":1}"#
                     .into(),
             ),
         ),
@@ -859,7 +863,7 @@ fn default_worker_progress_omitted_and_invalid_present_data_fails_closed() {
         (
             "SolarisLumberProgress",
             Tag::String(
-                r#"{"building":1,"revision":1,"cursor":1,"vertical":1,"base":[0,0,0],"sapling":1,"height":1,"layer":1,"has_target":false,"returning":false,"bogus":1}"#
+                r#"{"building":1,"revision":1,"cursor":1,"base":[0,0,0],"sapling":1,"height":1,"layer":1,"has_target":false,"returning":false,"bogus":1}"#
                     .into(),
             ),
         ),
@@ -887,6 +891,56 @@ fn default_worker_progress_omitted_and_invalid_present_data_fails_closed() {
     assert_eq!(loaded.lumber_progress, state.lumber_progress);
 }
 
+/// Worlds saved before the miner gained `level` and the lumberjack lost
+/// `vertical` must still load: both the villager NBT string and the serde
+/// journal image keep decoding, level defaults to the lowest comb and the
+/// removed band is ignored.
+#[test]
+fn legacy_worker_progress_shapes_still_decode() {
+    let items = mc_data::items::solaris_required_items();
+    let state = fixture(&items);
+    let mining = serde_json::json!({
+        "building": 9, "revision": 3,
+        "bounds": {"min": [0, 0, 0], "max": [8, 16, 8]},
+        "last_open": [1, 2, 3], "lane": 2, "cell": 42, "layer": 2, "returning": true,
+    });
+    let lumber = serde_json::json!({
+        "building": 5, "revision": 2, "cursor": 17, "vertical": 2, "base": [3, 64, -8],
+        "sapling": 11, "height": 6, "layer": 3, "has_target": true, "returning": false,
+    });
+    let mut fields = villager_to_fields(&items, &state, 100).unwrap();
+    let Tag::Compound(runtime) = &mut fields
+        .iter_mut()
+        .find(|(name, _)| name == "solaris:VillagerRuntime")
+        .unwrap()
+        .1
+    else {
+        panic!("runtime compound");
+    };
+    replace(
+        runtime,
+        "SolarisMiningProgress",
+        Tag::String(mining.to_string()),
+    );
+    replace(
+        runtime,
+        "SolarisLumberProgress",
+        Tag::String(lumber.to_string()),
+    );
+    let loaded = villager_from_fields(&items, &fields, 100).unwrap();
+    assert_eq!(loaded.mining_progress.level, 0);
+    assert_eq!(loaded.mining_progress.cell, 42);
+    assert_eq!(loaded.lumber_progress.cursor, 17);
+    assert_eq!(loaded.lumber_progress.base, [3, 64, -8]);
+    // The journal image is the same shapes inside the serde VillagerState.
+    let mut image = serde_json::to_value(&state).unwrap();
+    image["mining_progress"] = mining;
+    image["lumber_progress"] = lumber;
+    let journal: VillagerState = serde_json::from_value(image).unwrap();
+    assert_eq!(journal.mining_progress, loaded.mining_progress);
+    assert_eq!(journal.lumber_progress, loaded.lumber_progress);
+}
+
 #[test]
 fn worker_anvil_projection_is_vanilla_and_runtime_role_wins_on_import() {
     let items = mc_data::items::solaris_required_items();
@@ -902,6 +956,12 @@ fn worker_anvil_projection_is_vanilla_and_runtime_role_wins_on_import() {
             VillagerProfession::Fletcher,
             "minecraft:fletcher",
             "lumberjack",
+        ),
+        (
+            VillagerProfession::Builder,
+            VillagerProfession::Mason,
+            "minecraft:mason",
+            "builder",
         ),
     ] {
         let mut state = fixture(&items);

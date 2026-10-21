@@ -1,0 +1,328 @@
+{
+  "id": "house",
+  "kind": "house",
+  "palette": {
+    "B": "white_bed[facing=north,part=head]",
+    "C": "chest[facing=south]",
+    "D": "oak_door[facing=north,half=lower]",
+    "F": "furnace[facing=south]",
+    "K": "barrel[facing=up]",
+    "L": "oak_log[axis=y]",
+    "N": "wall_torch[facing=north]",
+    "P": "oak_pressure_plate",
+    "S": "wall_torch[facing=south]",
+    "T": "crafting_table",
+    "X": "oak_log[axis=x]",
+    "Z": "oak_log[axis=z]",
+    "b": "white_bed[facing=north,part=foot]",
+    "c": "cobblestone",
+    "d": "oak_door[facing=north,half=upper]",
+    "e": "oak_stairs[facing=east,half=bottom]",
+    "f": "oak_fence",
+    "h": "oak_trapdoor[facing=south,half=bottom,open=true]",
+    "k": "cobblestone_wall",
+    "l": "ladder[facing=east]",
+    "n": "oak_stairs[facing=north,half=bottom]",
+    "p": "oak_planks",
+    "q": "oak_stairs[facing=north,half=top]",
+    "s": "oak_stairs[facing=south,half=bottom]",
+    "t": "torch",
+    "w": "oak_stairs[facing=west,half=bottom]"
+  },
+  "levels": [
+    {
+      "cert": [
+        7,
+        5,
+        7
+      ],
+      "entrance": [
+        3,
+        1,
+        6
+      ],
+      "layers": [
+        [
+          "ccccccc",
+          "cpppppc",
+          "cpppppc",
+          "cpppppc",
+          "cpppppc",
+          "cpppppc",
+          "ccccccc"
+        ],
+        [
+          "LcccccL",
+          "cBC..Fc",
+          "cb...Tc",
+          "c.wfe.c",
+          "c.....c",
+          "c.....c",
+          "LccDccL"
+        ],
+        [
+          "LpfpfpL",
+          "p.....p",
+          "p.....p",
+          "f..P..f",
+          "p.....p",
+          "p.....p",
+          "LfpdpfL"
+        ],
+        [
+          "LpppppL",
+          "p..S..p",
+          "p.....p",
+          "p.....p",
+          "p.....p",
+          "p..N..p",
+          "LpppppL"
+        ],
+        [
+          "LXXXXXL",
+          "ZpppppZ",
+          "ZpppppZ",
+          "ZpppppZ",
+          "ZpppppZ",
+          "ZpppppZ",
+          "LXXXXXL"
+        ],
+        [
+          "sssssss",
+          "p.....p",
+          "p.....p",
+          "p..t..p",
+          "p.....p",
+          "p.....p",
+          "nnnnnnn"
+        ],
+        [
+          ".......",
+          "sssssss",
+          "p.....p",
+          "f.....f",
+          "p.....p",
+          "nnnnnnn",
+          "......."
+        ],
+        [
+          ".......",
+          ".......",
+          "sssssss",
+          "p.....p",
+          "nnnnnnn",
+          ".......",
+          "......."
+        ],
+        [
+          ".......",
+          ".......",
+          ".......",
+          "ppppppp",
+          ".......",
+          ".......",
+          "......."
+        ]
+      ]
+    },
+    {
+      "cert": [
+        11,
+        5,
+        7
+      ],
+      "entrance": [
+        3,
+        1,
+        6
+      ],
+      "layers": [
+        [
+          "ccccccccccc",
+          "cpppppcpppc",
+          "cpppppcpppc",
+          "cpppppcpppc",
+          "cpppppcpppc",
+          "cpppppcpppc",
+          "ccccccccccc"
+        ],
+        [
+          "LcccccLcccL",
+          "cBC..Fc.CBc",
+          "cb...Tc..bc",
+          "c.wfe....Kc",
+          "c.....c...c",
+          "c.....c...c",
+          "LccDccLcccL"
+        ],
+        [
+          "LpfpfcLpfpL",
+          "p.....p...p",
+          "p.....p...p",
+          "f..P......f",
+          "p.....p...p",
+          "p.....p...p",
+          "LfpdpfLpfpL"
+        ],
+        [
+          "LppppcLpppL",
+          "p..S..p...p",
+          "p.....p...p",
+          "p.....p...p",
+          "p.....p...p",
+          "p..N..p.N.p",
+          "LpppppLpppL"
+        ],
+        [
+          "LXXXXcLXXXL",
+          "ZpppppZpppZ",
+          "ZpppppZpppZ",
+          "ZpppppZpppZ",
+          "ZpppppZpppZ",
+          "ZpppppZpppZ",
+          "LXXXXXLXXXL"
+        ],
+        [
+          "ssssscsssss",
+          "p.........p",
+          "p.........p",
+          "p..t......p",
+          "p.........p",
+          "p.........p",
+          "nnnnnnnnnnn"
+        ],
+        [
+          ".....c.....",
+          "sssssssssss",
+          "p.........p",
+          "f.........f",
+          "p.........p",
+          "nnnnnnnnnnn",
+          "..........."
+        ],
+        [
+          ".....c.....",
+          "...........",
+          "sssssssssss",
+          "p.........p",
+          "nnnnnnnnnnn",
+          "...........",
+          "..........."
+        ],
+        [
+          ".....k.....",
+          "...........",
+          "...........",
+          "ppppppppppp",
+          "...........",
+          "...........",
+          "..........."
+        ]
+      ]
+    },
+    {
+      "cert": [
+        11,
+        5,
+        7
+      ],
+      "entrance": [
+        3,
+        1,
+        6
+      ],
+      "layers": [
+        [
+          "ccccccccccc",
+          "cpppppcpppc",
+          "cpppppcpppc",
+          "cpppppcpppc",
+          "cpppppcpppc",
+          "cpppppcpppc",
+          "ccccccccccc",
+          "...c......."
+        ],
+        [
+          "LcccccLcccL",
+          "cBC..Fc.CBc",
+          "cb...Tc..bc",
+          "c.wfe....Kc",
+          "c.....cl.Bc",
+          "c.....c..bc",
+          "LccDccLcccL",
+          "........nn."
+        ],
+        [
+          "LpfpfcLpfpL",
+          "p.....p...p",
+          "p.....p...p",
+          "f..P......f",
+          "p.....pl..p",
+          "p.....p...p",
+          "LfpdpfLpfpL",
+          "h.h.h.hh.h."
+        ],
+        [
+          "LppppcLpppL",
+          "p..S..p...p",
+          "p.....p...p",
+          "p.....p...p",
+          "p.....pl..p",
+          "p..N..p.N.p",
+          "LpppppLpppL",
+          "q.S.S.q...q"
+        ],
+        [
+          "LXXXXcLXXXL",
+          "ZpppppZpppZ",
+          "ZpppppZpppZ",
+          "ZpppppZpppZ",
+          "ZpppppZlppZ",
+          "ZpppppZpppZ",
+          "LXXXXXLXXXL",
+          "XXXXXXXXXXX"
+        ],
+        [
+          "ssssscsssss",
+          "pKK......Cp",
+          "L.........L",
+          "f..t......f",
+          "f.........f",
+          "L.........L",
+          "p.........p",
+          "nnLfLnnnnnn"
+        ],
+        [
+          ".....c.....",
+          "sssssssssss",
+          "L.........L",
+          "f.........f",
+          "f.........f",
+          "L.........L",
+          "nne.wnnnnnn",
+          "..efw......"
+        ],
+        [
+          ".....c.....",
+          "...........",
+          "sssssssssss",
+          "Z.........Z",
+          "Z.........Z",
+          "nnnpnnnnnnn",
+          "...p.......",
+          "...p......."
+        ],
+        [
+          ".....k.....",
+          "...........",
+          "...........",
+          "sssssssssss",
+          "nnnnnnnnnnn",
+          "...........",
+          "...........",
+          "..........."
+        ]
+      ]
+    }
+  ]
+}

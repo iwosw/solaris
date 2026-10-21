@@ -75,6 +75,8 @@ pub(crate) fn profession_name(profession: Profession) -> &'static str {
         Profession::Weaponsmith => "оружейник",
         Profession::Miner => "шахтёр",
         Profession::Lumberjack => "лесоруб",
+        Profession::Builder => "строитель",
+        Profession::Soldier => "солдат",
     }
 }
 
@@ -88,11 +90,11 @@ fn employed(villager: &crate::villager::VillagerState, dimension: &str) -> bool 
 }
 
 fn owner_display<'a>(state: &'a TickState, record: &'a SettlementRecord) -> &'a str {
-    if record.owner.is_empty() {
-        return "нет";
-    }
-    let Ok(uuid) = uuid::Uuid::parse_str(&record.owner) else {
-        return &record.owner;
+    let Some(owner) = record.owner.as_deref() else {
+        return "нет (автономное)";
+    };
+    let Ok(uuid) = uuid::Uuid::parse_str(owner) else {
+        return owner;
     };
     for world in std::iter::once(state).chain(state.other_dimensions.values().map(|world| &**world))
     {
@@ -110,13 +112,9 @@ fn owner_display<'a>(state: &'a TickState, record: &'a SettlementRecord) -> &'a 
         .roster
         .iter()
         .find(|player| player.uuid == uuid)
-        .map_or(
-            record
-                .owner_name
-                .as_deref()
-                .unwrap_or(record.owner.as_str()),
-            |player| player.name.as_str(),
-        )
+        .map_or(record.owner_name.as_deref().unwrap_or(owner), |player| {
+            player.name.as_str()
+        })
 }
 
 /// Same words and counts in chat and above the settlement's bell.

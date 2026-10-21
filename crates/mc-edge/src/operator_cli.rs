@@ -77,6 +77,11 @@ pub enum WorldCommand {
     /// Count stored entities, villagers, chunks and settlements of a stopped
     /// native world from its checkpoint, read-only and without starting it.
     Census(CensusPaths),
+    /// Keep a stopped native world across a worldgen revision bump: rewrite its
+    /// identity and generation records to the current revision. Existing chunks
+    /// stay as generated; only not-yet-generated chunks use the new generator.
+    /// Refuses when anything but the revision differs (seed comes from --config).
+    UpgradeWorldgen,
 }
 
 #[derive(Debug, Args)]
@@ -190,6 +195,20 @@ pub async fn run_offline(cli: &Cli, cfg: &mut crate::config::EdgeConfig) -> anyh
                         &paths.source,
                         &paths.receipt,
                     )?;
+                }
+                WorldCommand::UpgradeWorldgen => {
+                    let report = mc_core::worldgen_upgrade::upgrade_worldgen_revision(&config)?;
+                    if report.rewritten {
+                        println!(
+                            "worldgen revision upgraded: {} -> {} (existing chunks unchanged)",
+                            report.from_revision, report.to_revision
+                        );
+                    } else {
+                        println!(
+                            "worldgen revision already current: {}; nothing changed",
+                            report.to_revision
+                        );
+                    }
                 }
             }
         }

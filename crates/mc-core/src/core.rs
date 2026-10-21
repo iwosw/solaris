@@ -37,6 +37,13 @@ use crate::registry::CoreRegistry;
 use crate::tick::{TickState, run_tick};
 use crate::world::ChunkWorld;
 
+#[path = "core_stop.rs"]
+mod stop;
+
+#[cfg(test)]
+#[path = "core_stop_tests.rs"]
+mod stop_tests;
+
 type OutboxBatch = Vec<(ConnectionId, Vec<PlayerChange>)>;
 
 /// Only edge consumers share this receiver; the tick owns its sender.
@@ -615,6 +622,7 @@ impl Core {
     /// Open the world: build registries, recover the journal, spawn the tick
     /// and journal threads.
     pub fn open(config: CoreConfig) -> Result<Self, CoreError> {
+        stop::install_panic_hook();
         let is_stage = |path: &std::path::Path| {
             path.file_name()
                 .and_then(std::ffi::OsStr::to_str)
@@ -708,7 +716,7 @@ impl Core {
             } else {
                 mc_world::native::NativeStore::open(&path, identity)
             }
-            .map_err(|e| CoreError::Storage(e.to_string()))?,
+            .map_err(|e| crate::native_checkpoint::open_refusal(&config, &path, e))?,
         );
         #[cfg(test)]
         crate::native_checkpoint::tests::register_store(&config, &store)?;
@@ -1099,8 +1107,12 @@ impl Core {
     pub fn shutdown(&self) {
         if let Ok(mut guard) = self.inner.shutdown_tx.lock()
             && let Some(tx) = guard.take()
+            && tx.send(()).is_err()
         {
-            let _ = tx.send(());
+            tracing::error!(
+                cause = "tick shutdown channel closed",
+                "core already stopped"
+            );
         }
         // Join tick first (it sends the journal Shutdown after its final
         // checkpoint flush), then the journal (final flush on exit).
@@ -1108,12 +1120,12 @@ impl Core {
             && let Some(handle) = guard.take()
         {
             handle.thread().unpark();
-            let _ = handle.join();
+            stop::join(handle);
         }
         if let Ok(mut guard) = self.inner.journal_handle.lock()
             && let Some(handle) = guard.take()
         {
-            let _ = handle.join();
+            stop::join(handle);
         }
         if let Ok(mut lease) = self.inner.world_lease.lock() {
             lease.take();
@@ -1511,7 +1523,6 @@ fn tick_loop(mut state: TickState, mut channels: TickChannels) {
         let plugin_effects = match crate::plugin::seal_events(&mut state, tick) {
             Ok(active) => active,
             Err(reason) => {
-                tracing::error!(reason, "native plugin delivery failed closed");
                 halt_authority(&mut state, &channels, reason);
                 break;
             }
@@ -1718,10 +1729,26 @@ const GENERATED_SAVE_BATCH: usize = 64;
 
 /// Hand the remaining generated chunks to the journal thread, then stop it.
 fn send_shutdown(state: &mut TickState, work_tx: &std::sync::mpsc::SyncSender<JournalWork>) {
+    tracing::error!(
+        tick = state.tick,
+        cause = "shutdown requested",
+        "core tick owner stopping"
+    );
     while let Some(batch) = crate::dimensions::checkpoint::take_generated(state, 0) {
-        let _ = work_tx.send(JournalWork::SaveGenerated(batch));
+        if work_tx.send(JournalWork::SaveGenerated(batch)).is_err() {
+            tracing::error!(
+                cause = "journal work channel closed",
+                "core shutdown could not save generated chunks"
+            );
+            return;
+        }
     }
-    let _ = work_tx.send(JournalWork::Shutdown);
+    if work_tx.send(JournalWork::Shutdown).is_err() {
+        tracing::error!(
+            cause = "journal work channel closed",
+            "core shutdown could not flush journal"
+        );
+    }
 }
 
 /// Halt on an authoritative journal or callback-delivery failure: send
@@ -1730,6 +1757,11 @@ fn send_shutdown(state: &mut TickState, work_tx: &std::sync::mpsc::SyncSender<Jo
 /// further inputs. The broadcast sender drops with us, so subscribers see
 /// `Closed` (no further TickOutput, ever). No retry worker.
 fn halt_authority(state: &mut TickState, channels: &TickChannels, reason: &str) {
+    tracing::error!(
+        tick = state.tick,
+        cause = reason,
+        "core tick owner halted (fail closed)"
+    );
     let live: Vec<(ConnectionId, crate::boundary::PlayerChange)> = std::iter::once(&*state)
         .chain(state.other_dimensions.values().map(|world| &**world))
         .flat_map(|world| world.connections.all_connections())
@@ -3013,7 +3045,7 @@ fn journal_loop(
                     reserved,
                 } => {
                     if let Err(error) = writer.append(tick_lo, tick_hi, &entries) {
-                        tracing::error!(tick_lo, tick_hi, %error, "journal append failed; world halting (fail closed)");
+                        tracing::error!(tick_lo, tick_hi, error = %stop::Chain(&error), "journal append failed; world halting (fail closed)");
                         return;
                     }
                     for entry in &entries {
@@ -3032,7 +3064,7 @@ fn journal_loop(
                         && root == world_dir
                     {
                         if let Err(error) = writer.flush() {
-                            tracing::error!(tick_hi, %error, "journal flush failed; world halting (fail closed)");
+                            tracing::error!(tick_hi, error = %stop::Chain(&error), "journal flush failed; world halting (fail closed)");
                             return;
                         }
                         observer(tick_hi, &entries);
@@ -3049,20 +3081,35 @@ fn journal_loop(
                         .send(NativeWork::Checkpoint { job, plugins })
                         .is_err()
                     {
+                        tracing::error!(
+                            cause = "native writer channel closed",
+                            "journal checkpoint handoff failed; world halting"
+                        );
                         return;
                     }
                 }
                 JournalWork::SaveGenerated(chunks) => {
                     if native_tx.send(NativeWork::SaveGenerated(chunks)).is_err() {
+                        tracing::error!(
+                            cause = "native writer channel closed",
+                            "journal generated-chunk handoff failed; world halting"
+                        );
                         return;
                     }
                 }
                 JournalWork::Shutdown => {
-                    let _ = writer.flush();
-                    break;
+                    if let Err(error) = writer.flush() {
+                        tracing::error!(error = %stop::Chain(&error), "journal final flush failed");
+                    }
+                    tracing::error!(cause = "shutdown requested", "core journal owner stopped");
+                    return;
                 }
             }
         }
+        tracing::error!(
+            cause = "tick work channel closed",
+            "core journal owner stopped"
+        );
     });
 }
 
@@ -3099,8 +3146,11 @@ fn native_writer_loop(
                 &mut prev_manifest,
             );
         }));
-        if outcome.is_err() {
-            tracing::error!("native checkpoint writer panicked; world halting (fail closed)");
+        if let Err(payload) = outcome {
+            tracing::error!(
+                panic = stop::panic_message(&*payload),
+                "native checkpoint writer panicked; world halting (fail closed)"
+            );
             if let Some((done, reply)) = notify {
                 let _ = done.send(None);
                 if let Some(reply) = reply {
@@ -3111,6 +3161,10 @@ fn native_writer_loop(
             return;
         }
     }
+    tracing::error!(
+        cause = "journal work channel closed",
+        "native checkpoint writer stopped"
+    );
 }
 
 fn run_native_work(

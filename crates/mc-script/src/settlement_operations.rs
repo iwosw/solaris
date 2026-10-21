@@ -352,7 +352,7 @@ impl ScriptSettlementQuery {
 pub struct ScriptSettlementSnapshot {
     pub id: u64,
     pub name: String,
-    pub owner: String,
+    pub owner: Option<String>,
     pub anchor: [i32; 3],
     pub radius: u32,
     pub revision: u64,
@@ -367,7 +367,7 @@ impl ScriptSettlementSnapshot {
     pub fn new(
         id: u64,
         name: String,
-        owner: String,
+        owner: Option<String>,
         anchor: [i32; 3],
         radius: u32,
         revision: u64,
@@ -390,7 +390,11 @@ impl ScriptSettlementSnapshot {
     pub fn validate(&self) -> Result<(), ScriptDtoError> {
         validate_settlement_id(self.id)?;
         validate_settlement_name(&self.name)?;
-        if self.owner.is_empty() || self.owner.len() > 128 {
+        if self
+            .owner
+            .as_ref()
+            .is_some_and(|owner| owner.is_empty() || owner.len() > 128)
+        {
             return Err(ScriptDtoError::InvalidBounds);
         }
         if self.revision == 0 || self.revision > MAX_SCRIPT_WORLD_TIME {
@@ -687,7 +691,7 @@ mod tests {
         let mut snapshot = ScriptSettlementSnapshot::new(
             1,
             "city".into(),
-            "owner".into(),
+            Some("owner".into()),
             [0, 64, 0],
             48,
             1,
@@ -822,8 +826,15 @@ mod tests {
         observation.housed = 24;
         observation.working = vec!["solaris:warehouse".into(), "solaris:warehouse".into()];
         assert!(observation.validate().is_err());
-        let mut snapshot =
-            ScriptSettlementSnapshot::new(1, "town".into(), "owner".into(), [0, 64, 0], 48, 1, 30);
+        let mut snapshot = ScriptSettlementSnapshot::new(
+            1,
+            "town".into(),
+            Some("owner".into()),
+            [0, 64, 0],
+            48,
+            1,
+            30,
+        );
         assert!(snapshot.district.is_none());
         assert!(snapshot.economy.is_none());
         snapshot.district = Some(observation);

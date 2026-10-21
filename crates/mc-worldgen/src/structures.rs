@@ -58,6 +58,10 @@ pub struct StructureTemplate {
     villager_markers: Vec<[i32; 3]>,
     jigsaws: Vec<TemplateJigsaw>,
     entities: Vec<TemplateEntity>,
+    /// Cells the template authors as `minecraft:air`. Vanilla's legacy pool
+    /// elements ignore them when placing, so they are not in [`Self::blocks`];
+    /// a caller that clears terrain inside a building reads them here.
+    air_cells: Vec<[i32; 3]>,
 }
 
 /// `minecraft:jigsaw` joint type.
@@ -403,6 +407,7 @@ impl StructureTemplate {
             villager_markers: Vec::new(),
             jigsaws: Vec::new(),
             entities: Vec::new(),
+            air_cells: Vec::new(),
         }
     }
 
@@ -471,6 +476,18 @@ impl StructureTemplate {
         &self.villager_markers
     }
 
+    /// The cells the template authors as air, in template-local coordinates.
+    #[must_use]
+    pub fn air_cells(&self) -> &[[i32; 3]] {
+        &self.air_cells
+    }
+
+    #[must_use]
+    pub fn with_air_cells(mut self, air_cells: Vec<[i32; 3]>) -> Self {
+        self.air_cells = air_cells;
+        self
+    }
+
     /// The piece's jigsaw blocks, in template-local coordinates.
     #[must_use]
     pub fn jigsaws(&self) -> &[TemplateJigsaw] {
@@ -500,6 +517,7 @@ impl StructureTemplate {
         template.chests = parsed.chests;
         template.jigsaws = parsed.jigsaws;
         template.entities = parse_entities(path, compound)?;
+        template.air_cells = parsed.air_cells;
         Ok(template)
     }
 }
@@ -509,6 +527,7 @@ enum TemplatePaletteEntry {
     Block(BlockStateId),
     /// A `minecraft:jigsaw` state whose orientation supplies the connector face.
     Jigsaw(BlockStateId),
+    Air,
     Ignored,
 }
 
@@ -548,7 +567,10 @@ fn parse_palette_entry(
         })?;
         return Ok(TemplatePaletteEntry::Jigsaw(state));
     }
-    if matches!(id.as_str(), "minecraft:air" | "minecraft:structure_void") {
+    if id.as_str() == "minecraft:air" {
+        return Ok(TemplatePaletteEntry::Air);
+    }
+    if id.as_str() == "minecraft:structure_void" {
         return Ok(TemplatePaletteEntry::Ignored);
     }
     let props = match compound.iter().find(|(key, _)| key == "Properties") {
@@ -816,6 +838,7 @@ struct ParsedBlocks {
     villager_markers: Vec<[i32; 3]>,
     jigsaws: Vec<TemplateJigsaw>,
     chests: Vec<TemplateChest>,
+    air_cells: Vec<[i32; 3]>,
 }
 
 fn parse_blocks(
@@ -829,6 +852,7 @@ fn parse_blocks(
     let mut villager_markers = Vec::new();
     let mut jigsaws = Vec::new();
     let mut chests = Vec::new();
+    let mut air_cells = Vec::new();
     for entry in &list.elements {
         let compound = expect_compound(path, entry, "blocks[]")?;
         let pos = expect_int_triplet(path, require(compound, path, "pos")?, "blocks[].pos")?;
@@ -864,6 +888,7 @@ fn parse_blocks(
                 }
                 jigsaws.push(jigsaw);
             }
+            TemplatePaletteEntry::Air => air_cells.push(pos),
             TemplatePaletteEntry::Ignored => {}
         }
     }
@@ -872,6 +897,7 @@ fn parse_blocks(
         villager_markers,
         jigsaws,
         chests,
+        air_cells,
     })
 }
 

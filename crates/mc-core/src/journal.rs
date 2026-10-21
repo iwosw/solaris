@@ -257,7 +257,7 @@ pub enum JournalEntry {
     },
     /// Absolute dimension-local settlement post-image plus monotonic high water.
     Settlement {
-        image: crate::settlements::RecordImage,
+        image: Box<crate::settlements::RecordImage>,
         high_water: u64,
         tick: u64,
     },

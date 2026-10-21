@@ -1,0 +1,177 @@
+{
+  "id": "watch_tower",
+  "kind": "tower",
+  "palette": {
+    "D": "oak_door[facing=north,half=lower]",
+    "E": "wall_torch[facing=east]",
+    "K": "barrel[facing=up]",
+    "L": "oak_log[axis=y]",
+    "S": "wall_torch[facing=south]",
+    "W": "wall_torch[facing=west]",
+    "c": "cobblestone",
+    "d": "oak_door[facing=north,half=upper]",
+    "f": "oak_fence",
+    "h": "oak_trapdoor[facing=south,half=top,open=false]",
+    "l": "ladder[facing=south]",
+    "p": "oak_planks",
+    "t": "torch"
+  },
+  "levels": [
+    {
+      "cert": [
+        5,
+        6,
+        5
+      ],
+      "entrance": [
+        2,
+        1,
+        4
+      ],
+      "layers": [
+        [
+          "ccccc",
+          "ccccc",
+          "ccccc",
+          "ccccc",
+          "ccccc"
+        ],
+        [
+          "LcccL",
+          "cKl.c",
+          "c...c",
+          "c...c",
+          "LcDcL"
+        ],
+        [
+          "LcccL",
+          "cEl.c",
+          "c...c",
+          "c...c",
+          "LcdcL"
+        ],
+        [
+          "LcccL",
+          "c.l.c",
+          "f...f",
+          "c...c",
+          "LcfcL"
+        ],
+        [
+          "LcccL",
+          "c.l.c",
+          "c...c",
+          "c...c",
+          "LcccL"
+        ],
+        [
+          "ccccc",
+          "cphpc",
+          "cpppc",
+          "cpppc",
+          "ccccc"
+        ],
+        [
+          "ccccc",
+          "c...c",
+          "c...c",
+          "c.t.c",
+          "ccccc"
+        ],
+        [
+          "c.c.c",
+          ".....",
+          "c...c",
+          ".....",
+          "c.c.c"
+        ]
+      ]
+    },
+    {
+      "cert": [
+        5,
+        8,
+        5
+      ],
+      "entrance": [
+        2,
+        1,
+        4
+      ],
+      "layers": [
+        [
+          "ccccc",
+          "ccccc",
+          "ccccc",
+          "ccccc",
+          "ccccc",
+          "..c.."
+        ],
+        [
+          "LcccL",
+          "cKl.c",
+          "c...c",
+          "c...c",
+          "LcDcL",
+          "....."
+        ],
+        [
+          "LcccL",
+          "cEl.c",
+          "c...c",
+          "c...c",
+          "LcdcL",
+          ".S.S."
+        ],
+        [
+          "LcccL",
+          "c.l.c",
+          "f...f",
+          "c...c",
+          "LcfcL",
+          "....."
+        ],
+        [
+          "LcccL",
+          "c.l.c",
+          "c...c",
+          "c..Wc",
+          "LcccL",
+          "....."
+        ],
+        [
+          "ccccc",
+          "c.l.c",
+          "c...c",
+          "c...c",
+          "ccccc",
+          "....."
+        ],
+        [
+          "ccccc",
+          "c.l.c",
+          "f...f",
+          "cE..c",
+          "ccfcc",
+          "....."
+        ],
+        [
+          "ccccc",
+          "cphpc",
+          "cpppc",
+          "cpppc",
+          "ccccc",
+          "....."
+        ],
+        [
+          "cfcfc",
+          "f...f",
+          "c...c",
+          "ft.tf",
+          "cfcfc",
+          "....."
+        ]
+      ]
+    }
+  ]
+}

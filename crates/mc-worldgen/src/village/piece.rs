@@ -62,6 +62,18 @@
 //! - **`updateShapeAtEdge`/`updateFromNeighbourShapes`.** Both sit behind
 //!   `!settings.getKnownShape()`, and the jigsaw path sets `knownShape = true`.
 //!
+//! ## Declared divergences (playability)
+//!
+//! - **Footprint clearing.** For a `rigid` piece, terrain in the template's air
+//!   cells above its floor layer is removed ([`clear_footprint`]); vanilla's
+//!   legacy elements ignore template air and rely on the 3D beard.
+//! - **Exposed water.** A water source of the piece that is open to the side or
+//!   below becomes dry farmland ([`seal_exposed_water`]); vanilla leaves it to
+//!   flow at the first fluid tick.
+//!
+//! See `docs/VILLAGE_GENERATION.md`, "Interiors, streets and farm water on
+//! slopes".
+//!
 //! ## Fidelity
 //!
 //! The transform, the state rotation and the state mirroring were pinned
@@ -73,8 +85,10 @@
 //! disagreements for all four rotations and all three mirrors.
 //! [`crate::village_piece_tests`] asserts the outcomes it printed.
 
+use std::collections::{HashMap, HashSet};
+
 use mc_data::Identifier;
-use mc_data::village_data::{Projection, StructureProcessorSpec};
+use mc_data::village_data::{HeightmapType, Projection, StructureProcessorSpec};
 use mc_world::{BlockPos, BlockRegistry, BlockStateId};
 use thiserror::Error;
 
@@ -587,6 +601,25 @@ pub fn place_piece(
         settings.reference_pos,
     );
 
+    let mut processed = processed;
+    // Rigid pieces keep their own ground level, so the terrain inside their
+    // footprint is cleared where the template authors air (see
+    // [`clear_footprint`]); a water source the piece leaves open to the side or
+    // below would flow out over the village, so it is sealed (see
+    // [`seal_exposed_water`]).
+    let carved: HashSet<BlockPos> = if settings.projection == Projection::Rigid {
+        template
+            .air_cells()
+            .iter()
+            .filter(|cell| cell[1] >= 1)
+            .map(|cell| world_position(*cell, settings))
+            .collect()
+    } else {
+        HashSet::new()
+    };
+    seal_exposed_water(semantics, writer, &mut processed, &carved);
+    clear_footprint(semantics, writer, &carved, settings.clip);
+
     let registry = semantics.blocks();
     let chests: Vec<(BlockPos, usize)> = template
         .chests()
@@ -635,6 +668,132 @@ pub fn place_piece(
         writer.set_entity(&placed);
     }
     Ok(written)
+}
+
+/// Clears the terrain a rigid piece's template leaves inside its footprint.
+///
+/// Vanilla's legacy pool elements ignore template air, and `beard_thin`'s
+/// density term carves the hillside above a rigid piece's ground level. The
+/// column-height analogue in [`crate::village::beard`] only moves a surface by
+/// the term's value at that surface, so a slope more than a block or two above
+/// the floor survives inside the house: a grass block in front of the door
+/// leaves no headroom and the residents cannot leave. Every cell the template
+/// authors as air above its floor layer is therefore cleared of solid terrain
+/// before the piece's own blocks are written; fluids stay, so a piece placed in
+/// a lake does not drain it.
+fn clear_footprint(
+    semantics: &BlockSemantics<'_>,
+    writer: &mut dyn PieceWriter,
+    carved: &HashSet<BlockPos>,
+    clip: Option<BlockClip>,
+) {
+    if carved.is_empty() {
+        return;
+    }
+    let registry = semantics.blocks();
+    let air = Identifier::parse("minecraft:air").expect("static block id");
+    let Some(air) = registry.by_name_and_props(&air, &[]) else {
+        return;
+    };
+    for pos in carved {
+        if clip.is_some_and(|clip| !clip.contains(*pos)) {
+            continue;
+        }
+        let current = writer.block_state(*pos);
+        if current != air && !holds_water(registry, current) {
+            writer.set_block(*pos, air);
+        }
+    }
+}
+
+/// Replaces every water source of the piece that is open to the side or below
+/// with dry farmland.
+///
+/// Vanilla pastes the savanna streets' irrigated farm plots and leaves a source
+/// whose neighbour is air (a `terrain_matching` plot on a slope puts the water
+/// beside a lower farmland cell, and a rigid piece against a cut hillside beside
+/// the cut) to flow at the first fluid tick. On a hill village that is a spring
+/// above the streets that floods them. A source counts as contained when each
+/// horizontal neighbour and the cell below is a solid block, water, or a
+/// waterlogged block, taken from the piece's own blocks, else from the cleared
+/// footprint, else from the terrain (the chunk when the cell is inside it,
+/// otherwise the surface height). Replacing one source can open its
+/// neighbour, so the pass repeats until nothing changes.
+fn seal_exposed_water(
+    semantics: &BlockSemantics<'_>,
+    level: &dyn ProcessLevel,
+    blocks: &mut [PieceBlock],
+    carved: &HashSet<BlockPos>,
+) {
+    let registry = semantics.blocks();
+    let is_source = |state: BlockStateId| {
+        registry.by_id(state).is_some_and(|resolved| {
+            resolved.block.id.path() == "water"
+                && resolved
+                    .properties
+                    .iter()
+                    .any(|(name, value)| name == "level" && value == "0")
+        })
+    };
+    let mut sources: Vec<usize> = blocks
+        .iter()
+        .enumerate()
+        .filter(|(_, block)| is_source(block.state))
+        .map(|(index, _)| index)
+        .collect();
+    if sources.is_empty() {
+        return;
+    }
+    let index: HashMap<BlockPos, usize> = blocks
+        .iter()
+        .enumerate()
+        .map(|(index, block)| (block.pos, index))
+        .collect();
+    let contains = |state: BlockStateId| semantics.is_solid(state) || holds_water(registry, state);
+    let Ok(farmland_id) = Identifier::parse("minecraft:farmland") else {
+        return;
+    };
+    let Some(farmland) =
+        registry.by_name_and_props(&farmland_id, &[("moisture".to_owned(), "0".to_owned())])
+    else {
+        return;
+    };
+    loop {
+        let exposed: Vec<usize> = sources
+            .iter()
+            .copied()
+            .filter(|&source| {
+                let pos = blocks[source].pos;
+                [(1, 0, 0), (-1, 0, 0), (0, 0, 1), (0, 0, -1), (0, -1, 0)]
+                    .into_iter()
+                    .any(|(dx, dy, dz)| {
+                        let neighbour = BlockPos {
+                            x: pos.x + dx,
+                            y: pos.y + dy,
+                            z: pos.z + dz,
+                        };
+                        if let Some(&other) = index.get(&neighbour) {
+                            return !contains(blocks[other].state);
+                        }
+                        if carved.contains(&neighbour) {
+                            return true;
+                        }
+                        if level.in_view(neighbour) {
+                            return !contains(level.block_state(neighbour));
+                        }
+                        neighbour.y
+                            >= level.height(HeightmapType::WorldSurfaceWg, neighbour.x, neighbour.z)
+                    })
+            })
+            .collect();
+        if exposed.is_empty() {
+            return;
+        }
+        for &source in &exposed {
+            blocks[source].state = farmland;
+        }
+        sources.retain(|source| !exposed.contains(source));
+    }
 }
 
 /// The entities [`place_piece`] places, in world coordinates.

@@ -112,7 +112,7 @@ pub(crate) fn journal_entries(state: &mut TickState, tick: u64, entries: &mut Ve
     let high_water = state.settlements.high_water();
     for image in state.settlements.take_images() {
         entries.push(JournalEntry::Settlement {
-            image,
+            image: Box::new(image),
             high_water,
             tick,
         });

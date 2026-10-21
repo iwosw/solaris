@@ -2817,3 +2817,7 @@ mod coastal_tests;
 #[cfg(test)]
 #[path = "terrain/village_water_tests.rs"]
 mod village_water_tests;
+
+#[cfg(test)]
+#[path = "terrain/village_seed_tests.rs"]
+mod village_seed_tests;

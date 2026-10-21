@@ -2,7 +2,7 @@
 //!
 //! Thin guest helpers over the `settlements` WIT interface: a query reads
 //! owned-or-visible records, an action names one closed mutation fenced by the
-//! monotonic record id and the revision the caller read. Like the npc helpers,
+//! stable record id and the revision the caller read. Like the npc helpers,
 //! these only build the operation envelope; the server's own DTOs validate and
 //! the native settlement owner decides.
 
@@ -13,6 +13,7 @@ use crate::{domain_operations, settlements, types, Command};
 /// carries no durable operation id: the answer observes the server's current
 /// revisions, and every snapshot carries the stable id a later action fences
 /// on (names are reusable, ids never are).
+/// `snapshot.owner` is absent for autonomous, unclaimed generated villages.
 #[must_use]
 pub fn query_settlements(request: &str, names: &[String], cursor: Option<&str>) -> Command {
     operation_query(

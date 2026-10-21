@@ -52,7 +52,9 @@ fn offline_commands_require_exact_paths_and_global_config() {
         };
         let paths = match command {
             WorldCommand::ImportAnvil(paths) | WorldCommand::ExportAnvil(paths) => paths,
-            WorldCommand::Census(_) => unreachable!("conversion names only"),
+            WorldCommand::Census(_) | WorldCommand::UpgradeWorldgen => {
+                unreachable!("conversion names only")
+            }
         };
         assert_eq!(paths.source, PathBuf::from("source"));
         assert_eq!(paths.destination, PathBuf::from("destination"));
@@ -130,6 +132,28 @@ fn world_census_takes_source_and_receipt_only() {
         args.extend(missing);
         assert!(Cli::try_parse_from(args).is_err());
     }
+}
+
+#[test]
+fn world_upgrade_worldgen_takes_only_the_config() {
+    let cli = Cli::try_parse_from([
+        "solaris-v2",
+        "world",
+        "upgrade-worldgen",
+        "--config",
+        "live.toml",
+    ])
+    .unwrap();
+    assert_eq!(cli.config, PathBuf::from("live.toml"));
+    assert!(matches!(
+        cli.command,
+        Some(Command::World {
+            command: WorldCommand::UpgradeWorldgen
+        })
+    ));
+    assert!(
+        Cli::try_parse_from(["solaris-v2", "world", "upgrade-worldgen", "--source", "w"]).is_err()
+    );
 }
 
 #[test]

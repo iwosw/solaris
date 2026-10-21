@@ -847,7 +847,8 @@ pub(crate) fn execute(
         .get(settlement)
         .ok_or(Failure::NotFound)?
         .owner
-        != owner
+        .as_deref()
+        != Some(owner)
     {
         return Err(Failure::Forbidden);
     }

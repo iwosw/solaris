@@ -92,6 +92,13 @@ pub trait ProcessLevel {
     /// Vanilla `LevelReader.getHeight(Heightmap.Types, int, int)`.
     fn height(&self, heightmap: HeightmapType, x: i32, z: i32) -> i32;
 
+    /// Whether [`Self::block_state`] reads real blocks at `pos`. A level that
+    /// holds one chunk answers `air` outside it; callers that must tell that
+    /// apart from a real air cell fall back to [`Self::height`] there.
+    fn in_view(&self, _pos: BlockPos) -> bool {
+        true
+    }
+
     /// Vanilla `level instanceof ServerLevel`.
     ///
     /// `GravityProcessor` rewrites its `WORLD_SURFACE_WG`/`OCEAN_FLOOR_WG`

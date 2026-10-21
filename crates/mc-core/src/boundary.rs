@@ -50,6 +50,14 @@ pub enum PlayerInput {
         connection: ConnectionId,
         view_distance: u8,
     },
+    /// Trusted edge snapshot of the client's locale (`ClientInformation.language`,
+    /// e.g. `ru_ru`). Recorded before [`PlayerInput::Join`] from the configuration
+    /// phase and re-sent on every Play ClientInformation: transient
+    /// per-connection UI language, cleared on [`PlayerInput::Leave`].
+    SetLocale {
+        connection: ConnectionId,
+        locale: String,
+    },
     /// Connection closed for any reason; the core saves and removes the player.
     Leave { connection: ConnectionId },
     /// Client-reported movement; the core validates and may correct it.
@@ -291,6 +299,7 @@ impl PlayerInput {
             | Self::PluginClientReady { connection }
             | Self::PermissionLevel { connection, .. }
             | Self::SetViewDistance { connection, .. }
+            | Self::SetLocale { connection, .. }
             | Self::Leave { connection }
             | Self::Move { connection, .. }
             | Self::MoveRotation { connection, .. }
@@ -778,6 +787,10 @@ pub enum PlayerChange {
         state: u32,
         action: u8,
         parameter: u8,
+    },
+    /// Vanilla bell ring sound at the center of the bell block.
+    BellRung {
+        position: BlockPos,
     },
     /// A menu opened for this player (window 0, the player inventory, is
     /// always open and never announced).

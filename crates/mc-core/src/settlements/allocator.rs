@@ -21,6 +21,11 @@ use std::collections::{BTreeSet, BinaryHeap, VecDeque};
 // `distance` returns squared blocks. Keep workstation use/profession reach
 // wider than the pathfinder's adjacent-cell endpoint (including cell offsets).
 pub(crate) const JOB_SITE_REACH_SQUARED: f64 = 3.0 * 3.0;
+/// Rises above the departure floor at which a living-entity jump (0.42
+/// blocks/tick decaying under gravity; ticks above one block: 1.157, 1.234,
+/// 1.229, 1.144) can cross a ledge edge: the free-flight height first, then
+/// the heights a low departure ceiling caps the rise to (just over one block).
+const JUMP_CROSSING_RISES: [f64; 3] = [1.16, 1.10, 1.05];
 pub(crate) const PICKUP_REACH: f64 = 1.425;
 pub(crate) const POI_REFRESH_CHUNKS_PER_TICK: usize = 8;
 
@@ -40,11 +45,19 @@ pub(crate) struct Node {
     pos: BlockPos,
     parent: usize,
     cost: u32,
+    expanded: bool,
 }
 pub(crate) struct ChunkPois {
     pub(crate) revision: u64,
     pub(crate) queued: bool,
     pub(crate) pois: Vec<Poi>,
+}
+
+/// Transient retry position, kept only while a resident has missing POIs.
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct SearchProgress {
+    kind: usize,
+    candidates: [usize; 3],
 }
 
 /// Shared tick-owner POI, sensor and brain-admission scratch. Route/node
@@ -66,7 +79,7 @@ pub(crate) struct PoiCache {
     pub(crate) resident_threats: std::collections::BTreeSet<EntityId>,
     pub(crate) search_at: FxHashMap<EntityId, u64>,
     pub(crate) search_due: BTreeSet<(u64, EntityId)>,
-    pub(crate) search_needs: FxHashMap<EntityId, (u64, usize)>,
+    pub(crate) search_needs: FxHashMap<EntityId, (u64, usize, SearchProgress)>,
     pub(crate) search_ready: BTreeSet<(u64, EntityId)>,
     pub(crate) search_ready_order: FxHashMap<EntityId, u64>,
     pub(crate) next_search_order: u64,
@@ -86,7 +99,7 @@ pub(crate) struct PoiCache {
     pub(crate) standing_cache: FxHashMap<BlockPos, Option<[f64; 3]>>,
     #[cfg(test)]
     pub(crate) disable_standing_memo: bool,
-    pub(crate) open: BinaryHeap<Reverse<(u32, usize)>>,
+    pub(crate) open: BinaryHeap<Reverse<(u32, u32, u32, usize)>>,
     pub(crate) brain_bands: [Vec<u64>; 8],
     pub(crate) brain_due: BinaryHeap<Reverse<(u64, EntityId, u64)>>,
     pub(crate) profile_updates: Vec<EntityId>,
@@ -244,7 +257,7 @@ impl PoiCache {
     }
 
     fn forget_search(&mut self, id: EntityId) {
-        if let Some((due, missing)) = self.search_needs.remove(&id) {
+        if let Some((due, missing, _)) = self.search_needs.remove(&id) {
             self.search_due.remove(&(due, id));
             if let Some(order) = self.search_ready_order.remove(&id) {
                 self.search_ready.remove(&(order, id));
@@ -262,7 +275,9 @@ impl PoiCache {
             usize::from(v.home.is_none())
                 + usize::from(v.meeting_point.is_none())
                 + usize::from(
-                    v.age >= 0 && v.data.profession != Profession::Nitwit && v.job_site.is_none(),
+                    v.age >= 0
+                        && !matches!(v.data.profession, Profession::Nitwit | Profession::Soldier)
+                        && v.job_site.is_none(),
                 )
         } else {
             0
@@ -270,9 +285,15 @@ impl PoiCache {
         let due = self.search_at.get(&id).copied().unwrap_or(state.tick);
         if missing == 0 {
             self.forget_search(id);
-        } else if self.search_needs.get(&id) != Some(&(due, missing)) {
+        } else if self.search_needs.get(&id).map(|entry| (entry.0, entry.1)) != Some((due, missing))
+        {
+            let progress = self
+                .search_needs
+                .get(&id)
+                .map(|entry| entry.2)
+                .unwrap_or_default();
             self.forget_search(id);
-            self.search_needs.insert(id, (due, missing));
+            self.search_needs.insert(id, (due, missing, progress));
             self.search_due.insert((due, id));
         }
     }
@@ -461,27 +482,54 @@ pub(crate) fn confirm_profession(
     state: &TickState,
     cache: &PoiCache,
     owner: EntityId,
+    settlement: Option<super::SettlementId>,
     job: BlockPos,
     profession: Profession,
 ) -> bool {
-    matches!(
-        state.world.block_at(job.x, job.y, job.z).and_then(|id| cache.kind(id)),
-        Some(PoiKind::Job(p)) if p == workstation_profession(profession)
-    ) && !cache.claimed(
-        owner,
-        Poi {
-            pos: job,
-            kind: PoiKind::Job(profession),
-        },
-    )
+    let natural = natural_job(&state.settlements, settlement, job) == Some(profession);
+    (natural
+        || state
+            .world
+            .block_at(job.x, job.y, job.z)
+            .is_some_and(|block| job_matches(&state.registry, profession, block)))
+        && !cache.claimed(
+            owner,
+            Poi {
+                pos: job,
+                kind: PoiKind::Job(profession),
+            },
+        )
 }
 
-fn workstation_profession(profession: Profession) -> Profession {
-    match profession {
-        Profession::Miner => Profession::Toolsmith,
-        Profession::Lumberjack => Profession::Fletcher,
-        _ => profession,
-    }
+fn job_matches(registry: &CoreRegistry, profession: Profession, block: u32) -> bool {
+    let kind = match profession {
+        Profession::Miner => super::buildings::BuildingKind::Mine,
+        Profession::Lumberjack => super::buildings::BuildingKind::LumberCamp,
+        _ => super::buildings::BuildingKind::Workshop(profession),
+    };
+    super::buildings::workstation_matches(registry, kind, block)
+}
+
+fn natural_job(
+    registry: &super::Registry,
+    settlement: Option<super::SettlementId>,
+    pos: BlockPos,
+) -> Option<Profession> {
+    registry
+        .get(settlement?)?
+        .buildings
+        .values()
+        .find_map(|building| {
+            (building.natural_zone
+                && matches!(
+                    building.kind,
+                    super::buildings::BuildingKind::Mine
+                        | super::buildings::BuildingKind::LumberCamp
+                )
+                && building.work_points.contains(&[pos.x, pos.y, pos.z]))
+            .then(|| building.kind.profession())
+            .flatten()
+        })
 }
 
 pub(crate) fn clear_pois(v: &mut VillagerState) {
@@ -536,7 +584,7 @@ impl<'a> RouteCtx<'a> {
         }
     }
 
-    fn admit(&mut self) -> bool {
+    pub(crate) fn admit(&mut self) -> bool {
         self.budget
             .note_demand(self.dimension, self.consumer, Kind::PathNode, 1);
         self.budget
@@ -552,6 +600,7 @@ impl<'a> RouteCtx<'a> {
 
 /// Exact shape overlap, not the material classification: stairs/slabs/fences
 /// retain their real collision geometry and unloaded blocks remain obstacles.
+/// Spawn/placement clearance: any fluid in the body or its support refuses.
 pub(crate) fn clear_body(
     world: &crate::world::ChunkWorld,
     registry: &std::sync::Arc<CoreRegistry>,
@@ -559,9 +608,13 @@ pub(crate) fn clear_body(
     width: f64,
     height: f64,
 ) -> bool {
-    clear_body_for_route(world, registry, pos, width, height, false)
+    body_clear(world, registry, pos, width, height, false, false)
 }
 
+/// Walking clearance for routes and motion. Like vanilla ground navigation a
+/// body may wade through water that covers only its feet (a shallow flow or a
+/// one-block ford, e.g. spring water spilling over village streets and
+/// bridges); water reaching the head cell and all lava still refuse.
 pub(crate) fn clear_body_for_route(
     world: &crate::world::ChunkWorld,
     registry: &std::sync::Arc<CoreRegistry>,
@@ -570,19 +623,31 @@ pub(crate) fn clear_body_for_route(
     height: f64,
     can_open_doors: bool,
 ) -> bool {
+    body_clear(world, registry, pos, width, height, can_open_doors, true)
+}
+
+fn body_clear(
+    world: &crate::world::ChunkWorld,
+    registry: &std::sync::Arc<CoreRegistry>,
+    pos: [f64; 3],
+    width: f64,
+    height: f64,
+    can_open_doors: bool,
+    wade: bool,
+) -> bool {
     let min = [pos[0] - width, pos[1] + 1e-6, pos[2] - width];
     let max = [pos[0] + width, pos[1] + height - 1e-6, pos[2] + width];
+    let foot = min[1].floor() as i32;
     for x in min[0].floor() as i32..=max[0].floor() as i32 {
-        for y in (min[1].floor() as i32 - 1)..=max[1].floor() as i32 {
+        for y in (foot - 1)..=max[1].floor() as i32 {
             for z in min[2].floor() as i32..=max[2].floor() as i32 {
                 let Some(id) = world.block_at(x, y, z) else {
                     return false;
                 };
-                if matches!(
-                    registry.materials.classify(id),
-                    mc_physics::BlockMaterial::Lava | mc_physics::BlockMaterial::Water
-                ) {
-                    return false;
+                match registry.materials.classify(id) {
+                    mc_physics::BlockMaterial::Lava => return false,
+                    mc_physics::BlockMaterial::Water if !wade || y != foot => return false,
+                    _ => {}
                 }
                 let Some(boxes) = registry.collision_boxes.get(id as usize) else {
                     return false;
@@ -640,8 +705,101 @@ pub(crate) fn standing_for_route(
     ];
     clear_body_for_route(world, registry, pos, width, height, can_open_doors).then_some(pos)
 }
+
+/// The body falls straight down the landing column from `from_y` to the
+/// landing position `end`; every unit-spaced body position on the way (a body
+/// is taller than one block) must be clear.
+fn drop_shaft_clear(
+    ctx: &RouteCtx<'_>,
+    end: [f64; 3],
+    from_y: f64,
+    width: f64,
+    height: f64,
+    can_open_doors: bool,
+) -> bool {
+    let mut y = from_y;
+    while y > end[1] + 1e-6 {
+        if !clear_body_for_route(
+            ctx.world,
+            ctx.registry,
+            [end[0], y, end[2]],
+            width,
+            height,
+            can_open_doors,
+        ) {
+            return false;
+        }
+        y -= 1.0;
+    }
+    true
+}
+/// Highest a body may hover above the floor it just left, measured from that
+/// floor: a jump rises 1.25 blocks.
+const JUMP_APEX: f64 = 1.3;
+
+/// Whether a collision top lies under the body's feet.
+fn resting(ctx: &RouteCtx<'_>, body: [f64; 3], width: f64) -> bool {
+    let row = (body[1] - 1e-4).floor() as i32;
+    for x in (body[0] - width).floor() as i32..=(body[0] + width).floor() as i32 {
+        for z in (body[2] - width).floor() as i32..=(body[2] + width).floor() as i32 {
+            let boxes = ctx
+                .world
+                .block_at(x, row, z)
+                .and_then(|id| ctx.registry.collision_boxes.get(id as usize));
+            for shape in boxes.into_iter().flat_map(|boxes| boxes.iter()) {
+                let b = shape.as_blocks();
+                if (f64::from(row) + b[4] - body[1]).abs() < 1e-3
+                    && body[0] - width < f64::from(x) + b[3] - 1e-6
+                    && body[0] + width > f64::from(x) + b[0] + 1e-6
+                    && body[2] - width < f64::from(z) + b[5] - 1e-6
+                    && body[2] + width > f64::from(z) + b[2] + 1e-6
+                {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
+/// Cell a route starts from. A body mid-jump hovers above its floor, so its
+/// cell is one or two rows too high: a step the floor cannot make looks like a
+/// one-block rise, and a builder jumping at a two-block wall replanned the same
+/// impossible route forever. Such a body starts from the floor it left.
+fn grounded_start(
+    ctx: &RouteCtx<'_>,
+    cache: &mut PoiCache,
+    body: [f64; 3],
+    width: f64,
+    height: f64,
+    can_open_doors: bool,
+) -> BlockPos {
+    let cell = at(body);
+    if resting(ctx, body, width) {
+        return cell;
+    }
+    (0..=2)
+        .map(|drop| BlockPos {
+            y: cell.y - drop,
+            ..cell
+        })
+        .find(|&below| {
+            standing_memo(ctx, cache, below, width, height, can_open_doors)
+                .is_some_and(|floor| floor[1] <= body[1] + 1e-6 && body[1] - floor[1] <= JUMP_APEX)
+        })
+        .unwrap_or(cell)
+}
+
 fn heuristic(a: BlockPos, b: BlockPos) -> u32 {
     (a.x.abs_diff(b.x) + a.z.abs_diff(b.z) + a.y.abs_diff(b.y)).saturating_mul(10)
+}
+
+/// Weighted A* keeps a POI route bounded when a nearby target is behind a
+/// wall: favour closing the remaining distance over flooding every equally
+/// short street on the wrong side. Routes need only be valid, not shortest.
+fn search_priority(cost: u32, pos: BlockPos, target: BlockPos) -> (u32, u32) {
+    let remaining = heuristic(pos, target);
+    (cost.saturating_add(remaining.saturating_mul(8)), remaining)
 }
 #[cfg(test)]
 pub(crate) fn find_path(
@@ -717,23 +875,38 @@ pub(crate) fn find_path_ctx(
     cache.visited.clear();
     cache.open.clear();
     cache.standing_cache.clear();
-    let start = at(start);
+    let body = start;
+    let start = grounded_start(ctx, cache, body, width, height, can_open_doors);
     cache.nodes.push(Node {
         pos: start,
         parent: 0,
         cost: 0,
+        expanded: false,
     });
     cache.visited.insert(start, 0);
-    cache.open.push(Reverse((heuristic(start, target), 0)));
+    let (score, remaining) = search_priority(0, start, target);
+    cache.open.push(Reverse((score, remaining, 0, 0)));
     let mut closest = 0;
-    while let Some(Reverse((_, index))) = cache.open.pop() {
+    while let Some(Reverse((_, _, queued_cost, index))) = cache.open.pop() {
+        let node = cache.nodes[index];
+        // A cheaper predecessor may have superseded this queued entry. Do not
+        // spend one of the shared tick nodes expanding it a second time.
+        if node.cost != queued_cost {
+            continue;
+        }
+        // An A* node needs expansion at most once. Retaining the first route
+        // is sufficient for navigation and prevents terrain alternatives from
+        // repeatedly consuming the shared per-tick allowance.
+        if cache.nodes[index].expanded {
+            continue;
+        }
+        cache.nodes[index].expanded = true;
         if !ctx
             .budget
             .try_charge(ctx.dimension, ctx.consumer, Kind::PathNode, 1)
         {
             break;
         }
-        let node = cache.nodes[index];
         if heuristic(node.pos, target) < heuristic(cache.nodes[closest].pos, target) {
             closest = index;
         }
@@ -755,8 +928,10 @@ pub(crate) fn find_path_ctx(
         if cache.nodes.len() >= 8_192 {
             break;
         }
+        // The first node is where the body really is: a rim over water or a
+        // ledge edge has no standable support below its cell centre.
         let begin = standing_memo(ctx, cache, node.pos, width, height, can_open_doors)
-            .unwrap_or_else(|| centre(node.pos));
+            .unwrap_or_else(|| if index == 0 { body } else { centre(node.pos) });
         for (dx, dz) in [(1, 0), (-1, 0), (0, 1), (0, -1)] {
             for dy in [0, 1, -1, -2, -3] {
                 let next = BlockPos {
@@ -770,13 +945,41 @@ pub(crate) fn find_path_ctx(
                 {
                     continue;
                 }
+                if cache
+                    .visited
+                    .get(&next)
+                    .is_some_and(|&index| cache.nodes[index].expanded)
+                {
+                    continue;
+                }
                 let Some(end) = standing_memo(ctx, cache, next, width, height, can_open_doors)
                 else {
                     continue;
                 };
                 // A jump requires headroom over the starting column; a drop
-                // traverses the edge horizontally before falling.
+                // traverses the edge horizontally before falling. A real jump
+                // (above step height) clears the ledge only while the body is
+                // high, so the crossing needs headroom at the highest height
+                // the departure column lets the jump reach.
                 let travel_y = begin[1].max(end[1]);
+                let crossing_y = if end[1] > begin[1] + mc_physics::STEP_HEIGHT {
+                    JUMP_CROSSING_RISES
+                        .iter()
+                        .map(|rise| begin[1] + rise)
+                        .find(|&y| {
+                            clear_body_for_route(
+                                ctx.world,
+                                ctx.registry,
+                                [begin[0], y, begin[2]],
+                                width,
+                                height,
+                                can_open_doors,
+                            )
+                        })
+                        .map_or(travel_y, |y| y.max(travel_y))
+                } else {
+                    travel_y
+                };
                 if !clear_body_for_route(
                     ctx.world,
                     ctx.registry,
@@ -789,13 +992,15 @@ pub(crate) fn find_path_ctx(
                     ctx.registry,
                     [
                         (begin[0] + end[0]) * 0.5,
-                        travel_y,
+                        crossing_y,
                         (begin[2] + end[2]) * 0.5,
                     ],
                     width,
                     height,
                     can_open_doors,
-                ) {
+                ) || (end[1] < begin[1]
+                    && !drop_shaft_clear(ctx, end, travel_y, width, height, can_open_doors))
+                {
                     continue;
                 }
                 let cost = node.cost + 10 + dy.unsigned_abs() * 4;
@@ -805,20 +1010,19 @@ pub(crate) fn find_path_ctx(
                     }
                     cache.nodes[old].parent = index;
                     cache.nodes[old].cost = cost;
-                    cache
-                        .open
-                        .push(Reverse((cost + heuristic(next, target), old)));
+                    let (score, remaining) = search_priority(cost, next, target);
+                    cache.open.push(Reverse((score, remaining, cost, old)));
                 } else {
                     let i = cache.nodes.len();
                     cache.nodes.push(Node {
                         pos: next,
                         parent: index,
                         cost,
+                        expanded: false,
                     });
                     cache.visited.insert(next, i);
-                    cache
-                        .open
-                        .push(Reverse((cost + heuristic(next, target), i)));
+                    let (score, remaining) = search_priority(cost, next, target);
+                    cache.open.push(Reverse((score, remaining, cost, i)));
                 }
                 break;
             }
@@ -892,7 +1096,18 @@ fn acquire(
                 let Some(profession) = building.kind.profession() else {
                     continue;
                 };
-                if traded(v) && profession != v.data.profession {
+                if (traded(v)
+                    || matches!(
+                        v.data.profession,
+                        Profession::Farmer
+                            | Profession::Shepherd
+                            | Profession::Miner
+                            | Profession::Lumberjack
+                            | Profession::Builder
+                            | Profession::Soldier
+                    ))
+                    && profession != v.data.profession
+                {
                     continue;
                 }
                 for &[x, y, z] in building
@@ -905,7 +1120,12 @@ fn acquire(
                         kind: PoiKind::Job(profession),
                     };
                     if state.world.block_at(x, y, z).is_some_and(|id| {
-                        cache.kind(id) == Some(PoiKind::Job(workstation_profession(profession)))
+                        building.natural_zone
+                            || super::buildings::workstation_matches(
+                                &state.registry,
+                                building.kind,
+                                id,
+                            )
                     }) && scope_allows(scope, poi.pos)
                         && !cache.claimed(owner, poi)
                     {
@@ -928,13 +1148,22 @@ fn acquire(
             .candidates
             .retain(|(_, poi)| scope_allows(scope, poi.pos));
     }
+    let kind_index = match kind {
+        PoiKind::Home => 0,
+        PoiKind::Job(_) => 1,
+        PoiKind::Bell => 2,
+    };
+    let cursor = cache.search_needs[&owner].2.candidates[kind_index];
     // A blocked workstation must not trigger unbounded repeated A* searches.
-    for _ in 0..5 {
-        let (_, poi) = cache.candidates.pop()?;
+    for attempt in 0..cache.candidates.len().min(5) {
+        let offset = cursor.wrapping_add(attempt) % cache.candidates.len();
+        let (_, poi) = cache.candidates[cache.candidates.len() - 1 - offset];
         if !cache.spend_path(state, Consumer::Allocator) {
             cache.search_deferred = true;
             break;
         }
+        cache.search_needs.get_mut(&owner).unwrap().2.candidates[kind_index] =
+            cursor.wrapping_add(attempt + 1);
         let mut path = std::mem::take(&mut cache.candidate_path);
         // Disjoint field borrows: route search reads world/registry while
         // charging the shared budget pool. The search window follows the
@@ -970,6 +1199,7 @@ fn acquire(
         }
         cache.candidate_path = path;
         if reached {
+            cache.search_needs.get_mut(&owner).unwrap().2.candidates[kind_index] = 0;
             v.navigation_target = Some(poi.pos);
             capture_route(state, v, pos, true);
             v.navigation_repath_at = tick_now + 40;
@@ -1005,37 +1235,53 @@ fn acquire_pois(state: &mut TickState, cache: &mut PoiCache) {
         let before = [v.home, v.job_site, v.meeting_point];
         let old = before;
         cache.search_deferred = false;
-        if v.home.is_none() {
-            v.home = acquire(state, cache, slot, &mut v, PoiKind::Home);
-            if v.home.is_some() {
-                v.home_dimension = state.dimension.name().to_owned();
-                if let (Some(settlement), Some(household), Some(home)) =
-                    (v.settlement, v.household.as_deref(), v.home)
-                    && state
-                        .settlements
-                        .get(settlement)
-                        .and_then(|record| record.households.get(household))
-                        .is_some_and(|family| family.home.is_none())
-                {
-                    let record = state.settlements.get_mut(settlement).unwrap();
-                    record.revision = record.revision.saturating_add(1);
-                    let family = record.households.get_mut(household).unwrap();
-                    family.home = Some([home.x, home.y, home.z]);
-                    family.revision = family.revision.saturating_add(1);
+        let progress = &mut cache.search_needs.get_mut(&id).unwrap().2;
+        let first = progress.kind;
+        progress.kind = (first + 1) % 3;
+        // A blocked home must not consume the next tick's entire budget again
+        // before an otherwise reachable job or meeting point gets a turn.
+        for offset in 0..3 {
+            match (first + offset) % 3 {
+                0 if v.home.is_none() => {
+                    v.home = acquire(state, cache, slot, &mut v, PoiKind::Home);
+                    if v.home.is_some() {
+                        v.home_dimension = state.dimension.name().to_owned();
+                        if let (Some(settlement), Some(household), Some(home)) =
+                            (v.settlement, v.household.as_deref(), v.home)
+                            && state
+                                .settlements
+                                .get(settlement)
+                                .and_then(|record| record.households.get(household))
+                                .is_some_and(|family| family.home.is_none())
+                        {
+                            let record = state.settlements.get_mut(settlement).unwrap();
+                            record.revision = record.revision.saturating_add(1);
+                            let family = record.households.get_mut(household).unwrap();
+                            family.home = Some([home.x, home.y, home.z]);
+                            family.revision = family.revision.saturating_add(1);
+                        }
+                    }
                 }
+                1 if v.age >= 0
+                    && !matches!(v.data.profession, Profession::Nitwit | Profession::Soldier)
+                    && v.job_site.is_none() =>
+                {
+                    let profession = v.data.profession;
+                    v.job_site = acquire(state, cache, slot, &mut v, PoiKind::Job(profession));
+                    if v.job_site.is_some() {
+                        v.job_site_dimension = state.dimension.name().to_owned();
+                    }
+                }
+                2 if v.meeting_point.is_none() => {
+                    v.meeting_point = acquire(state, cache, slot, &mut v, PoiKind::Bell);
+                    if v.meeting_point.is_some() {
+                        v.meeting_point_dimension = state.dimension.name().to_owned();
+                    }
+                }
+                _ => {}
             }
-        }
-        if v.age >= 0 && v.data.profession != Profession::Nitwit && v.job_site.is_none() {
-            let profession = v.data.profession;
-            v.job_site = acquire(state, cache, slot, &mut v, PoiKind::Job(profession));
-            if v.job_site.is_some() {
-                v.job_site_dimension = state.dimension.name().to_owned();
-            }
-        }
-        if v.meeting_point.is_none() {
-            v.meeting_point = acquire(state, cache, slot, &mut v, PoiKind::Bell);
-            if v.meeting_point.is_some() {
-                v.meeting_point_dimension = state.dimension.name().to_owned();
+            if cache.search_deferred {
+                break;
             }
         }
         cache.update_claims(id, old, [v.home, v.job_site, v.meeting_point]);
@@ -1374,15 +1620,18 @@ impl PoiCtx<'_> {
                 let certified =
                     super::buildings::job_profession(self.settlements, v.settlement, pos);
                 uncertified = certified.is_none();
-                kind = match (kind, certified) {
-                    (Some(PoiKind::Job(actual)), Some(expected))
-                        if actual == workstation_profession(expected) =>
+                kind = match (geometry.block, certified) {
+                    (_, Some(expected))
+                        if natural_job(self.settlements, v.settlement, pos) == Some(expected) =>
                     {
                         Some(PoiKind::Job(expected))
                     }
-                    (None, Some(expected)) if geometry.block.is_none() => {
+                    (Some(block), Some(expected))
+                        if job_matches(self.registry, expected, block) =>
+                    {
                         Some(PoiKind::Job(expected))
                     }
+                    (None, Some(expected)) => Some(PoiKind::Job(expected)),
                     _ => None,
                 };
                 // An absent certificate is not an unloaded workstation.
@@ -1392,7 +1641,8 @@ impl PoiCtx<'_> {
             }
             let valid = match kind {
                 Some(PoiKind::Job(p)) => {
-                    (!traded(v) || p == v.data.profession)
+                    (v.data.profession != Profession::Builder || p == Profession::Builder)
+                        && (!traded(v) || p == v.data.profession)
                         && !cache.claimed(
                             owner,
                             Poi {

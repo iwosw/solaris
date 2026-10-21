@@ -19,27 +19,61 @@ use crate::tick::TickState;
 use mc_data::ItemStack;
 
 const PERIOD: u64 = 20;
-/// Tree columns scanned per work attempt; the cursor lives in [`Progress`].
-pub(super) const SEARCH_PER_TICK: u32 = 32;
-const SEARCH_Y: i32 = 8;
+/// Simulated tree columns scanned per work attempt; the cursor lives in [`Progress`].
+pub(super) const SEARCH_PER_TICK: u32 = 128;
+/// Inactive chunk strips skipped per work attempt, one lookup each.
+const SKIP_PER_ATTEMPT: u32 = 1024;
 const REACH: f64 = 4.0;
 const MIN_TRUNK: u16 = 4;
 const MAX_TRUNK: u16 = 384;
 
 #[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
-#[serde(deny_unknown_fields)]
+#[serde(from = "StoredProgress")]
 pub struct Progress {
     pub building: u64,
     pub revision: u64,
     pub cursor: u32,
-    /// Vertical search band; each square sweep advances to the next elevation.
-    pub vertical: u32,
     pub base: [i32; 3],
     pub sapling: u32,
     pub height: u16,
     pub layer: u16,
     pub has_target: bool,
     pub returning: bool,
+}
+
+/// Stored shape: [`Progress`] plus `vertical`, the search band that older
+/// worlds wrote and nothing reads any more. Unknown fields stay rejected.
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StoredProgress {
+    building: u64,
+    revision: u64,
+    cursor: u32,
+    #[serde(default)]
+    #[allow(dead_code)]
+    vertical: u32,
+    base: [i32; 3],
+    sapling: u32,
+    height: u16,
+    layer: u16,
+    has_target: bool,
+    returning: bool,
+}
+
+impl From<StoredProgress> for Progress {
+    fn from(stored: StoredProgress) -> Self {
+        Self {
+            building: stored.building,
+            revision: stored.revision,
+            cursor: stored.cursor,
+            base: stored.base,
+            sapling: stored.sapling,
+            height: stored.height,
+            layer: stored.layer,
+            has_target: stored.has_target,
+            returning: stored.returning,
+        }
+    }
 }
 
 fn block_path(state: &TickState, x: i32, y: i32, z: i32) -> Option<&str> {
@@ -113,10 +147,11 @@ fn has_leaves(state: &TickState, x: i32, top: i32, z: i32) -> bool {
     false
 }
 
-/// Any certified footprint protects its base, including this worker's camp.
+/// Certificates protect every base except this worker's designated natural grove.
 fn base_protected(
     state: &TickState,
     settlement: Option<crate::settlements::SettlementId>,
+    camp: u64,
     base: [i32; 3],
 ) -> bool {
     let Some(settlement) = settlement else {
@@ -126,7 +161,9 @@ fn base_protected(
         return false;
     };
     record.buildings.values().any(|building| {
-        (0..3).all(|i| base[i] >= building.bounds.min[i] && base[i] <= building.bounds.max[i])
+        !(building.id.0 == camp && building.natural_zone)
+            && (0..3)
+                .all(|i| base[i] >= building.bounds.min[i] && base[i] <= building.bounds.max[i])
     })
 }
 
@@ -172,9 +209,57 @@ fn column_at(anchor: [i32; 3], radius: u32, index: u32) -> [i32; 2] {
     [anchor[0] + dx, anchor[2] + dz]
 }
 
-/// Scan at most [`SEARCH_PER_TICK`] settlement columns from the persisted
-/// cursor; the cursor always advances by exactly the scanned count, wrapping
-/// the radius square. Unloaded columns read as absent, never as trees.
+/// The first mature unprotected tree in one column of the settlement sphere.
+/// A trunk is at least [`MIN_TRUNK`] logs tall, so probing every fourth block
+/// of the sphere's vertical chord touches every trunk; the base is found by
+/// walking down its log column.
+fn scan_column(
+    state: &TickState,
+    anchor: [i32; 3],
+    radius: u32,
+    settlement: Option<crate::settlements::SettlementId>,
+    camp: u64,
+    [x, z]: [i32; 2],
+) -> Option<([i32; 3], u32, u16)> {
+    let dx = i64::from(x) - i64::from(anchor[0]);
+    let dz = i64::from(z) - i64::from(anchor[2]);
+    let chord = (i64::from(radius).pow(2) - dx * dx - dz * dz).max(-1);
+    if chord < 0 {
+        return None;
+    }
+    let half = (chord as u64).isqrt() as i32;
+    let lowest = anchor[1] - half;
+    let mut y = anchor[1] + half;
+    while y >= lowest {
+        if !block_path(state, x, y, z).is_some_and(is_log) {
+            y -= i32::from(MIN_TRUNK);
+            continue;
+        }
+        let mut base = y;
+        while y - base < i32::from(MAX_TRUNK)
+            && block_path(state, x, base - 1, z).is_some_and(is_log)
+        {
+            base -= 1;
+        }
+        if let Some((sapling, height)) = mature_tree(state, x, base, z) {
+            // A certified footprint over the base protects even a
+            // natural-looking tree: player buildings are never harvestable.
+            if !base_protected(state, settlement, camp, [x, base, z]) {
+                return Some(([x, base, z], sapling, height));
+            }
+        }
+        y = base - 1;
+    }
+    None
+}
+
+/// Scan at most [`SEARCH_PER_TICK`] simulated settlement columns from the
+/// persisted cursor, wrapping the radius square. Unloaded columns read as
+/// absent, never as trees, and columns outside the simulated area are never
+/// targets: a worker routed to a tree in a chunk that never ticks would freeze
+/// at its border with the target held. An inactive chunk strip is skipped in one
+/// step (bounded by [`SKIP_PER_ATTEMPT`]) so the sweep spends its budget only on
+/// columns that can actually be harvested.
 fn search(
     state: &TickState,
     anchor: [i32; 3],
@@ -183,30 +268,23 @@ fn search(
     progress: &mut Progress,
 ) -> Option<([i32; 3], u32, u16)> {
     let total = columns_total(radius);
-    let bands = (radius.saturating_sub(SEARCH_Y as u32)).div_ceil((SEARCH_Y * 2 + 1) as u32);
-    for _ in 0..SEARCH_PER_TICK {
-        let [x, z] = column_at(anchor, radius, progress.cursor);
-        // Scan the anchor elevation first, then alternate higher/lower fixed
-        // bands. This covers the entire radius without a height-dependent
-        // per-attempt scan, including villages on steep hillsides.
-        let band = progress.vertical % (bands * 2 + 1);
-        let offset = if band == 0 {
-            0
-        } else {
-            (band.div_ceil(2) as i32) * (SEARCH_Y * 2 + 1) * if band % 2 == 1 { 1 } else { -1 }
-        };
-        progress.cursor = progress.cursor.wrapping_add(1) % total;
-        if progress.cursor == 0 {
-            progress.vertical = (band + 1) % (bands * 2 + 1);
+    let side = radius.saturating_mul(2).saturating_add(1).max(1);
+    let (mut scanned, mut skipped) = (0, 0);
+    while scanned < SEARCH_PER_TICK && skipped < SKIP_PER_ATTEMPT {
+        let slot = progress.cursor % total;
+        let [x, z] = column_at(anchor, radius, slot);
+        if !state.world.is_active(x.div_euclid(16), z.div_euclid(16)) {
+            let strip = (16 - z.rem_euclid(16)) as u32;
+            progress.cursor = (slot + strip.min(side - slot % side)) % total;
+            skipped += 1;
+            continue;
         }
-        for y in anchor[1] + offset - SEARCH_Y..=anchor[1] + offset + SEARCH_Y {
-            if let Some((sapling, height)) = mature_tree(state, x, y, z) {
-                // A certified footprint over the base protects even a
-                // natural-looking tree: player buildings are never harvestable.
-                if !base_protected(state, settlement, [x, y, z]) {
-                    return Some(([x, y, z], sapling, height));
-                }
-            }
+        progress.cursor = (slot + 1) % total;
+        scanned += 1;
+        if let Some(tree) =
+            scan_column(state, anchor, radius, settlement, progress.building, [x, z])
+        {
+            return Some(tree);
         }
     }
     None
@@ -270,8 +348,8 @@ pub(super) fn work(
     // Owned binding snapshot: the borrow of `state` ends before `v` mutates.
     let bound = buildings::building_for_job(state, v)
         .filter(|building| building.kind == buildings::BuildingKind::LumberCamp)
-        .map(|building| (building.id.0, building.revision));
-    let Some((id, revision)) = bound else {
+        .map(|building| (building.id.0, building.revision, building.natural_zone));
+    let Some((id, revision, natural)) = bound else {
         // Unbound or rebound away from the camp: never route to a stale tree.
         drop_target(v);
         return None;
@@ -282,6 +360,19 @@ pub(super) fn work(
             revision,
             ..Progress::default()
         };
+        if natural {
+            let record = state.settlements.get(v.settlement?)?;
+            let entrance = v.job_site?;
+            // The certified grove is already a known resource source. Start
+            // the same bounded radius sweep there, not at an unloaded corner.
+            let radius = i64::from(record.radius);
+            let side = radius * 2 + 1;
+            let x =
+                (i64::from(entrance.x) - i64::from(record.anchor[0]) + radius).clamp(0, side - 1);
+            let z =
+                (i64::from(entrance.z) - i64::from(record.anchor[2]) + radius).clamp(0, side - 1);
+            v.lumber_progress.cursor = (x * side + z) as u32;
+        }
     }
     v.lumber_progress.revision = revision;
     let working =
@@ -342,8 +433,12 @@ pub(super) fn work(
     // Recheck the stored crown and all certificates at the actual cut
     // deadline, not on every intervening navigation tick.
     let top = base.y + i32::from(v.lumber_progress.height) - 1;
-    if base_protected(state, v.settlement, v.lumber_progress.base)
-        || !has_leaves(state, base.x, top, base.z)
+    if base_protected(
+        state,
+        v.settlement,
+        v.lumber_progress.building,
+        v.lumber_progress.base,
+    ) || !has_leaves(state, base.x, top, base.z)
     {
         drop_target(v);
         return None;

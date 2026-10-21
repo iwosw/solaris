@@ -7,9 +7,12 @@
 //! `s` payload entry, re-derives permission (record owner or operator, the same
 //! rule as the chat commands; reads are open) and re-validates all other input
 //! before calling the existing native paths ([`buildings::certify`],
-//! [`buildings::upgrade`], production [`Action`]s, registry rename). Labels are
-//! English; the client locale never reaches the core, so the Russian wording lives
-//! in `docs/SETTLEMENTS_GUIDE.md`.
+//! [`buildings::upgrade`], production [`Action`]s, registry rename).
+//!
+//! Titles, buttons, labels and notes come from [`ui_text`]: the language is the
+//! connection's client locale (`ClientInformation.language` carried by the edge),
+//! Russian for `ru*` and English otherwise. Game data (item, blueprint,
+//! profession and settlement names) stays as authored.
 
 use std::collections::BTreeSet;
 
@@ -22,6 +25,7 @@ use mc_script::{
 use uuid::Uuid;
 
 use super::buildings::{self, BuildingId, BuildingKind, CertError};
+use super::ui_text::{self, Key, Lang};
 use super::{SettlementId, economy_customization, inventory};
 use crate::boundary::{ConnectionId, PlayerChange};
 use crate::dialog::{self, Button, ClickPayload, Dialog, Input};
@@ -34,12 +38,13 @@ pub(crate) const OWNER: &str = "settlement";
 pub(crate) type Marks = [Option<[i32; 3]>; 2];
 
 const MAX_LISTED: usize = 12;
+/// Unfunded items one waiting line cites before `(+N more)`.
+const WAITING_ITEMS: usize = 3;
 const MAX_RESIDENTS: usize = 30;
 const MAX_STATIONS: usize = 4;
 const MAX_MARKS: usize = 64;
 const MAX_ORDER: f32 = 64.0;
 const MAX_EXTRA_HEIGHT: f32 = 24.0;
-const DENIED: &str = "Only the owner or an operator can change this settlement.";
 
 /// Actions that change state; everything else is a read-only screen.
 const MUTATING: &[&str] = &[
@@ -48,6 +53,8 @@ const MUTATING: &[&str] = &[
     "mark2",
     "certify_do",
     "upgrade",
+    "project_order",
+    "project_upgrade",
     "order_start",
     "order_pick",
     "order_create",
@@ -55,17 +62,34 @@ const MUTATING: &[&str] = &[
     "order_resume",
     "order_cancel",
     "rename",
+    "army_recruit",
+    "army_dismiss",
+    "army_order",
 ];
 
 struct Ctx {
     id: SettlementId,
     manage: bool,
+    /// Dialog language for this connection's client locale.
+    lang: Lang,
+}
+
+impl Ctx {
+    fn t(&self, key: Key) -> &'static str {
+        ui_text::text(self.lang, key)
+    }
+
+    /// Translated `key` with `{name}` placeholders filled in.
+    fn f(&self, key: Key, args: &[(&str, &str)]) -> String {
+        ui_text::fill(self.t(key), args)
+    }
 }
 
 struct Resident {
     uuid: Uuid,
     profession: Profession,
     job: Option<BuildingId>,
+    soldier: Option<super::army::Soldier>,
 }
 
 struct Station {
@@ -88,19 +112,16 @@ struct Form {
 /// `/settlement` and `/settlement menu [page]`: the settlement around the player
 /// (else one they own), on the requested page.
 pub(crate) fn open_menu(state: &mut TickState, connection: ConnectionId, page: Option<&str>) {
+    let lang = Lang::of(state.connections.locale_of(connection));
     let Some(id) = locate(state, connection) else {
-        say(
-            state,
-            connection,
-            "No settlement here. Stand inside one, or found one with /settlement create <name> [radius].",
-        );
+        say(state, connection, ui_text::text(lang, Key::NoSettlement));
         return;
     };
     let Some(ctx) = ctx(state, connection, id) else {
         say(
             state,
             connection,
-            "Settlement command admission is unavailable.",
+            ui_text::text(lang, Key::AdmissionUnavailable),
         );
         return;
     };
@@ -110,17 +131,33 @@ pub(crate) fn open_menu(state: &mut TickState, connection: ConnectionId, page: O
         "certify" => "certify",
         "residents" | "jobs" => "residents",
         "production" | "orders" => "orders",
+        "army" => "army",
+        "projects" => "projects",
         "settings" => "settings",
         _ => {
-            say(
-                state,
-                connection,
-                "Pages: main, buildings, certify, residents, production, settings.",
-            );
+            say(state, connection, ui_text::text(lang, Key::Pages));
             return;
         }
     };
     dispatch(state, connection, &ctx, action, ClickPayload(None));
+}
+
+/// Opens the main settlement page for a known settlement anchor.
+pub(crate) fn open_for_settlement(
+    state: &mut TickState,
+    connection: ConnectionId,
+    id: SettlementId,
+) {
+    let Some(ctx) = ctx(state, connection, id) else {
+        let lang = Lang::of(state.connections.locale_of(connection));
+        say(
+            state,
+            connection,
+            ui_text::text(lang, Key::AdmissionUnavailable),
+        );
+        return;
+    };
+    dispatch(state, connection, &ctx, "main", ClickPayload(None));
 }
 
 /// One `solaris:settlement/<action>` click.
@@ -138,7 +175,8 @@ pub(crate) fn click(
         return;
     };
     let Some(ctx) = ctx(state, connection, id) else {
-        say(state, connection, "That settlement no longer exists.");
+        let lang = Lang::of(state.connections.locale_of(connection));
+        say(state, connection, ui_text::text(lang, Key::SettlementGone));
         return;
     };
     dispatch(state, connection, &ctx, action, payload);
@@ -152,14 +190,26 @@ fn dispatch(
     payload: ClickPayload<'_>,
 ) {
     if MUTATING.contains(&action) && !ctx.manage {
-        main_screen(state, connection, ctx, DENIED);
+        main_screen(state, connection, ctx, ctx.t(Key::Denied));
         return;
     }
     match action {
         "main" => main_screen(state, connection, ctx, ""),
+        "claim" => {
+            let note = match super::commands::claim(state, connection, Some(ctx.id)) {
+                Ok(message) => message,
+                Err(message) => message.to_owned(),
+            };
+            if let Some(ctx) = self::ctx(state, connection, ctx.id) {
+                main_screen(state, connection, &ctx, &note);
+            }
+        }
         "buildings" => buildings_screen(state, connection, ctx, ""),
         "residents" => residents_screen(state, connection, ctx),
         "orders" => orders_screen(state, connection, ctx, ""),
+        "army" => army_screen(state, connection, ctx, ""),
+        "projects" => projects_screen(state, connection, ctx, ""),
+        "project_status" => project_status_screen(state, connection, ctx),
         "settings" => settings_screen(state, connection, ctx, ""),
         "certify" => {
             let form = form_of(state, connection, payload);
@@ -176,20 +226,29 @@ fn dispatch(
                     } else {
                         &mut form.to
                     }) = corner_text(at);
-                    let note = format!("Corner {} = {}.", index + 1, corner_text(at));
+                    let note = ctx.f(
+                        Key::CornerSet,
+                        &[("n", &(index + 1).to_string()), ("at", &corner_text(at))],
+                    );
                     certify_screen(state, connection, ctx, &form, &note);
                 }
-                None => certify_screen(state, connection, ctx, &form, "Your position is unknown."),
+                None => certify_screen(state, connection, ctx, &form, ctx.t(Key::PositionUnknown)),
             }
         }
         "certify_do" => certify(state, connection, ctx, payload),
         "upgrade" => upgrade(state, connection, ctx, payload),
+        "project_order" => project_order(state, connection, ctx, payload),
+        "project_upgrade" => project_upgrade(state, connection, ctx, payload),
         "order_start" => order_start(state, connection, ctx),
         "order_pick" => order_pick(state, connection, ctx, payload),
         "order_create" => order_create(state, connection, ctx, payload),
         "order_pause" | "order_resume" | "order_cancel" => {
             order_control(state, connection, ctx, action, payload)
         }
+        "army_soldier" => army_soldier(state, connection, ctx, payload),
+        "army_recruit" => army_recruit(state, connection, ctx),
+        "army_dismiss" => army_dismiss(state, connection, ctx, payload),
+        "army_order" => army_order(state, connection, ctx, payload),
         "rename" => rename(state, connection, ctx, payload),
         _ => {
             tracing::debug!(target: "dialog", connection = connection.0, action, "unknown settlement action");
@@ -204,7 +263,8 @@ fn ctx(state: &TickState, connection: ConnectionId, id: SettlementId) -> Option<
     let actor = state.connections.uuid_of(connection)?.to_string();
     Some(Ctx {
         id,
-        manage: record.owner == actor || state.plugin_players.is_operator(connection),
+        manage: record.can_manage(&actor, state.plugin_players.is_operator(connection)),
+        lang: Lang::of(state.connections.locale_of(connection)),
     })
 }
 
@@ -238,7 +298,7 @@ fn locate(state: &TickState, connection: ConnectionId) -> Option<SettlementId> {
     state
         .settlements
         .records()
-        .find(|record| record.owner == actor)
+        .find(|record| record.owner.as_deref() == Some(actor.as_str()))
         .map(|record| record.id)
 }
 
@@ -262,12 +322,14 @@ fn button(label: impl Into<String>, action: &str, id: SettlementId) -> Button {
         .with("s", Tag::String(id.0.to_string()))
 }
 
-fn frame(title: String, note: &str, text: String, buttons: Vec<Button>) -> Dialog {
+fn frame(ctx: &Ctx, title: String, note: &str, text: String, buttons: Vec<Button>) -> Dialog {
     let mut dialog = Dialog::multi_action(title, buttons);
-    if !note.is_empty() {
-        dialog = dialog.text(note);
+    for paragraph in [note, text.as_str()] {
+        if !paragraph.is_empty() {
+            dialog = dialog.text(paragraph);
+        }
     }
-    dialog.text(text).exit(Button::plain("Close"))
+    dialog.exit(Button::plain(ctx.t(Key::Close)))
 }
 
 fn short(id: BuildingId) -> u64 {
@@ -278,27 +340,34 @@ fn corner_text(at: [i32; 3]) -> String {
     format!("{} {} {}", at[0], at[1], at[2])
 }
 
-fn kind_label(kind: BuildingKind) -> String {
+fn kind_label(ctx: &Ctx, kind: BuildingKind) -> String {
     match kind {
-        BuildingKind::House => "House".into(),
-        BuildingKind::Storage => "Storage".into(),
-        BuildingKind::Mine => "Mine".into(),
-        BuildingKind::LumberCamp => "Lumber camp".into(),
-        BuildingKind::Barracks => "Barracks".into(),
-        BuildingKind::Wall => "Wall section".into(),
-        BuildingKind::Tower => "Tower".into(),
-        BuildingKind::Gate => "Gate".into(),
-        BuildingKind::Workshop(profession) => format!("{profession:?} workshop"),
+        BuildingKind::House => ctx.t(Key::KindHouse).into(),
+        BuildingKind::Storage => ctx.t(Key::KindStorage).into(),
+        BuildingKind::Mine => ctx.t(Key::KindMine).into(),
+        BuildingKind::LumberCamp => ctx.t(Key::KindLumberCamp).into(),
+        BuildingKind::Barracks => ctx.t(Key::KindBarracks).into(),
+        BuildingKind::Wall => ctx.t(Key::KindWall).into(),
+        BuildingKind::Tower => ctx.t(Key::KindTower).into(),
+        BuildingKind::Gate => ctx.t(Key::KindGate).into(),
+        BuildingKind::Workshop(profession) => ctx.f(
+            Key::KindWorkshop,
+            &[("profession", &format!("{profession:?}"))],
+        ),
     }
 }
 
-fn category(kind: BuildingKind) -> &'static str {
+fn category(ctx: &Ctx, kind: BuildingKind) -> &'static str {
     match kind {
-        BuildingKind::House => "Housing",
-        BuildingKind::Storage => "Storage",
-        BuildingKind::Workshop(_) | BuildingKind::Mine | BuildingKind::LumberCamp => "Production",
-        BuildingKind::Barracks => "Military",
-        BuildingKind::Wall | BuildingKind::Tower | BuildingKind::Gate => "Fortification",
+        BuildingKind::House => ctx.t(Key::CategoryHousing),
+        BuildingKind::Storage => ctx.t(Key::CategoryStorage),
+        BuildingKind::Workshop(_) | BuildingKind::Mine | BuildingKind::LumberCamp => {
+            ctx.t(Key::CategoryProduction)
+        }
+        BuildingKind::Barracks => ctx.t(Key::CategoryMilitary),
+        BuildingKind::Wall | BuildingKind::Tower | BuildingKind::Gate => {
+            ctx.t(Key::CategoryFortification)
+        }
     }
 }
 
@@ -382,6 +451,7 @@ fn residents(state: &TickState, id: SettlementId) -> Vec<Resident> {
                 uuid: row.uuid,
                 profession: villager.data.profession,
                 job: buildings::building_for_job(state, villager).map(|building| building.id),
+                soldier: villager.soldier.clone(),
             });
         }
     }
@@ -402,10 +472,10 @@ fn busy_workers(state: &TickState, id: SettlementId) -> BTreeSet<Uuid> {
 
 // ------------------------------------------------------------------------ main
 
-fn storage_summary(state: &TickState, id: SettlementId) -> String {
+fn storage_summary(ctx: &Ctx, state: &TickState, id: SettlementId) -> String {
     let points = buildings::storage_points(state, id);
     if points.is_empty() {
-        return "Storage: none certified".to_owned();
+        return ctx.t(Key::StorageNone).to_owned();
     }
     let dimension = state.dimension.name();
     let mut totals = std::collections::BTreeMap::<&str, i64>::new();
@@ -426,15 +496,23 @@ fn storage_summary(state: &TickState, id: SettlementId) -> String {
     let mut top: Vec<_> = totals.into_iter().collect();
     top.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(b.0)));
     let items = if top.is_empty() {
-        "empty".to_owned()
+        ctx.t(Key::Empty).to_owned()
     } else {
         top.iter()
             .take(6)
-            .map(|(name, count)| format!("{name} x{count}"))
+            .map(|(name, count)| {
+                ctx.f(
+                    Key::ItemCount,
+                    &[("name", name), ("count", &count.to_string())],
+                )
+            })
             .collect::<Vec<_>>()
             .join(", ")
     };
-    format!("Storage: {} containers; {items}", points.len())
+    ctx.f(
+        Key::StorageCount,
+        &[("containers", &points.len().to_string()), ("items", &items)],
+    )
 }
 
 fn main_screen(state: &mut TickState, connection: ConnectionId, ctx: &Ctx, note: &str) {
@@ -442,17 +520,44 @@ fn main_screen(state: &mut TickState, connection: ConnectionId, ctx: &Ctx, note:
         return;
     };
     let people = residents(state, ctx.id);
+    if record.owner.is_none() {
+        let text = ctx.f(
+            Key::UnclaimedBody,
+            &[
+                ("residents", &people.len().to_string()),
+                ("buildings", &record.buildings.len().to_string()),
+            ],
+        );
+        let buttons = vec![
+            button(ctx.t(Key::Claim), "claim", ctx.id),
+            button(ctx.t(Key::Buildings), "buildings", ctx.id),
+            button(ctx.t(Key::ResidentsJobs), "residents", ctx.id),
+            button(ctx.t(Key::Projects), "projects", ctx.id),
+        ];
+        let dialog = frame(
+            ctx,
+            ctx.f(Key::TitleSettlement, &[("name", &record.name)]),
+            note,
+            text,
+            buttons,
+        );
+        return present(state, connection, dialog);
+    }
     let working = people
         .iter()
         .filter(|resident| resident.job.is_some())
         .count();
-    let owner = record.owner_name.as_deref().unwrap_or(&record.owner);
+    let owner = record
+        .owner_name
+        .as_deref()
+        .or(record.owner.as_deref())
+        .unwrap_or(ctx.t(Key::Autonomous));
     let mut counts = std::collections::BTreeMap::<&str, usize>::new();
     for building in record.buildings.values() {
-        *counts.entry(category(building.kind)).or_default() += 1;
+        *counts.entry(category(ctx, building.kind)).or_default() += 1;
     }
     let certified = if counts.is_empty() {
-        "none yet".to_owned()
+        ctx.t(Key::NoneYet).to_owned()
     } else {
         counts
             .iter()
@@ -460,40 +565,51 @@ fn main_screen(state: &mut TickState, connection: ConnectionId, ctx: &Ctx, note:
             .collect::<Vec<_>>()
             .join(", ")
     };
-    let mut text = format!(
-        "Owner: {owner}\nRadius: {} blocks around {} {} {}\nResidents: {} ({working} working, {} idle)\nBuildings: {certified}\n{}",
-        record.radius,
-        record.anchor[0],
-        record.anchor[1],
-        record.anchor[2],
-        people.len(),
-        people.len() - working,
-        storage_summary(state, ctx.id),
+    let mut text = ctx.f(
+        Key::MainBody,
+        &[
+            ("owner", owner),
+            ("radius", &record.radius.to_string()),
+            ("x", &record.anchor[0].to_string()),
+            ("y", &record.anchor[1].to_string()),
+            ("z", &record.anchor[2].to_string()),
+            ("residents", &people.len().to_string()),
+            ("working", &working.to_string()),
+            ("idle", &(people.len() - working).to_string()),
+            ("certified", &certified),
+            ("storage", &storage_summary(ctx, state, ctx.id)),
+        ],
     );
     // Workers whose profession has no certified job: only certified workshops give jobs.
+    // Soldiers serve in barracks, not workshops, so they never count as stranded.
     let stranded = people
         .iter()
         .filter(|resident| {
             resident.job.is_none()
-                && !matches!(resident.profession, Profession::None | Profession::Nitwit)
+                && !matches!(
+                    resident.profession,
+                    Profession::None | Profession::Nitwit | Profession::Soldier
+                )
         })
         .count();
     if stranded > 0 {
-        text.push_str(&format!(
-            "\n{stranded} workers need a certified workshop — open Buildings → Certify"
-        ));
+        text.push('\n');
+        text.push_str(&ctx.f(Key::Stranded, &[("stranded", &stranded.to_string())]));
     }
     if !ctx.manage {
-        text.push_str("\nView only: the owner or an operator manages this settlement.");
+        text.push('\n');
+        text.push_str(ctx.t(Key::ViewOnlyOwner));
     }
-    let title = format!("Settlement {}", record.name);
+    let title = ctx.f(Key::TitleSettlement, &[("name", &record.name)]);
     let buttons = vec![
-        button("Buildings", "buildings", ctx.id),
-        button("Residents & jobs", "residents", ctx.id),
-        button("Production orders", "orders", ctx.id),
-        button("Settings", "settings", ctx.id),
+        button(ctx.t(Key::Buildings), "buildings", ctx.id),
+        button(ctx.t(Key::ResidentsJobs), "residents", ctx.id),
+        button(ctx.t(Key::ProductionOrders), "orders", ctx.id),
+        button(ctx.t(Key::Army), "army", ctx.id),
+        button(ctx.t(Key::Projects), "projects", ctx.id),
+        button(ctx.t(Key::Settings), "settings", ctx.id),
     ];
-    present(state, connection, frame(title, note, text, buttons));
+    present(state, connection, frame(ctx, title, note, text, buttons));
 }
 
 // ------------------------------------------------------------------- buildings
@@ -509,7 +625,7 @@ fn buildings_screen(state: &mut TickState, connection: ConnectionId, ctx: &Ctx, 
         let seq = short(building.id);
         let mut line = format!(
             "#{seq} {} L{} [{} .. {}]",
-            kind_label(building.kind),
+            kind_label(ctx, building.kind),
             building.level,
             corner_text(building.bounds.min),
             corner_text(building.bounds.max),
@@ -520,44 +636,67 @@ fn buildings_screen(state: &mut TickState, connection: ConnectionId, ctx: &Ctx, 
                 .iter()
                 .filter(|resident| resident.job == Some(building.id))
                 .count();
-            line.push_str(&format!(" jobs {filled}/{slots}"));
+            line.push_str(&ctx.f(
+                Key::JobsRow,
+                &[
+                    ("filled", &filled.to_string()),
+                    ("slots", &slots.to_string()),
+                ],
+            ));
         }
         if building.level >= 3 {
-            line.push_str(" - max level");
+            line.push_str(ctx.t(Key::MaxLevel));
         } else {
             let next = building.level + 1;
             match buildings::inspect(state, building.kind, next, building.bounds) {
-                Ok(_) => line.push_str(&format!(" - ready for L{next}")),
+                Ok(_) => line.push_str(&ctx.f(Key::ReadyFor, &[("next", &next.to_string())])),
                 Err(error) => {
-                    line.push_str(&format!(" - L{next} needs: {}", missing_text(&error)));
+                    line.push_str(&ctx.f(
+                        Key::NeedsNext,
+                        &[
+                            ("next", &next.to_string()),
+                            ("missing", &missing_text(&error)),
+                        ],
+                    ));
                 }
             }
             if ctx.manage {
                 buttons.push(
-                    button(format!("Upgrade #{seq} to L{next}"), "upgrade", ctx.id)
-                        .with("b", Tag::String(building.id.0.to_string())),
+                    button(
+                        ctx.f(
+                            Key::UpgradeTo,
+                            &[("seq", &seq.to_string()), ("next", &next.to_string())],
+                        ),
+                        "upgrade",
+                        ctx.id,
+                    )
+                    .with("b", Tag::String(building.id.0.to_string())),
                 );
             }
         }
         lines.push(line);
     }
     if record.buildings.len() > MAX_LISTED {
-        lines.push(format!("(+{} more)", record.buildings.len() - MAX_LISTED));
+        lines.push(ctx.f(
+            Key::More,
+            &[("n", &(record.buildings.len() - MAX_LISTED).to_string())],
+        ));
     }
     let mut text = if lines.is_empty() {
-        "No certified buildings yet. Build freely, then certify the finished building: the settlement checks its blocks and size.".to_owned()
+        ctx.t(Key::NoBuildings).to_owned()
     } else {
         lines.join("\n")
     };
     if !ctx.manage {
-        text.push_str("\nView only.");
+        text.push('\n');
+        text.push_str(ctx.t(Key::ViewOnly));
     }
     if ctx.manage {
-        buttons.push(button("Certify new building", "certify", ctx.id));
+        buttons.push(button(ctx.t(Key::CertifyNew), "certify", ctx.id));
     }
-    buttons.push(button("Back", "main", ctx.id));
-    let title = format!("Buildings - {}", record.name);
-    present(state, connection, frame(title, note, text, buttons));
+    buttons.push(button(ctx.t(Key::Back), "main", ctx.id));
+    let title = ctx.f(Key::TitleBuildings, &[("name", &record.name)]);
+    present(state, connection, frame(ctx, title, note, text, buttons));
 }
 
 fn form_of(state: &TickState, connection: ConnectionId, payload: ClickPayload<'_>) -> Form {
@@ -607,7 +746,11 @@ fn certify_screen(
         .map(|kind| {
             (
                 kind.name().to_owned(),
-                Tag::String(format!("{}: {}", category(*kind), kind_label(*kind))),
+                Tag::String(format!(
+                    "{}: {}",
+                    category(ctx, *kind),
+                    kind_label(ctx, *kind)
+                )),
             )
         })
         .collect();
@@ -616,37 +759,38 @@ fn certify_screen(
     // Short labels, one button row and no Close button (Escape closes): the
     // form must fit a small window without scrolling.
     let buttons = vec![
-        button("Certify", "certify_do", ctx.id).width(100).tooltip(
-            "Corners are two opposite corners of the finished building, inclusive. Height adds blocks above the higher corner.",
-        ),
-        button("Corner 1 here", "mark1", ctx.id)
+        button(ctx.t(Key::Certify), "certify_do", ctx.id)
             .width(100)
-            .tooltip("Stand in a corner block and press this; walk to the opposite corner, then /settlement menu certify and press Corner 2 here."),
-        button("Corner 2 here", "mark2", ctx.id)
+            .tooltip(ctx.t(Key::TipCorners)),
+        button(ctx.t(Key::Corner1), "mark1", ctx.id)
             .width(100)
-            .tooltip("Stand in the opposite corner block and press this."),
-        button("Back", "buildings", ctx.id).width(100),
+            .tooltip(ctx.t(Key::TipCorner1)),
+        button(ctx.t(Key::Corner2), "mark2", ctx.id)
+            .width(100)
+            .tooltip(ctx.t(Key::TipCorner2)),
+        button(ctx.t(Key::Back), "buildings", ctx.id).width(100),
     ];
-    let mut dialog = Dialog::multi_action("Certify building", buttons).columns(4);
+    let mut dialog = Dialog::multi_action(ctx.t(Key::TitleCertify), buttons).columns(4);
     if !note.is_empty() {
         dialog = dialog.text(note);
     }
     let dialog = dialog
         .input(
-            Input::single_option("kind", "Building type", options).initial_option(selected.name()),
+            Input::single_option("kind", ctx.t(Key::LabelKind), options)
+                .initial_option(selected.name()),
         )
         .input(
-            Input::text("from", "Corner 1 (x y z)")
+            Input::text("from", ctx.t(Key::LabelFrom))
                 .initial_text(&form.from)
                 .max_length(40),
         )
         .input(
-            Input::text("to", "Corner 2 (x y z)")
+            Input::text("to", ctx.t(Key::LabelTo))
                 .initial_text(&form.to)
                 .max_length(40),
         )
         .input(
-            Input::number_range("extra", "Height above corners", 0.0, MAX_EXTRA_HEIGHT)
+            Input::number_range("extra", ctx.t(Key::LabelExtra), 0.0, MAX_EXTRA_HEIGHT)
                 .initial_number(form.extra.clamp(0.0, MAX_EXTRA_HEIGHT).round())
                 .step(1.0),
         );
@@ -668,35 +812,37 @@ fn corner(text: &str) -> Option<[i32; 3]> {
 fn certify(state: &mut TickState, connection: ConnectionId, ctx: &Ctx, payload: ClickPayload<'_>) {
     let form = form_of(state, connection, payload);
     let Some(kind) = BuildingKind::parse(&form.kind) else {
-        return certify_screen(state, connection, ctx, &form, "Choose a building type.");
+        return certify_screen(state, connection, ctx, &form, ctx.t(Key::ChooseKind));
     };
     let (Some(a), Some(b)) = (corner(&form.from), corner(&form.to)) else {
-        return certify_screen(
-            state,
-            connection,
-            ctx,
-            &form,
-            "Corners must be three whole numbers: x y z.",
-        );
+        return certify_screen(state, connection, ctx, &form, ctx.t(Key::BadCorners));
     };
     let extra = form.extra.clamp(0.0, MAX_EXTRA_HEIGHT) as i32;
     let min = [a[0].min(b[0]), a[1].min(b[1]), a[2].min(b[2])];
     let mut max = [a[0].max(b[0]), a[1].max(b[1]), a[2].max(b[2])];
     max[1] = max[1].saturating_add(extra);
     let Ok(bounds) = ScriptWorldBounds::new(min, max) else {
-        return certify_screen(state, connection, ctx, &form, "Invalid corners.");
+        return certify_screen(state, connection, ctx, &form, ctx.t(Key::InvalidCorners));
     };
     match buildings::certify(state, ctx.id, kind, bounds) {
         Ok(id) => {
             state.settlement_marks.remove(&connection);
-            let note = format!("Certified {} #{} (level 1).", kind_label(kind), short(id));
+            let note = ctx.f(
+                Key::Certified,
+                &[
+                    ("kind", &kind_label(ctx, kind)),
+                    ("id", &short(id).to_string()),
+                ],
+            );
             buildings_screen(state, connection, ctx, &note);
         }
         Err(error) => {
-            let note = format!(
-                "Cannot certify {}. Missing: {}.",
-                kind_label(kind),
-                missing_text(&error)
+            let note = ctx.f(
+                Key::CannotCertify,
+                &[
+                    ("kind", &kind_label(ctx, kind)),
+                    ("missing", &missing_text(&error)),
+                ],
             );
             certify_screen(state, connection, ctx, &form, &note);
         }
@@ -715,7 +861,7 @@ fn building_of(state: &TickState, ctx: &Ctx, payload: ClickPayload<'_>) -> Optio
 
 fn upgrade(state: &mut TickState, connection: ConnectionId, ctx: &Ctx, payload: ClickPayload<'_>) {
     let Some(id) = building_of(state, ctx, payload) else {
-        return buildings_screen(state, connection, ctx, "That building no longer exists.");
+        return buildings_screen(state, connection, ctx, ctx.t(Key::BuildingGone));
     };
     let note = match buildings::upgrade(state, id) {
         Ok(()) => {
@@ -724,12 +870,20 @@ fn upgrade(state: &mut TickState, connection: ConnectionId, ctx: &Ctx, payload: 
                 .get(ctx.id)
                 .and_then(|record| record.buildings.get(&id))
                 .map_or(0, |building| building.level);
-            format!("Building #{} upgraded to level {level}.", short(id))
+            ctx.f(
+                Key::Upgraded,
+                &[
+                    ("id", &short(id).to_string()),
+                    ("level", &level.to_string()),
+                ],
+            )
         }
-        Err(error) => format!(
-            "Cannot upgrade #{}. Missing: {}.",
-            short(id),
-            missing_text(&error)
+        Err(error) => ctx.f(
+            Key::CannotUpgrade,
+            &[
+                ("id", &short(id).to_string()),
+                ("missing", &missing_text(&error)),
+            ],
         ),
     };
     buildings_screen(state, connection, ctx, &note);
@@ -746,6 +900,29 @@ fn residents_screen(state: &mut TickState, connection: ConnectionId, ctx: &Ctx) 
     let mut free = 0;
     for building in record.buildings.values() {
         let slots = buildings::job_slots(building.kind, building.level);
+        if building.kind == BuildingKind::Barracks {
+            let filled = people
+                .iter()
+                .filter(|resident| {
+                    resident
+                        .soldier
+                        .as_ref()
+                        .is_some_and(|soldier| soldier.barracks == building.id)
+                })
+                .count();
+            let beds = slots;
+            lines.push(ctx.f(
+                Key::SoldiersRow,
+                &[
+                    ("id", &short(building.id).to_string()),
+                    ("kind", &kind_label(ctx, building.kind)),
+                    ("level", &building.level.to_string()),
+                    ("filled", &filled.to_string()),
+                    ("beds", &beds.to_string()),
+                ],
+            ));
+            continue;
+        }
         if slots == 0 {
             continue;
         }
@@ -754,20 +931,33 @@ fn residents_screen(state: &mut TickState, connection: ConnectionId, ctx: &Ctx) 
             .filter(|resident| resident.job == Some(building.id))
             .count();
         free += slots.saturating_sub(filled);
-        lines.push(format!(
-            "#{} {} L{}: {filled}/{slots} jobs filled",
-            short(building.id),
-            kind_label(building.kind),
-            building.level
+        lines.push(ctx.f(
+            Key::JobsFilledRow,
+            &[
+                ("id", &short(building.id).to_string()),
+                ("kind", &kind_label(ctx, building.kind)),
+                ("level", &building.level.to_string()),
+                ("filled", &filled.to_string()),
+                ("slots", &slots.to_string()),
+            ],
         ));
     }
-    lines.push(format!(
-        "Free job slots: {free}; unemployed residents: {}",
-        people
-            .iter()
-            .filter(|resident| resident.job.is_none())
-            .count()
-    ));
+    lines.push(
+        ctx.f(
+            Key::FreeSlots,
+            &[
+                ("free", &free.to_string()),
+                (
+                    "people",
+                    &people
+                        .iter()
+                        .filter(|resident| resident.job.is_none() && resident.soldier.is_none())
+                        .count()
+                        .to_string(),
+                ),
+            ],
+        ),
+    );
     lines.push(String::new());
     for resident in people.iter().take(MAX_RESIDENTS) {
         let name = super::presentation::villager_name(resident.uuid);
@@ -775,41 +965,56 @@ fn residents_screen(state: &mut TickState, connection: ConnectionId, ctx: &Ctx) 
             .job
             .and_then(|id| record.buildings.get(&id))
             .map_or_else(
-                || "no job".to_owned(),
+                || ctx.t(Key::NoJob).to_owned(),
                 |building| {
-                    format!(
-                        "works at #{} {}",
-                        short(building.id),
-                        kind_label(building.kind)
+                    ctx.f(
+                        Key::WorksAt,
+                        &[
+                            ("id", &short(building.id).to_string()),
+                            ("kind", &kind_label(ctx, building.kind)),
+                        ],
                     )
                 },
             );
-        lines.push(format!("{name} ({:?}): {place}", resident.profession));
+        let duty = resident
+            .soldier
+            .as_ref()
+            .map(|soldier| {
+                ctx.f(
+                    Key::SoldierDuty,
+                    &[("order", &format!("{:?}", soldier.order))],
+                )
+            })
+            .unwrap_or_default();
+        lines.push(format!("{name} ({:?}): {place}{duty}", resident.profession));
     }
     if people.len() > MAX_RESIDENTS {
-        lines.push(format!("(+{} more)", people.len() - MAX_RESIDENTS));
+        lines.push(ctx.f(
+            Key::More,
+            &[("n", &(people.len() - MAX_RESIDENTS).to_string())],
+        ));
     }
-    let title = format!("Residents & jobs - {}", record.name);
-    let buttons = vec![button("Back", "main", ctx.id)];
+    let title = ctx.f(Key::TitleResidents, &[("name", &record.name)]);
+    let buttons = vec![button(ctx.t(Key::Back), "main", ctx.id)];
     present(
         state,
         connection,
-        frame(title, "", lines.join("\n"), buttons),
+        frame(ctx, title, "", lines.join("\n"), buttons),
     );
 }
 
 // ---------------------------------------------------------------------- orders
 
-fn job_status(job: &super::production::Job) -> String {
+fn job_status(ctx: &Ctx, job: &super::production::Job) -> String {
     if job.cancelled {
-        "cancelled".to_owned()
+        ctx.t(Key::JobCancelled).to_owned()
     } else if job.done >= job.count {
-        "done".to_owned()
+        ctx.t(Key::JobDone).to_owned()
     } else {
         match job.paused.as_deref() {
-            Some("paused") => "paused".to_owned(),
-            Some(reason) => format!("waiting: {reason}"),
-            None => "working".to_owned(),
+            Some("paused") => ctx.t(Key::JobPaused).to_owned(),
+            Some(reason) => ctx.f(Key::JobWaiting, &[("reason", reason)]),
+            None => ctx.t(Key::JobWorking).to_owned(),
         }
     }
 }
@@ -824,47 +1029,53 @@ fn orders_screen(state: &mut TickState, connection: ConnectionId, ctx: &Ctx, not
     let mut buttons = Vec::new();
     for job in jobs.iter().take(MAX_LISTED) {
         let recipe = job.recipe.rsplit(':').next().unwrap_or(&job.recipe);
-        lines.push(format!(
-            "{}: {recipe} {}/{} by {} - {}",
-            job.id,
-            job.done,
-            job.count,
-            super::presentation::villager_name(job.worker),
-            job_status(job)
+        lines.push(ctx.f(
+            Key::OrderRow,
+            &[
+                ("id", &job.id),
+                ("recipe", recipe),
+                ("done", &job.done.to_string()),
+                ("count", &job.count.to_string()),
+                ("worker", super::presentation::villager_name(job.worker)),
+                ("status", &job_status(ctx, job)),
+            ],
         ));
         if ctx.manage && !job.cancelled && job.done < job.count {
             let (label, action) = if job.paused.as_deref() == Some("paused") {
-                (format!("Resume {}", job.id), "order_resume")
+                (ctx.f(Key::Resume, &[("id", &job.id)]), "order_resume")
             } else {
-                (format!("Pause {}", job.id), "order_pause")
+                (ctx.f(Key::Pause, &[("id", &job.id)]), "order_pause")
             };
             buttons.push(button(label, action, ctx.id).with("j", Tag::String(job.id.clone())));
             buttons.push(
-                button(format!("Cancel {}", job.id), "order_cancel", ctx.id)
-                    .with("j", Tag::String(job.id.clone())),
+                button(
+                    ctx.f(Key::Cancel, &[("id", &job.id)]),
+                    "order_cancel",
+                    ctx.id,
+                )
+                .with("j", Tag::String(job.id.clone())),
             );
         }
     }
     if jobs.len() > MAX_LISTED {
-        lines.push(format!("(+{} more)", jobs.len() - MAX_LISTED));
+        lines.push(ctx.f(Key::More, &[("n", &(jobs.len() - MAX_LISTED).to_string())]));
     }
     let mut text = if lines.is_empty() {
-        "No production orders yet.".to_owned()
+        ctx.t(Key::NoOrders).to_owned()
     } else {
         lines.join("\n")
     };
     if ctx.manage {
-        text.push_str(
-            "\nA new order sends one resident to a crafting table inside a certified workshop; \
-the resident crafts from the ingredients in their own inventory.",
-        );
-        buttons.insert(0, button("New order", "order_start", ctx.id));
+        text.push('\n');
+        text.push_str(ctx.t(Key::NewOrderHelp));
+        buttons.insert(0, button(ctx.t(Key::NewOrder), "order_start", ctx.id));
     } else {
-        text.push_str("\nView only.");
+        text.push('\n');
+        text.push_str(ctx.t(Key::ViewOnly));
     }
-    buttons.push(button("Back", "main", ctx.id));
-    let title = format!("Production orders - {}", record.name);
-    present(state, connection, frame(title, note, text, buttons));
+    buttons.push(button(ctx.t(Key::Back), "main", ctx.id));
+    let title = ctx.f(Key::TitleOrders, &[("name", &record.name)]);
+    present(state, connection, frame(ctx, title, note, text, buttons));
 }
 
 /// Crafting stations inside certified workshops, a bounded scan on click only.
@@ -914,24 +1125,24 @@ fn stations(state: &TickState, id: SettlementId) -> Vec<Station> {
 fn order_start(state: &mut TickState, connection: ConnectionId, ctx: &Ctx) {
     let found = stations(state, ctx.id);
     match found.as_slice() {
-        [] => orders_screen(
-            state,
-            connection,
-            ctx,
-            "No crafting table inside a certified workshop. Place a crafting table in a workshop and try again.",
-        ),
+        [] => orders_screen(state, connection, ctx, ctx.t(Key::NoStation)),
         [only] => recipes_screen(state, connection, ctx, only.building, only.at),
         _ => {
             let buttons = found
                 .iter()
                 .map(|station| {
                     button(
-                        format!(
-                            "#{} {}: {} at {}",
-                            short(station.building),
-                            kind_label(station.kind),
-                            station.block.rsplit(':').next().unwrap_or(&station.block),
-                            corner_text(station.at)
+                        ctx.f(
+                            Key::StationRow,
+                            &[
+                                ("id", &short(station.building).to_string()),
+                                ("kind", &kind_label(ctx, station.kind)),
+                                (
+                                    "block",
+                                    station.block.rsplit(':').next().unwrap_or(&station.block),
+                                ),
+                                ("at", &corner_text(station.at)),
+                            ],
                         ),
                         "order_pick",
                         ctx.id,
@@ -940,12 +1151,13 @@ fn order_start(state: &mut TickState, connection: ConnectionId, ctx: &Ctx) {
                     .with("p", Tag::String(corner_text(station.at)))
                     .width(300)
                 })
-                .chain([button("Back", "orders", ctx.id)])
+                .chain([button(ctx.t(Key::Back), "orders", ctx.id)])
                 .collect();
             let dialog = frame(
-                "Choose a workstation".to_owned(),
+                ctx,
+                ctx.t(Key::ChooseStation).to_owned(),
                 "",
-                "Where should the resident work?".to_owned(),
+                ctx.t(Key::WhereWork).to_owned(),
                 buttons,
             )
             .columns(1);
@@ -964,7 +1176,7 @@ fn order_pick(
         building_of(state, ctx, payload),
         payload.string("p").and_then(corner),
     ) else {
-        return orders_screen(state, connection, ctx, "That workstation is gone.");
+        return orders_screen(state, connection, ctx, ctx.t(Key::StationGone));
     };
     recipes_screen(state, connection, ctx, building, at);
 }
@@ -977,7 +1189,7 @@ fn recipes_screen(
     at: [i32; 3],
 ) {
     let Some(block) = block_name(state, at).map(str::to_owned) else {
-        return orders_screen(state, connection, ctx, "That workstation is not loaded.");
+        return orders_screen(state, connection, ctx, ctx.t(Key::StationUnloaded));
     };
     let busy = busy_workers(state, ctx.id);
     let free: Vec<Resident> = residents(state, ctx.id)
@@ -986,12 +1198,7 @@ fn recipes_screen(
         .take(50)
         .collect();
     if free.is_empty() {
-        return orders_screen(
-            state,
-            connection,
-            ctx,
-            "No free resident: bind villagers with /settlement bind, or wait for current orders to finish.",
-        );
+        return orders_screen(state, connection, ctx, ctx.t(Key::NoFreeResident));
     }
     let workers = free
         .iter()
@@ -1032,23 +1239,25 @@ fn recipes_screen(
             .width(300),
         );
     }
-    buttons.push(button("Back", "orders", ctx.id));
+    buttons.push(button(ctx.t(Key::Back), "orders", ctx.id));
     let dialog = frame(
-        "New production order".to_owned(),
+        ctx,
+        ctx.t(Key::TitleNewOrder).to_owned(),
         "",
-        format!(
-            "Pick the product, a quantity and the resident. Crafting table at {}.",
-            corner_text(at)
-        ),
+        ctx.f(Key::PickProduct, &[("at", &corner_text(at))]),
         buttons,
     )
     .columns(1)
     .input(
-        Input::number_range("count", "Quantity", 1.0, MAX_ORDER)
+        Input::number_range("count", ctx.t(Key::Quantity), 1.0, MAX_ORDER)
             .initial_number(8.0)
             .step(1.0),
     )
-    .input(Input::single_option("worker", "Resident", workers));
+    .input(Input::single_option(
+        "worker",
+        ctx.t(Key::Resident),
+        workers,
+    ));
     present(state, connection, dialog);
 }
 
@@ -1081,14 +1290,14 @@ fn stand_at(state: &TickState, station: [i32; 3], bounds: ScriptWorldBounds) -> 
         .or_else(|| candidates.iter().copied().find(usable))
 }
 
-fn failure_text(failure: Failure) -> String {
+fn failure_text(ctx: &Ctx, failure: Failure) -> String {
     match failure {
-        Failure::Busy => "That resident already has an active order.".to_owned(),
-        Failure::NotFound => "Resident, workshop or recipe not found.".to_owned(),
-        Failure::Forbidden => "That resident does not belong to this settlement.".to_owned(),
-        Failure::Blocked => "The workstation is missing or blocked.".to_owned(),
-        Failure::Unloaded => "The workshop is not loaded.".to_owned(),
-        other => format!("Refused: {other:?}."),
+        Failure::Busy => ctx.t(Key::FailureBusy).to_owned(),
+        Failure::NotFound => ctx.t(Key::FailureNotFound).to_owned(),
+        Failure::Forbidden => ctx.t(Key::FailureForbidden).to_owned(),
+        Failure::Blocked => ctx.t(Key::FailureBlocked).to_owned(),
+        Failure::Unloaded => ctx.t(Key::FailureUnloaded).to_owned(),
+        other => ctx.f(Key::FailureOther, &[("reason", &format!("{other:?}"))]),
     }
 }
 
@@ -1108,7 +1317,7 @@ fn order_create(
             .string("worker")
             .and_then(|text| text.parse::<Uuid>().ok()),
     ) else {
-        return orders_screen(state, connection, ctx, "The order form was incomplete.");
+        return orders_screen(state, connection, ctx, ctx.t(Key::OrderIncomplete));
     };
     let count = payload
         .float("count")
@@ -1117,7 +1326,7 @@ fn order_create(
         return;
     };
     let Some(found) = record.buildings.get(&building).cloned() else {
-        return orders_screen(state, connection, ctx, "That workshop no longer exists.");
+        return orders_screen(state, connection, ctx, ctx.t(Key::WorkshopGone));
     };
     let valid = matches!(found.kind, BuildingKind::Workshop(_))
         && (0..3).all(|i| found.bounds.min[i] <= at[i] && at[i] <= found.bounds.max[i])
@@ -1127,20 +1336,10 @@ fn order_create(
             .work_recipe(&recipe)
             .is_some_and(|work| block_name(state, at) == Some(work.station.as_str()));
     if !valid {
-        return orders_screen(
-            state,
-            connection,
-            ctx,
-            "That recipe needs a different workstation than the one chosen.",
-        );
+        return orders_screen(state, connection, ctx, ctx.t(Key::WrongStation));
     }
     let Some(stand) = stand_at(state, at, found.bounds) else {
-        return orders_screen(
-            state,
-            connection,
-            ctx,
-            "No free standing cell next to that workstation.",
-        );
+        return orders_screen(state, connection, ctx, ctx.t(Key::NoStand));
     };
     let production = &record.economy.production;
     let mut sequence = production.sequence.saturating_add(1);
@@ -1165,8 +1364,15 @@ fn order_create(
         stand_at: stand,
     };
     let note = match economy_customization::execute(state, ctx.id, &action) {
-        Ok(()) => format!("Order {job} started: {} x{count}.", recipe.path()),
-        Err(failure) => failure_text(failure),
+        Ok(()) => ctx.f(
+            Key::OrderStarted,
+            &[
+                ("job", &job),
+                ("item", recipe.path()),
+                ("count", &count.to_string()),
+            ],
+        ),
+        Err(failure) => failure_text(ctx, failure),
     };
     orders_screen(state, connection, ctx, &note);
 }
@@ -1184,7 +1390,7 @@ fn order_control(
             .get(ctx.id)
             .is_some_and(|record| record.economy.production.jobs.contains_key(job))
     }) else {
-        return orders_screen(state, connection, ctx, "That order no longer exists.");
+        return orders_screen(state, connection, ctx, ctx.t(Key::OrderGone));
     };
     let request = match action {
         "order_pause" => Action::ProductionPause { job: job.clone() },
@@ -1192,32 +1398,412 @@ fn order_control(
         _ => Action::ProductionCancel { job: job.clone() },
     };
     let note = match economy_customization::execute(state, ctx.id, &request) {
-        Ok(()) => format!("Order {job} updated."),
-        Err(failure) => failure_text(failure),
+        Ok(()) => ctx.f(Key::OrderUpdated, &[("job", &job)]),
+        Err(failure) => failure_text(ctx, failure),
     };
     orders_screen(state, connection, ctx, &note);
 }
 
-// -------------------------------------------------------------------- settings
+// ------------------------------------------------------------------------ army
+
+/// First eight hex digits of a soldier UUID: the roster label. Clicks carry the full UUID.
+fn soldier_id(uuid: Uuid) -> String {
+    uuid.to_string()[..8].to_owned()
+}
+
+fn order_word(order: &super::army::Order) -> String {
+    use super::army::Order;
+    match order {
+        Order::Follow(_) => "Follow".to_owned(),
+        Order::Guard(at) => format!("Guard {}", corner_text(*at)),
+        Order::Patrol => "Patrol".to_owned(),
+        Order::Return => "Return".to_owned(),
+    }
+}
+
+/// Native soldiers. The roster is one short line and one `Soldier` button per
+/// soldier, so its button grid stays small however many soldiers there are; the
+/// per-soldier orders and dismissal live on [`soldier_screen`]. The all-soldier
+/// orders stay here. Follow targets the clicking player; guard posts at their
+/// feet. Reads are open; mutations require `manage` (checked before dispatch,
+/// re-read here for the live executor pose).
+fn army_screen(state: &mut TickState, connection: ConnectionId, ctx: &Ctx, note: &str) {
+    let Some(record) = state.settlements.get(ctx.id) else {
+        return;
+    };
+    let rows = super::army::rows(state, ctx.id);
+    let mut text = if rows.is_empty() {
+        ctx.t(Key::NoSoldiers).to_owned()
+    } else {
+        rows.iter()
+            .take(MAX_RESIDENTS)
+            .map(|row| {
+                format!(
+                    "{} — {:.0} HP — {}",
+                    soldier_id(row.uuid),
+                    row.health,
+                    order_word(&row.order)
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    if !ctx.manage {
+        text.push('\n');
+        text.push_str(ctx.t(Key::ViewOnly));
+    }
+    let mut buttons = Vec::new();
+    if ctx.manage {
+        buttons.push(button(ctx.t(Key::Recruit), "army_recruit", ctx.id));
+    }
+    for row in rows.iter().take(MAX_RESIDENTS) {
+        buttons.push(
+            button(
+                ctx.f(Key::SoldierButton, &[("id", &soldier_id(row.uuid))]),
+                "army_soldier",
+                ctx.id,
+            )
+            .with("u", Tag::String(row.uuid.to_string())),
+        );
+    }
+    if ctx.manage && !rows.is_empty() {
+        for (label, order) in [
+            (Key::FollowMeAll, "follow"),
+            (Key::GuardHereAll, "guard"),
+            (Key::PatrolAll, "patrol"),
+            (Key::ReturnAll, "return"),
+        ] {
+            buttons.push(
+                button(ctx.t(label), "army_order", ctx.id)
+                    .with("u", Tag::String("all".to_owned()))
+                    .with("o", Tag::String(order.to_owned())),
+            );
+        }
+    }
+    buttons.push(button(ctx.t(Key::Back), "main", ctx.id));
+    let title = ctx.f(Key::TitleArmy, &[("name", &record.name)]);
+    present(state, connection, frame(ctx, title, note, text, buttons));
+}
+
+/// One soldier: details plus its Follow/Guard/Patrol/Return and Dismiss buttons.
+/// A soldier that no longer exists falls back to the roster.
+fn soldier_screen(
+    state: &mut TickState,
+    connection: ConnectionId,
+    ctx: &Ctx,
+    uuid: Uuid,
+    note: &str,
+) {
+    let Some(record) = state.settlements.get(ctx.id) else {
+        return;
+    };
+    let Some(row) = super::army::rows(state, ctx.id)
+        .into_iter()
+        .find(|row| row.uuid == uuid)
+    else {
+        return army_screen(state, connection, ctx, ctx.t(Key::SoldierGone));
+    };
+    let text = format!(
+        "{uuid}\n{:.0} HP — {}\n{}",
+        row.health,
+        order_word(&row.order),
+        row.equipment.join(", ")
+    );
+    let mut buttons = Vec::new();
+    if ctx.manage {
+        for (label, order) in [
+            (Key::FollowMe, "follow"),
+            (Key::GuardHere, "guard"),
+            (Key::Patrol, "patrol"),
+            (Key::Return, "return"),
+        ] {
+            buttons.push(
+                button(ctx.t(label), "army_order", ctx.id)
+                    .with("u", Tag::String(uuid.to_string()))
+                    .with("o", Tag::String(order.to_owned())),
+            );
+        }
+        buttons.push(
+            button(ctx.t(Key::Dismiss), "army_dismiss", ctx.id)
+                .with("u", Tag::String(uuid.to_string())),
+        );
+    }
+    buttons.push(button(ctx.t(Key::Back), "army", ctx.id));
+    let title = ctx.f(
+        Key::TitleSoldier,
+        &[("id", &soldier_id(uuid)), ("name", &record.name)],
+    );
+    present(state, connection, frame(ctx, title, note, text, buttons));
+}
+
+/// Back to the soldier a click targeted, or to the roster for an all-soldier click.
+fn army_target(
+    state: &mut TickState,
+    connection: ConnectionId,
+    ctx: &Ctx,
+    target: Option<Uuid>,
+    note: &str,
+) {
+    match target {
+        Some(uuid) => soldier_screen(state, connection, ctx, uuid, note),
+        None => army_screen(state, connection, ctx, note),
+    }
+}
+
+fn army_soldier(
+    state: &mut TickState,
+    connection: ConnectionId,
+    ctx: &Ctx,
+    payload: ClickPayload<'_>,
+) {
+    match payload.string("u").and_then(|text| text.parse().ok()) {
+        Some(uuid) => soldier_screen(state, connection, ctx, uuid, ""),
+        None => army_screen(state, connection, ctx, ctx.t(Key::SoldierGone)),
+    }
+}
+
+/// A successful recruit lands on the new soldier's page: it has no Recruit
+/// button, so a repeated click on the same spot cannot recruit a second soldier.
+fn army_recruit(state: &mut TickState, connection: ConnectionId, ctx: &Ctx) {
+    match super::army::recruit(state, ctx.id) {
+        Ok(uuid) => {
+            let note = ctx.f(Key::Recruited, &[("uuid", &soldier_id(uuid))]);
+            soldier_screen(state, connection, ctx, uuid, &note);
+        }
+        Err(message) => army_screen(state, connection, ctx, &message),
+    }
+}
+
+fn army_dismiss(
+    state: &mut TickState,
+    connection: ConnectionId,
+    ctx: &Ctx,
+    payload: ClickPayload<'_>,
+) {
+    let Some(uuid) = payload.string("u").and_then(|text| text.parse().ok()) else {
+        return army_screen(state, connection, ctx, ctx.t(Key::SoldierGone));
+    };
+    let note = match super::army::dismiss(state, ctx.id, uuid) {
+        Ok(()) => ctx.f(Key::Dismissed, &[("uuid", &soldier_id(uuid))]),
+        Err(message) => message,
+    };
+    army_screen(state, connection, ctx, &note);
+}
+
+fn army_order(
+    state: &mut TickState,
+    connection: ConnectionId,
+    ctx: &Ctx,
+    payload: ClickPayload<'_>,
+) {
+    let target = payload.string("u").unwrap_or("all");
+    let uuid = if target == "all" {
+        None
+    } else if let Ok(uuid) = target.parse() {
+        Some(uuid)
+    } else {
+        return army_screen(state, connection, ctx, ctx.t(Key::SoldierGone));
+    };
+    let order = match payload.string("o") {
+        Some("follow") => {
+            let Some(executor) = state.connections.entity_of(connection) else {
+                return army_target(state, connection, ctx, uuid, ctx.t(Key::PositionUnknown));
+            };
+            let Some(slot) = state.entities.slot_of(executor) else {
+                return army_target(state, connection, ctx, uuid, ctx.t(Key::PositionUnknown));
+            };
+            super::army::Order::Follow(state.entities.row(slot).uuid)
+        }
+        Some("guard") => match player_pos(state, connection) {
+            Some(at) => super::army::Order::Guard(at),
+            None => {
+                return army_target(state, connection, ctx, uuid, ctx.t(Key::PositionUnknown));
+            }
+        },
+        Some("patrol") => super::army::Order::Patrol,
+        Some("return") => super::army::Order::Return,
+        _ => return army_target(state, connection, ctx, uuid, ctx.t(Key::ChooseOrder)),
+    };
+    let note = match super::army::order(state, ctx.id, uuid, order) {
+        Ok(count) => ctx.f(Key::Ordered, &[("count", &count.to_string())]),
+        Err(message) => message,
+    };
+    army_target(state, connection, ctx, uuid, &note);
+}
+
+// -------------------------------------------------------------------- projects
+
+/// Owner order buttons for every authored blueprint, `Upgrade` buttons for
+/// blueprint-built buildings with a next level, and the `Status` page.
+///
+/// A dialog renders its body above the action grid, in one scroll column, so a
+/// status block here would push every button below the fold. The body therefore
+/// holds only the click note: the grid stays the first thing in the column, and
+/// the live project status sits behind `Status` ([`project_status_screen`]).
+/// Clicks route through the `MUTATING` allowlist; forged payloads revalidate.
+fn projects_screen(state: &mut TickState, connection: ConnectionId, ctx: &Ctx, note: &str) {
+    let Some(record) = state.settlements.get(ctx.id) else {
+        return;
+    };
+    let mut buttons = Vec::new();
+    if ctx.manage {
+        for blueprint in super::blueprints::all(&state.registry) {
+            buttons.push(
+                button(
+                    ctx.f(Key::OrderBlueprint, &[("blueprint", &blueprint.id)]),
+                    "project_order",
+                    ctx.id,
+                )
+                .with("blueprint", Tag::String(blueprint.id.clone())),
+            );
+        }
+        for building in record
+            .buildings
+            .values()
+            .filter(|building| super::construction::upgrade_available(state, ctx.id, building.id))
+            .take(MAX_LISTED)
+        {
+            buttons.push(
+                button(
+                    ctx.f(
+                        Key::UpgradeRow,
+                        &[
+                            ("id", &short(building.id).to_string()),
+                            ("kind", &kind_label(ctx, building.kind)),
+                            ("level", &building.level.to_string()),
+                            ("next", &(building.level + 1).to_string()),
+                        ],
+                    ),
+                    "project_upgrade",
+                    ctx.id,
+                )
+                .with("b", Tag::String(building.id.0.to_string())),
+            );
+        }
+    }
+    buttons.push(button(ctx.t(Key::Status), "project_status", ctx.id));
+    buttons.push(button(ctx.t(Key::Back), "main", ctx.id));
+    let text = if ctx.manage {
+        String::new()
+    } else {
+        ctx.t(Key::ViewOnly).to_owned()
+    };
+    let title = ctx.f(Key::TitleProjects, &[("name", &record.name)]);
+    present(state, connection, frame(ctx, title, note, text, buttons));
+}
+
+/// Live project progress and one short line per unmet need, reached from the
+/// Projects grid so no status text precedes the order buttons.
+fn project_status_screen(state: &mut TickState, connection: ConnectionId, ctx: &Ctx) {
+    let Some(record) = state.settlements.get(ctx.id) else {
+        return;
+    };
+    let mut lines = super::construction::project_summary(state, ctx.id);
+    lines.extend(waiting_lines(state, ctx));
+    let buttons = vec![button(ctx.t(Key::Back), "projects", ctx.id)];
+    let title = ctx.f(Key::TitleProjectStatus, &[("name", &record.name)]);
+    present(
+        state,
+        connection,
+        frame(ctx, title, "", lines.join("\n"), buttons),
+    );
+}
+
+/// One translated line per waiting kind, citing at most [`WAITING_ITEMS`]
+/// unfunded items and a `+N more` count for the rest: a level-one bill can name
+/// dozens of items, and the whole line must stay readable in one row.
+fn waiting_lines(state: &TickState, ctx: &Ctx) -> Vec<String> {
+    super::construction::waiting(state, ctx.id)
+        .iter()
+        .map(|kind| waiting_line(ctx, kind))
+        .collect()
+}
+
+fn waiting_line(ctx: &Ctx, kind: &super::construction::WaitingKind) -> String {
+    let extra = kind.needs.len().saturating_sub(WAITING_ITEMS);
+    let items = kind
+        .needs
+        .iter()
+        .take(WAITING_ITEMS)
+        .map(|need| match need {
+            super::construction::WaitingNeed::Awaiting { item, count } => ctx.f(
+                Key::WaitingItem,
+                &[("item", item), ("count", &count.to_string())],
+            ),
+            super::construction::WaitingNeed::NoSource { item } => {
+                ctx.f(Key::WaitingNoSource, &[("item", item)])
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    let items = if extra > 0 {
+        ctx.f(
+            Key::WaitingMore,
+            &[("items", &items), ("n", &extra.to_string())],
+        )
+    } else {
+        items
+    };
+    ctx.f(
+        Key::WaitingLine,
+        &[("blueprint", &kind.blueprint), ("items", &items)],
+    )
+}
+
+fn project_order(
+    state: &mut TickState,
+    connection: ConnectionId,
+    ctx: &Ctx,
+    payload: ClickPayload<'_>,
+) {
+    let Some(blueprint) = payload.string("blueprint") else {
+        return projects_screen(state, connection, ctx, ctx.t(Key::ChooseBlueprint));
+    };
+    let note = match super::construction::request_build(state, ctx.id, blueprint) {
+        Ok(()) => ctx.f(Key::BlueprintOrdered, &[("blueprint", blueprint)]),
+        Err(error) => error,
+    };
+    projects_screen(state, connection, ctx, &note);
+}
+
+fn project_upgrade(
+    state: &mut TickState,
+    connection: ConnectionId,
+    ctx: &Ctx,
+    payload: ClickPayload<'_>,
+) {
+    let Some(id) = building_of(state, ctx, payload) else {
+        return projects_screen(state, connection, ctx, ctx.t(Key::BuildingGone));
+    };
+    let note = match super::construction::request_upgrade(state, ctx.id, id) {
+        Ok(()) => ctx.f(Key::UpgradeStarted, &[("id", &short(id).to_string())]),
+        Err(error) => error,
+    };
+    projects_screen(state, connection, ctx, &note);
+}
 
 fn settings_screen(state: &mut TickState, connection: ConnectionId, ctx: &Ctx, note: &str) {
     let Some(record) = state.settlements.get(ctx.id) else {
         return;
     };
-    let text = format!(
-        "Name: {}\nRadius: {} blocks (grows with population)\nRevision: {}",
-        record.name, record.radius, record.revision
+    let text = ctx.f(
+        Key::SettingsBody,
+        &[
+            ("name", &record.name),
+            ("radius", &record.radius.to_string()),
+            ("revision", &record.revision.to_string()),
+        ],
     );
     let mut buttons = Vec::new();
     if ctx.manage {
-        buttons.push(button("Rename", "rename", ctx.id));
+        buttons.push(button(ctx.t(Key::Rename), "rename", ctx.id));
     }
-    buttons.push(button("Back", "main", ctx.id));
-    let title = format!("Settings - {}", record.name);
-    let mut dialog = frame(title, note, text, buttons);
+    buttons.push(button(ctx.t(Key::Back), "main", ctx.id));
+    let title = ctx.f(Key::TitleSettings, &[("name", &record.name)]);
+    let mut dialog = frame(ctx, title, note, text, buttons);
     if ctx.manage {
         dialog = dialog.input(
-            Input::text("name", "New name (letters, digits, - _)")
+            Input::text("name", ctx.t(Key::NewName))
                 .initial_text(&record.name)
                 .max_length(64),
         );
@@ -1227,10 +1813,10 @@ fn settings_screen(state: &mut TickState, connection: ConnectionId, ctx: &Ctx, n
 
 fn rename(state: &mut TickState, connection: ConnectionId, ctx: &Ctx, payload: ClickPayload<'_>) {
     let Some(name) = payload.string("name") else {
-        return settings_screen(state, connection, ctx, "Enter a name.");
+        return settings_screen(state, connection, ctx, ctx.t(Key::EnterName));
     };
     let note = match state.settlements.rename(ctx.id, name.to_owned()) {
-        Ok(()) => format!("Renamed to {name}."),
+        Ok(()) => ctx.f(Key::Renamed, &[("name", name)]),
         Err(message) => message.to_owned(),
     };
     settings_screen(state, connection, ctx, &note);
@@ -1239,3 +1825,7 @@ fn rename(state: &mut TickState, connection: ConnectionId, ctx: &Ctx, payload: C
 #[cfg(test)]
 #[path = "ui_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "army_ui_tests.rs"]
+mod army_ui_tests;

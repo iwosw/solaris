@@ -81,15 +81,23 @@ const SETTLEMENT_HELP: &[(&str, &str)] = &[
     ("guide", "Step-by-step in-game settlement tutorial."),
     (
         "menu",
-        "Open the settlement dialogs (also: /settlement alone). Pages: main, buildings, certify, residents, production, settings.",
+        "Open the settlement dialogs (also: /settlement alone). Pages: main, buildings, certify, residents, production, army, projects, settings.",
     ),
     (
         "building",
         "Certify or upgrade player-built buildings: list | certify <kind> <x1 y1 z1 x2 y2 z2> | upgrade <id>.",
     ),
     (
+        "build",
+        "Start a fully funded blueprint building or native-built upgrade: <blueprint> | upgrade <buildingId>. Owner/operator of the claimed settlement here; one active project, real materials from storage.",
+    ),
+    (
         "create",
         "Found a settlement here; optional radius 1-256 (default 48).",
+    ),
+    (
+        "claim",
+        "Claim the autonomous settlement you stand in (ownerless villages refuse other mutations).",
     ),
     ("list", "List all settlements."),
     ("info", "Show owner, centre, radius and resident count."),
@@ -125,6 +133,10 @@ const SETTLEMENT_HELP: &[(&str, &str)] = &[
     (
         "caravan",
         "Physical transport: status/open/pickup/unload/cancel/block.",
+    ),
+    (
+        "army",
+        "Native soldiers: list | recruit | dismiss <uuid> | order <all|uuid> follow|guard|patrol|return (owner/operator for mutations).",
     ),
 ];
 
@@ -977,9 +989,14 @@ fn settlement_tree(t: &mut Tree, root: i32) {
         true,
     );
     let word = Parser::String(CommandStringKind::SingleWord);
+    let build = t.literal(root, "build", false);
+    t.argument(build, "blueprint", word.clone(), true);
+    let upgrade = t.literal(build, "upgrade", false);
+    t.argument(upgrade, "id", word.clone(), true);
     let create = t.literal(root, "create", false);
     let name = t.argument(create, "name", word.clone(), true);
     t.argument(name, "radius", integer(Some(1), Some(256)), true);
+    t.literal(root, "claim", true);
     t.literal(root, "list", true);
     for action in ["info", "rename", "remove", "bind", "relocate"] {
         let operation = t.literal(root, action, action == "info");
@@ -1019,6 +1036,16 @@ fn settlement_tree(t: &mut Tree, root: i32) {
             );
         }
     }
+    let army = t.literal(root, "army", false);
+    t.literal(army, "list", true);
+    t.literal(army, "recruit", true);
+    let dismiss = t.literal(army, "dismiss", false);
+    t.argument(dismiss, "soldier", Parser::Uuid, true);
+    let order = t.literal(army, "order", false);
+    let target = t.argument(order, "target", word.clone(), false);
+    // The target word is `all` or a soldier UUID; the parser validates it.
+    // Order verbs are executable leaves under the target.
+    t.literals(target, &["follow", "guard", "patrol", "return"]);
 }
 
 fn team_tree(t: &mut Tree, root: i32) {

@@ -11,7 +11,7 @@ pub(crate) const MAX_RADIUS: u32 = 256;
 /// ever rises, so the created radius is a floor.
 pub(crate) const GROWTH_PER_RESIDENT: u32 = 4;
 
-/// Global, monotonically allocated identity; names may change, IDs never do.
+/// Stable global identity, allocated monotonically for founded and generated towns.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct SettlementId(pub u64);
@@ -21,7 +21,7 @@ pub struct SettlementId(pub u64);
 pub struct SettlementRecord {
     pub id: SettlementId,
     pub name: String,
-    pub owner: String,
+    pub owner: Option<String>,
     /// Last authenticated display name; UUID `owner` remains the authority.
     #[serde(default)]
     pub owner_name: Option<String>,
@@ -40,6 +40,15 @@ pub struct SettlementRecord {
     pub district: Option<super::districts::DistrictPlan>,
     #[serde(default)]
     pub(crate) economy: super::economy::State,
+    /// Stable worldgen provenance, retained after claim or rename.
+    #[serde(default)]
+    pub village_source: Option<String>,
+    #[serde(default)]
+    pub bootstrap_storage: Option<[i32; 3]>,
+    #[serde(default)]
+    pub project: Option<super::construction::Project>,
+    #[serde(default)]
+    pub construction_cursor: u32,
 }
 
 /// One absolute post-image or tombstone, not an aggregate registry blob.
@@ -76,6 +85,21 @@ pub struct Registry {
 }
 
 impl SettlementRecord {
+    /// Autonomous settlements must be claimed before even an operator may
+    /// mutate them through player management commands or dialogs.
+    pub(crate) fn can_manage(&self, actor: &str, operator: bool) -> bool {
+        self.owner
+            .as_deref()
+            .is_some_and(|owner| owner == actor || operator)
+    }
+
+    pub(crate) fn contains(&self, at: [i32; 3]) -> bool {
+        at.iter()
+            .zip(self.anchor)
+            .map(|(a, b)| (i64::from(*a) - i64::from(b)).pow(2))
+            .sum::<i64>()
+            <= i64::from(self.radius).pow(2)
+    }
     /// Cheap overestimate of the heap this record owns, for the journal
     /// queue's byte budget: map element counts times element size, string
     /// capacities and item-stack heaps; fixed-size endpoint/fence records get
@@ -221,8 +245,12 @@ impl SettlementRecord {
                 size_of::<super::buildings::Building>(),
             );
         self.name.capacity()
-            + self.owner.capacity()
+            + opt(&self.owner)
+            + opt(&self.village_source)
             + opt(&self.owner_name)
+            + self.project.as_ref().map_or(0, |project| {
+                project.blueprint.capacity() + project.structure.capacity()
+            })
             + roots
             + households
             + district
@@ -245,12 +273,24 @@ pub fn validate_record(record: &SettlementRecord) -> Result<(), &'static str> {
     if record.id.0 == 0 || record.revision == 0 {
         return Err("invalid settlement identity or revision");
     }
-    if !valid_name(&record.name) || record.owner.is_empty() || record.owner.len() > 128 {
+    if !valid_name(&record.name)
+        || record
+            .owner
+            .as_ref()
+            .is_some_and(|owner| owner.is_empty() || owner.len() > 128)
+    {
         return Err("invalid settlement name or owner");
     }
     if !(1..=MAX_RADIUS).contains(&record.radius) {
         return Err("settlement radius must be in 1..=256");
     }
+    if record
+        .bootstrap_storage
+        .is_some_and(|at| !record.contains(at))
+    {
+        return Err("bootstrap storage outside settlement radius");
+    }
+    super::construction::validate_record(record)?;
     super::households::validate_record(record)?;
     super::buildings::validate_record_buildings(record)?;
     if let Some(district) = &record.district {
@@ -269,7 +309,11 @@ impl Registry {
         name_of: impl Fn(uuid::Uuid) -> Option<&'a str>,
     ) {
         for record in self.records.values_mut() {
-            let Ok(owner) = uuid::Uuid::parse_str(&record.owner) else {
+            let Some(owner) = record
+                .owner
+                .as_deref()
+                .and_then(|owner| uuid::Uuid::parse_str(owner).ok())
+            else {
                 continue;
             };
             let Some(name) = name_of(owner) else {
@@ -344,12 +388,26 @@ impl Registry {
         self.records.values().find(|record| record.name == name)
     }
 
+    pub(super) fn find_village(&self, source: &str) -> Option<&SettlementRecord> {
+        self.records
+            .values()
+            .find(|record| record.village_source.as_deref() == Some(source))
+    }
+
     pub fn high_water(&self) -> u64 {
         self.high_water
     }
 
     pub fn set_high_water(&mut self, value: u64) {
         self.high_water = self.high_water.max(value);
+    }
+
+    fn next_id(&self, sequence: u64) -> Result<SettlementId, &'static str> {
+        sequence
+            .max(self.high_water)
+            .checked_add(1)
+            .map(SettlementId)
+            .ok_or("settlement identity exhausted")
     }
 
     pub fn create(
@@ -363,16 +421,11 @@ impl Registry {
         if self.find(&name).is_some() {
             return Err("settlement name already exists");
         }
-        let id = SettlementId(
-            (*sequence)
-                .max(self.high_water)
-                .checked_add(1)
-                .ok_or("settlement identity exhausted")?,
-        );
+        let id = self.next_id(*sequence)?;
         let record = SettlementRecord {
             id,
             name,
-            owner,
+            owner: Some(owner),
             owner_name: None,
             anchor,
             radius,
@@ -383,6 +436,10 @@ impl Registry {
             buildings: BTreeMap::new(),
             district: None,
             economy: super::economy::State::default(),
+            village_source: None,
+            bootstrap_storage: None,
+            project: None,
+            construction_cursor: 0,
         };
         validate_record(&record)?;
         self.records.insert(id, record);
@@ -390,6 +447,76 @@ impl Registry {
         self.high_water = id.0;
         *sequence = id.0;
         Ok(id)
+    }
+
+    /// Reuse saved worldgen provenance across claim, rename and restart; new
+    /// villages share the existing settlement sequence with founded towns.
+    pub(crate) fn adopt_village(
+        &mut self,
+        sequence: &mut u64,
+        source: &str,
+        anchor: [i32; 3],
+    ) -> Result<SettlementId, &'static str> {
+        if let Some(record) = self.find_village(source) {
+            return Ok(record.id);
+        }
+        let id = self.next_id(*sequence)?;
+        let name = format!("village_{:08x}", id.0);
+        if self.find(&name).is_some() {
+            return Err("generated village name already exists");
+        }
+        let record = SettlementRecord {
+            id,
+            name,
+            owner: None,
+            owner_name: None,
+            anchor,
+            radius: super::commands::DEFAULT_RADIUS,
+            revision: 1,
+            household_sequence: 0,
+            households: BTreeMap::new(),
+            building_sequence: 0,
+            buildings: BTreeMap::new(),
+            district: None,
+            economy: super::economy::State::default(),
+            village_source: Some(source.to_owned()),
+            bootstrap_storage: None,
+            project: None,
+            construction_cursor: 0,
+        };
+        validate_record(&record)?;
+        self.records.insert(id, record);
+        self.touched.insert(id);
+        self.high_water = id.0;
+        *sequence = id.0;
+        Ok(id)
+    }
+
+    pub(crate) fn claim(
+        &mut self,
+        id: SettlementId,
+        owner: String,
+        at: [i32; 3],
+    ) -> Result<(), &'static str> {
+        if owner.is_empty() || owner.len() > 128 {
+            return Err("invalid settlement owner");
+        }
+        let record = self.records.get_mut(&id).ok_or("settlement not found")?;
+        if record.owner.is_some() {
+            return Err("settlement already has an owner");
+        }
+        if !record.contains(at) {
+            return Err("stand inside the settlement to claim it");
+        }
+        let revision = record
+            .revision
+            .checked_add(1)
+            .ok_or("settlement revision exhausted")?;
+        record.owner = Some(owner);
+        record.owner_name = None;
+        record.revision = revision;
+        self.touched.insert(id);
+        Ok(())
     }
 
     pub fn rename(&mut self, id: SettlementId, name: String) -> Result<(), &'static str> {

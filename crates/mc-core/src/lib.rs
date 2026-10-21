@@ -181,6 +181,7 @@ mod tick_tests;
 #[cfg(test)]
 mod view_negotiation_tests;
 pub mod world_conversion;
+pub mod worldgen_upgrade;
 
 pub use config::{CoreConfig, CoreError};
 pub use core::{Core, RemoteTicket, SpawnRequest};

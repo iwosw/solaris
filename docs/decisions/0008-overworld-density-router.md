@@ -11,6 +11,26 @@ and new terrain inside one Anvil world. That creates hard borders which no local
 height or decoration fix can remove. Tree placement also accepted any non-fluid
 block as support instead of the surface planned for that column.
 
+## Explicit operator revision upgrade
+
+The fence below is the default and stays fail-closed: opening a world whose header
+identity or generation/dimension records name another revision is refused, and for
+a world that differs only in an older revision the refusal names the one operator
+exception, `solaris-v2 --config server.toml world upgrade-worldgen`. On a stopped
+world it verifies that the stored identity equals the configured one in everything
+but the (older) revision — seed, format and dimension geometry included, byte for
+byte — and then rewrites the header identity and the `generation`/`dimensions`
+records to the running build's revision in one durable transaction. Nothing else is
+rewritten: every already generated chunk, entity and gameplay row stays as the older
+revision made it, and only chunks generated after the upgrade use the new generator.
+The world therefore contains a deliberate revision seam at the border of the
+already generated area — the same hard-border consequence this ADR's fence exists to
+prevent — which is why the operator must ask for it. The command refuses a
+different seed, a newer stored revision, a running server (world lease) and a
+missing native store; a second run verifies the contract and writes nothing.
+Revision-27 village fixes (interiors, water, streets) thus reach an upgraded world
+only in newly generated chunks; existing villages are not regenerated.
+
 ## Decision
 
 Worldgen revision 20 widens the existing seeded river reaches and deepens their

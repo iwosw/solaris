@@ -149,6 +149,8 @@ fn unlock(state: &mut VillagerState, registry: &CoreRegistry, level: u8) {
     let profession = match state.data.profession {
         VillagerProfession::Miner => VillagerProfession::Toolsmith,
         VillagerProfession::Lumberjack => VillagerProfession::Fletcher,
+        VillagerProfession::Builder => VillagerProfession::Mason,
+        VillagerProfession::Soldier => VillagerProfession::Armorer,
         profession => profession,
     };
     let Some(pool) = profession_level_offers_26_1_2(profession.name(), level) else {

@@ -1182,6 +1182,12 @@ fn settlement(
                 Err(message) => error(state, connection, message),
             }
         }
+        SettlementCommand::Claim => {
+            match crate::settlements::commands::claim(state, connection, None) {
+                Ok(message) => error(state, connection, message),
+                Err(message) => error(state, connection, message),
+            }
+        }
         SettlementCommand::Menu { page } => {
             crate::settlements::ui::open_menu(state, connection, page.as_deref());
         }
@@ -1212,7 +1218,7 @@ fn settlement(
                         "{}\n{} | owner={} anchor={:?} radius={} members={} revision={}",
                         crate::settlements::presentation::summary(state, record),
                         record.name,
-                        record.owner,
+                        record.owner.as_deref().unwrap_or("autonomous"),
                         record.anchor,
                         record.radius,
                         members,
@@ -1235,7 +1241,7 @@ fn settlement(
                 error(state, connection, "Settlement not found.");
                 return;
             };
-            if record.owner != actor && !operator {
+            if !record.can_manage(&actor, operator) {
                 error(
                     state,
                     connection,
@@ -1262,7 +1268,7 @@ fn settlement(
                 error(state, connection, "Settlement not found.");
                 return;
             };
-            if record.owner != actor && !operator {
+            if !record.can_manage(&actor, operator) {
                 error(
                     state,
                     connection,
@@ -1274,7 +1280,11 @@ fn settlement(
             if crate::settlements::remove(state, id) {
                 error(state, connection, format!("Removed {name}."));
             } else {
-                error(state, connection, "Settlement not found.");
+                error(
+                    state,
+                    connection,
+                    "Settlement removal refused: construction could not be cancelled.",
+                );
             }
         }
         SettlementCommand::Relocate {
@@ -1296,7 +1306,7 @@ fn settlement(
                 error(state, connection, "Settlement not found.");
                 return;
             };
-            if (source.owner != actor || target.owner != actor) && !operator {
+            if !source.can_manage(&actor, operator) || !target.can_manage(&actor, operator) {
                 error(
                     state,
                     connection,
@@ -1332,7 +1342,7 @@ fn settlement(
                 error(state, connection, "Settlement not found.");
                 return;
             };
-            if record.owner != actor && !operator {
+            if !record.can_manage(&actor, operator) {
                 error(
                     state,
                     connection,
@@ -1383,7 +1393,7 @@ fn settlement(
                 error(state, connection, "Settlement not found.");
                 return;
             };
-            if record.owner != actor && !operator {
+            if !record.can_manage(&actor, operator) {
                 error(
                     state,
                     connection,
@@ -1409,7 +1419,7 @@ fn settlement(
             if !status
                 && actor
                     .as_ref()
-                    .is_none_or(|actor| *actor != record.owner && !operator)
+                    .is_none_or(|actor| !record.can_manage(actor, operator))
             {
                 error(
                     state,
@@ -1458,6 +1468,216 @@ fn settlement(
                 Ok(message) => error(state, connection, message),
                 Err(message) => error(state, connection, message),
             }
+        }
+        SettlementCommand::Build { blueprint } => {
+            build_command(
+                state,
+                connection,
+                executor,
+                actor.as_deref(),
+                operator,
+                blueprint,
+            );
+        }
+        SettlementCommand::BuildUpgrade { id } => {
+            build_upgrade_command(state, connection, executor, actor.as_deref(), operator, *id);
+        }
+        SettlementCommand::Army { command } => {
+            army_command(state, connection, executor, command);
+        }
+    }
+}
+
+/// Native `/settlement build ...` execution. The target is always the
+/// executor's enclosing settlement (closest anchor within its radius, like
+/// building/army commands). Both variants need an authenticated actor and
+/// `can_manage`, which also refuses ownerless settlements; operators of an
+/// owned settlement pass per existing semantics. Orders start immediately via
+/// `construction::request_build/request_upgrade` (no stock debit or placement
+/// here); the reply reports the started order or the real refusal (`Busy.`,
+/// missing materials, no free site).
+fn build_command(
+    state: &mut TickState,
+    connection: ConnectionId,
+    executor: EntityId,
+    actor: Option<&str>,
+    operator: bool,
+    blueprint: &str,
+) {
+    use crate::settlements::building_commands;
+    let Some(id) = building_commands::containing(state, executor) else {
+        return error(state, connection, building_commands::NO_SETTLEMENT);
+    };
+    let Some(actor) = actor else {
+        return error(state, connection, building_commands::ADMISSION_UNAVAILABLE);
+    };
+    if state
+        .settlements
+        .get(id)
+        .is_none_or(|record| !record.can_manage(actor, operator))
+    {
+        return error(
+            state,
+            connection,
+            "Only the owner or an operator orders construction.",
+        );
+    }
+    match crate::settlements::construction::request_build(state, id, blueprint) {
+        Ok(()) => error(
+            state,
+            connection,
+            format!("Started {blueprint} construction."),
+        ),
+        Err(message) => error(state, connection, message),
+    }
+}
+
+/// Native `/settlement build upgrade <buildingId>` execution. The building id
+/// is global (`settlement << 32 | sequence`, like `/settlement building
+/// upgrade`), but authorization runs against the executor's enclosing
+/// settlement: the target must belong to it. Starts the funded upgrade
+/// immediately (no stock debit or placement here); refusals surface directly.
+/// Kept separate from the geometric `/settlement building upgrade` path.
+fn build_upgrade_command(
+    state: &mut TickState,
+    connection: ConnectionId,
+    executor: EntityId,
+    actor: Option<&str>,
+    operator: bool,
+    id: u64,
+) {
+    use crate::settlements::building_commands;
+    use crate::settlements::buildings::BuildingId;
+    let Some(enclosing) = building_commands::containing(state, executor) else {
+        return error(state, connection, building_commands::NO_SETTLEMENT);
+    };
+    let Some(actor) = actor else {
+        return error(state, connection, building_commands::ADMISSION_UNAVAILABLE);
+    };
+    if state
+        .settlements
+        .get(enclosing)
+        .is_none_or(|record| !record.can_manage(actor, operator))
+    {
+        return error(
+            state,
+            connection,
+            "Only the owner or an operator orders construction.",
+        );
+    }
+    let building = BuildingId(id);
+    let home = crate::settlements::SettlementId(id >> 32);
+    if home != enclosing {
+        return error(state, connection, "Building not found.");
+    }
+    match crate::settlements::construction::request_upgrade(state, enclosing, building) {
+        Ok(()) => error(
+            state,
+            connection,
+            format!("Started upgrade for building #{id}."),
+        ),
+        Err(message) => error(state, connection, message),
+    }
+}
+/// Native `/settlement army ...` execution. The target is always the
+/// executor's enclosing settlement (closest anchor within its radius, like
+/// building commands). Reads are open; every mutation re-checks
+/// `can_manage`, which also refuses ownerless settlements. Follow uses the
+/// executor's entity UUID; guard uses the executor's current block position.
+fn army_command(
+    state: &mut TickState,
+    connection: ConnectionId,
+    executor: EntityId,
+    command: &crate::settlements::commands::ArmyCommand,
+) {
+    use crate::settlements::commands::{ArmyCommand, ArmyOrderKind};
+    use crate::settlements::{army, building_commands};
+    let Some(id) = building_commands::containing(state, executor) else {
+        return error(state, connection, building_commands::NO_SETTLEMENT);
+    };
+    if !matches!(command, ArmyCommand::List) {
+        let operator = state.plugin_players.is_operator(connection)
+            || connection == crate::command_console::CONNECTION;
+        let Some(actor) = actor_identity(state, connection) else {
+            return error(state, connection, building_commands::ADMISSION_UNAVAILABLE);
+        };
+        if state
+            .settlements
+            .get(id)
+            .is_none_or(|record| !record.can_manage(&actor, operator))
+        {
+            return error(
+                state,
+                connection,
+                "Only the owner or an operator commands soldiers.",
+            );
+        }
+    }
+    match command {
+        ArmyCommand::List => {
+            let rows = army::list(state, id);
+            let message = if rows.is_empty() {
+                "No soldiers.".to_owned()
+            } else {
+                rows.join("\n")
+            };
+            error(state, connection, message);
+        }
+        ArmyCommand::Recruit => {
+            let result = army::recruit(state, id).map(|uuid| format!("Recruited {uuid}."));
+            error(
+                state,
+                connection,
+                result.unwrap_or_else(std::convert::identity),
+            );
+        }
+        ArmyCommand::Dismiss { soldier } => {
+            let Ok(uuid) = soldier.parse::<uuid::Uuid>() else {
+                return error(state, connection, "Soldier must be a native entity UUID.");
+            };
+            let result = army::dismiss(state, id, uuid).map(|()| format!("Dismissed {uuid}."));
+            error(
+                state,
+                connection,
+                result.unwrap_or_else(std::convert::identity),
+            );
+        }
+        ArmyCommand::Order { target, order } => {
+            let uuid = if target == "all" {
+                None
+            } else {
+                let Ok(uuid) = target.parse::<uuid::Uuid>() else {
+                    return error(
+                        state,
+                        connection,
+                        "Soldier must be a native entity UUID or all.",
+                    );
+                };
+                Some(uuid)
+            };
+            let order = match order {
+                ArmyOrderKind::Follow | ArmyOrderKind::Guard => {
+                    let Some(slot) = state.entities.slot_of(executor) else {
+                        return error(state, connection, "Your position is unavailable.");
+                    };
+                    if *order == ArmyOrderKind::Follow {
+                        army::Order::Follow(state.entities.row(slot).uuid)
+                    } else {
+                        army::Order::Guard(
+                            state.entities.pos(slot).map(|value| value.floor() as i32),
+                        )
+                    }
+                }
+                ArmyOrderKind::Patrol => army::Order::Patrol,
+                ArmyOrderKind::Return => army::Order::Return,
+            };
+            let result = army::order(state, id, uuid, order)
+                .map(|count| format!("Ordered {count} soldier(s)."));
+            error(
+                state,
+                connection,
+                result.unwrap_or_else(std::convert::identity),
+            );
         }
     }
 }

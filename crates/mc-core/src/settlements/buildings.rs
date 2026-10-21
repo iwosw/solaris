@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 
 use super::{Registry, SettlementId, SettlementRecord};
 use crate::boundary::BlockPos;
+use crate::registry::CoreRegistry;
 use crate::tick::TickState;
 use crate::villager::{VillagerProfession as Profession, VillagerState};
 
@@ -49,6 +50,7 @@ impl BuildingKind {
             "leatherworker" => Self::Workshop(Profession::Leatherworker),
             "librarian" => Self::Workshop(Profession::Librarian),
             "mason" => Self::Workshop(Profession::Mason),
+            "builder" => Self::Workshop(Profession::Builder),
             "shepherd" => Self::Workshop(Profession::Shepherd),
             "toolsmith" => Self::Workshop(Profession::Toolsmith),
             "weaponsmith" => Self::Workshop(Profession::Weaponsmith),
@@ -77,6 +79,7 @@ impl BuildingKind {
                 Profession::Leatherworker => "leatherworker",
                 Profession::Librarian => "librarian",
                 Profession::Mason => "mason",
+                Profession::Builder => "builder",
                 Profession::Shepherd => "shepherd",
                 Profession::Toolsmith => "toolsmith",
                 Profession::Weaponsmith => "weaponsmith",
@@ -94,6 +97,7 @@ impl BuildingKind {
                         | Profession::Nitwit
                         | Profession::Miner
                         | Profession::Lumberjack
+                        | Profession::Soldier
                 ) =>
             {
                 Some(p)
@@ -116,6 +120,10 @@ pub struct Building {
     /// Sorted workstation positions (or container positions for Storage).
     pub work_points: Vec<[i32; 3]>,
     pub revision: u64,
+    /// Terrain zone certified without placed blocks (`certify_zone`): Mine or
+    /// LumberCamp at level 1 only. Provenance, not a configuration flag.
+    #[serde(default)]
+    pub natural_zone: bool,
 }
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Requirement {
@@ -150,7 +158,12 @@ fn failure(description: &str) -> CertError {
 }
 #[must_use]
 pub fn job_slots(kind: BuildingKind, level: u8) -> usize {
-    if kind.profession().is_some() && (1..=3).contains(&level) {
+    if !(1..=3).contains(&level) {
+        return 0;
+    }
+    if kind == BuildingKind::Barracks {
+        usize::from(level) * 2
+    } else if kind.profession().is_some() {
         usize::from(level)
     } else {
         0
@@ -160,7 +173,7 @@ pub fn job_slots(kind: BuildingKind, level: u8) -> usize {
 pub fn requirements(kind: BuildingKind, level: u8) -> Vec<Requirement> {
     let l = u32::from(level.clamp(1, 3));
     let height = if kind == BuildingKind::Tower {
-        3 * l + 3
+        2 * l + 4
     } else {
         4
     };
@@ -233,6 +246,26 @@ fn within(record: &SettlementRecord, bounds: ScriptWorldBounds) -> bool {
             })
         })
     })
+}
+/// Solaris job stations: builder huts, mines and lumber camps are staffed at crafting
+/// tables or barrels. Resolved by building kind, so vanilla fishermen keep their barrels.
+fn solaris_station(kind: BuildingKind, name: &str) -> bool {
+    matches!(
+        kind,
+        BuildingKind::Workshop(Profession::Builder) | BuildingKind::Mine | BuildingKind::LumberCamp
+    ) && matches!(name, "crafting_table" | "barrel")
+}
+/// Whether `block` is a work station for a building of `kind`: the vanilla profession POI
+/// block, or a crafting table for the Solaris kinds above.
+pub(crate) fn workstation_matches(registry: &CoreRegistry, kind: BuildingKind, block: u32) -> bool {
+    registry
+        .blocks
+        .by_id(mc_world::BlockStateId(block))
+        .is_some_and(|def| solaris_station(kind, def.block.id.path()))
+        || matches!(
+            super::allocator::poi_kind(registry, block),
+            Some(super::allocator::PoiKind::Job(p)) if expected_station(kind, p)
+        )
 }
 fn expected_station(kind: BuildingKind, p: Profession) -> bool {
     match kind {
@@ -328,10 +361,7 @@ pub(crate) fn inspect(
                 {
                     points.insert([x, y, z]);
                 }
-                if let Some(super::allocator::PoiKind::Job(p)) =
-                    super::allocator::poi_kind(&state.registry, id)
-                    && expected_station(kind, p)
-                {
+                if workstation_matches(&state.registry, kind, id) {
                     points.insert([x, y, z]);
                 }
             }
@@ -411,6 +441,7 @@ pub(crate) fn certify(
         let building = record.buildings.get_mut(&id).expect("validated building");
         building.bounds = bounds;
         building.work_points = points;
+        building.natural_zone = false;
         building.revision = building.revision.saturating_add(1);
         wake_residents(state, settlement);
         return Ok(id);
@@ -444,6 +475,7 @@ pub(crate) fn certify(
             bounds,
             work_points: points,
             revision: 1,
+            natural_zone: false,
         },
     );
     wake_residents(state, settlement);
@@ -472,8 +504,141 @@ pub(crate) fn upgrade(state: &mut TickState, id: BuildingId) -> Result<(), CertE
     building.level += 1;
     building.revision = building.revision.saturating_add(1);
     building.work_points = points;
+    building.natural_zone = false;
     wake_residents(state, settlement);
     Ok(())
+}
+
+/// Natural zone certification (Mine / LumberCamp level 1): no placed blocks, the
+/// terrain itself is the building. `entrance` is the single work point (an open cell
+/// inside `bounds`); the allocator treats it as the certified job endpoint.
+/// Requirements: lumber zone holds >= 4 log blocks (a grove); mine zone is at least
+/// 5x5 with two blocks of depth under the entrance and holds >= 32 stone/ore blocks.
+pub(crate) fn certify_zone(
+    state: &mut TickState,
+    settlement: SettlementId,
+    kind: BuildingKind,
+    bounds: ScriptWorldBounds,
+    entrance: [i32; 3],
+) -> Result<BuildingId, CertError> {
+    if !matches!(kind, BuildingKind::Mine | BuildingKind::LumberCamp) {
+        return Err(failure("only mine and lumber camp zones are natural"));
+    }
+    let dims = dimensions(bounds).ok_or_else(|| failure("invalid zone bounds"))?;
+    if !inside(bounds, entrance) {
+        return Err(failure("zone entrance must be inside the zone"));
+    }
+    let record = state
+        .settlements
+        .get(settlement)
+        .ok_or_else(|| failure("settlement not found"))?;
+    if !within(record, bounds) {
+        return Err(failure("zone outside settlement"));
+    }
+    if record
+        .buildings
+        .values()
+        .any(|b| overlaps(b.bounds, bounds))
+    {
+        return Err(failure("zone overlaps another certificate"));
+    }
+    if record.buildings.len() >= 1024 {
+        return Err(failure("maximum 1024 buildings per settlement"));
+    }
+    let sequence = record
+        .building_sequence
+        .checked_add(1)
+        .filter(|n| *n <= u64::from(u32::MAX))
+        .ok_or_else(|| failure("building identity exhausted"))?;
+    if settlement.0 > u64::from(u32::MAX) {
+        return Err(failure("settlement identity exhausted"));
+    }
+    let (mut logs, mut stone) = (0_u32, 0_u32);
+    for x in bounds.min[0]..=bounds.max[0] {
+        for z in bounds.min[2]..=bounds.max[2] {
+            for y in bounds.min[1]..=bounds.max[1] {
+                let id = state
+                    .world
+                    .block_at(x, y, z)
+                    .ok_or_else(|| failure("all zone chunks must be loaded"))?;
+                let path = state
+                    .registry
+                    .blocks
+                    .by_id(mc_world::BlockStateId(id))
+                    .ok_or_else(|| failure("unknown block"))?
+                    .block
+                    .id
+                    .path();
+                logs += u32::from(path.ends_with("_log"));
+                stone += u32::from(
+                    matches!(
+                        path,
+                        "stone"
+                            | "deepslate"
+                            | "andesite"
+                            | "diorite"
+                            | "granite"
+                            | "tuff"
+                            | "cobblestone"
+                    ) || path.ends_with("_ore"),
+                );
+            }
+        }
+    }
+    let mut missing = Vec::new();
+    let mut need = |description: &str, required: u32, found: u32| {
+        if found < required {
+            missing.push(Requirement {
+                description: description.into(),
+                required,
+                found,
+            });
+        }
+    };
+    if kind == BuildingKind::LumberCamp {
+        need("zone logs", 4, logs);
+    } else {
+        need("zone stone", 32, stone);
+        need("zone width", 5, dims[0].min(dims[2]));
+        let depth = (i64::from(entrance[1]) - i64::from(bounds.min[1])).clamp(0, 255) as u32;
+        need("depth under entrance", 2, depth);
+    }
+    let open = |y: i32| {
+        state
+            .world
+            .block_at(entrance[0], y, entrance[2])
+            .is_some_and(|id| state.registry.collision_boxes[id as usize].is_empty())
+    };
+    need(
+        "open entrance",
+        1,
+        u32::from(open(entrance[1]) && open(entrance[1] + 1)),
+    );
+    if !missing.is_empty() {
+        return Err(CertError { missing });
+    }
+    let id = BuildingId((settlement.0 << 32) | sequence);
+    let record = state
+        .settlements
+        .get_mut(settlement)
+        .expect("validated settlement");
+    record.building_sequence = sequence;
+    record.revision = record.revision.saturating_add(1);
+    record.buildings.insert(
+        id,
+        Building {
+            id,
+            settlement,
+            kind,
+            level: 1,
+            bounds,
+            work_points: vec![entrance],
+            revision: 1,
+            natural_zone: true,
+        },
+    );
+    wake_residents(state, settlement);
+    Ok(id)
 }
 
 fn wake_residents(state: &mut TickState, settlement: SettlementId) {
@@ -529,14 +694,23 @@ pub(crate) fn building_for_job<'a>(
         })
 }
 pub(crate) fn storage_points(state: &TickState, settlement: SettlementId) -> Vec<[i32; 3]> {
-    state
-        .settlements
-        .get(settlement)
+    let Some(record) = state.settlements.get(settlement) else {
+        return Vec::new();
+    };
+    let mut points: Vec<_> = record
+        .bootstrap_storage
         .into_iter()
-        .flat_map(|r| r.buildings.values())
-        .filter(|b| b.kind == BuildingKind::Storage)
-        .flat_map(|b| b.work_points.iter().copied())
-        .collect()
+        .chain(
+            record
+                .buildings
+                .values()
+                .filter(|b| b.kind == BuildingKind::Storage)
+                .flat_map(|b| b.work_points.iter().copied()),
+        )
+        .collect();
+    points.sort_unstable();
+    points.dedup();
+    points
 }
 pub(super) fn validate_record_buildings(record: &SettlementRecord) -> Result<(), &'static str> {
     if record.building_sequence > u64::from(u32::MAX) || record.buildings.len() > 1024 {
@@ -549,6 +723,9 @@ pub(super) fn validate_record_buildings(record: &SettlementRecord) -> Result<(),
             || id.0 & u64::from(u32::MAX) == 0
             || id.0 & u64::from(u32::MAX) > record.building_sequence
             || !(1..=3).contains(&b.level)
+            || (b.natural_zone
+                && (b.level != 1
+                    || !matches!(b.kind, BuildingKind::Mine | BuildingKind::LumberCamp)))
             || b.revision == 0
             || dimensions(b.bounds).is_none()
             || !within(record, b.bounds)
@@ -576,3 +753,7 @@ pub(super) fn validate_record_buildings(record: &SettlementRecord) -> Result<(),
 #[cfg(test)]
 #[path = "buildings_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "building_zone_tests.rs"]
+mod zone_tests;

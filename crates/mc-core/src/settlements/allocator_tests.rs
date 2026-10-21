@@ -503,6 +503,297 @@ fn admitted_brain_path_does_not_pay_a_second_decision() {
     assert!(state.tick_budget.remaining(Kind::PathNode) < nodes);
 }
 
+/// A real village streets/bridge flooded by spring water left every resident
+/// without a single legal step: the route layer treated any water in the body
+/// as a wall. Vanilla ground navigation wades; only head-deep water and lava
+/// remain barriers.
+#[test]
+fn routes_wade_through_foot_deep_water_but_never_deeper_or_lava() {
+    let route = |fluid: &str, depth: i32| -> bool {
+        let mut state = test_state();
+        let id = block(&state, fluid, &[]);
+        for z in 0..16 {
+            for x in 6..8 {
+                for y in 201..201 + depth {
+                    state.world.set_block(x, y, z, id);
+                }
+            }
+        }
+        state.world.fold_overlay();
+        let mut cache = PoiCache::default();
+        let mut path = Vec::new();
+        let mut ctx = RouteCtx::tick(&mut state, Consumer::Brain);
+        find_path_exact_ctx(
+            &mut ctx,
+            &mut cache,
+            [2.5, 201.0, 8.5],
+            BlockPos {
+                x: 10,
+                y: 201,
+                z: 8,
+            },
+            0.3,
+            1.95,
+            &mut path,
+        )
+    };
+    assert!(route("minecraft:water", 1), "one-block ford is walkable");
+    assert!(!route("minecraft:water", 2), "head-deep water is a barrier");
+    assert!(!route("minecraft:lava", 1), "lava is never walkable");
+}
+
+/// Seed 87122 replay: a farmer standing on the rim of an irrigation channel has
+/// water under its start cell. Routes began from the cell centre, whose support
+/// row is that water, so every first step was refused and the farmer never moved.
+#[test]
+fn route_starts_from_the_real_body_when_the_start_cell_is_supported_by_water() {
+    let mut state = test_state();
+    let water = block(&state, "minecraft:water", &[]);
+    let farmland = block(&state, "minecraft:farmland", &[("moisture", "7")]);
+    state.world.set_block(8, 200, 8, water);
+    state.world.set_block(9, 200, 8, farmland);
+    state.world.set_block(7, 200, 8, farmland);
+    state.world.fold_overlay();
+    let mut cache = PoiCache::default();
+    let mut path = Vec::new();
+    let mut ctx = RouteCtx::tick(&mut state, Consumer::Brain);
+    // Body straddles the channel and rests on the farmland rim (top 15/16).
+    let found = find_path_ctx(
+        &mut ctx,
+        &mut cache,
+        [8.8, 200.9375, 8.5],
+        BlockPos {
+            x: 13,
+            y: 201,
+            z: 8,
+        },
+        0.3,
+        1.95,
+        &mut path,
+        false,
+        48,
+        16,
+        true,
+    );
+    assert!(found, "a body that physically stands there can leave");
+}
+
+/// Seed 87122 replay: the cleric walked onto a platform and its route dropped
+/// three blocks "off the edge" into a column that the platform itself covers,
+/// so it pushed against the stone forever. A drop must have a clear shaft.
+#[test]
+fn route_never_drops_through_an_overhang_into_a_sealed_pocket() {
+    let mut state = test_state();
+    let stone = state.registry.states.stone;
+    // Pillar (5,201..203) and overhang (6,203): standing surface at y=204.
+    for y in 201..=203 {
+        state.world.set_block(5, y, 8, stone);
+    }
+    state.world.set_block(6, 203, 8, stone);
+    // Sealed pocket under the overhang: walls on every side but the ceiling.
+    for y in 201..=202 {
+        for (x, z) in [(7, 8), (6, 7), (6, 9)] {
+            state.world.set_block(x, y, z, stone);
+        }
+    }
+    state.world.fold_overlay();
+    let mut cache = PoiCache::default();
+    let mut path = Vec::new();
+    let mut ctx = RouteCtx::tick(&mut state, Consumer::Brain);
+    let found = find_path_exact_ctx(
+        &mut ctx,
+        &mut cache,
+        [6.5, 204.0, 8.5],
+        BlockPos { x: 6, y: 201, z: 8 },
+        0.3,
+        1.95,
+        &mut path,
+    );
+    assert!(!found, "the pocket is only reachable through solid stone");
+}
+
+/// A one-block jump rises 1.25 blocks. When only the ledge's column is roofed
+/// two blocks over the ledge, the head stops the body above the ledge edge
+/// from entering it and the resident jumped in place forever. A roof over the
+/// departure column too caps the rise to the narrow window just above the
+/// edge (a one-block mine staircase), which does cross.
+#[test]
+fn route_never_jumps_onto_a_ledge_roofed_below_the_jump_apex() {
+    let route = |roof: Option<i32>, over_departure: bool| {
+        let mut state = test_state();
+        let stone = state.registry.states.stone;
+        // Ledge (8,201,9)-(8,201,10): standing surface y=202.
+        for z in 9..=10 {
+            state.world.set_block(8, 201, z, stone);
+        }
+        if let Some(y) = roof {
+            for z in 9..=10 {
+                state.world.set_block(8, y, z, stone);
+            }
+            if over_departure {
+                state.world.set_block(8, y, 8, stone);
+            }
+        }
+        state.world.fold_overlay();
+        let mut cache = PoiCache::default();
+        let mut path = Vec::new();
+        let mut ctx = RouteCtx::tick(&mut state, Consumer::Brain);
+        find_path_exact_ctx(
+            &mut ctx,
+            &mut cache,
+            [8.5, 201.0, 8.5],
+            BlockPos {
+                x: 8,
+                y: 202,
+                z: 10,
+            },
+            0.3,
+            1.95,
+            &mut path,
+        )
+    };
+    assert!(route(None, false), "an open ledge is a jump up");
+    assert!(route(Some(205), false), "a roof with headroom for the jump");
+    assert!(
+        !route(Some(204), false),
+        "a roof two blocks over the ledge stops the jump short of the edge"
+    );
+    assert!(
+        route(Some(204), true),
+        "a staircase roofed over both columns caps the rise inside the crossing window"
+    );
+}
+
+/// Seed 87122 claim QA: a builder in a crater jumped at a two-block wall for
+/// ten minutes. Every replan started from the cell above its hovering body, so
+/// the wall top looked one block up and the route the floor cannot make was
+/// accepted again. A body mid-jump routes from the floor it left.
+#[test]
+fn route_from_a_jumping_body_starts_at_its_floor() {
+    let route = |wall: i32, feet: f64| {
+        let mut state = test_state();
+        let stone = state.registry.states.stone;
+        // Wall column (8,201..) on a floor with standing surface y=201.
+        for y in 201..201 + wall {
+            state.world.set_block(8, y, 9, stone);
+        }
+        state.world.fold_overlay();
+        let mut cache = PoiCache::default();
+        let mut path = Vec::new();
+        let mut ctx = RouteCtx::tick(&mut state, Consumer::Brain);
+        find_path_exact_ctx(
+            &mut ctx,
+            &mut cache,
+            [8.5, feet, 8.5],
+            BlockPos {
+                x: 8,
+                y: 201 + wall,
+                z: 9,
+            },
+            0.3,
+            1.95,
+            &mut path,
+        )
+    };
+    for feet in [201.0, 201.42, 202.04, 202.25] {
+        assert!(route(1, feet), "a one-block step is a jump from {feet}");
+        assert!(
+            !route(2, feet),
+            "a two-block wall cannot be climbed from a body at {feet}"
+        );
+    }
+}
+
+/// A centre resident in the seed-100 village repeatedly exhausted the 4096
+/// node allowance while approaching a workstation only 20 blocks away.  A
+/// long fence-lined street and a one-door house make an unweighted A* flood
+/// the west side of the barrier before it follows the available detour.
+#[test]
+fn route_to_nearby_workstation_survives_cluttered_village_node_budget() {
+    let mut state = test_state();
+    let wanted = (-3..=3)
+        .flat_map(|x| (-3..=3).map(move |z| crate::boundary::ChunkPos { x, z }))
+        .map(|chunk| (chunk, 0))
+        .collect();
+    state.world.ensure_blocking(&wanted);
+    for x in -48..64 {
+        for z in -48..64 {
+            state
+                .world
+                .set_block(x, 200, z, state.registry.states.stone);
+            for y in 201..206 {
+                state.world.set_block(x, y, z, state.registry.states.air);
+            }
+        }
+    }
+
+    let stone = state.registry.states.stone;
+    let fence = block(&state, "minecraft:oak_fence", &[]);
+    let water = block(&state, "minecraft:water", &[]);
+    let wheat = block(&state, "minecraft:wheat", &[("age", "7")]);
+    // The only crossing is far south.  Fences, crop rows and flooded plots
+    // leave the route recognisably village-like without closing that crossing.
+    for z in -40..51 {
+        if z != 36 {
+            for y in 201..204 {
+                state.world.set_block(12, y, z, stone);
+            }
+        }
+    }
+    for x in -30..-18 {
+        for z in -30..-18 {
+            for y in 201..203 {
+                state.world.set_block(x, y, z, water);
+            }
+        }
+    }
+    for x in -16..8 {
+        state.world.set_block(x, 201, 28, fence);
+        state.world.set_block(x, 201, 30, wheat);
+    }
+    // The target is inside a house entered from its east-side door after the
+    // street detour.
+    for x in 18..27 {
+        for z in 4..13 {
+            if (x == 18 || x == 26 || z == 4 || z == 12) && (x, z) != (26, 10) {
+                for y in 201..204 {
+                    state.world.set_block(x, y, z, stone);
+                }
+            }
+        }
+    }
+    let cauldron = block(&state, "minecraft:cauldron", &[]);
+    let target = BlockPos {
+        x: 22,
+        y: 201,
+        z: 8,
+    };
+    state
+        .world
+        .set_block(target.x, target.y, target.z, cauldron);
+    state.world.fold_overlay();
+
+    let mut cache = PoiCache::default();
+    let mut path = Vec::new();
+    assert!(
+        find_path(
+            &mut state,
+            &mut cache,
+            [2.5, 201.0, 8.5],
+            target,
+            0.3,
+            1.95,
+            &mut path,
+        ),
+        "a nearby POI behind a cluttered village street must fit one tick's path allowance"
+    );
+    assert!(!path.is_empty());
+    assert!(
+        state.tick_budget.remaining(Kind::PathNode) > 0,
+        "the route must leave shared path-node capacity for other residents"
+    );
+}
+
 #[test]
 fn allocator_noop_validation_and_empty_search_leave_journal_rows_quiet() {
     let mut state = test_state();
@@ -613,5 +904,398 @@ fn unrelated_activity_change_does_not_refresh_every_resident() {
     assert!(
         !cache.updates.contains(&id),
         "a global activity fence must not dirty residents of unchanged chunks"
+    );
+}
+
+#[test]
+fn bound_resource_roles_keep_their_profession_while_other_roles_can_retarget() {
+    for profession in [
+        Profession::Farmer,
+        Profession::Shepherd,
+        Profession::Miner,
+        Profession::Lumberjack,
+        Profession::Builder,
+        Profession::None,
+        Profession::Mason,
+    ] {
+        let (mut state, settlement, _) = crate::settlements::construction::tests::fixture();
+        let station = block(&state, "minecraft:blast_furnace", &[]);
+        state.world.set_block(8, 201, 8, station);
+        crate::settlements::buildings::certify(
+            &mut state,
+            settlement,
+            crate::settlements::buildings::BuildingKind::Workshop(Profession::Armorer),
+            mc_script::ScriptWorldBounds::new([7, 200, 7], [9, 203, 9]).unwrap(),
+        )
+        .unwrap();
+        state.world.fold_overlay();
+        let slot = villager(&mut state, [6.5, 201.0, 8.5]);
+        let entity = state.entities.body(slot).id;
+        crate::settlements::bind(&mut state, settlement, entity).unwrap();
+        state
+            .entities
+            .row_mut(slot)
+            .villager
+            .as_mut()
+            .unwrap()
+            .data
+            .profession = profession;
+        for _ in 0..1500 {
+            step(&mut state);
+        }
+        let resident = state.entities.row(slot).villager.as_ref().unwrap();
+        if matches!(profession, Profession::None | Profession::Mason) {
+            assert_eq!(resident.data.profession, Profession::Armorer);
+            assert_eq!(resident.job_site, Some(BlockPos { x: 8, y: 201, z: 8 }));
+        } else {
+            assert_eq!(
+                resident.data.profession, profession,
+                "preserve {profession:?}"
+            );
+            assert!(resident.job_site.is_none(), "do not take a foreign slot");
+        }
+    }
+}
+
+fn far_workshop_fixture() -> (TickState, SettlementId, EntitySlot, BlockPos) {
+    let mut state = test_state();
+    let chunks = (1..=4).map(|x| (ChunkPos { x, z: 0 }, 0)).collect();
+    state.world.ensure_blocking(&chunks);
+    for x in 16..80 {
+        for z in 0..16 {
+            state
+                .world
+                .set_block(x, 200, z, state.registry.states.stone);
+            for y in 201..206 {
+                state.world.set_block(x, y, z, state.registry.states.air);
+            }
+        }
+    }
+    state
+        .tickets
+        .insert("far-workshop".into(), (ChunkPos { x: 2, z: 0 }, 2));
+    state.refresh_active_chunks(0);
+    state.day_time = 3000;
+    let settlement = state
+        .settlements
+        .create(
+            &mut state.settlement_sequence,
+            "far-workshop".into(),
+            "owner".into(),
+            [8, 201, 8],
+            80,
+        )
+        .unwrap();
+    state.settlements.get_mut(settlement).unwrap().owner = None;
+    let job = BlockPos {
+        x: 60,
+        y: 201,
+        z: 8,
+    };
+    let composter = block(&state, "minecraft:composter", &[]);
+    state.world.set_block(job.x, job.y, job.z, composter);
+    crate::settlements::buildings::certify(
+        &mut state,
+        settlement,
+        crate::settlements::buildings::BuildingKind::Workshop(Profession::Farmer),
+        mc_script::ScriptWorldBounds::new([59, 200, 7], [61, 203, 9]).unwrap(),
+    )
+    .unwrap();
+    state.world.fold_overlay();
+    let slot = villager(&mut state, [8.5, 201.0, 8.5]);
+    let entity = state.entities.body(slot).id;
+    crate::settlements::bind(&mut state, settlement, entity).unwrap();
+    (state, settlement, slot, job)
+}
+
+#[test]
+fn bound_resident_claims_certified_work_beyond_vanilla_poi_reach() {
+    let (mut state, _, slot, job) = far_workshop_fixture();
+    for _ in 0..400 {
+        state.tick_budget.reset(state.tick);
+        tick(&mut state, &mut ChangeSet::default());
+        state.tick += 1;
+        if state
+            .entities
+            .row(slot)
+            .villager
+            .as_ref()
+            .unwrap()
+            .job_site
+            .is_some()
+        {
+            break;
+        }
+    }
+    let resident = state.entities.row(slot).villager.as_ref().unwrap();
+    assert_eq!(resident.job_site, Some(job));
+    assert_eq!(resident.navigation_target, Some(job));
+    assert!(!resident.navigation_path.is_empty());
+    assert_eq!(state.entities.pos(slot), [8.5, 201.0, 8.5]);
+}
+
+#[test]
+fn unbound_resident_does_not_claim_work_beyond_vanilla_poi_reach() {
+    let (mut state, _, slot, _) = far_workshop_fixture();
+    let entity = state.entities.body(slot).id;
+    crate::settlements::unbind(&mut state, entity).unwrap();
+    for _ in 0..400 {
+        state.tick_budget.reset(state.tick);
+        tick(&mut state, &mut ChangeSet::default());
+        state.tick += 1;
+    }
+    assert!(
+        state
+            .entities
+            .row(slot)
+            .villager
+            .as_ref()
+            .unwrap()
+            .job_site
+            .is_none()
+    );
+}
+
+#[test]
+fn far_farmer_walks_to_work_and_returns_surplus_to_founding_chest() {
+    let (mut state, settlement, slot, job) = far_workshop_fixture();
+    let chest = block(&state, "minecraft:chest", &[]);
+    state.world.set_block(5, 201, 8, chest);
+    state.block_entities.insert(
+        (5, 201, 8),
+        crate::tick::BlockEntityState {
+            slots: vec![mc_data::ItemStack::EMPTY; 27],
+            furnace: None,
+        },
+    );
+    state
+        .settlements
+        .get_mut(settlement)
+        .unwrap()
+        .bootstrap_storage = Some([5, 201, 8]);
+    let crop = block(&state, "minecraft:wheat", &[("age", "7")]);
+    state.world.set_block(60, 201, 9, crop);
+    state.world.fold_overlay();
+    let [bread, wheat] = ["minecraft:bread", "minecraft:wheat"].map(|name| {
+        state
+            .registry
+            .items
+            .id_of(&mc_data::Identifier::parse(name).unwrap())
+            .unwrap()
+    });
+    state
+        .entities
+        .row_mut(slot)
+        .villager
+        .as_mut()
+        .unwrap()
+        .inventory[0] = Some(mc_data::ItemStack::new(bread, 3));
+    let mut reached_work = false;
+    for _ in 0..4000 {
+        step(&mut state);
+        let resident = state.entities.row(slot).villager.as_ref().unwrap();
+        reached_work |=
+            resident.data.profession == Profession::Farmer && resident.job_site == Some(job);
+        if state.block_entities[&(5, 201, 8)]
+            .slots
+            .iter()
+            .any(|stack| stack.item_id == wheat && stack.count > 0)
+        {
+            break;
+        }
+        // Domain navigation assistance follows only the brain's admitted
+        // route; never teleport directly to a job or delivery target.
+        let next = state
+            .entities
+            .row_mut(slot)
+            .villager
+            .as_mut()
+            .unwrap()
+            .navigation_path
+            .pop();
+        if let Some(next) = next {
+            state.entities.set_pos(
+                slot,
+                [
+                    f64::from(next.x) + 0.5,
+                    f64::from(next.y),
+                    f64::from(next.z) + 0.5,
+                ],
+            );
+        }
+    }
+    assert!(
+        reached_work,
+        "the untrained resident must reach its certified far job"
+    );
+    assert!(
+        state.block_entities[&(5, 201, 8)]
+            .slots
+            .iter()
+            .any(|stack| stack.item_id == wheat && stack.count > 0),
+        "real harvested grain must reach the empty physical founding chest"
+    );
+    assert_eq!(
+        state.world.block_at(60, 201, 9),
+        Some(block(&state, "minecraft:wheat", &[("age", "0")]))
+    );
+    assert_eq!(
+        state
+            .entities
+            .row(slot)
+            .villager
+            .as_ref()
+            .unwrap()
+            .inventory
+            .iter()
+            .flatten()
+            .filter(|stack| stack.item_id == bread)
+            .map(|stack| stack.count)
+            .sum::<i32>(),
+        3,
+        "delivery preserves the breeding ration",
+    );
+}
+
+fn scarce_path_nodes(state: &mut TickState, tick: u64) {
+    state.tick = tick;
+    state.tick_budget.reset(tick);
+    let allowance =
+        state
+            .tick_budget
+            .allowance(state.dimension, Consumer::Allocator, Kind::PathNode);
+    assert!(state.tick_budget.try_charge(
+        state.dimension,
+        Consumer::Allocator,
+        Kind::PathNode,
+        allowance.saturating_sub(24),
+    ));
+}
+
+fn blocked_home_with_resource_job() -> (TickState, EntitySlot, BlockPos) {
+    let mut state = test_state();
+    let home = bed(&mut state, 5, 5);
+    for x in 3..=7 {
+        for z in 3..=7 {
+            for y in 201..=204 {
+                state.world.set_block(x, y, z, state.registry.states.stone);
+            }
+        }
+    }
+    assert_eq!(bed(&mut state, 5, 5), home);
+    let settlement = state
+        .settlements
+        .create(
+            &mut state.settlement_sequence,
+            "resource_jobs".into(),
+            "owner".into(),
+            [8, 201, 8],
+            16,
+        )
+        .unwrap();
+    let job = BlockPos {
+        x: 13,
+        y: 201,
+        z: 10,
+    };
+    let building = super::super::buildings::BuildingId((settlement.0 << 32) | 1);
+    let record = state.settlements.get_mut(settlement).unwrap();
+    record.building_sequence = 1;
+    record.buildings.insert(
+        building,
+        super::super::buildings::Building {
+            id: building,
+            settlement,
+            kind: super::super::buildings::BuildingKind::LumberCamp,
+            level: 1,
+            bounds: mc_script::ScriptWorldBounds::new([12, 200, 9], [14, 204, 11]).unwrap(),
+            work_points: vec![[job.x, job.y, job.z]],
+            revision: 1,
+            natural_zone: true,
+        },
+    );
+    let slot = villager(&mut state, [1.5, 201.0, 9.5]);
+    let entity = state.entities.body(slot).id;
+    super::super::bind(&mut state, settlement, entity).unwrap();
+    state.world.fold_overlay();
+    (state, slot, job)
+}
+
+#[test]
+fn exhausted_home_search_does_not_starve_reachable_resource_job() {
+    let (mut state, slot, job) = blocked_home_with_resource_job();
+    for time in 0..40 {
+        scarce_path_nodes(&mut state, time);
+        tick(&mut state, &mut ChangeSet::default());
+        if state
+            .entities
+            .row(slot)
+            .villager
+            .as_ref()
+            .unwrap()
+            .job_site
+            .is_some()
+        {
+            break;
+        }
+    }
+    let resident = state.entities.row(slot).villager.as_ref().unwrap();
+    assert_eq!(resident.home, None, "the enclosed bed stays unreachable");
+    assert_eq!(
+        resident.job_site,
+        Some(job),
+        "a budget-denied home route must not monopolize every subsequent job search"
+    );
+}
+
+#[test]
+fn exhausted_nearest_job_search_retries_another_certified_candidate() {
+    let (mut state, slot, job) = blocked_home_with_resource_job();
+    let mut cache = PoiCache::default();
+    cache.sync_search(&state, slot);
+    let mut resident = state.entities.row_mut(slot).villager.take().unwrap();
+    let settlement = resident.settlement.unwrap();
+    let blocked = BlockPos { x: 5, y: 201, z: 5 };
+    let stonecutter = block(&state, "minecraft:stonecutter", &[]);
+    state
+        .world
+        .set_block(blocked.x, blocked.y, blocked.z, stonecutter);
+    let id = super::super::buildings::BuildingId((settlement.0 << 32) | 2);
+    state
+        .settlements
+        .get_mut(settlement)
+        .unwrap()
+        .buildings
+        .insert(
+            id,
+            super::super::buildings::Building {
+                id,
+                settlement,
+                kind: super::super::buildings::BuildingKind::Workshop(Profession::Mason),
+                level: 1,
+                bounds: mc_script::ScriptWorldBounds::new([3, 200, 3], [7, 204, 7]).unwrap(),
+                work_points: vec![[blocked.x, blocked.y, blocked.z]],
+                revision: 1,
+                natural_zone: false,
+            },
+        );
+    let mut acquired = None;
+    for attempt in 0..4 {
+        scarce_path_nodes(&mut state, attempt);
+        acquired = acquire(
+            &mut state,
+            &mut cache,
+            slot,
+            &mut resident,
+            PoiKind::Job(Profession::None),
+        );
+        if acquired.is_some() {
+            break;
+        }
+    }
+    assert_eq!(
+        acquired,
+        Some(job),
+        "retry must not restart the same budget-exhausting nearest workstation forever"
     );
 }

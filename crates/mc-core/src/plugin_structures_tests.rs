@@ -80,7 +80,7 @@ fn stored_structure(state: &mut TickState) -> String {
         None,
         worksites::planned_points(state, &instance).unwrap(),
     );
-    let image = fingerprint(state, bounds(at, blueprint.size()).unwrap()).unwrap();
+    let image = fingerprint(state, bounds(at, blueprint.size()).unwrap(), false).unwrap();
     let mut ledger = Ledger {
         revision: 1,
         ..Default::default()
@@ -89,6 +89,7 @@ fn stored_structure(state: &mut TickState) -> String {
         snapshot.structure_id.clone(),
         Structure {
             owner: "demo".into(),
+            settlement: None,
             snapshot,
             blueprint_hash: blueprint.content_hash().into(),
             image,
@@ -1636,4 +1637,18 @@ fn district_requires_committed_matching_structure_and_loses_destroyed_readiness(
         destroyed.reason.as_deref(),
         Some("Native district building unavailable: Blocked.")
     );
+}
+
+#[test]
+fn stored_generic_cells_without_quantity_keep_one_item_semantics() {
+    let cell: Cell = serde_json::from_value(serde_json::json!({
+        "at": [1, 200, 1], "state": 1, "resource": "minecraft:stone"
+    }))
+    .unwrap();
+    assert_eq!(cell.quantity, 1);
+    let explicit: Cell = serde_json::from_value(serde_json::json!({
+        "at": [1, 200, 1], "state": 1, "resource": "minecraft:stone_slab", "quantity": 2
+    }))
+    .unwrap();
+    assert_eq!(explicit.quantity, 2);
 }

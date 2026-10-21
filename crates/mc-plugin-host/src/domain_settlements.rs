@@ -583,13 +583,36 @@ mod tests {
         let snapshot = mc_script::ScriptSettlementSnapshot::new(
             7,
             "town".into(),
-            "owner".into(),
+            Some("owner".into()),
             [0, 64, 0],
             48,
             1,
             2,
         );
         snapshot.validate().unwrap();
+    }
+
+    #[test]
+    fn autonomous_owner_roundtrips_without_a_sentinel_identity() {
+        let snapshot = mc_script::ScriptSettlementSnapshot::new(
+            7,
+            "village".into(),
+            None,
+            [0, 64, 0],
+            48,
+            1,
+            2,
+        );
+        snapshot.validate().unwrap();
+        let result = ScriptSettlementResult::Page(mc_script::ScriptSettlementPage::new(
+            vec![snapshot],
+            None,
+        ));
+        let Some(wire_events::OperationPayload::SettlementPage(page)) = encode_result(&result)
+        else {
+            panic!("settlement page");
+        };
+        assert_eq!(page.settlements[0].owner, None);
     }
 
     #[test]
@@ -623,7 +646,7 @@ mod tests {
         let mut snapshot = mc_script::ScriptSettlementSnapshot::new(
             7,
             "town".into(),
-            "owner".into(),
+            Some("owner".into()),
             [0, 64, 0],
             48,
             3,
@@ -707,7 +730,7 @@ mod tests {
         let mut snapshot = mc_script::ScriptSettlementSnapshot::new(
             7,
             "town".into(),
-            "owner".into(),
+            Some("owner".into()),
             [0, 64, 0],
             48,
             3,
@@ -757,7 +780,7 @@ mod tests {
         let mut snapshot = mc_script::ScriptSettlementSnapshot::new(
             7,
             "town".into(),
-            "owner".into(),
+            Some("owner".into()),
             [0, 64, 0],
             48,
             3,

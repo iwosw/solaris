@@ -30,6 +30,19 @@ cadence varies, see Mob blueprints), remote physical tickets keep chosen areas
 simulated without players, radical hardware-level optimizations are allowed
 when measured and documented.
 
+## Core stop diagnostics (2026-10-20)
+
+Every tick-owner stop records its cause at error level before dropping the
+broadcast sender: requested shutdown or fail-closed journal/plugin failure.
+The server records SIGINT/SIGTERM before joining the owners, not only after
+the final checkpoint, so a normal signal-driven stop cannot masquerade as an
+unexplained broadcast failure. Journal/native channel loss and flush failures
+also record their cause. Owner panics retain the standard panic hook and add
+an error-level record containing the thread, payload and source location;
+failed joins are not discarded. Error diagnostics include the source chain.
+SIGKILL, process OOM kills and stack-overflow aborts cannot reliably execute
+Rust logging and still require the kernel/service-manager evidence.
+
 ## G1-A event-driven allocator (2026-10-16)
 
 Decision 008 replaces the per-tick population validator with a runtime dirty
@@ -46,6 +59,21 @@ starving later residents. Due demand and settlement occupancy are incremental
 projections, not population scans. The allocator refreshes the shared sensor/
 resident cache once before the brain; actual allocator row changes update only
 their cached brain profiles. Releases settle to a fixed point in the same tick.
+
+Within each resident's pending search, transient cursors also rotate the
+missing home/job/bell kind and its route candidates. Otherwise one unreachable
+nearer home or workstation can exhaust all 4,096 path nodes and restart before
+any reachable job is considered on every retry. These cursors reuse the existing
+search-needs entry, survive retry-deadline changes and disappear with that entry;
+they are neither durable claim authority nor another queue or path budget.
+Every claim still requires a successful native route. Natural-grove workers
+start their existing bounded radius scan at the certified entrance, and resource
+workers haul a completed stack rather than waiting for all eight carry slots.
+Route clearance for walking bodies treats water covering only the feet cell as
+passable, like vanilla ground navigation; head-deep water and lava still refuse,
+and spawn/placement clearance stays strict. Lumberjack searches skip columns in
+chunks that are not actively simulated, since a worker routed there would stop
+at the border with its target held.
 
 Nonresident swap-removals repair only changed resident slots, preserving
 stable brain indices and admission ranks. Hydration and genuine roster
@@ -115,6 +143,35 @@ exclusive server-load performance gate. If owner mutation rules change,
 retain conservative `row_mut` custody for genuinely changing state; remove
 the corresponding no-op proof rather than bypassing journal equality.
 
+## Native military — Decision 009 (owner authorization, 2026-10-20)
+
+The owner explicitly requested native barracks recruits, superseding the prior
+S5 deferral below. Idle adult native residents fill certified barracks beds
+(two per building level); they keep the original entity identity and become
+Soldiers, projected with the vanilla armorer profession. Native equipment slots
+hold their actual weapons and armor, and canonical fenced inventory commits
+transfer equipment from settlement storage and return it on dismissal. Full or
+unavailable storage refuses dismissal without destroying equipment.
+The vanilla villager crossed-arms item layer displays the main-hand weapon;
+equipped armor contributes to native defense but is not rendered on villagers.
+The owner accepted that vanilla renderer limitation for this prototype; native
+residents are not replaced by a different visual carrier.
+
+Persisted resident military state holds the barracks identity, order and attack
+deadline. Orders are Follow(player UUID), Guard(block position), Patrol within
+the settlement radius, and Return to barracks. Local hostile sensing, existing
+collision-aware villager navigation and the native melee/damage pipeline govern
+combat; this adds no abstract battle or unloaded combat catch-up. Recruitment
+is automatic only for loaded, unowned autonomous settlements. Owned settlements
+are staffed explicitly through the Army dialog or `/settlement army recruit`,
+so dismissal remains in effect until the owner recruits again. Mutations retain
+settlement ownership checks.
+An unowned autonomous settlement cannot be commanded until claimed.
+Soldier attacks are produced in the entity phase as ordinary `EntityId`-targeted
+damage intents, merged and committed in that same tick. The post-commit
+villager brain only navigates: it must not leave dense-slot damage pending
+across a tick boundary where natural despawn can compact entity slots.
+
 ## Native economy — Decision 006, S4 (2026-10-17)
 
 Production, commerce, payroll and caravans are native settlement policy, not
@@ -173,6 +230,48 @@ contract, fsyncs the production WAL while the checkpoint is still at creation,
 then kills the process before checkpoint. Fresh core recovery must retain both
 original physical wallets and the retirement fence; ticking and replaying the
 retired contract must not debit again.
+
+## Autonomous generated villages and construction (2026-10-20)
+
+The owner explicitly requested a Millenaire-style native prototype. Generated
+vanilla villages are adopted from authoritative structure starts at their loaded
+meeting-piece bell; identity is dimension plus start chunk. Generated entity
+markers prove resident membership. Arbitrary nearby player bells cannot create
+another village; absent/dead inhabitants do not erase a generated site. The native
+settlement row owns an optional authenticated player UUID (`None` means
+autonomous), stable worldgen provenance, bootstrap storage and the construction
+project. Native settlement row/WAL post-images and villager membership columns
+remain the only persistence authorities. Claim is `/settlement claim` or the
+main dialog button, admitted only for an in-world player inside the radius and
+only while ownerless; all other player management mutations require a claim
+first, even for operators. Existing owned settlement permissions are unchanged.
+
+Adoption deduplicates by the row's stored worldgen source before allocating.
+Both founded towns and generated villages use the existing monotonic settlement
+sequence; there is no hash-derived identity namespace or second ID allocator.
+
+The owner explicitly permits one empty founding chest as adoption infrastructure
+(like the meeting bell), without consuming a chest item. Its contents are never
+fabricated. Existing generated geometry is certified only if it passes the real
+building checks; natural level-one lumber/mining zones bootstrap real material
+production without conjuring a workstation or stock. Subsequent construction
+consumes real storage/carry items, including recipe-derived materials.
+
+The same bounded planner handles autonomous and owned settlements. Repository
+blueprints place actual blocks and consume actual settlement-container items;
+finished geometry goes through the existing building certification authority.
+Development and military work run only in loaded chunks. There is no off-screen
+construction, recruit or battle simulation and no new abstract catch-up domain.
+The typed settlement snapshot exposes `owner: option<string>` through WIT as
+well as Rust: absence is not represented by an invented owner identity.
+
+Owner build/upgrade requests require an idle settlement and a whole bill funded
+by existing real storage ingredients, including supported crafting chains.
+Busy or unfunded requests are refused immediately, never persisted as pending
+work and never allowed to block autonomous planning. Accepted work uses the same
+canonical project, structure ledger, Builder carry and checkpoint/WAL recovery.
+The unshipped prototype `construction_queue` field is removed without a migration:
+unknown fields still fail closed, and QA regenerates its prototype world.
 
 ## Native districts and stages — Decision 006, S3 (2026-10-17)
 
@@ -3869,3 +3968,68 @@ after-image; there is no second store. Block breaks and replanting go through
 the journaled `world.set_block` + `ChangeSet` path, deposits through the
 canonical settlement inventory fences. Each work attempt scans a bounded
 number of cells, so per-tick cost does not grow with settlement radius.
+
+Seed-87122 replay (2026-10-20) corrections: a miner walks to the cell it is
+about to dig, because a one-cell route-arrival tolerance around the previous
+open cell could strand it just beyond dig reach; a finished comb advances to
+the next `level` (three blocks higher, two columns aside) instead of ending the
+mine, and `level` is part of `mining_progress`. The lumberjack search no longer
+has a height-band cursor (`vertical` is removed from `lumber_progress`): each
+attempt reads a bounded number of simulated columns over the settlement
+sphere's whole vertical chord, skipping inactive chunk strips in one step.
+Worlds saved with the old worker-progress shapes fail closed. Route search
+starts from the body's real position when its cell has no standable support (a
+rim over water) and refuses drops whose landing column is covered. The
+autonomous planner examines 64 terrain-following site candidates per pass
+(solid ground within ±8 blocks of the bell) and a builder candidate must have a
+walkable route to settlement storage.
+
+Seed-87122 follow-up replay (2026-10-21): a jump step in `find_path_ctx`
+(above `STEP_HEIGHT`) requires body clearance over the edge at the highest
+rise the departure column permits (1.16, 1.10 or 1.05 blocks), because a
+two-block roof over the ledge alone stops the body above the edge and the
+resident jumps in place forever, while a staircase roofed over both steps caps
+the rise inside the crossing window. A panicking resident whose flee route has
+no step retreats to home, job site or meeting point. A miner waits (branch
+intact) while a dig cell lies within a hostile's sensor reach (plus the dig
+reach), and an
+alternate lane starts at its column's ground (`surface_origin`), skipping
+columns whose ground lies outside the zone.
+
+Seed-87122 round 3 (2026-10-21): mining levels no longer shift sideways.
+A higher level reuses the lane's lower-level staircase (cells inside it are
+walked or skipped, and air beside it counts as the miner's own shaft, not a
+cave) and runs its corridor one column beside the lane (`z_direction`), because
+the same cells directly above a continuing staircase hang over its air and are
+unwalkable. A finished lane set restarts at the next level, and a dig cell
+within a hostile's reach is waited on for `HOSTILE_PATIENCE` (2,400 ticks,
+`mining_progress.blocked_since`, saved) before the lane closes. A miner far
+from `last_open` walks there first, since a route to the solid dig cell falls
+back to the closest reachable point, which can be a dead-end pocket.
+
+Seed-100 buildings replay (2026-10-21): after the L1 to L2 upgrade the mine
+re-certified with new bounds, so `mining_progress` reset correctly, but every
+lane then failed `safe()` because the air of the L1 tunnel (and the other
+miner's) beside it counted as a cave, and the saved `lane` had run past the
+zone width. `own_tunnel` floods the open cells beside a dig cell (cap 1,200,
+inside the zone, no fluid, opening onto the entrance surface, at least six
+cells) and accepts them as the mine's own; sealed pockets and dents still count
+as caves. `blocked_since` is now `stalled_since`: a miner that walks without
+reaching its dig cell for `STALL_PATIENCE` closes the lane exactly like a
+hostile that outstays it.
+
+Seed-100 buildings replay, round 5 (2026-10-21): the cobble in the chest stayed
+flat while two miners dug for thousands of ticks. They carried 40-60 dirt plus
+30-50 cobble (a mixed load never fills one 64 stack) and delivered only at day
+end, which a stopped day clock never reaches. `heavy_load` also sends a miner
+home when the whole load weighs 64 items, and a mine with nothing left to dig
+delivers instead of idling with its cargo. The quarry itself was finite: a
+flight reaches `min(run, depth)` blocks down and three levels cover it, so a
+15-deep natural zone ran dry after ~12k ticks. Flights now chain
+(`mining_progress.pass`, already saved): flight N starts at the open end of
+flight N-1, two lead-in cells and a staircase two columns beside it, alternating
+sides so it never undercuts the flight above and fits the footprint. A mine's
+operational floor is 48 blocks below its certified floor (built mines were 12),
+always clamped to the settlement sphere; X/Z stay the certified footprint.
+
+Seed-87122 claim QA (2026-10-21): a storage ordered at the village anchor was sited 110 blocks away after 21 refusals, and its builder placed 4 blocks in ten minutes. Site search now scans square rings outward from the anchor (`construction_cursor` is the ring index; success resets it to 0), so the nearest free site wins; an owner order starts at the anchor and scans the whole sphere, the autonomous planner keeps 64 columns per pass. The slow builder stood in a crater, jumping at a two-block wall: a route search from a body hovering mid-jump started at the cell above it, so the wall top looked one block up and the same impossible route was replanned forever. `find_path_ctx` now starts a body that is not resting on a collision top from the floor it left (within a 1.3-block jump apex). Replay of the kept world: the builder escaped the crater and went from 4 to 83 placed blocks in 400 ticks.

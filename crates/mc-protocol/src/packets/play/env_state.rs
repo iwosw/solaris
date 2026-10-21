@@ -56,6 +56,62 @@ impl Packet for ClientboundSoundEntity {
     }
 }
 
+/// Positional sound with a direct holder. Coordinates are fixed-point eighths.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ClientboundSound {
+    pub sound: Identifier,
+    pub fixed_range: Option<f32>,
+    pub source: i32,
+    pub position: [i32; 3],
+    pub volume: f32,
+    pub pitch: f32,
+    pub seed: i64,
+}
+
+impl Packet for ClientboundSound {
+    // 26.1.2 GameProtocols: CLIENTBOUND_SOUND follows SOUND_ENTITY (116).
+    // ClientboundSoundPacket.write: holder, source, xyz ints, volume, pitch, seed.
+    const ID: i32 = 0x75;
+
+    fn encode<B: BufMut>(&self, buf: &mut B) -> Result<(), CodecError> {
+        buf.write_varint(0);
+        buf.write_identifier(&self.sound)?;
+        buf.write_bool(self.fixed_range.is_some());
+        if let Some(range) = self.fixed_range {
+            buf.write_f32(range);
+        }
+        buf.write_varint(self.source);
+        for coordinate in self.position {
+            buf.write_i32(coordinate);
+        }
+        buf.write_f32(self.volume);
+        buf.write_f32(self.pitch);
+        buf.write_i64(self.seed);
+        Ok(())
+    }
+
+    fn decode<B: Buf>(buf: &mut B) -> Result<Self, CodecError> {
+        if buf.read_varint()? != 0 {
+            return Err(CodecError::NotSupported("registry sound holder"));
+        }
+        let sound = buf.read_identifier()?;
+        let fixed_range = if buf.read_bool()? {
+            Some(buf.read_f32()?)
+        } else {
+            None
+        };
+        Ok(Self {
+            sound,
+            fixed_range,
+            source: buf.read_varint()?,
+            position: [buf.read_i32()?, buf.read_i32()?, buf.read_i32()?],
+            volume: buf.read_f32()?,
+            pitch: buf.read_f32()?,
+            seed: buf.read_i64()?,
+        })
+    }
+}
+
 /// Vanilla parameterless sweep particle (26.1.2 ParticleTypes.java:101).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ClientboundSweepParticle {
@@ -729,6 +785,45 @@ mod shield_sound_tests {
                 ClientboundSoundEntity::decode(&mut &bytes[..]).unwrap(),
                 packet
             );
+        }
+    }
+}
+
+#[cfg(test)]
+mod positional_sound_tests {
+    use super::*;
+
+    #[test]
+    fn bell_sound_matches_verified_positional_wire_layout() {
+        for fixed_range in [None, Some(32.0)] {
+            let packet = ClientboundSound {
+                sound: Identifier::parse("minecraft:block.bell.use").unwrap(),
+                fixed_range,
+                source: 4,
+                position: [-60, 1612, 68],
+                volume: 2.0,
+                pitch: 1.0,
+                seed: 42,
+            };
+            let mut bytes = Vec::new();
+            packet.encode(&mut bytes).unwrap();
+            let mut expected = vec![0, 24];
+            expected.extend_from_slice(b"minecraft:block.bell.use");
+            // Identifier is 24 bytes, then optional range and SoundSource.BLOCKS.
+            expected.push(u8::from(fixed_range.is_some()));
+            if let Some(range) = fixed_range {
+                expected.extend_from_slice(&range.to_be_bytes());
+            }
+            expected.push(4);
+            for coordinate in packet.position {
+                expected.extend_from_slice(&coordinate.to_be_bytes());
+            }
+            expected.extend_from_slice(&2.0_f32.to_be_bytes());
+            expected.extend_from_slice(&1.0_f32.to_be_bytes());
+            expected.extend_from_slice(&42_i64.to_be_bytes());
+            assert_eq!(bytes, expected);
+            assert_eq!(ClientboundSound::ID, 0x75);
+            assert_eq!(ClientboundSound::decode(&mut &bytes[..]).unwrap(), packet);
         }
     }
 }

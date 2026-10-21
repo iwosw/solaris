@@ -4719,3 +4719,46 @@ fn golem_detection_uses_resident_positions_after_brain_motion() {
         Some(799)
     );
 }
+
+#[test]
+fn panicking_villager_whose_flee_route_is_walled_off_retreats_home() {
+    let mut state = test_state();
+    state.tick = 1;
+    state.day_time = 3_000;
+    let stone = state.registry.states.stone;
+    // A sealed one-wide tunnel along x at z=8; the flee direction away from the
+    // zombie behind the south wall points into rock.
+    for x in 1..=15 {
+        for z in 7..=9 {
+            for y in 201..=203 {
+                let wall = z != 8 || y == 203 || x == 1 || x == 15;
+                if wall {
+                    state.world.set_block(x, y, z, stone);
+                }
+            }
+        }
+    }
+    let home = bed(&mut state, 13, 8);
+    state.world.fold_overlay();
+    let start = [4.5, 201.0, 8.5];
+    let slot = villager(&mut state, start);
+    let zombie = state
+        .registry
+        .entity_types
+        .id_of(&mc_data::Identifier::parse("minecraft:zombie").unwrap())
+        .unwrap();
+    state.spawn_mob(zombie, [4.5, 201.0, 11.5], 20.0);
+    {
+        let v = state.entities.row_mut(slot).villager.as_mut().unwrap();
+        v.home = Some(home);
+        v.home_dimension = state.dimension.name().into();
+    }
+    for _ in 0..400 {
+        step(&mut state);
+    }
+    let pos = state.entities.pos(slot);
+    assert!(
+        pos[0] > 10.0,
+        "a blocked flee must fall back to a reachable refuge, stuck at {pos:?}"
+    );
+}

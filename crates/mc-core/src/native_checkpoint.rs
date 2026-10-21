@@ -10,12 +10,18 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 pub(crate) fn native_identity(config: &CoreConfig) -> [u8; 32] {
+    native_identity_at(config, mc_worldgen::WORLDGEN_REVISION)
+}
+
+/// Identity of `config` under an explicit generator revision (the offline
+/// worldgen upgrade needs the stored one).
+pub(crate) fn native_identity_at(config: &CoreConfig, revision: u32) -> [u8; 32] {
     // Fixed 16-byte format tag, followed by seed and generator revision (BE).
     let mut identity = [0; 32];
     const TAG: [u8; 16] = *b"SolarisV2Native\0";
     identity[..16].copy_from_slice(&TAG);
     identity[16..24].copy_from_slice(&config.seed.to_be_bytes());
-    identity[24..].copy_from_slice(&(mc_worldgen::WORLDGEN_REVISION as u64).to_be_bytes());
+    identity[24..].copy_from_slice(&u64::from(revision).to_be_bytes());
     identity
 }
 
@@ -132,13 +138,20 @@ pub(crate) fn statistics_to_json(
 pub(crate) fn generation_records(
     config: &CoreConfig,
 ) -> Result<BTreeMap<String, NativeDomainRecord>, CoreError> {
+    generation_records_at(config, mc_worldgen::WORLDGEN_REVISION)
+}
+
+pub(crate) fn generation_records_at(
+    config: &CoreConfig,
+    revision: u32,
+) -> Result<BTreeMap<String, NativeDomainRecord>, CoreError> {
     let mut dimensions = serde_json::Map::new();
     for dimension in [Dimension::Overworld, Dimension::Nether, Dimension::End] {
         let geometry = dimension.geometry();
         dimensions.insert(dimension_id(dimension).to_string(), serde_json::json!({
             "name": dimension.name(), "min_y": geometry.min_y(), "height": geometry.height(),
             "generator": match dimension { Dimension::Overworld => "vanilla_like", Dimension::Nether => "nether", Dimension::End => "end" },
-            "seed": config.seed, "revision": mc_worldgen::WORLDGEN_REVISION
+            "seed": config.seed, "revision": revision
         }));
     }
     let encode = |value: serde_json::Value| {
@@ -154,7 +167,7 @@ pub(crate) fn generation_records(
             record(
                 0,
                 encode(
-                    serde_json::json!({"identity": native_identity(config), "base": {"seed": config.seed, "revision": mc_worldgen::WORLDGEN_REVISION}, "generators": dimensions}),
+                    serde_json::json!({"identity": native_identity_at(config, revision), "base": {"seed": config.seed, "revision": revision}, "generators": dimensions}),
                 )?,
             ),
         ),
@@ -267,7 +280,7 @@ pub(crate) fn recover_offline(config: &CoreConfig) -> Result<RecoveredWorld, Cor
     }
     let store =
         NativeReadOnlyStore::open_with_cache(&path, native_identity(config), 16 * 1024 * 1024)
-            .map_err(|e| CoreError::Storage(e.to_string()))?;
+            .map_err(|e| open_refusal(config, &path, e))?;
     let reader = store
         .checkpoint_reader()
         .map_err(|e| CoreError::Storage(e.to_string()))?;
@@ -279,6 +292,39 @@ pub(crate) fn import_required(config: &CoreConfig) -> CoreError {
         "{} has persisted history but no native checkpoint; use solaris-v2 world import-anvil --source ANVIL --destination NATIVE --receipt JSON",
         config.world_dir.display()
     ))
+}
+
+/// Revision stored in `identity` when it is `config`'s identity at some other
+/// generator revision, i.e. nothing but the worldgen revision differs.
+pub(crate) fn revision_only_difference(config: &CoreConfig, identity: [u8; 32]) -> Option<u32> {
+    let revision = u32::try_from(u64::from_be_bytes(identity[24..].try_into().ok()?)).ok()?;
+    (native_identity_at(config, revision) == identity).then_some(revision)
+}
+
+/// Refusal for a store that failed identity admission. A world that differs only
+/// in an older worldgen revision gets the explicit operator path; everything else
+/// keeps the plain storage refusal.
+pub(crate) fn open_refusal(
+    config: &CoreConfig,
+    path: &std::path::Path,
+    error: mc_world::native::NativeError,
+) -> CoreError {
+    let current = mc_worldgen::WORLDGEN_REVISION;
+    if matches!(
+        error,
+        mc_world::native::NativeError::Invalid("identity mismatch")
+    ) && let Ok(identity) = mc_world::native::NativeStore::read_identity(path)
+        && let Some(stored) = revision_only_difference(config, identity)
+        && stored < current
+    {
+        return CoreError::Storage(format!(
+            "{error}: world was generated with worldgen revision {stored}, this build is \
+             revision {current}; to keep it, stop the server and run `solaris-v2 world \
+             upgrade-worldgen --config <server.toml>` (existing chunks stay as generated, only \
+             not-yet-generated chunks use revision {current}), or use a fresh world_dir"
+        ));
+    }
+    CoreError::Storage(error.to_string())
 }
 
 /// Validate and hydrate one stored native entity exactly as recovery does,

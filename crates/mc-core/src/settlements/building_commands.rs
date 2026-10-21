@@ -52,8 +52,11 @@ pub(crate) fn containing(
     best.map(|(id, _)| id)
 }
 
-/// Certify `kind` over `min..=max` in the executor's settlement. Owner or
-/// operator only. Returns the chat-ready success line.
+/// Certify `kind` over `min..=max` in the executor's settlement (nearest
+/// anchor containing the executor). Owner or operator of a claimed settlement
+/// only: an autonomous settlement grants neither, so it is refused with the
+/// claim instruction instead of an owner/operator message. Returns the
+/// chat-ready success line.
 pub(crate) fn certify(
     state: &mut TickState,
     executor: EntityId,
@@ -80,7 +83,13 @@ pub(crate) fn certify(
     let Some(actor) = actor else {
         return Err(ADMISSION_UNAVAILABLE.to_owned());
     };
-    if record.owner.as_str() != actor && !operator {
+    if record.owner.is_none() {
+        return Err(format!(
+            "{} is an autonomous settlement; claim it before managing it.",
+            record.name
+        ));
+    }
+    if !record.can_manage(actor, operator) {
         return Err("Only the owner or an operator certifies buildings.".to_owned());
     }
     match certify_building(state, id, building_kind, bounds) {
@@ -119,7 +128,7 @@ pub(crate) fn upgrade(
     let Some(actor) = actor else {
         return Err(ADMISSION_UNAVAILABLE.to_owned());
     };
-    if record.owner.as_str() != actor && !operator {
+    if !record.can_manage(actor, operator) {
         return Err("Only the owner or an operator upgrades buildings.".to_owned());
     }
     match upgrade_building(state, sought) {

@@ -9,6 +9,14 @@ use mc_data::ItemStack;
 use mc_script::ScriptWorldBounds;
 
 const PERIOD: u64 = 20;
+/// Most open cells a connected tunnel may have to still count as the mine's own
+/// (a comb level is a few hundred cells), and the fewest that make one rather
+/// than a dent in the ground.
+const TUNNEL_CELLS: usize = 1_200;
+const MIN_TUNNEL_CELLS: usize = 6;
+/// Ticks a miner waits for a hostile beside its next dig cell to leave, or for
+/// a route to the cell to open, before it abandons that lane for another.
+const STALL_PATIENCE: u64 = 2_400;
 
 #[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -18,9 +26,20 @@ pub struct Progress {
     pub bounds: Option<ScriptWorldBounds>,
     pub last_open: Option<[i32; 3]>,
     pub lane: u32,
+    #[serde(default)]
+    pub level: u8,
+    /// Which staircase of the quarry: pass `n` starts where pass `n - 1`'s
+    /// lane-0 staircase ended, one flight deeper.
+    #[serde(default)]
+    pub pass: u8,
     pub cell: u32,
     pub layer: u8,
     pub returning: bool,
+    /// Tick the miner first stopped making progress on this lane (a hostile
+    /// beside the next dig cell, or a dig cell it cannot walk to); zero while it
+    /// does. A stall that outlasts [`STALL_PATIENCE`] closes the lane.
+    #[serde(default)]
+    pub stalled_since: u64,
 }
 
 pub(super) fn item_id(state: &TickState, name: &str) -> Option<u32> {
@@ -73,7 +92,14 @@ pub(super) fn near(state: &TickState, slot: EntitySlot, pos: BlockPos, reach: f6
 pub(super) fn needs_deposit(v: &VillagerState) -> bool {
     v.inventory
         .iter()
-        .all(|slot| slot.as_ref().is_some_and(|s| s.count >= 64))
+        .any(|slot| slot.as_ref().is_some_and(|s| s.count >= 64))
+}
+
+/// A miner's load is mixed (dirt from the grass surface plus a little of every
+/// stone never fills one stack), so a total as heavy as a stack also sends it
+/// home; with the day clock stopped nothing else ever would.
+fn heavy_load(v: &VillagerState) -> bool {
+    needs_deposit(v) || v.inventory.iter().flatten().map(|s| s.count).sum::<i32>() >= 64
 }
 
 /// Container fences, reservation floors, double chests, viewers and the block
@@ -177,8 +203,11 @@ fn inside(bounds: ScriptWorldBounds, p: BlockPos) -> bool {
 }
 
 /// O(1) cursor decoding: descend along X, extend to the wall, then alternate
-/// parallel X branches separated by three Z blocks, joined at their ends.
-fn cell(bounds: ScriptWorldBounds, entrance: BlockPos, index: u32) -> Option<BlockPos> {
+/// parallel X branches separated by three Z blocks, joined at their ends. Each
+/// `level` raises the whole comb by three blocks so successive levels cover the
+/// zone's full height.
+/// Direction, length and floor depth of one level's staircase.
+fn staircase(bounds: ScriptWorldBounds, entrance: BlockPos, level: u8) -> Option<(i32, u32, i32)> {
     let left = bounds.min[0] + 1;
     let right = bounds.max[0] - 1;
     let direction = if right - entrance.x >= entrance.x - left {
@@ -191,12 +220,125 @@ fn cell(bounds: ScriptWorldBounds, entrance: BlockPos, index: u32) -> Option<Blo
     if run == 0 || entrance.y <= bounds.min[1] + 1 {
         return None;
     }
-    let depth = (entrance.y - bounds.min[1] - 1).min(run as i32);
+    let depth = (entrance.y - bounds.min[1] - 1).min(run as i32) - 3 * i32::from(level);
+    (depth >= 1).then_some((direction, run, depth))
+}
+
+/// Side of the zone the rows of a comb extend toward, from the lane's column.
+fn z_direction(bounds: ScriptWorldBounds, z: i32) -> i32 {
+    if bounds.max[2] - 1 - z >= z - bounds.min[2] - 1 {
+        1
+    } else {
+        -1
+    }
+}
+
+/// A deeper flight's staircase runs two columns beside the open end of the
+/// flight above, so it never undercuts that flight's stairs; two lead-in cells
+/// join the open end to it. Flights alternate sides, so any number of them fit
+/// the zone's width.
+const FLIGHT_OFFSET: i32 = 2;
+
+/// Direction of the lead-in and shift of flight `pass` from `base` along Z.
+fn flight_side(bounds: ScriptWorldBounds, base: BlockPos, pass: u8) -> i32 {
+    let toward_far_side = z_direction(bounds, base.z);
+    if pass % 2 == 1 {
+        toward_far_side
+    } else {
+        -toward_far_side
+    }
+}
+
+fn stair_base(bounds: ScriptWorldBounds, origin: BlockPos, pass: u8) -> BlockPos {
+    if pass == 0 {
+        origin
+    } else {
+        BlockPos {
+            z: origin.z + flight_side(bounds, origin, pass) * FLIGHT_OFFSET,
+            ..origin
+        }
+    }
+}
+
+/// `cell` of flight `pass`: its lead-in cells, then the shifted staircase.
+fn cell_in_flight(
+    bounds: ScriptWorldBounds,
+    origin: BlockPos,
+    pass: u8,
+    index: u32,
+    level: u8,
+) -> Option<BlockPos> {
+    if pass == 0 {
+        return cell(bounds, origin, index, level);
+    }
+    let lead = FLIGHT_OFFSET as u32;
+    if index < lead {
+        let at = BlockPos {
+            z: origin.z + flight_side(bounds, origin, pass) * (index as i32 + 1),
+            ..origin
+        };
+        return (inside(bounds, at) && at.z > bounds.min[2] && at.z < bounds.max[2]).then_some(at);
+    }
+    cell(
+        bounds,
+        stair_base(bounds, origin, pass),
+        index - lead,
+        level,
+    )
+}
+
+/// Where flight `pass` starts: pass 0 at the entrance, each later pass at the
+/// bottom of the previous pass's staircase (the deepest cell of its level-0
+/// row). `None` once a flight no longer fits above the bottom of the zone.
+fn pass_entrance(bounds: ScriptWorldBounds, entrance: BlockPos, pass: u8) -> Option<BlockPos> {
+    let mut base = entrance;
+    for flight in 0..pass {
+        let stair = stair_base(bounds, base, flight);
+        let (direction, run, depth) = staircase(bounds, stair, 0)?;
+        base = BlockPos {
+            x: stair.x + direction * run as i32,
+            y: stair.y - depth,
+            z: stair.z,
+        };
+    }
+    staircase(bounds, stair_base(bounds, base, pass), 0).map(|_| base)
+}
+
+/// `at` lies in the open staircase of a lower level of this lane: the miner's
+/// own earlier shaft, not a cave.
+fn lower_staircase(bounds: ScriptWorldBounds, entrance: BlockPos, level: u8, at: BlockPos) -> bool {
+    (0..level).any(|lower| {
+        let Some((direction, run, depth)) = staircase(bounds, entrance, lower) else {
+            return false;
+        };
+        let index = (at.x - entrance.x) * direction - 1;
+        at.z == entrance.z
+            && (0..run as i32).contains(&index)
+            && (entrance.y - (index + 1).min(depth)..entrance.y - (index + 1).min(depth) + 3)
+                .contains(&at.y)
+    })
+}
+
+fn cell(bounds: ScriptWorldBounds, entrance: BlockPos, index: u32, level: u8) -> Option<BlockPos> {
+    let left = bounds.min[0] + 1;
+    let right = bounds.max[0] - 1;
+    let (direction, run, depth) = staircase(bounds, entrance, level)?;
+    let edge = if direction > 0 { right } else { left };
+    let z_direction = z_direction(bounds, entrance.z);
     let p = if index < run {
+        let past_stairs = index as i32 + 1 > depth;
         BlockPos {
             x: entrance.x + direction * (index as i32 + 1),
             y: entrance.y - (index as i32 + 1).min(depth),
-            z: entrance.z,
+            // A higher level's stair is the lower levels' open staircase; its
+            // corridor beside the lane keeps a solid floor, where the same
+            // cells above the continuing stair would hang over its air.
+            z: entrance.z
+                + if past_stairs && level > 0 {
+                    z_direction
+                } else {
+                    0
+                },
         }
     } else {
         let width = right - left;
@@ -210,11 +352,6 @@ fn cell(bounds: ScriptWorldBounds, entrance: BlockPos, index: u32) -> Option<Blo
             return None;
         }
         let offset = n % stride;
-        let z_direction = if bounds.max[2] - 1 - entrance.z >= entrance.z - bounds.min[2] - 1 {
-            1
-        } else {
-            -1
-        };
         let from = if row.is_multiple_of(2) {
             edge
         } else if edge == right {
@@ -255,6 +392,7 @@ fn natural(path: &str) -> bool {
             | "andesite"
             | "tuff"
             | "dirt"
+            | "grass_block"
             | "gravel"
             | "sand"
             | "calcite"
@@ -263,6 +401,7 @@ fn natural(path: &str) -> bool {
 
 fn drop_name(path: &str) -> &str {
     match path {
+        "grass_block" => "dirt",
         "stone" => "cobblestone",
         "deepslate" => "cobbled_deepslate",
         "coal_ore" | "deepslate_coal_ore" => "coal",
@@ -313,6 +452,7 @@ fn unsafe_fluid(state: &TickState, id: u32, path: &str) -> bool {
 
 /// Reject fluids, voids and caves before opening any face. Missing chunks
 /// pause the same cell; permanent obstructions abandon this staircase lane.
+#[allow(clippy::too_many_arguments)]
 fn safe(
     state: &TickState,
     bounds: ScriptWorldBounds,
@@ -321,6 +461,7 @@ fn safe(
     previous: BlockPos,
     height: i32,
     layer: u8,
+    level: u8,
 ) -> Result<(), Obstruction> {
     for y in current.y..current.y + height {
         let p = BlockPos { y, ..current };
@@ -335,7 +476,10 @@ fn safe(
         }
         let already = y > current.y + height - 1 - i32::from(layer);
         let surface_air = clear(path) && y >= entrance.y;
-        if (already && !clear(path)) || (!already && !surface_air && !natural(path)) {
+        let own = clear(path)
+            && (lower_staircase(bounds, entrance, level, p)
+                || own_tunnel(state, bounds, entrance, p));
+        if (already && !clear(path)) || (!already && !surface_air && !own && !natural(path)) {
             return Err(Obstruction::Permanent);
         }
         for (dx, dy, dz) in [
@@ -363,13 +507,132 @@ fn safe(
                     && neighbor.y < entrance.y
                     && !(neighbor.x == previous.x
                         && neighbor.z == previous.z
-                        && (previous.y..previous.y + 3).contains(&neighbor.y)))
+                        && (previous.y..previous.y + 3).contains(&neighbor.y))
+                    && !lower_staircase(bounds, entrance, level, neighbor)
+                    && !own_tunnel(state, bounds, entrance, neighbor))
             {
                 return Err(Obstruction::Permanent);
             }
         }
     }
     Ok(())
+}
+
+/// Open cells of an earlier tunnel of this mine, flooded from `start`: it
+/// stays inside the zone, is small, opens onto the surface under the entrance
+/// (never a sealed pocket) and touches no fluid. Anything else is a cave.
+fn own_tunnel(
+    state: &TickState,
+    bounds: ScriptWorldBounds,
+    entrance: BlockPos,
+    start: BlockPos,
+) -> bool {
+    let mut seen = rustc_hash::FxHashSet::default();
+    let mut stack = vec![start];
+    let mut surface = false;
+    while let Some(p) = stack.pop() {
+        if !seen.insert(p) {
+            continue;
+        }
+        if seen.len() > TUNNEL_CELLS || !inside(bounds, p) {
+            return false;
+        }
+        for (dx, dy, dz) in [
+            (1, 0, 0),
+            (-1, 0, 0),
+            (0, 1, 0),
+            (0, -1, 0),
+            (0, 0, 1),
+            (0, 0, -1),
+        ] {
+            let q = BlockPos {
+                x: p.x + dx,
+                y: p.y + dy,
+                z: p.z + dz,
+            };
+            let Ok((id, path)) = probe(state, q) else {
+                return false;
+            };
+            if unsafe_fluid(state, id, path) {
+                return false;
+            }
+            if !clear(path) {
+                continue;
+            }
+            if q.y >= entrance.y {
+                surface = true;
+            } else {
+                stack.push(q);
+            }
+        }
+    }
+    surface && seen.len() >= MIN_TUNNEL_CELLS
+}
+
+/// Every cell of the column is already open air with no fluid in it or beside
+/// it: the miner's own earlier tunnel, which `safe` would reject as a cave.
+fn open_and_dry(state: &TickState, current: BlockPos, height: i32) -> bool {
+    (current.y..current.y + height).all(|y| {
+        [(0, 0, 0), (1, 0, 0), (-1, 0, 0), (0, 0, 1), (0, 0, -1)]
+            .into_iter()
+            .chain(
+                (y == current.y)
+                    .then_some((0, -1, 0))
+                    .into_iter()
+                    .chain((y == current.y + height - 1).then_some((0, 1, 0))),
+            )
+            .all(|(dx, dy, dz)| {
+                let p = BlockPos {
+                    x: current.x + dx,
+                    y: y + dy,
+                    z: current.z + dz,
+                };
+                probe(state, p).is_ok_and(|(id, path)| {
+                    !unsafe_fluid(state, id, path) && ((dx, dy, dz) != (0, 0, 0) || clear(path))
+                })
+            })
+    })
+}
+
+/// A hostile mob within its sensor reach of `cell` (plus the cell's own height
+/// and the miner's dig reach). It never has to reach the miner: residents panic
+/// at any hostile in range (a zombie in a cave under the quarry), so the miner
+/// would flee back and forth from a cell it can never dig.
+fn hostile_near(state: &TickState, cell: BlockPos) -> bool {
+    let centre = [
+        f64::from(cell.x) + 0.5,
+        f64::from(cell.y) + 0.5,
+        f64::from(cell.z) + 0.5,
+    ];
+    let reach = |type_id: u32| {
+        mc_data::entity_types::entity_type_contract_26_1_2_by_protocol_id(type_id).and_then(
+            |contract| {
+                crate::settlements::allocator::threat_range(
+                    contract
+                        .name
+                        .strip_prefix("minecraft:")
+                        .unwrap_or(contract.name),
+                )
+            },
+        )
+    };
+    state
+        .entities
+        .mob_slots_matching(|type_id| reach(type_id).is_some())
+        .into_iter()
+        .any(|mob| {
+            let body = state.entities.body(mob);
+            let crate::entities::EntityKind::Mob { type_id } = body.kind else {
+                return false;
+            };
+            let at = state.entities.pos(mob);
+            let range = reach(type_id).unwrap_or(0.0) + 3.0;
+            body.alive
+                && (at[0] - centre[0]).powi(2)
+                    + (at[1] - centre[1]).powi(2)
+                    + (at[2] - centre[2]).powi(2)
+                    <= range * range
+        })
 }
 
 /// Each permanently blocked branch retries a different surface entrance column,
@@ -384,6 +647,64 @@ fn lane_entrance(bounds: ScriptWorldBounds, entrance: BlockPos, lane: u32) -> Op
         z: bounds.min[2] + 1 + (offset + lane as i32) % width,
         ..entrance
     })
+}
+
+/// The standing surface of an alternate entrance column: ground with two clear
+/// cells above it. Terrain slopes, so the original entrance's height would put
+/// the new branch's origin underground, where the miner seals itself in.
+fn surface_origin(
+    state: &TickState,
+    bounds: ScriptWorldBounds,
+    column: BlockPos,
+) -> Option<BlockPos> {
+    let open = |y: i32| block_path(state, BlockPos { y, ..column }).is_some_and(clear);
+    (bounds.min[1] + 2..=bounds.max[1] - 1)
+        .rev()
+        .find(|&y| {
+            !open(y - 1)
+                && block_path(state, BlockPos { y: y - 1, ..column }).is_some()
+                && open(y)
+                && open(y + 1)
+        })
+        .map(|y| BlockPos { y, ..column })
+}
+
+/// How far below its certified floor a mine may quarry, as long as the cut
+/// stays inside the settlement sphere: flight after flight, so the mine keeps
+/// producing instead of running dry after a few levels.
+const QUARRY_DEPTH: i32 = 48;
+
+/// A built entrance certifies the surface, not a pre-dug quarry, and a natural
+/// zone's depth is finite: derive the underground work volume without enlarging
+/// the building's reserved footprint or persisting another bounds authority.
+fn operational_bounds(
+    state: &TickState,
+    building: &buildings::Building,
+) -> Option<ScriptWorldBounds> {
+    let mut bounds = building.bounds;
+    let record = state.settlements.get(building.settlement)?;
+    let dx = u64::from(
+        bounds.min[0]
+            .abs_diff(record.anchor[0])
+            .max(bounds.max[0].abs_diff(record.anchor[0])),
+    );
+    let dz = u64::from(
+        bounds.min[2]
+            .abs_diff(record.anchor[2])
+            .max(bounds.max[2].abs_diff(record.anchor[2])),
+    );
+    let horizontal = dx.checked_mul(dx)?.checked_add(dz.checked_mul(dz)?);
+    let vertical = horizontal.and_then(|h| u64::from(record.radius).pow(2).checked_sub(h));
+    let Some(vertical) = vertical else {
+        // A natural zone may lie beyond the sphere: it keeps its own depth.
+        return building.natural_zone.then_some(bounds);
+    };
+    let sphere_floor = (i64::from(record.anchor[1]) - vertical.isqrt() as i64)
+        .clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32;
+    bounds.min[1] = bounds.min[1]
+        .saturating_sub(QUARRY_DEPTH)
+        .max(sphere_floor.min(bounds.min[1]));
+    Some(bounds)
 }
 
 pub(super) fn work(
@@ -403,7 +724,18 @@ pub(super) fn work(
     if building.kind != buildings::BuildingKind::Mine {
         return None;
     }
-    let (id, revision, bounds) = (building.id.0, building.revision, building.bounds);
+    // The shaft starts in the floor interior, inside the footprint the
+    // upgrade fences: digging it mid-upgrade pauses the structure for good.
+    let (id, revision, bounds, upgrading) = (
+        building.id.0,
+        building.revision,
+        operational_bounds(state, building)?,
+        state
+            .settlements
+            .get(building.settlement)
+            .and_then(|record| record.project.as_ref())
+            .is_some_and(|project| project.building == Some(building.id)),
+    );
     let entrance = v.job_site?;
     if v.mining_progress.building != id || v.mining_progress.bounds != Some(bounds) {
         v.mining_progress = Progress {
@@ -416,7 +748,10 @@ pub(super) fn work(
     v.mining_progress.revision = revision;
     let working =
         v.activity == Activity::Work && (2_000..9_000).contains(&state.day_time.rem_euclid(24_000));
-    if !working || needs_deposit(v) {
+    if !working {
+        v.mining_progress.stalled_since = 0;
+    }
+    if !working || heavy_load(v) {
         v.mining_progress.returning = true;
     }
     if v.mining_progress.returning {
@@ -424,11 +759,70 @@ pub(super) fn work(
         v.mining_progress.returning = v.inventory.iter().any(Option::is_some);
         return target;
     }
-    if !working || !crate::command_rules::boolean(state, "mob_griefing") {
+    if !working || upgrading || !crate::command_rules::boolean(state, "mob_griefing") {
         return None;
     }
-    let origin = lane_entrance(bounds, entrance, v.mining_progress.lane)?;
-    let current = cell(bounds, origin, v.mining_progress.cell)?;
+    let level = v.mining_progress.level;
+    let pass = v.mining_progress.pass;
+    let Some(base) = pass_entrance(bounds, entrance, pass) else {
+        // Every flight down to the bottom of the zone has been quarried; what
+        // the miner still carries goes to storage instead of staying with it.
+        v.mining_progress.returning = v.inventory.iter().any(Option::is_some);
+        return deposit(state, slot, v);
+    };
+    if staircase(bounds, stair_base(bounds, base, pass), level).is_none() {
+        // Every level of this flight is done: the next flight starts where this
+        // one ended, deeper, so the quarry reaches the bottom of the zone.
+        v.mining_progress.pass = pass.saturating_add(1);
+        v.mining_progress.level = 0;
+        v.mining_progress.lane = 0;
+        v.mining_progress.cell = 0;
+        v.mining_progress.layer = 0;
+        v.mining_progress.last_open = None;
+        return None;
+    }
+    let column = if pass == 0 || v.mining_progress.lane == 0 {
+        lane_entrance(bounds, base, v.mining_progress.lane)
+    } else {
+        // Deeper flights hang off the lane-0 tunnel only: another lane's
+        // flight end is not known to be open.
+        None
+    };
+    let Some(column) = column else {
+        // Every lane is closed at this level (no ground, caves, hostiles):
+        // the next level lies higher, where the same lanes may be open.
+        v.mining_progress.level = level.saturating_add(1);
+        v.mining_progress.lane = 0;
+        v.mining_progress.cell = 0;
+        v.mining_progress.layer = 0;
+        v.mining_progress.last_open = None;
+        return None;
+    };
+    let origin = if column == base {
+        base
+    } else if pass == 0
+        && let Some(origin) = surface_origin(state, bounds, column)
+    {
+        origin
+    } else {
+        // No ground at this column inside the zone: try the next one.
+        v.mining_progress.lane += 1;
+        v.mining_progress.cell = 0;
+        v.mining_progress.layer = 0;
+        v.mining_progress.last_open = None;
+        return None;
+    };
+    let stair = stair_base(bounds, origin, pass);
+    let Some(current) = cell_in_flight(bounds, origin, pass, v.mining_progress.cell, level) else {
+        // This comb is finished: continue one level higher through the same
+        // lane (its open staircase is walked, not re-dug), where new ore and
+        // stone lie, until no level fits any more.
+        v.mining_progress.level = level.saturating_add(1);
+        v.mining_progress.cell = 0;
+        v.mining_progress.layer = 0;
+        v.mining_progress.last_open = None;
+        return None;
+    };
     let previous = v
         .mining_progress
         .last_open
@@ -438,27 +832,69 @@ pub(super) fn work(
         .mining_progress
         .cell
         .checked_sub(1)
-        .and_then(|n| cell(bounds, origin, n))
+        .and_then(|n| cell_in_flight(bounds, origin, pass, n, level))
         .unwrap_or(origin);
     let height = if current.y < planned_previous.y { 3 } else { 2 };
     if i32::from(v.mining_progress.layer) >= height {
         return None;
     }
-    if !near(state, slot, current, 3.0) {
-        return Some(previous);
-    }
     if state.tick < v.harvest_at {
         return Some(previous);
     }
+    let hostile = hostile_near(state, current);
+    let walking = !hostile && !near(state, slot, current, 3.0);
+    if hostile || walking {
+        // Villagers panic at any hostile in range, so the cell can never be
+        // dug while it stays; a route may also be impossible (a pit under a
+        // level's row, a pocket). Give it time, then close the lane.
+        if v.mining_progress.stalled_since == 0 {
+            v.mining_progress.stalled_since = state.tick.max(1);
+        }
+        if state.tick.saturating_sub(v.mining_progress.stalled_since) >= STALL_PATIENCE {
+            v.mining_progress.stalled_since = 0;
+            v.mining_progress.lane += 1;
+            v.mining_progress.cell = 0;
+            v.mining_progress.layer = 0;
+            v.mining_progress.last_open = None;
+            return None;
+        }
+        if hostile {
+            return None;
+        }
+        // Walk toward the cell to dig once beside the open end: the route's
+        // one-cell arrival tolerance around `current` always lies inside dig
+        // reach, while tolerance around `previous` can strand the miner
+        // diagonally out of reach. Far away, walk to the known-reachable open
+        // end first: a route to the solid cell falls back to the closest
+        // reachable point, which can be a pocket beneath it.
+        return Some(if near(state, slot, previous, 2.0) {
+            current
+        } else {
+            previous
+        });
+    }
+    v.mining_progress.stalled_since = 0;
     v.harvest_at = state.tick + PERIOD;
+    // Only cells inside an earlier level's own staircase are walked through.
+    // A higher level's corridor ends on the cell its first row starts from.
+    let walkthrough = current == previous
+        || (current.y..current.y + height)
+            .all(|y| lower_staircase(bounds, stair, level, BlockPos { y, ..current }));
+    if walkthrough && v.mining_progress.layer == 0 && open_and_dry(state, current, height) {
+        // An earlier level's own tunnel: walk through it.
+        v.mining_progress.cell += 1;
+        v.mining_progress.last_open = Some([current.x, current.y, current.z]);
+        return Some(current);
+    }
     match safe(
         state,
         bounds,
-        origin,
+        stair,
         current,
         previous,
         height,
         v.mining_progress.layer,
+        level,
     ) {
         Ok(()) => {}
         Err(Obstruction::Unloaded) => return Some(previous),

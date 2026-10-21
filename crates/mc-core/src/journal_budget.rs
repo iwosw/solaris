@@ -463,10 +463,13 @@ fn entry_heap(entry: &JournalEntry) -> usize {
         }
         E::Raids { value } => raids_heap(value),
         E::WanderingTrader { .. } => 0,
-        E::Settlement { image, .. } => image
-            .value
-            .as_ref()
-            .map_or(0, crate::settlements::SettlementRecord::heap_estimate),
+        E::Settlement { image, .. } => {
+            std::mem::size_of::<crate::settlements::RecordImage>()
+                + image
+                    .value
+                    .as_ref()
+                    .map_or(0, crate::settlements::SettlementRecord::heap_estimate)
+        }
         E::Scoreboard { value } => scoreboard_heap(value),
         E::Dimension { entries, .. } => {
             entries.capacity() * std::mem::size_of::<JournalEntry>()

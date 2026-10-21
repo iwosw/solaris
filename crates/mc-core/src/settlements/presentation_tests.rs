@@ -38,7 +38,7 @@ fn authenticated_owner_name_is_cached_round_trips_and_does_not_dirty_idle_ticks(
     let record = state.settlements.get(id).unwrap();
     assert_eq!(
         record.owner,
-        owner.to_string(),
+        Some(owner.to_string()),
         "name must never become authorization identity"
     );
     assert_eq!(record.owner_name.as_deref(), Some("Alex"));

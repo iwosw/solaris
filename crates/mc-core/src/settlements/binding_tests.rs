@@ -335,3 +335,95 @@ fn radius_grows_with_population_persists_and_never_shrinks() {
     }
     assert_eq!(state.settlements.get(town).unwrap().radius, 256);
 }
+
+#[test]
+fn soldier_must_be_dismissed_before_unbind_and_settlement_removal_clears_orders() {
+    let mut state = state();
+    let town = settlement(&mut state, "town");
+    let entity = resident(&mut state, [0.0, 64.0, 0.0]);
+    bind(&mut state, town, entity).unwrap();
+    let slot = state.entities.slot_of(entity).unwrap();
+    let uuid = state.entities.row(slot).uuid;
+    let villager = state.entities.row_mut(slot).villager.as_mut().unwrap();
+    villager.data.profession = crate::villager::VillagerProfession::Soldier;
+    villager.soldier = Some(army::Soldier {
+        barracks: buildings::BuildingId((town.0 << 32) | 1),
+        order: army::Order::Patrol,
+        next_attack: 0,
+    });
+    assert_eq!(
+        unbind(&mut state, entity),
+        Err("Dismiss soldier before unbinding")
+    );
+    assert_eq!(
+        state
+            .entities
+            .row(slot)
+            .villager
+            .as_ref()
+            .unwrap()
+            .settlement,
+        Some(town)
+    );
+    assert!(remove(&mut state, town));
+    let villager = state.entities.row(slot).villager.as_ref().unwrap();
+    assert!(villager.settlement.is_none());
+    assert!(villager.soldier.is_none());
+    assert_eq!(
+        villager.data.profession,
+        crate::villager::VillagerProfession::None
+    );
+    assert_eq!(state.entities.row(slot).uuid, uuid);
+}
+
+#[test]
+fn builder_membership_changes_release_profession_without_replacing_the_resident() {
+    let mut state = state();
+    let town = settlement(&mut state, "town");
+    let entity = resident(&mut state, [0.0, 64.0, 0.0]);
+    bind(&mut state, town, entity).unwrap();
+    let slot = state.entities.slot_of(entity).unwrap();
+    let uuid = state.entities.row(slot).uuid;
+    state
+        .entities
+        .row_mut(slot)
+        .villager
+        .as_mut()
+        .unwrap()
+        .data
+        .profession = crate::villager::VillagerProfession::Builder;
+    unbind(&mut state, entity).unwrap();
+    assert_eq!(
+        state
+            .entities
+            .row(slot)
+            .villager
+            .as_ref()
+            .unwrap()
+            .data
+            .profession,
+        crate::villager::VillagerProfession::None
+    );
+    bind(&mut state, town, entity).unwrap();
+    state
+        .entities
+        .row_mut(slot)
+        .villager
+        .as_mut()
+        .unwrap()
+        .data
+        .profession = crate::villager::VillagerProfession::Builder;
+    assert!(remove(&mut state, town));
+    assert_eq!(
+        state
+            .entities
+            .row(slot)
+            .villager
+            .as_ref()
+            .unwrap()
+            .data
+            .profession,
+        crate::villager::VillagerProfession::None
+    );
+    assert_eq!(state.entities.row(slot).uuid, uuid);
+}

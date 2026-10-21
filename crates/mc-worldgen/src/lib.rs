@@ -104,7 +104,13 @@ pub use terrain::{HeightContextStats, height_context_stats, reset_height_context
 /// 26: ore feature size controls ellipsoid geometry rather than a guaranteed
 /// block count; revision-25 worlds must not mix the inflated ore distribution
 /// with newly generated vanilla-like veins.
-pub const WORLDGEN_REVISION: u32 = 26;
+///
+/// 27: village playability on slopes — rigid pieces clear the terrain inside
+/// their template-air cells, `terrain_matching` streets are written before the
+/// rigid pieces, and a piece's water source open to the side or below is
+/// replaced by farmland. Revision-26 villages keep hillside soil in their houses
+/// and farm springs over their streets.
+pub const WORLDGEN_REVISION: u32 = 27;
 
 /// Crate version, exposed so other crates and the binary can report it.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

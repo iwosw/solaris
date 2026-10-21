@@ -321,6 +321,17 @@ impl EdgeServer {
                 );
                 registry.view_distances.insert(id, view_distance);
             }
+            let locale = request.information.language;
+            if registry.locales.get(&id) != Some(&locale) {
+                anyhow::ensure!(
+                    self.hub.submit(PlayerInput::SetLocale {
+                        connection: id,
+                        locale: locale.clone(),
+                    }),
+                    "locale admission queue is full"
+                );
+                registry.locales.insert(id, locale);
+            }
             return Ok(true);
         }
         if packet_id != ServerboundCommandSuggestion::ID {
@@ -626,6 +637,9 @@ struct RegistryInner {
     handles: HashMap<ConnectionId, ConnectionHandles>,
     names: HashMap<ConnectionId, String>,
     view_distances: HashMap<ConnectionId, i32>,
+    /// Client locale last admitted to the core (`ClientInformation.language`);
+    /// deduplicates Play updates and is cleared on disconnect.
+    locales: HashMap<ConnectionId, String>,
     roster_dirty: bool,
     // Join state and its waiters share the queue registry's atomic removal.
     pending_joins: HashMap<ConnectionId, JoinedSpawn>,
@@ -807,6 +821,7 @@ impl ConnectionRegistry {
         inner.join_waiters.remove(&id);
         inner.disconnect_reasons.remove(&id);
         inner.view_distances.remove(&id);
+        inner.locales.remove(&id);
     }
 
     /// Look up one connection's handles.
@@ -1093,8 +1108,10 @@ async fn handle_connection(stream: TcpStream, server: Arc<EdgeServer>) -> anyhow
         }
     };
 
-    // The radius precedes Join on the reliable queue, so the first residency
-    // reconciliation never expands this client to the server-wide maximum.
+    // The radius and locale precede Join on the reliable queue: the first
+    // residency reconciliation never expands this client to the server-wide
+    // maximum, and a dialog opened right after join already reads the client
+    // language.
     let view_distance = effective_view_distance(
         config_outcome.client_view_distance,
         server.cfg.server.view_distance,
@@ -1103,6 +1120,10 @@ async fn handle_connection(stream: TcpStream, server: Arc<EdgeServer>) -> anyhow
         PlayerInput::SetViewDistance {
             connection: id,
             view_distance: view_distance as u8,
+        },
+        PlayerInput::SetLocale {
+            connection: id,
+            locale: config_outcome.client_language.clone(),
         },
         PlayerInput::Join {
             connection: id,
@@ -1132,6 +1153,7 @@ async fn handle_connection(stream: TcpStream, server: Arc<EdgeServer>) -> anyhow
         id,
         &outcome.name,
         config_outcome.client_view_distance,
+        &config_outcome.client_language,
     )
     .await
     {
@@ -1782,11 +1804,18 @@ async fn wait_for_join(
     id: ConnectionId,
     _name: &str,
     client_view_distance: i8,
+    client_language: &str,
 ) -> anyhow::Result<JoinedSpawn> {
-    server.connections.inner.lock().view_distances.insert(
-        id,
-        effective_view_distance(client_view_distance, server.cfg.server.view_distance),
-    );
+    {
+        let mut inner = server.connections.inner.lock();
+        inner.view_distances.insert(
+            id,
+            effective_view_distance(client_view_distance, server.cfg.server.view_distance),
+        );
+        // Already submitted before Join: remember it so the first Play
+        // ClientInformation does not repeat the same locale.
+        inner.locales.insert(id, client_language.to_owned());
+    }
     // Fast path: Joined arrived before we registered interest.
     if let Some(joined) = server.connections.take_join(id) {
         return Ok(joined);

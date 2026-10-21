@@ -421,3 +421,88 @@ fn foreign_household_members_recover_without_artificial_birth_capacity() {
     );
     assert_eq!(state.settlements.household_size(&family), 20);
 }
+
+#[test]
+fn enlisted_household_relocation_refuses_before_mutating_rows() {
+    let mut state = state();
+    let source = town(&mut state, "source", [8, 201, 8], 48);
+    let target = town(&mut state, "target", [16, 201, 8], 48);
+    let entity = resident(&mut state, source, [8.0, 201.0, 8.0]);
+    let family = form(&mut state, source, &[entity], HouseholdOrigin::Adoption).unwrap();
+    let slot = state.entities.slot_of(entity).unwrap();
+    state
+        .entities
+        .row_mut(slot)
+        .villager
+        .as_mut()
+        .unwrap()
+        .soldier = Some(crate::settlements::army::Soldier {
+        barracks: crate::settlements::buildings::BuildingId((source.0 << 32) | 1),
+        order: crate::settlements::army::Order::Patrol,
+        next_attack: 0,
+    });
+    state.settlements.take_images();
+    assert_eq!(
+        relocate(&mut state, source, &family, target),
+        Err("Dismiss soldiers before relocating their household")
+    );
+    assert!(state.settlements.take_images().is_empty());
+    assert_eq!(villager(&state, entity).settlement, Some(source));
+    assert!(
+        state
+            .settlements
+            .get(source)
+            .unwrap()
+            .households
+            .contains_key(&family)
+    );
+    assert!(
+        !state
+            .settlements
+            .get(target)
+            .unwrap()
+            .households
+            .contains_key(&family)
+    );
+}
+
+#[test]
+fn hidden_foreign_soldier_is_discharged_on_household_reconciliation_without_replacing_body() {
+    let mut state = state();
+    let source = town(&mut state, "source", [8, 201, 8], 48);
+    let target = town(&mut state, "target", [16, 201, 8], 48);
+    let local = resident(&mut state, source, [8.0, 201.0, 8.0]);
+    let family = form(&mut state, source, &[local], HouseholdOrigin::Adoption).unwrap();
+    let abroad = foreign_member(&mut state, source, &family);
+    let mut foreign = state
+        .other_dimensions
+        .remove(&crate::dimensions::Dimension::Nether)
+        .unwrap();
+    let slot = foreign.entities.slot_of(abroad).unwrap();
+    let uuid = foreign.entities.row(slot).uuid;
+    let sword = foreign
+        .registry
+        .items
+        .id_of(&mc_data::Identifier::parse("minecraft:iron_sword").unwrap())
+        .unwrap();
+    Arc::make_mut(&mut foreign.entities.row_mut(slot).appearance).equipment[0] =
+        Some(mc_data::ItemStack::new(sword, 1));
+    let equipment = foreign.entities.row(slot).appearance.equipment.clone();
+    let v = foreign.entities.row_mut(slot).villager.as_mut().unwrap();
+    v.data.profession = crate::villager::VillagerProfession::Soldier;
+    v.soldier = Some(crate::settlements::army::Soldier {
+        barracks: crate::settlements::buildings::BuildingId((source.0 << 32) | 1),
+        order: crate::settlements::army::Order::Patrol,
+        next_attack: 0,
+    });
+    relocate(&mut state, source, &family, target).unwrap();
+    state.other_dimensions.insert(foreign.dimension, foreign);
+    crate::settlements::finish(&mut state);
+    let foreign = &state.other_dimensions[&crate::dimensions::Dimension::Nether];
+    let v = villager(foreign, abroad);
+    assert_eq!(v.settlement, Some(target));
+    assert!(v.soldier.is_none());
+    assert_eq!(v.data.profession, crate::villager::VillagerProfession::None);
+    assert_eq!(foreign.entities.row(slot).uuid, uuid);
+    assert_eq!(foreign.entities.row(slot).appearance.equipment, equipment);
+}

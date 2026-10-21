@@ -12,7 +12,8 @@ fn population(state: &TickState) -> usize {
 }
 
 /// Four bound villagers (two farmers, two unemployed), six beds, a certified
-/// level-2 farmer workshop with two composters beside mature wheat/carrots.
+/// level-2 farmer workshop whose certificate contains the mature wheat/carrot
+/// field beside its two composters.
 fn typical_village(state: &mut TickState) {
     state.day_time = 3000;
     let settlement = state
@@ -47,7 +48,7 @@ fn typical_village(state: &mut TickState) {
         state,
         settlement,
         crate::settlements::buildings::BuildingKind::Workshop(Profession::Farmer),
-        mc_script::ScriptWorldBounds::new([10, 200, 7], [13, 203, 10]).unwrap(),
+        mc_script::ScriptWorldBounds::new([10, 200, 5], [15, 203, 11]).unwrap(),
     )
     .expect("the farm has a loaded, floored workshop with composters");
     crate::settlements::buildings::upgrade(state, workshop)

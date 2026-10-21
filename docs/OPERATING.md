@@ -149,6 +149,13 @@ Earth WorldPlan preparation and offline rectangular pregeneration are not
 ported. Simulation tickets are not an offline generator: using them advances
 simulation and persists ticket ownership.
 
+A worldgen revision bump refuses existing worlds (`identity mismatch`). To keep a
+stopped world, back it up and run `solaris-v2 --config server.toml world
+upgrade-worldgen`: it rewrites only the stored revision (refusing any other
+difference), leaves generated chunks as they are and applies the new generator to
+chunks generated afterwards, with a hard seam at the old explored border. See
+[Village generation](VILLAGE_GENERATION.md#keeping-a-world-across-a-revision-bump).
+
 ## Offline native backup and restore
 
 Stop the server first. Commands use the same exclusive world-directory lease

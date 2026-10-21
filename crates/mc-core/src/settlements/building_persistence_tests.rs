@@ -34,6 +34,7 @@ fn building(
         bounds: mc_script::ScriptWorldBounds::new([3, 200, 3], [7, 204, 7]).unwrap(),
         work_points: vec![[4, 201, 4]],
         revision: 1,
+        natural_zone: false,
     }
 }
 

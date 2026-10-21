@@ -1,0 +1,223 @@
+{
+  "id": "farm",
+  "kind": "farmer",
+  "levels": [
+    {
+      "cert": [
+        7,
+        5,
+        10
+      ],
+      "entrance": [
+        3,
+        1,
+        4
+      ],
+      "layers": [
+        [
+          "ppppppp",
+          "pZZZZZp",
+          "pZZZZZp",
+          "pZZZZZp",
+          "ppppppp",
+          "gggpggg",
+          "gffpffg",
+          "gffpffg",
+          "gffpffg",
+          "gggpggg"
+        ],
+        [
+          "XpppppX",
+          "pP...dp",
+          "pht.thp",
+          "ph...Cp",
+          "XppoppX",
+          "D.....D",
+          "DWW.WWD",
+          "DWW.WWD",
+          "DWW.WWD",
+          "DDDLDDD"
+        ],
+        [
+          "XZDZDZX",
+          "Z.....Z",
+          "D.....Z",
+          "Zh....Z",
+          "XDZOZDX",
+          ".......",
+          ".......",
+          ".......",
+          ".......",
+          "t.....t"
+        ],
+        [
+          "XsssssX",
+          "s.....s",
+          "s.....s",
+          "s.....s",
+          "XsssssX",
+          ".......",
+          ".......",
+          ".......",
+          ".......",
+          "......."
+        ],
+        [
+          "xxxxxxx",
+          "ZsssssZ",
+          "ZsssssZ",
+          "ZsssssZ",
+          "SSSSSSS",
+          ".......",
+          ".......",
+          ".......",
+          ".......",
+          "......."
+        ],
+        [
+          ".......",
+          "xxxxxxx",
+          "Z.....Z",
+          "SSSSSSS",
+          ".......",
+          ".......",
+          ".......",
+          ".......",
+          ".......",
+          "......."
+        ],
+        [
+          ".......",
+          ".......",
+          "sssssss",
+          ".......",
+          ".......",
+          ".......",
+          ".......",
+          ".......",
+          ".......",
+          "......."
+        ]
+      ]
+    },
+    {
+      "cert": [
+        9,
+        5,
+        10
+      ],
+      "entrance": [
+        3,
+        1,
+        4
+      ],
+      "layers": [
+        [
+          "ppppppppp",
+          "pZZZZZZZp",
+          "pZZZZZZZp",
+          "pZZZZZZZp",
+          "ppppppppp",
+          "gggpggggg",
+          "gffpffffg",
+          "gffpffffg",
+          "gffpffffg",
+          "gggpggggg"
+        ],
+        [
+          "XpppppppX",
+          "pPtP.d..p",
+          "pht.th..p",
+          "ph...C..p",
+          "XppoppppX",
+          "D.......D",
+          "DWWWWWWWD",
+          "DWW.WDWWD",
+          "DWW.WWWWD",
+          "DDDLDDDDD"
+        ],
+        [
+          "XZDZDZDZX",
+          "Z.......Z",
+          "D.......Z",
+          "Zh......Z",
+          "XDZOZDZDX",
+          ".........",
+          ".........",
+          ".....H...",
+          ".........",
+          "t.......t"
+        ],
+        [
+          "XsssssssX",
+          "s.......s",
+          "s.......s",
+          "s.......s",
+          "XsssssssX",
+          ".........",
+          ".........",
+          ".....t...",
+          ".........",
+          "........."
+        ],
+        [
+          "xxxxxxxxx",
+          "ZsssssssZ",
+          "ZsssssssZ",
+          "ZsssssssZ",
+          "SSSSSSSSS",
+          ".........",
+          ".........",
+          ".........",
+          ".........",
+          "........."
+        ],
+        [
+          ".........",
+          "xxxxxxxxx",
+          "Z.......Z",
+          "SSSSSSSSS",
+          ".........",
+          ".........",
+          ".........",
+          ".........",
+          ".........",
+          "........."
+        ],
+        [
+          ".........",
+          ".........",
+          "sssssssss",
+          ".........",
+          ".........",
+          ".........",
+          ".........",
+          ".........",
+          ".........",
+          "........."
+        ]
+      ]
+    }
+  ],
+  "palette": {
+    "C": "chest[facing=west]",
+    "D": "oak_fence",
+    "H": "barrel[facing=up]",
+    "L": "oak_fence_gate[facing=south,open=true]",
+    "O": "oak_door[facing=north,half=upper]",
+    "P": "composter[level=0]",
+    "S": "oak_stairs[facing=north,half=bottom]",
+    "X": "oak_log[axis=y]",
+    "Z": "oak_planks",
+    "d": "crafting_table",
+    "f": "farmland[moisture=7]",
+    "h": "barrel[facing=up]",
+    "o": "oak_door[facing=north,half=lower]",
+    "p": "cobblestone",
+    "s": "oak_planks",
+    "t": "torch",
+    "x": "oak_stairs[facing=south,half=bottom]",
+    "W": "wheat[age=0]",
+    "g": "dirt"
+  }
+}

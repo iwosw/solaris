@@ -350,6 +350,32 @@ def run_village_qa(ctx: ProfileContext) -> dict[str, Any]:
     return village_qa.run(ctx)
 
 
+def run_village_autonomy_qa(ctx: ProfileContext) -> dict[str, Any]:
+    """Generated-village autonomy: ownerless growth, no-give building, claim fencing (native)."""
+    from .backends import village_autonomy_qa
+
+    return village_autonomy_qa.run(ctx)
+
+
+def run_claim_only_qa(ctx: ProfileContext) -> dict[str, Any]:
+    """Claim/fencing/restart checklist on a settled autonomous world (native)."""
+    from .backends import claim_only_qa
+
+    return claim_only_qa.run(ctx)
+
+def run_buildings_qa(ctx: ProfileContext) -> dict[str, Any]:
+    """Millenaire buildings: every blueprint L1..N built by a real Builder, block-match + function (native)."""
+    from .backends import buildings_qa
+
+    return buildings_qa.run(ctx)
+
+
+def run_army_qa(ctx: ProfileContext) -> dict[str, Any]:
+    """Millenaire army: barracks L1/L2 slots, dialog-only recruit/order/dismiss, combat, adversarial, restart (native)."""
+    from .backends import army_qa
+
+    return army_qa.run(ctx)
+
 def run_core_client(ctx: ProfileContext) -> dict[str, Any]:
     from .backends import client_probes
 
@@ -693,6 +719,26 @@ PROFILES: dict[str, dict[str, Any]] = {
         "scope": "real-client",
         "description": "Issue #1 settlement acceptance: house/workshop/storage/mine/camp, bind, door/sleep/harvest/mine/lumber PASS-FAIL (native --client, windowed for screenshots)",
         "run": run_village_qa,
+    },
+    "village-autonomy-qa": {
+        "scope": "real-client",
+        "description": "Generated-village autonomy: walk-to-village adoption, unfunded Storage L1 + House L1, dialog claim, second-claim refusal (native --client, windowed for screenshots)",
+        "run": run_village_autonomy_qa,
+    },
+    "claim-only-qa": {
+        "scope": "real-client",
+        "description": "Claim/fencing/restart checklist on a settled autonomous world (native --client, windowed)",
+        "run": run_claim_only_qa,
+    },
+    "buildings-qa": {
+        "scope": "real-client",
+        "description": "Millenaire buildings: every blueprint L1..N built by a real Builder, block-match + function (native --client, windowed for screenshots)",
+        "run": run_buildings_qa,
+    },
+    "army-qa": {
+        "scope": "real-client",
+        "description": "Millenaire army: barracks L1/L2 recruit slots, dialog-only orders, combat, adversarial, restart (native --client, windowed for screenshots)",
+        "run": run_army_qa,
     },
     "dialogs": {
         "scope": "real-client",

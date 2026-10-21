@@ -527,6 +527,85 @@ fn write_entities<E: std::borrow::Borrow<NativeEntitySnapshot>>(
     }
     Ok(())
 }
+/// Header identity and the two immutable generation payloads of a native world.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NativeGenerationContract {
+    pub identity: [u8; 32],
+    pub generation: Vec<u8>,
+    pub dimensions: Vec<u8>,
+}
+
+impl NativeStore {
+    /// Offline operator path: the stored header identity of a stopped world,
+    /// without validating it against any configuration.
+    pub fn read_identity(path: &std::path::Path) -> Result<[u8; 32], NativeError> {
+        let database = super::read_only_database(path, super::DB_CACHE_BYTES)?;
+        let tx = db(database.begin_read())?;
+        let header = db(tx.open_table(super::HEADER))?;
+        let stored =
+            db(header.get("identity"))?.ok_or_else(|| failure("world/identity", "missing"))?;
+        stored
+            .value()
+            .try_into()
+            .map_err(|_| failure("world/identity", "invalid length"))
+    }
+
+    /// Offline operator path: replace the header identity and the immutable
+    /// generation/dimensions payloads in one durable transaction, only when the
+    /// stored contract is byte-for-byte `from`. Record versions and capture ticks
+    /// are kept; chunks, entities and gameplay state are untouched. `from == to`
+    /// verifies and writes nothing. Requires exclusive access to the database file.
+    pub fn replace_generation_contract(
+        path: &std::path::Path,
+        from: &NativeGenerationContract,
+        to: &NativeGenerationContract,
+    ) -> Result<(), NativeError> {
+        let database = db(redb::Database::builder()
+            .set_cache_size(super::DB_CACHE_BYTES)
+            .open(path))?;
+        let mut tx = db(database.begin_write())?;
+        db(tx.set_durability(redb::Durability::Immediate))?;
+        {
+            let mut header = db(tx.open_table(super::HEADER))?;
+            if db(header.get("identity"))?.is_none_or(|v| v.value() != from.identity) {
+                return Err(failure(
+                    "world/identity",
+                    "does not match the expected contract",
+                ));
+            }
+            let mut global = db(tx.open_table(GLOBAL))?;
+            let mut replacements = Vec::new();
+            for (key, old, new) in [
+                ("generation", &from.generation, &to.generation),
+                ("dimensions", &from.dimensions, &to.dimensions),
+            ] {
+                let stored = db(global.get(key))?
+                    .map(|record| decode(record.value()))
+                    .transpose()?
+                    .ok_or_else(|| failure(key, "missing"))?;
+                if stored.payload != *old {
+                    return Err(failure(key, "does not match the expected contract"));
+                }
+                replacements.push((
+                    key,
+                    encode(&NativeDomainRecord {
+                        payload: new.clone(),
+                        ..stored
+                    })?,
+                ));
+            }
+            if from == to {
+                return Ok(());
+            }
+            for (key, bytes) in replacements {
+                db(global.insert(key, bytes.as_slice()))?;
+            }
+            db(header.insert("identity", to.identity.as_slice()))?;
+        }
+        db(tx.commit())
+    }
+}
+
 impl NativeStore {
     /// Install geometry in an unpublished converter staging DB before bulk imports.
     /// This does not constitute a recoverable world checkpoint.

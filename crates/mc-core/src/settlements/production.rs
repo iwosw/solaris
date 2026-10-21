@@ -499,7 +499,7 @@ fn admit(
         return Err(Failure::InvalidRequest);
     }
     let record = world.settlements.get(settlement).ok_or(Failure::NotFound)?;
-    if record.owner != owner {
+    if record.owner.as_deref() != Some(owner) {
         return Err(Failure::Forbidden);
     }
     worker_slot(world, settlement, worker)?;

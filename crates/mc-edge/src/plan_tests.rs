@@ -2840,6 +2840,47 @@ fn native_note_event_installs_state_before_protocol_07_and_is_viewer_owned() {
 }
 
 #[test]
+fn bell_ring_maps_animation_and_vanilla_positional_sound() {
+    use mc_protocol::packets::play::{ClientboundBlockEvent, ClientboundSound};
+    let position = mc_core::boundary::BlockPos {
+        x: -1,
+        y: 200,
+        z: 2,
+    };
+    let changes = [
+        PlayerChange::BlockEvent {
+            position,
+            block: 103,
+            state: 9876,
+            action: 1,
+            parameter: 2,
+        },
+        PlayerChange::BellRung { position },
+    ];
+    let packets = plan_player_changes(&changes, &mut viewer_at(7, [0.0; 3]));
+    assert_eq!(packets.len(), 3);
+    assert!(
+        packets
+            .iter()
+            .all(|packet| packet.reliable && packet.connection == ConnectionId(7))
+    );
+    assert_eq!(packets[0].id, BlockUpdate::ID);
+    assert_eq!(packets[1].id, ClientboundBlockEvent::ID);
+    let event = ClientboundBlockEvent::decode(&mut body_of(&packets[1])).unwrap();
+    assert_eq!(
+        (event.action, event.parameter, event.block_type),
+        (1, 2, 103)
+    );
+    assert_eq!(packets[2].id, ClientboundSound::ID);
+    let sound = ClientboundSound::decode(&mut body_of(&packets[2])).unwrap();
+    assert_eq!(sound.sound.as_str(), "minecraft:block.bell.use");
+    assert_eq!(sound.fixed_range, None);
+    assert_eq!(sound.source, 4);
+    assert_eq!(sound.position, [-4, 1604, 20]);
+    assert_eq!((sound.volume, sound.pitch, sound.seed), (2.0, 1.0, 0));
+}
+
+#[test]
 fn hanging_sign_editor_and_type_eight_nbt_use_native_packets_in_order() {
     use mc_protocol::packets::play::{ClientboundBlockEntityData, ClientboundOpenSignEditor};
     let position = mc_core::boundary::BlockPos { x: 1, y: 200, z: 2 };

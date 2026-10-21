@@ -109,6 +109,7 @@ fn certify_shed(state: &mut TickState, v: &VillagerState, x: i32, z: i32) {
                 bounds: ScriptWorldBounds::new([x - 1, 195, z - 1], [x + 1, 207, z + 1]).unwrap(),
                 work_points: vec![],
                 revision: 1,
+                natural_zone: false,
             },
         );
 }
@@ -139,9 +140,8 @@ fn lumberjack_routes_then_cuts_full_trunk_and_replants_matching_sapling() {
     let (mut state, slot, mut v) = fixture(BuildingKind::LumberCamp);
     tree(&mut state, 10, 10, 5);
     let mut changes = ChangeSet::default();
-    // Incremental scan: the planted column is index 612, reached in fixed
-    // 32-column steps, so the first route arrives on the 20th attempt with
-    // nothing broken before the walk.
+    // Incremental scan over the simulated columns only: the planted column is
+    // reached within a few attempts with nothing broken before the walk.
     let mut calls = 0u64;
     let route = loop {
         state.tick = calls * 20;
@@ -152,7 +152,7 @@ fn lumberjack_routes_then_cuts_full_trunk_and_replants_matching_sapling() {
         assert!(changes.blocks.is_empty(), "search never breaks");
         assert!(calls < 40, "bounded scan must reach the planted tree");
     };
-    assert_eq!(calls, 20);
+    assert!(calls <= 3, "found after {calls} attempts");
     assert_eq!(
         route,
         BlockPos {
@@ -246,22 +246,57 @@ fn lumberjack_drops_tree_target_when_radius_shrinks_or_camp_unbinds() {
 fn lumberjack_scan_is_bounded_per_attempt_and_wraps_radius() {
     let (mut state, slot, mut v) = fixture(BuildingKind::LumberCamp);
     let mut changes = ChangeSet::default();
-    for tick in 0..3 {
-        state.tick = tick * 20;
-        assert_eq!(lumber::work(&mut state, slot, &mut v, &mut changes), None);
-    }
-    assert_eq!(v.lumber_progress.cursor, 3 * lumber::SEARCH_PER_TICK);
+    // Fixture radius 16 spans 33x33 columns; only chunk (0, 0) simulates, so
+    // one attempt walks past the unsimulated strips and reads at most
+    // SEARCH_PER_TICK columns.
+    state.tick = 0;
+    assert_eq!(lumber::work(&mut state, slot, &mut v, &mut changes), None);
+    let first = v.lumber_progress.cursor;
+    assert!(first > 0 && first < 33 * 33);
     assert!(changes.blocks.is_empty());
-    // Fixture radius 16 spans 33x33 columns; the cursor wraps without extra scans.
+    // The cursor wraps the square without leaving it.
     v.lumber_progress.cursor = 33 * 33 - 10;
     state.tick = 60;
     assert_eq!(lumber::work(&mut state, slot, &mut v, &mut changes), None);
-    assert_eq!(v.lumber_progress.cursor, 22);
+    assert!(v.lumber_progress.cursor < 33 * 33);
     assert!(changes.blocks.is_empty());
 }
 
+/// Seed 87122 replay: 29 mature trees stood inside the simulated chunks, yet the
+/// lumberjack found none in thousands of ticks because the sweep spent one
+/// column per tick on 61k mostly unsimulated columns and 15 height bands. A
+/// village-sized radius must reach a tree beyond the camp within a few attempts.
 #[test]
-fn lumberjack_completes_trunk_and_replants_across_full_inventory() {
+fn lumberjack_finds_a_simulated_tree_in_a_village_sized_radius_within_a_few_attempts() {
+    let (mut state, slot, mut v) = fixture(BuildingKind::LumberCamp);
+    tree(&mut state, 10, 10, 5);
+    let settlement = v.settlement.unwrap();
+    state.settlements.get_mut(settlement).unwrap().radius = 123;
+    let mut changes = ChangeSet::default();
+    let mut attempts = 0u64;
+    let route = loop {
+        state.tick = attempts * 20;
+        attempts += 1;
+        if let Some(target) = lumber::work(&mut state, slot, &mut v, &mut changes) {
+            break target;
+        }
+        assert!(
+            attempts < 12,
+            "the simulated tree must be found, not skipped"
+        );
+    };
+    assert_eq!(
+        route,
+        BlockPos {
+            x: 10,
+            y: 201,
+            z: 10
+        }
+    );
+}
+
+#[test]
+fn lumberjack_completes_trunk_and_replants_across_stack_haul() {
     let (mut state, slot, mut v) = fixture(BuildingKind::LumberCamp);
     tree(&mut state, 10, 10, 5);
     let oak = mining::item_id(&state, "oak_log").unwrap();
@@ -270,7 +305,7 @@ fn lumberjack_completes_trunk_and_replants_across_full_inventory() {
         if i == 0 {
             Some(ItemStack::new(oak, 60))
         } else {
-            Some(ItemStack::new(cobble, 64))
+            Some(ItemStack::new(cobble, 63))
         }
     });
     storage(&mut state, &v, [12, 201, 12]);
@@ -301,8 +336,8 @@ fn lumberjack_completes_trunk_and_replants_across_full_inventory() {
     let chest = state.block_entities.get(&(12, 201, 12)).unwrap();
     assert_eq!(
         chest.slots.iter().map(|s| s.count).sum::<i32>(),
-        512,
-        "deposit trip drained the full inventory"
+        505,
+        "the stack-triggered trip drains all carried resources"
     );
     assert_eq!(
         chest
@@ -311,7 +346,7 @@ fn lumberjack_completes_trunk_and_replants_across_full_inventory() {
             .filter(|s| !s.is_empty())
             .map(|s| s.count)
             .sum::<i32>(),
-        512
+        505
     );
     assert_eq!(count(&v, oak), 1, "last trunk block after the trip");
 }
@@ -457,13 +492,20 @@ fn lumberjack_searches_hillsides_and_finishes_tall_trunks_with_matching_replants
         }
         state.world.set_block(10, base_y + height, 10, leaves);
         let mut changes = ChangeSet::default();
-        lumber::work(&mut state, slot, &mut v, &mut changes);
-        v.lumber_progress.cursor = 612;
-        v.lumber_progress.vertical = u32::from(base_y > 209);
-        state.tick = 20;
-        let target = lumber::work(&mut state, slot, &mut v, &mut changes).unwrap();
-        follow(&mut state, slot, target);
-        for tick in 2..height as u64 + 3 {
+        let mut target = None;
+        for attempt in 0..8 {
+            state.tick = attempt * 20;
+            target = lumber::work(&mut state, slot, &mut v, &mut changes);
+            if target.is_some() {
+                break;
+            }
+        }
+        follow(
+            &mut state,
+            slot,
+            target.expect("the full-height sweep finds the tree"),
+        );
+        for tick in 10..height as u64 + 12 {
             state.tick = tick * 20;
             lumber::work(&mut state, slot, &mut v, &mut changes);
         }
@@ -496,11 +538,9 @@ fn lumberjack_ignores_decorative_persistent_leaves() {
         "decorative crown is not a tree"
     );
     assert!(changes.blocks.is_empty(), "search never breaks");
-    // Full radius sweep (33x33 columns) with no target: the scan ran.
-    assert_eq!(
-        v.lumber_progress.cursor,
-        40 * lumber::SEARCH_PER_TICK % (33 * 33)
-    );
+    // The sweep ran: the cursor left its start and is a valid column slot.
+    assert_ne!(v.lumber_progress.cursor, 0);
+    assert!(v.lumber_progress.cursor < 33 * 33);
 }
 
 #[test]
@@ -600,5 +640,136 @@ fn lumberjack_protects_its_own_certified_camp_footprint_too() {
     assert!(
         changes.blocks.is_empty(),
         "the worker's camp is also a certified building"
+    );
+}
+
+#[test]
+fn lumberjack_harvests_own_natural_zone_but_keeps_built_camp_posts_protected() {
+    let (mut state, slot, mut v) = fixture(BuildingKind::LumberCamp);
+    tree(&mut state, 9, 9, 4);
+    tree(&mut state, 3, 3, 4);
+    let settlement = v.settlement.unwrap();
+    let zone = crate::settlements::buildings::certify_zone(
+        &mut state,
+        settlement,
+        BuildingKind::LumberCamp,
+        ScriptWorldBounds::new([7, 200, 7], [13, 208, 13]).unwrap(),
+        [8, 201, 8],
+    )
+    .unwrap();
+    v.job_site = Some(BlockPos { x: 8, y: 201, z: 8 });
+    v.job_site_dimension = state.dimension.name().into();
+    let oak = mining::item_id(&state, "oak_log").unwrap();
+    let mut changes = ChangeSet::default();
+    for tick in 0..300 {
+        state.tick = tick * 20;
+        if let Some(target) = lumber::work(&mut state, slot, &mut v, &mut changes) {
+            follow(&mut state, slot, target);
+        }
+        if count(&v, oak) == 4 {
+            break;
+        }
+    }
+    assert_eq!(v.lumber_progress.building, zone.0);
+    assert_eq!(
+        count(&v, oak),
+        4,
+        "the designated natural grove supplies real logs"
+    );
+    assert_eq!(
+        path(&state, 3, 201, 3),
+        "oak_log",
+        "built camp posts stay protected"
+    );
+    assert_eq!(path(&state, 3, 204, 3), "oak_log");
+}
+
+#[test]
+fn natural_grove_search_starts_near_its_certified_source_in_a_large_village() {
+    let (mut state, slot, mut v) = fixture(BuildingKind::LumberCamp);
+    // The full-height sweep also sees the generator's own trees far below the
+    // fixture's flat ground; this test is about the sweep order, so remove them.
+    for x in 0..16 {
+        for z in 0..16 {
+            for y in 60..190 {
+                state.world.set_block(x, y, z, state.registry.states.stone);
+            }
+        }
+    }
+    tree(&mut state, 10, 10, 5);
+    let settlement = v.settlement.unwrap();
+    let record = state.settlements.get_mut(settlement).unwrap();
+    record.radius = 136;
+    let camp = record
+        .buildings
+        .values_mut()
+        .find(|b| b.kind == BuildingKind::LumberCamp)
+        .unwrap();
+    camp.natural_zone = true;
+    camp.bounds = ScriptWorldBounds::new([9, 200, 9], [11, 206, 11]).unwrap();
+    camp.work_points = vec![[9, 201, 10]];
+    v.job_site = Some(BlockPos {
+        x: 9,
+        y: 201,
+        z: 10,
+    });
+    let mut changes = ChangeSet::default();
+    let mut route = None;
+    for attempt in 0..12 {
+        state.tick = attempt * 20;
+        route = lumber::work(&mut state, slot, &mut v, &mut changes);
+        if route.is_some() {
+            break;
+        }
+    }
+    assert_eq!(
+        route,
+        Some(BlockPos {
+            x: 10,
+            y: 201,
+            z: 10
+        }),
+        "the known grove must not wait behind tens of thousands of unloaded radius columns"
+    );
+    assert!(
+        changes.blocks.is_empty(),
+        "finding a source does not teleport or cut remotely"
+    );
+}
+
+/// At radius 136 the QA village's lumberjack picked a tree one chunk beyond
+/// the simulated area, walked to its border and froze there with the target
+/// held for the rest of the run. Loaded-but-inactive columns are not targets.
+#[test]
+fn lumberjack_never_targets_trees_in_loaded_chunks_that_do_not_simulate() {
+    let (mut state, slot, mut v) = fixture(BuildingKind::LumberCamp);
+    state
+        .world
+        .ensure_blocking(&rustc_hash::FxHashMap::from_iter([(
+            crate::boundary::ChunkPos { x: -1, z: 0 },
+            0,
+        )]));
+    // Scanned first (row x = -3) but outside every ticket's simulated area.
+    tree(&mut state, -3, 8, 5);
+    tree(&mut state, 10, 10, 5);
+    assert!(state.world.has_chunk(-1, 0) && !state.world.is_active(-1, 0));
+    assert!(state.world.is_active(0, 0));
+    let mut changes = ChangeSet::default();
+    let mut route = None;
+    for attempt in 0..60 {
+        state.tick = attempt * 20;
+        route = lumber::work(&mut state, slot, &mut v, &mut changes);
+        if route.is_some() {
+            break;
+        }
+    }
+    assert_eq!(
+        route,
+        Some(BlockPos {
+            x: 10,
+            y: 201,
+            z: 10
+        }),
+        "the simulated tree, never the frozen-border one"
     );
 }

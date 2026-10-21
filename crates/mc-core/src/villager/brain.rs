@@ -575,6 +575,7 @@ impl PoiCache {
             brain.counted_near = counted;
         }
         let protected = busy
+            || brain.profession == Profession::Soldier
             || state.tick < brain.protected_until
             || brain.reactive
             || self.urgent_chunks.contains(&cell);
@@ -1203,6 +1204,9 @@ pub(super) fn bodies_near(
 
 pub(super) fn schedule(age: i32, profession: Profession, day_time: i64) -> Activity {
     let time = day_time.rem_euclid(24_000);
+    if profession == Profession::Soldier && age >= 0 {
+        return Activity::Work;
+    }
     if profession == Profession::Nitwit && age >= 0 {
         return if !(2_000..14_000).contains(&time) {
             Activity::Rest
@@ -2892,11 +2896,8 @@ pub(crate) fn tick(state: &mut TickState, changes: &mut ChangeSet) {
         let meeting_point = v
             .meeting_point
             .filter(|_| v.meeting_point_dimension == state.dimension.name());
-        if let Some(job) = job_site
-            && v.age >= 0
-            && !crate::settlements::allocator::traded(&v)
-            && distance(pos, centre(job)) <= JOB_SITE_REACH_SQUARED
-            && let Some(profession) = if v.settlement.is_some() {
+        let assigned_profession = job_site.and_then(|job| {
+            if v.settlement.is_some() {
                 crate::settlements::buildings::job_profession(&state.settlements, v.settlement, job)
             } else {
                 state
@@ -2907,24 +2908,48 @@ pub(crate) fn tick(state: &mut TickState, changes: &mut ChangeSet) {
                         _ => None,
                     })
             }
+        });
+        if let Some(job) = job_site
+            && v.age >= 0
+            && !matches!(v.data.profession, Profession::Builder | Profession::Soldier)
+            && !crate::settlements::allocator::traded(&v)
+            && distance(pos, centre(job)) <= JOB_SITE_REACH_SQUARED
+            && let Some(profession) = assigned_profession
             && v.data.profession != profession
-            && crate::settlements::allocator::confirm_profession(state, &cache, id, job, profession)
+            && crate::settlements::allocator::confirm_profession(
+                state,
+                &cache,
+                id,
+                v.settlement,
+                job,
+                profession,
+            )
         {
             v.data.profession = profession;
             v.offers.clear();
         }
         let threat = decision_phase!(cache, 2, nearest_threat(&cache, pos));
-        if let Some(hurt_at) = state.entities.body(slot).hurt_at {
-            v.panic_until = v.panic_until.max(hurt_at.saturating_add(100));
-        }
-        if threat.is_some() {
-            v.panic_until = state.tick.saturating_add(100);
+        if v.data.profession == Profession::Soldier {
+            v.panic_until = 0;
+        } else {
+            if let Some(hurt_at) = state.entities.body(slot).hurt_at {
+                v.panic_until = v.panic_until.max(hurt_at.saturating_add(100));
+            }
+            if threat.is_some() {
+                v.panic_until = state.tick.saturating_add(100);
+            }
         }
         v.activity = if state.tick < v.panic_until {
             Activity::Panic
         } else {
             cache.activity_for(v.age, v.data.profession, state.day_time)
         };
+        // Reach the newly assigned workstation before running an old resource
+        // role: its independent work target must not prevent profession takeover.
+        let awaiting_profession = v.activity == Activity::Work
+            && !matches!(v.data.profession, Profession::Builder | Profession::Soldier)
+            && !crate::settlements::allocator::traded(&v)
+            && assigned_profession.is_some_and(|profession| profession != v.data.profession);
         if old_activity != v.activity {
             v.navigation_target = None;
             v.navigation_repath_at = 0;
@@ -3002,19 +3027,47 @@ pub(crate) fn tick(state: &mut TickState, changes: &mut ChangeSet) {
                 super::harvest::work(state, slot, &mut v, changes);
                 share_food(state, &cache.food, slot, &mut v, changes)
             });
-            let worker_target = if merchant_busy {
+            let mut worker_exact = false;
+            let worker_target = if merchant_busy || awaiting_profession {
                 None
             } else {
                 match v.data.profession {
                     Profession::Miner => super::mining::work(state, slot, &mut v, changes),
                     Profession::Lumberjack => super::lumber::work(state, slot, &mut v, changes),
+                    Profession::Builder => {
+                        super::building::work(state, slot, &mut v, changes).map(|target| {
+                            worker_exact = target.exact;
+                            target.pos
+                        })
+                    }
+                    Profession::Soldier => {
+                        super::soldier::work(state, slot, &mut v).map(|(target, exact)| {
+                            worker_exact = exact;
+                            target
+                        })
+                    }
+                    Profession::Farmer => super::harvest::deposit(state, slot, &mut v)
+                        .or_else(|| super::harvest::target(&v)),
+                    Profession::Shepherd => super::shepherd::work(state, slot, &mut v, changes),
                     _ => None,
                 }
             };
             let mut short_wander = false;
             let mut exact_target = false;
             let target = if v.activity == Activity::Panic {
-                if state.tick >= v.navigation_repath_at || v.navigation_target.is_none() {
+                let retreat = home.or(job_site).or(meeting_point);
+                // A flee route that found no step (a shaft or tunnel whose
+                // "away" side is rock) would freeze the villager beside the
+                // threat for as long as it lasts. Retreat to a known place and
+                // keep retreating while that route is progressing, instead of
+                // alternating with the unreachable flee target.
+                let walled_off = v.navigation_path.is_empty()
+                    && v.navigation_target
+                        .is_some_and(|goal| distance(pos, centre(goal)) > 16.0);
+                let retreating = v.navigation_target == retreat && !v.navigation_path.is_empty();
+                if retreat.is_some() && (retreating || walled_off) {
+                    retreat
+                } else if state.tick >= v.navigation_repath_at || v.navigation_target.is_none() {
                     let source = threat.or_else(|| {
                         state
                             .entities
@@ -3035,6 +3088,9 @@ pub(crate) fn tick(state: &mut TickState, changes: &mut ChangeSet) {
                 } else {
                     v.navigation_target
                 }
+            } else if v.data.profession == Profession::Soldier {
+                exact_target = worker_exact;
+                worker_target
             } else if let Some(target) = crate::settlements::economy::target(
                 state,
                 v.settlement,
@@ -3044,13 +3100,18 @@ pub(crate) fn tick(state: &mut TickState, changes: &mut ChangeSet) {
                 Some(target)
             } else if let Some(partner) = v.partner.and_then(|id| state.entities.slot_of(id)) {
                 Some(at(state.entities.pos(partner)))
+            } else if awaiting_profession {
+                job_site
             } else if worker_target.is_some()
                 || (v.activity == Activity::Work
                     && matches!(
                         v.data.profession,
-                        Profession::Miner | Profession::Lumberjack
+                        Profession::Miner | Profession::Lumberjack | Profession::Builder
                     ))
             {
+                // A one-cell arrival tolerance can leave a builder inside the
+                // future footprint despite its selected perimeter goal.
+                exact_target = worker_exact;
                 worker_target
             } else {
                 match v.activity {

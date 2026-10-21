@@ -1020,11 +1020,13 @@ fn settlement_commands_keep_native_identity_and_enforce_owner_or_operator() {
     );
     assert_eq!(
         record.owner,
-        state
-            .connections
-            .uuid_of(ConnectionId(1))
-            .unwrap()
-            .to_string()
+        Some(
+            state
+                .connections
+                .uuid_of(ConnectionId(1))
+                .unwrap()
+                .to_string()
+        )
     );
     assert_eq!(record.radius, 48);
     let villager_type = state
@@ -1237,4 +1239,382 @@ fn settlement_building_commands_select_executor_town_and_enforce_owner() {
         )),
         "owner passes authorization"
     );
+}
+
+#[test]
+fn settlement_autonomous_claim_refuses_other_mutations_and_other_players() {
+    let (mut state, alice, bob) = fixture();
+    let at = state
+        .entities
+        .pos(state.entities.slot_of(alice).unwrap())
+        .map(|value| value.floor() as i32);
+    let id = state
+        .settlements
+        .adopt_village(
+            &mut state.settlement_sequence,
+            "minecraft:overworld:test-village",
+            at,
+        )
+        .unwrap();
+    let name = state.settlements.get(id).unwrap().name.clone();
+    state.plugin_players.observe_permission(ConnectionId(2), 2);
+    command(
+        &mut state,
+        alice,
+        &format!("settlement rename {name} stolen"),
+    );
+    command(&mut state, bob, &format!("settlement remove {name}"));
+    command(&mut state, bob, &format!("settlement rename {name} stolen"));
+    assert_eq!(state.settlements.get(id).unwrap().owner, None);
+    assert!(state.settlements.find("stolen").is_none());
+    command(&mut state, alice, "settlement claim");
+    let owner = state
+        .connections
+        .uuid_of(ConnectionId(1))
+        .unwrap()
+        .to_string();
+    assert_eq!(
+        state.settlements.get(id).unwrap().owner.as_deref(),
+        Some(owner.as_str())
+    );
+    command(&mut state, bob, "settlement claim");
+    assert_eq!(
+        state.settlements.get(id).unwrap().owner.as_deref(),
+        Some(owner.as_str())
+    );
+    command(
+        &mut state,
+        alice,
+        &format!("settlement rename {name} claimed"),
+    );
+    assert_eq!(state.settlements.find("claimed").unwrap().id, id);
+}
+
+fn build_last_chat(state: &TickState, connection: ConnectionId) -> String {
+    state.outbox[&connection]
+        .iter()
+        .rev()
+        .find_map(|change| match change {
+            PlayerChange::Chat { message, .. } => Some(message.clone()),
+            _ => None,
+        })
+        .expect("build command replies over chat")
+}
+
+/// Narrow stock probe: construction materials move only through the shared
+/// executor, so an accepted order starts the project without debiting stock.
+fn build_chest_stock_at(state: &TickState, pos: (i32, i32, i32)) -> Vec<mc_data::ItemStack> {
+    state
+        .block_entities
+        .get(&pos)
+        .map(|entity| {
+            entity
+                .slots
+                .iter()
+                .filter(|stack| !stack.is_empty())
+                .cloned()
+                .collect()
+        })
+        .unwrap_or_default()
+}
+fn build_chest_stock(state: &TickState) -> Vec<mc_data::ItemStack> {
+    build_chest_stock_at(state, (1, 201, 1))
+}
+
+/// Fill the chest at `pos` with exact catalog stock for the requested level.
+fn fund_at(state: &mut TickState, pos: (i32, i32, i32), blueprint: &str, level: u8) {
+    let materials = crate::settlements::blueprints::get(&state.registry, blueprint)
+        .unwrap()
+        .level(level)
+        .unwrap()
+        .materials
+        .clone();
+    let slots = &mut state.block_entities.get_mut(&pos).unwrap().slots;
+    slots.fill(mc_data::ItemStack::EMPTY);
+    let mut index = 0;
+    for (item, quantity) in &materials {
+        let mut quantity = *quantity;
+        while quantity > 0 {
+            let count = quantity.min(64);
+            slots[index] = mc_data::ItemStack::new(*item, count as i32);
+            quantity -= count;
+            index += 1;
+        }
+    }
+}
+
+#[test]
+fn settlement_build_starts_funded_order_without_touching_blocks_or_stock() {
+    use crate::settlements::allocator::tests::block;
+    let (mut state, alice, bob) = fixture();
+    let alice_slot = state.entities.slot_of(alice).unwrap();
+    state.entities.set_pos(alice_slot, [2.5, 201.0, 2.5]);
+    // Exact syntax works; malformed shapes fail at parse and reach no record.
+    assert!(parse("settlement build house", true).is_ok());
+    assert!(parse("settlement build upgrade 7", true).is_ok());
+    assert!(parse("settlement build", true).is_err());
+    assert!(parse("settlement build house extra", true).is_err());
+    assert!(parse("settlement build upgrade nope", true).is_err());
+    // NOTE: `build upgrade` alone parses as blueprint "upgrade" (blueprint
+    // ids are free-form; validation happens at execution). Only extra words
+    // or a non-numeric id after `upgrade` fail at parse.
+    assert!(parse("settlement build upgrade 1 extra", true).is_err());
+    // Flatten ground around the anchor so the bounded site scan finds a
+    // free loaded site deterministically.
+    for x in 0..16 {
+        for z in 0..16 {
+            state
+                .world
+                .set_block(x, 200, z, state.registry.states.stone);
+            for y in 201..224 {
+                state.world.set_block(x, y, z, state.registry.states.air);
+            }
+        }
+    }
+    state.world.fold_overlay();
+    state
+        .world
+        .set_block(1, 201, 1, block(&state, "minecraft:chest", &[]));
+    // A chest with weak stock proves unfunded orders refuse with a named
+    // shortage and never persist.
+    state.block_entities.insert(
+        (1, 201, 1),
+        crate::tick::BlockEntityState {
+            slots: vec![mc_data::ItemStack::EMPTY; 27],
+            furnace: None,
+        },
+    );
+    let dirt = state
+        .registry
+        .items
+        .id_of(&mc_data::Identifier::parse("minecraft:dirt").unwrap())
+        .unwrap();
+    state.block_entities.get_mut(&(1, 201, 1)).unwrap().slots[0] =
+        mc_data::ItemStack::new(dirt, 64);
+    command(&mut state, alice, "settlement create town");
+    let id = state.settlements.find("town").unwrap().id;
+    state.settlements.get_mut(id).unwrap().bootstrap_storage = Some([1, 201, 1]);
+    command(&mut state, alice, "settlement build house");
+    assert!(
+        build_last_chat(&state, ConnectionId(1)).starts_with("not enough:"),
+        "unfunded order names its shortage"
+    );
+    assert!(
+        state.settlements.get(id).unwrap().project.is_none(),
+        "unfunded orders never persist"
+    );
+    // Full house L1 funding starts the single project with no debit here.
+    fund_at(&mut state, (1, 201, 1), "house", 1);
+    let before_writes = state.plugin_block_writes.len();
+    let before_stock = build_chest_stock(&state);
+    command(&mut state, alice, "settlement build house");
+    assert_eq!(
+        build_last_chat(&state, ConnectionId(1)),
+        "Started house construction."
+    );
+    let record = state.settlements.get(id).unwrap();
+    assert_eq!(record.project.as_ref().unwrap().blueprint, "house");
+    assert_eq!(record.project.as_ref().unwrap().level, 1);
+    assert_eq!(state.plugin_block_writes.len(), before_writes);
+    assert_eq!(build_chest_stock(&state), before_stock);
+    // A second order while the project runs is Busy and changes nothing.
+    command(&mut state, alice, "settlement build house");
+    assert_eq!(build_last_chat(&state, ConnectionId(1)), "Busy.");
+    assert_eq!(
+        state
+            .settlements
+            .get(id)
+            .unwrap()
+            .project
+            .as_ref()
+            .unwrap()
+            .blueprint,
+        "house"
+    );
+    assert_eq!(state.plugin_block_writes.len(), before_writes);
+    assert_eq!(build_chest_stock(&state), before_stock);
+    // Real validation errors surface instead of a started reply.
+    command(&mut state, alice, "settlement build not-a-blueprint");
+    assert_eq!(build_last_chat(&state, ConnectionId(1)), "Busy.");
+    // Foreign owners and unowned records refuse; operators of an owned
+    // settlement pass per existing semantics.
+    let bob_slot = state.entities.slot_of(bob).unwrap();
+    state.entities.set_pos(bob_slot, [2.5, 201.0, 2.5]);
+    command(&mut state, bob, "settlement build house");
+    assert_eq!(
+        build_last_chat(&state, ConnectionId(2)),
+        "Only the owner or an operator orders construction."
+    );
+    assert_eq!(state.plugin_block_writes.len(), before_writes);
+    assert_eq!(build_chest_stock(&state), before_stock);
+    state.plugin_players.observe_permission(ConnectionId(2), 2);
+    command(&mut state, bob, "settlement build house");
+    assert_eq!(build_last_chat(&state, ConnectionId(2)), "Busy.");
+    // Execution outside every settlement radius selects nothing.
+    state.entities.set_pos(bob_slot, [200.0, 80.0, 0.0]);
+    command(&mut state, bob, "settlement build house");
+    assert_eq!(
+        build_last_chat(&state, ConnectionId(2)),
+        "No settlement contains your position."
+    );
+}
+
+#[test]
+fn settlement_build_upgrade_refuses_stale_foreign_and_unowned_targets() {
+    use crate::settlements::{buildings::BuildingId, construction};
+    let (mut state, alice, bob) = fixture();
+    let alice_slot = state.entities.slot_of(alice).unwrap();
+    state.entities.set_pos(alice_slot, [-0.5, 80.0, -0.5]);
+    command(&mut state, alice, "settlement create town");
+    let id = state.settlements.find("town").unwrap().id;
+    let ghost = BuildingId((id.0 << 32) | 1);
+    // Stale targets (no such building) report the real admission refusal.
+    command(
+        &mut state,
+        alice,
+        &format!("settlement build upgrade {}", ghost.0),
+    );
+    assert!(state.settlements.get(id).unwrap().project.is_none());
+    assert_eq!(
+        build_last_chat(&state, ConnectionId(1)),
+        "Building not found."
+    );
+    // A foreign building id never resolves against the enclosing settlement.
+    let bob_slot = state.entities.slot_of(bob).unwrap();
+    state.entities.set_pos(bob_slot, [-0.5, 80.0, -0.5]);
+    let foreign = (id.0.wrapping_add(2048) << 32) | 1;
+    command(
+        &mut state,
+        alice,
+        &format!("settlement build upgrade {foreign}"),
+    );
+    assert!(state.settlements.get(id).unwrap().project.is_none());
+    assert_eq!(
+        build_last_chat(&state, ConnectionId(1)),
+        "Building not found."
+    );
+    // Foreign owners refuse even a well-formed request.
+    command(
+        &mut state,
+        bob,
+        &format!("settlement build upgrade {}", ghost.0),
+    );
+    assert!(state.settlements.get(id).unwrap().project.is_none());
+    assert_eq!(
+        build_last_chat(&state, ConnectionId(2)),
+        "Only the owner or an operator orders construction."
+    );
+    // Unowned records refuse even operators via can_manage.
+    let unowned = state
+        .settlements
+        .adopt_village(
+            &mut state.settlement_sequence,
+            "minecraft:overworld:unowned-build",
+            [300, 80, 0],
+        )
+        .unwrap();
+    assert_eq!(state.settlements.get(unowned).unwrap().owner, None);
+    state.entities.set_pos(alice_slot, [300.0, 80.0, 0.0]);
+    // Shrink town so the unowned village is the closest enclosing anchor.
+    state.settlements.get_mut(id).unwrap().radius = 1;
+    state.plugin_players.observe_permission(ConnectionId(1), 2);
+    command(&mut state, alice, "settlement build house");
+    assert!(
+        state.settlements.get(unowned).unwrap().project.is_none(),
+        "unowned records refuse even operators"
+    );
+    assert_eq!(
+        build_last_chat(&state, ConnectionId(1)),
+        "Only the owner or an operator orders construction."
+    );
+    // Absent actors (lost UUID registration) refuse rather than start work.
+    let ghost_connection = crate::boundary::ConnectionId(99);
+    let parsed = parse(&format!("settlement build upgrade {}", ghost.0), true).unwrap();
+    let mut changes = ChangeSet::default();
+    let stock = build_chest_stock(&state);
+    super::execute(&mut state, ghost_connection, alice, &parsed, &mut changes);
+    assert!(state.settlements.get(id).unwrap().project.is_none());
+    assert_eq!(build_chest_stock(&state), stock);
+    // Positive admission lives with the planner owner: only a ledger
+    // entry marked committed plus matching L1 geometry makes a building
+    // upgrade-available (see upgrade_uses_diff_and_certifies_level_two).
+    assert!(
+        !construction::upgrade_available(&state, id, ghost),
+        "fixture building is not blueprint-upgradeable"
+    );
+}
+
+#[test]
+fn settlement_build_upgrade_owner_command_starts_a_real_blueprint_upgrade() {
+    use crate::settlements::allocator::tests::{block, villager};
+    use crate::settlements::construction::tests::{complete, fund, start};
+    let (mut state, alice, _) = fixture();
+    let alice_slot = state.entities.slot_of(alice).unwrap();
+    state.entities.set_pos(alice_slot, [8.5, 201.0, 8.5]);
+    command(&mut state, alice, "settlement create town");
+    let id = state.settlements.find("town").unwrap().id;
+    for x in 0..16 {
+        for z in 0..16 {
+            state
+                .world
+                .set_block(x, 200, z, state.registry.states.stone);
+            for y in 201..224 {
+                state.world.set_block(x, y, z, state.registry.states.air);
+            }
+        }
+    }
+    let chest = block(&state, "minecraft:chest", &[]);
+    state.world.set_block(1, 201, 1, chest);
+    state.block_entities.insert(
+        (1, 201, 1),
+        crate::tick::BlockEntityState {
+            slots: vec![mc_data::ItemStack::EMPTY; 27],
+            furnace: None,
+        },
+    );
+    state.settlements.get_mut(id).unwrap().bootstrap_storage = Some([1, 201, 1]);
+    let builder = villager(&mut state, [1.5, 201.0, 1.5]);
+    let entity = state.entities.body(builder).id;
+    crate::settlements::bind(&mut state, id, entity).unwrap();
+    let v = state.entities.row_mut(builder).villager.as_mut().unwrap();
+    v.data.profession = crate::villager::VillagerProfession::Builder;
+    v.activity = crate::villager::Activity::Work;
+    state.day_time = 3000;
+    state.world.fold_overlay();
+    start(&mut state, id, "house", 1, None);
+    fund(&mut state, "house", 1);
+    complete(&mut state, id, builder);
+    let building = *state
+        .settlements
+        .get(id)
+        .unwrap()
+        .buildings
+        .keys()
+        .next()
+        .unwrap();
+    // L1 stock is spent by the finished build; L2 stock funds the upgrade.
+    fund(&mut state, "house", 2);
+    let before_writes = state.plugin_block_writes.len();
+    let before_stock = state.block_entities[&(1, 201, 1)].slots.clone();
+    command(
+        &mut state,
+        alice,
+        &format!("settlement build upgrade {}", building.0),
+    );
+    let record = state.settlements.get(id).unwrap();
+    let project = record.project.as_ref().unwrap();
+    assert_eq!(project.building, Some(building));
+    assert_eq!(project.level, 2);
+    assert_eq!(project.blueprint, "house");
+    assert_eq!(state.plugin_block_writes.len(), before_writes);
+    assert_eq!(state.block_entities[&(1, 201, 1)].slots, before_stock);
+    assert_eq!(
+        build_last_chat(&state, ConnectionId(1)),
+        format!("Started upgrade for building #{}.", building.0)
+    );
+    // While the upgrade runs, another order is Busy and changes nothing.
+    command(&mut state, alice, "settlement build house");
+    assert_eq!(build_last_chat(&state, ConnectionId(1)), "Busy.");
+    assert_eq!(state.plugin_block_writes.len(), before_writes);
+    assert_eq!(state.block_entities[&(1, 201, 1)].slots, before_stock);
 }

@@ -918,6 +918,43 @@ fn play_note(state: &mut TickState, pos: BlockPos) {
         None,
     );
 }
+
+/// Queues the vanilla bell block action and positional sound for nearby players.
+pub(crate) fn ring_bell(
+    state: &mut TickState,
+    position: BlockPos,
+    block: u32,
+    block_state: u32,
+    parameter: u8,
+) {
+    let mut viewers = std::mem::take(&mut state.redstone.event_viewers);
+    viewers.clear();
+    viewers.extend(state.players.iter().filter_map(|(id, player)| {
+        let slot = state.entities.slot_of(*id)?;
+        let player_position = state.entities.pos(slot);
+        let distance = (player_position[0] - f64::from(position.x)).powi(2)
+            + (player_position[1] - f64::from(position.y)).powi(2)
+            + (player_position[2] - f64::from(position.z)).powi(2);
+        (distance < 64.0 * 64.0).then_some(player.connection)
+    }));
+    for connection in viewers.drain(..) {
+        state.push_player(
+            connection,
+            crate::boundary::PlayerChange::BlockEvent {
+                position,
+                block,
+                state: block_state,
+                action: 1,
+                parameter,
+            },
+        );
+        state.push_player(
+            connection,
+            crate::boundary::PlayerChange::BellRung { position },
+        );
+    }
+    state.redstone.event_viewers = viewers;
+}
 fn rail_power(state: &TickState, pos: BlockPos, seen: &mut HashSet<BlockPos>, depth: u8) -> bool {
     if !seen.insert(pos) || depth > 8 {
         return false;

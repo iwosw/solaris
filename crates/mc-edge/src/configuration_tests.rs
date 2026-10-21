@@ -21,8 +21,12 @@ async fn loopback_pair() -> (Connection, Connection) {
 }
 
 fn information(view_distance: i8) -> ClientInformation {
+    information_locale("en_us", view_distance)
+}
+
+fn information_locale(language: &str, view_distance: i8) -> ClientInformation {
     ClientInformation {
-        language: "en_us".to_owned(),
+        language: language.to_owned(),
         view_distance,
         chat_visibility: ChatVisibility::Full,
         chat_colors: true,
@@ -104,7 +108,7 @@ async fn full_configuration_with_matching_pack() {
     // Tolerated packet while waiting for ack, then ack.
     client
         .send_packet(&ServerboundClientInformation {
-            information: information(9),
+            information: information_locale("ru_ru", 9),
         })
         .await
         .unwrap();
@@ -115,6 +119,20 @@ async fn full_configuration_with_matching_pack() {
 
     let outcome = server_task.await.unwrap();
     assert_eq!(outcome.client_view_distance, 9);
+    // The latest `Client Information` also carries the locale for dialogs.
+    assert_eq!(outcome.client_language, "ru_ru");
+}
+
+#[test]
+fn client_preferences_default_to_english_and_unknown_packets_change_nothing() {
+    let mut prefs = super::ClientPrefs::default();
+    assert_eq!(prefs.language, "");
+    assert_eq!(prefs.view_distance, 8);
+    assert!(
+        super::note_ignored(&mut prefs, 0x7fff, bytes::Bytes::new()).unwrap(),
+        "unknown packets are tolerated"
+    );
+    assert_eq!(prefs.language, "");
 }
 
 #[tokio::test]

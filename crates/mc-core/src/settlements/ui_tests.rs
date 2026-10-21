@@ -192,6 +192,102 @@ fn certify_form(kind: &str) -> Vec<(&'static str, Tag)> {
     ]
 }
 
+fn use_bell(state: &mut TickState, at: [i32; 3]) -> Vec<PlayerChange> {
+    run(
+        state,
+        &[PlayerInput::UseItemOn {
+            connection: CONN,
+            hand: crate::boundary::Hand::Main,
+            position: crate::boundary::BlockPos {
+                x: at[0],
+                y: at[1],
+                z: at[2],
+            },
+            face: 2,
+            cursor: [0.5; 3],
+            sequence: 1,
+        }],
+    )
+}
+
+fn assert_bell_rings(changes: &[PlayerChange], at: [i32; 3]) {
+    assert!(
+        changes.iter().any(|change| matches!(
+            change,
+            PlayerChange::BlockEvent { position, action: 1, parameter: 2, .. }
+                if [position.x, position.y, position.z] == at
+        )),
+        "bell animation must still be queued"
+    );
+    assert!(
+        changes.iter().any(|change| matches!(
+            change,
+            PlayerChange::BellRung { position }
+                if [position.x, position.y, position.z] == at
+        )),
+        "bell sound must still be queued"
+    );
+}
+
+#[test]
+fn anchor_bell_opens_its_settlement_for_a_non_owner_and_rings() {
+    let mut state = joined(0);
+    let id = town(&mut state, "someone-else");
+    // Another settlement is closer to the player: select by the clicked anchor,
+    // not the command's nearest-settlement lookup.
+    state
+        .settlements
+        .create(
+            &mut state.settlement_sequence,
+            "closer".into(),
+            PLAYER.into(),
+            [8, 202, 8],
+            48,
+        )
+        .unwrap();
+    station(&mut state, [8, 201, 8], "minecraft:bell");
+    let changes = use_bell(&mut state, [8, 201, 8]);
+    let dialog = last_dialog(&changes);
+    assert_eq!(dialog.title, "Settlement oak");
+    assert!(dialog.body.contains("View only"));
+    assert_bell_rings(&changes, [8, 201, 8]);
+    let denied = last_dialog(&click(
+        &mut state,
+        id,
+        "rename",
+        &[("name", string("stolen"))],
+    ));
+    assert!(denied.body.contains("Only the owner or an operator"));
+    assert_eq!(state.settlements.get(id).unwrap().name, "oak");
+}
+
+#[test]
+fn unrelated_bell_inside_settlement_only_rings() {
+    let mut state = joined(0);
+    town(&mut state, PLAYER);
+    station(&mut state, [9, 201, 8], "minecraft:bell");
+    let changes = use_bell(&mut state, [9, 201, 8]);
+    assert_bell_rings(&changes, [9, 201, 8]);
+    assert!(
+        !changes
+            .iter()
+            .any(|change| matches!(change, PlayerChange::ShowDialog { .. }))
+    );
+}
+
+#[test]
+fn settlement_anchor_without_a_bell_does_not_open_menu() {
+    let mut state = joined(0);
+    town(&mut state, PLAYER);
+    station(&mut state, [8, 201, 8], "minecraft:stone");
+    let changes = use_bell(&mut state, [8, 201, 8]);
+    assert!(
+        !changes
+            .iter()
+            .any(|change| matches!(change, PlayerChange::ShowDialog { .. }))
+    );
+}
+
 #[test]
 fn settlement_command_opens_the_main_screen_with_live_numbers_for_a_player_inside() {
     let mut state = joined(0);
@@ -242,6 +338,8 @@ fn non_owner_sees_the_screens_read_only_and_every_mutating_click_is_refused() {
         ("certify_do", certify_form("farmer")),
         ("certify", vec![]),
         ("order_start", vec![]),
+        ("project_order", vec![("blueprint", string("house"))]),
+        ("project_upgrade", vec![("b", string("1"))]),
         ("rename", vec![("name", string("hijacked"))]),
         ("upgrade", vec![("b", string("1"))]),
     ] {
@@ -253,6 +351,7 @@ fn non_owner_sees_the_screens_read_only_and_every_mutating_click_is_refused() {
     }
     let record = state.settlements.get(id).unwrap();
     assert!(record.buildings.is_empty());
+    assert!(record.project.is_none());
     assert_eq!(record.name, "oak");
 }
 
@@ -635,4 +734,604 @@ fn rename_validates_and_updates_the_record() {
     assert!(good.body.contains("Renamed to birch."));
     assert_eq!(state.settlements.get(id).unwrap().name, "birch");
     assert_eq!(good.inputs, ["name"]);
+}
+
+#[test]
+fn autonomous_main_page_keeps_claim_first_and_fits_a_small_window() {
+    let mut state = joined(0);
+    let at = player_pos(&state, CONN).unwrap();
+    let id = state
+        .settlements
+        .adopt_village(
+            &mut state.settlement_sequence,
+            "minecraft:overworld:compact-village",
+            at,
+        )
+        .unwrap();
+    for index in 0..8 {
+        let slot = villager(
+            &mut state,
+            [at[0] as f64 + index as f64, at[1] as f64, at[2] as f64],
+        );
+        let entity = state.entities.body(slot).id;
+        crate::settlements::bind(&mut state, id, entity).unwrap();
+    }
+    let page = last_dialog(&command(&mut state, "settlement"));
+    assert_eq!(
+        page.actions.first().map(|(_, action)| action.as_str()),
+        Some("solaris:settlement/claim"),
+        "the primary action must not be placed below the other navigation buttons"
+    );
+    assert!(
+        page.actions.len() <= 4,
+        "unclaimed navigation must stay compact"
+    );
+    assert!(
+        page.body.lines().count() <= 3,
+        "move detailed statistics off the claim page"
+    );
+    assert!(
+        page.body.len() <= 240,
+        "the claim page must not need body scrolling"
+    );
+    assert!(page.has("buildings") && page.has("residents") && page.has("projects"));
+}
+
+#[test]
+fn autonomous_dialog_claim_requires_live_presence_and_refreshes_management() {
+    let mut state = joined(2);
+    let at = player_pos(&state, CONN).unwrap();
+    let id = state
+        .settlements
+        .adopt_village(
+            &mut state.settlement_sequence,
+            "minecraft:overworld:ui-village",
+            at,
+        )
+        .unwrap();
+    let changes = command(&mut state, "settlement");
+    assert!(last_dialog(&changes).has("claim"));
+    let original = state.settlements.get(id).unwrap().name.clone();
+    click(&mut state, id, "rename", &[("name", string("stolen"))]);
+    assert_eq!(state.settlements.get(id).unwrap().name, original);
+    let projects = last_dialog(&click(&mut state, id, "projects", &[]));
+    assert!(!projects.has("project_order"));
+    for (action, extra) in [
+        ("project_order", vec![("blueprint", string("house"))]),
+        ("project_upgrade", vec![("b", string("1"))]),
+    ] {
+        click(&mut state, id, action, &extra);
+    }
+    assert!(
+        state.settlements.get(id).unwrap().project.is_none(),
+        "even an operator must claim before ordering construction"
+    );
+    let entity = state.connections.entity_of(CONN).unwrap();
+    let slot = state.entities.slot_of(entity).unwrap();
+    state.entities.set_pos(slot, [1000.0, 201.0, 1000.0]);
+    click(&mut state, id, "claim", &[]);
+    assert_eq!(state.settlements.get(id).unwrap().owner, None);
+    state.entities.set_pos(slot, at.map(f64::from));
+    let changes = click(&mut state, id, "claim", &[]);
+    assert_eq!(
+        state.settlements.get(id).unwrap().owner.as_deref(),
+        Some(PLAYER)
+    );
+    assert!(!last_dialog(&changes).has("claim"));
+}
+
+fn blueprint_build(state: &mut TickState, id: SettlementId, blueprint: &str) -> BuildingId {
+    use crate::settlements::construction::tests::{complete, fund, start};
+    for x in 0..16 {
+        for z in 0..16 {
+            for y in 201..224 {
+                state.world.set_block(x, y, z, state.registry.states.air);
+            }
+        }
+    }
+    let slot = villager(state, [1.5, 201.0, 1.5]);
+    let entity = state.entities.body(slot).id;
+    crate::settlements::bind(state, id, entity).unwrap();
+    let chest = block(state, "minecraft:chest", &[]);
+    state.world.set_block(1, 201, 1, chest);
+    state.block_entities.insert(
+        (1, 201, 1),
+        crate::tick::BlockEntityState {
+            slots: vec![mc_data::ItemStack::EMPTY; 27],
+            furnace: None,
+        },
+    );
+    state.settlements.get_mut(id).unwrap().bootstrap_storage = Some([1, 201, 1]);
+    {
+        let villager = state.entities.row_mut(slot).villager.as_mut().unwrap();
+        villager.data.profession = crate::villager::VillagerProfession::Builder;
+        villager.activity = crate::villager::Activity::Work;
+    }
+    state.day_time = 3000;
+    state.world.fold_overlay();
+    start(state, id, blueprint, 1, None);
+    fund(state, blueprint, 1);
+    complete(state, id, slot);
+    assert!(state.settlements.get(id).unwrap().project.is_none());
+    *state
+        .settlements
+        .get(id)
+        .unwrap()
+        .buildings
+        .keys()
+        .next()
+        .unwrap()
+}
+/// Cleared site plus an empty bootstrap chest and a bound resident, so an
+/// owner click runs the same admission shape as the planner RED fixture.
+/// Funding stays explicit at the call site: only the click may start the
+/// single project, and the click itself must debit nothing.
+fn prep_projects_site(state: &mut TickState, id: SettlementId) {
+    for x in 0..16 {
+        for z in 0..16 {
+            for y in 201..224 {
+                if (x, y, z) == (1, 201, 1) {
+                    continue;
+                }
+                state.world.set_block(x, y, z, state.registry.states.air);
+            }
+        }
+    }
+    if let std::collections::btree_map::Entry::Vacant(entry) =
+        state.block_entities.entry((1, 201, 1))
+    {
+        entry.insert(crate::tick::BlockEntityState {
+            slots: vec![mc_data::ItemStack::EMPTY; 27],
+            furnace: None,
+        });
+        let chest = block(state, "minecraft:chest", &[]);
+        state.world.set_block(1, 201, 1, chest);
+        state.settlements.get_mut(id).unwrap().bootstrap_storage = Some([1, 201, 1]);
+    }
+    if crate::settlements::member_count(state, id) == 0 {
+        let slot = villager(state, [1.5, 201.0, 1.5]);
+        let entity = state.entities.body(slot).id;
+        crate::settlements::bind(state, id, entity).unwrap();
+    }
+    state.day_time = 3000;
+    state.world.fold_overlay();
+}
+
+#[test]
+fn projects_screen_offers_every_blueprint_order_to_the_owner() {
+    let mut state = joined(0);
+    let id = town(&mut state, PLAYER);
+    let page = last_dialog(&click(&mut state, id, "projects", &[]));
+    assert!(page.title.starts_with("Projects"));
+    let expected: Vec<String> = crate::settlements::blueprints::all(&state.registry)
+        .iter()
+        .map(|blueprint| format!("Order: {}", blueprint.id))
+        .collect();
+    assert_eq!(expected.len(), 9);
+    for label in expected {
+        assert!(
+            page.actions.iter().any(
+                |(text, action)| text == &label && action == "solaris:settlement/project_order"
+            ),
+            "{label}"
+        );
+    }
+    assert!(!page.body.contains("View only"));
+
+    // Without funded stock the order starts nothing and saves nothing.
+    prep_projects_site(&mut state, id);
+    let revision = state.settlements.get(id).unwrap().revision;
+    let before_block = state.world.block_at(8, 201, 8);
+    let stock = state.block_entities[&(1, 201, 1)].slots.clone();
+    let poor = last_dialog(&click(
+        &mut state,
+        id,
+        "project_order",
+        &[("blueprint", string("watch_tower"))],
+    ));
+    assert!(poor.body.contains("not enough:"), "{}", poor.body);
+    assert!(state.settlements.get(id).unwrap().project.is_none());
+    assert_eq!(state.settlements.get(id).unwrap().revision, revision);
+    assert_eq!(state.block_entities[&(1, 201, 1)].slots, stock);
+    assert_eq!(state.world.block_at(8, 201, 8), before_block);
+    assert_eq!(poor.title, page.title);
+
+    // Funded stock starts the single project immediately, with no debit or edit.
+    crate::settlements::construction::tests::fund(&mut state, "watch_tower", 1);
+    let before = state.block_entities[&(1, 201, 1)].slots.clone();
+    let ordered = last_dialog(&click(
+        &mut state,
+        id,
+        "project_order",
+        &[("blueprint", string("watch_tower"))],
+    ));
+    assert!(
+        ordered.body.contains("Ordered watch_tower"),
+        "{}",
+        ordered.body
+    );
+    let project = state
+        .settlements
+        .get(id)
+        .unwrap()
+        .project
+        .clone()
+        .expect("funded order starts immediately");
+    assert_eq!(project.blueprint, "watch_tower");
+    assert_eq!(project.level, 1);
+    assert!(!project.structure.is_empty());
+    assert_eq!(state.block_entities[&(1, 201, 1)].slots, before);
+    assert_eq!(state.world.block_at(8, 201, 8), before_block);
+    assert_eq!(ordered.title, page.title);
+
+    // A second order while the project is active is refused without mutation.
+    let busy = last_dialog(&click(
+        &mut state,
+        id,
+        "project_order",
+        &[("blueprint", string("house"))],
+    ));
+    assert!(busy.body.contains("Busy."), "{}", busy.body);
+    assert_eq!(
+        state
+            .settlements
+            .get(id)
+            .unwrap()
+            .project
+            .as_ref()
+            .expect("active project kept")
+            .blueprint,
+        "watch_tower"
+    );
+    assert_eq!(state.block_entities[&(1, 201, 1)].slots, before);
+    assert_eq!(busy.title, page.title);
+}
+
+#[test]
+fn projects_screen_shows_upgrade_only_for_blueprint_built_buildings() {
+    let mut state = joined(0);
+    let id = town(&mut state, PLAYER);
+    let building = blueprint_build(&mut state, id, "house");
+    assert!(crate::settlements::construction::upgrade_available(
+        &state, id, building
+    ));
+    let page = last_dialog(&click(&mut state, id, "projects", &[]));
+    let seq = building.0 & u64::from(u32::MAX);
+    assert!(
+        page.actions
+            .iter()
+            .any(|(text, action)| text.contains(&format!("#{seq}"))
+                && text.contains("House L1")
+                && text.starts_with("Upgrade")
+                && action == "solaris:settlement/project_upgrade"),
+        "{:?}",
+        page.actions
+    );
+
+    // Without L2 stock the upgrade starts nothing and saves nothing.
+    for slot in state
+        .block_entities
+        .get_mut(&(1, 201, 1))
+        .unwrap()
+        .slots
+        .iter_mut()
+    {
+        *slot = mc_data::ItemStack::EMPTY;
+    }
+    let stock = state.block_entities[&(1, 201, 1)].slots.clone();
+    let poor = last_dialog(&click(
+        &mut state,
+        id,
+        "project_upgrade",
+        &[("b", string(&building.0.to_string()))],
+    ));
+    assert!(poor.body.contains("not enough:"), "{}", poor.body);
+    assert!(state.settlements.get(id).unwrap().project.is_none());
+    assert_eq!(state.block_entities[&(1, 201, 1)].slots, stock);
+
+    // Funded L2 stock starts the upgrade immediately, with no debit.
+    crate::settlements::construction::tests::fund(&mut state, "house", 2);
+    let before = state.block_entities[&(1, 201, 1)].slots.clone();
+    let started = last_dialog(&click(
+        &mut state,
+        id,
+        "project_upgrade",
+        &[("b", string(&building.0.to_string()))],
+    ));
+    assert!(
+        started
+            .body
+            .contains(&format!("Upgrade for #{seq} started")),
+        "{}",
+        started.body
+    );
+    let project = state
+        .settlements
+        .get(id)
+        .unwrap()
+        .project
+        .clone()
+        .expect("funded upgrade starts immediately");
+    assert_eq!(project.building, Some(building));
+    assert_eq!(project.level, 2);
+    assert!(!project.structure.is_empty());
+    assert_eq!(state.block_entities[&(1, 201, 1)].slots, before);
+
+    // A player-certified building of the same kind is never offered an upgrade.
+    let mut state = joined(0);
+    let id = town(&mut state, PLAYER);
+    station(&mut state, [4, 201, 4], "minecraft:composter");
+    click(&mut state, id, "certify_do", &certify_form("farmer"));
+    let page = last_dialog(&click(&mut state, id, "projects", &[]));
+    assert!(
+        !page
+            .actions
+            .iter()
+            .any(|(_, action)| action == "solaris:settlement/project_upgrade"),
+        "{:?}",
+        page.actions
+    );
+}
+
+#[test]
+fn projects_screen_keeps_every_order_button_above_the_status_lines() {
+    let mut state = joined(0);
+    let id = town(&mut state, PLAYER);
+    blueprint_build(&mut state, id, "house");
+    let page = last_dialog(&click(&mut state, id, "projects", &[]));
+    // A dialog renders its body above the action grid in one scroll column, so
+    // an empty body is what keeps Order/Upgrade reachable without scrolling
+    // past status lines: with a note-less page the grid comes first.
+    assert_eq!(page.body, "", "no status line may precede the grid");
+    assert_eq!(
+        page.actions.first().map(|(_, action)| action.as_str()),
+        Some("solaris:settlement/project_order"),
+        "{:?}",
+        page.actions
+    );
+    assert!(page.has("project_upgrade") && page.has("project_status"));
+
+    let status = last_dialog(&click(&mut state, id, "project_status", &[]));
+    assert_eq!(status.title, "Project status - oak");
+    assert!(status.has("projects"));
+    assert!(
+        status.body.contains("No active project."),
+        "{}",
+        status.body
+    );
+    assert!(!status.has("project_order") && !status.has("project_upgrade"));
+}
+
+#[test]
+fn project_status_lines_cite_three_needs_then_count_the_rest() {
+    use crate::settlements::construction::{WaitingKind, WaitingNeed};
+
+    let kind = WaitingKind {
+        blueprint: "house".into(),
+        needs: vec![
+            WaitingNeed::Awaiting {
+                item: "oak_planks".into(),
+                count: 4,
+            },
+            WaitingNeed::NoSource {
+                item: "white_wool".into(),
+            },
+            WaitingNeed::Awaiting {
+                item: "oak_door".into(),
+                count: 1,
+            },
+            WaitingNeed::Awaiting {
+                item: "cobblestone".into(),
+                count: 12,
+            },
+        ],
+    };
+    let mut ctx = Ctx {
+        id: SettlementId(1),
+        manage: true,
+        lang: Lang::En,
+    };
+    let english = waiting_line(&ctx, &kind);
+    assert_eq!(
+        english,
+        "Waiting house: needs oak_planks x4, white_wool — no source, oak_door x1 … (+1 more)"
+    );
+    ctx.lang = Lang::Ru;
+    let russian = waiting_line(&ctx, &kind);
+    assert_eq!(
+        russian,
+        "Ожидание house: нужно oak_planks ×4, white_wool — нет источника, oak_door ×1 … (ещё 1)"
+    );
+
+    // Two needs fit without the ellipsis; every line stays one short row.
+    let short = WaitingKind {
+        blueprint: "mine".into(),
+        needs: vec![
+            WaitingNeed::Awaiting {
+                item: "oak_planks".into(),
+                count: 4,
+            },
+            WaitingNeed::NoSource {
+                item: "white_wool".into(),
+            },
+        ],
+    };
+    assert_eq!(
+        waiting_line(&ctx, &short),
+        "Ожидание mine: нужно oak_planks ×4, white_wool — нет источника"
+    );
+}
+
+#[test]
+fn project_status_screen_keeps_every_waiting_line_within_the_cap() {
+    let mut state = joined(0);
+    let id = town(&mut state, PLAYER);
+    prep_projects_site(&mut state, id);
+    let status = last_dialog(&click(&mut state, id, "project_status", &[]));
+    let waiting: Vec<&str> = status
+        .body
+        .lines()
+        .filter(|line| line.starts_with("Waiting "))
+        .collect();
+    assert!(!waiting.is_empty(), "{}", status.body);
+    for line in waiting {
+        let items = line
+            .split_once(": needs ")
+            .unwrap_or_else(|| panic!("{line}"))
+            .1;
+        assert!(items.split(", ").count() <= 3, "{line}");
+    }
+}
+
+#[test]
+fn projects_clicks_are_read_only_for_visitors_and_forged_payloads_start_nothing() {
+    let mut state = joined(0);
+    let id = town(&mut state, "someone-else");
+    let page = last_dialog(&click(&mut state, id, "projects", &[]));
+    assert!(page.body.contains("View only"));
+    assert!(
+        !page
+            .actions
+            .iter()
+            .any(|(_, action)| action == "solaris:settlement/project_order"
+                || action == "solaris:settlement/project_upgrade"),
+        "{:?}",
+        page.actions
+    );
+
+    for (action, extra) in [
+        ("project_order", vec![("blueprint", string("house"))]),
+        ("project_upgrade", vec![("b", string("1"))]),
+    ] {
+        let refused = last_dialog(&click(&mut state, id, action, &extra));
+        assert!(
+            refused.body.contains("Only the owner or an operator"),
+            "{action}"
+        );
+    }
+    assert!(state.settlements.get(id).unwrap().project.is_none());
+
+    // Owner clicks with forged or stale payloads start nothing and stay on page.
+    let mut state = joined(0);
+    let id = town(&mut state, PLAYER);
+    let forged_blueprint = last_dialog(&click(
+        &mut state,
+        id,
+        "project_order",
+        &[("blueprint", string("castle"))],
+    ));
+    assert!(forged_blueprint.body.contains("Unknown blueprint"));
+    let stale_building = last_dialog(&click(
+        &mut state,
+        id,
+        "project_upgrade",
+        &[("b", string("999"))],
+    ));
+    assert!(stale_building.body.contains("no longer exists"));
+    let foreign = last_dialog(&click(
+        &mut state,
+        id,
+        "project_upgrade",
+        &[("b", string(&(5u64 << 32 | 1).to_string()))],
+    ));
+    assert!(foreign.body.contains("no longer exists"));
+    assert!(state.settlements.get(id).unwrap().project.is_none());
+}
+
+// ------------------------------------------------------------------ localisation
+
+/// Play `ClientInformation` locale updates arrive as `PlayerInput::SetLocale`.
+fn set_locale(state: &mut TickState, locale: &str) {
+    run_tick(
+        state,
+        &[PlayerInput::SetLocale {
+            connection: CONN,
+            locale: locale.into(),
+        }],
+    );
+}
+
+#[test]
+fn russian_locale_localizes_the_main_menu_and_army_page() {
+    let mut state = joined(0);
+    let id = town(&mut state, PLAYER);
+    set_locale(&mut state, "ru_ru");
+
+    let main = last_dialog(&command(&mut state, "settlement"));
+    assert_eq!(main.title, "Поселение oak");
+    assert!(main.has("army"));
+    assert_eq!(main.label_of("buildings"), "Постройки");
+    assert_eq!(main.label_of("residents"), "Жители и работа");
+    assert_eq!(main.label_of("orders"), "Заказы производства");
+    assert_eq!(main.label_of("army"), "Армия");
+    assert_eq!(main.label_of("projects"), "Стройка");
+    assert_eq!(main.label_of("settings"), "Настройки");
+    assert!(main.body.contains("Владелец: "), "{}", main.body);
+    assert!(
+        main.body.contains("Радиус: 48 блоков вокруг 8 201 8"),
+        "{}",
+        main.body
+    );
+    assert!(main.body.contains("Постройки: пока нет"), "{}", main.body);
+    assert!(
+        main.body.contains("Склад: нет сертифицированного"),
+        "{}",
+        main.body
+    );
+
+    let army = last_dialog(&click(&mut state, id, "army", &[]));
+    assert_eq!(army.title, "Армия — oak");
+    assert_eq!(army.label_of("army_recruit"), "Нанять солдата");
+    assert_eq!(army.label_of("main"), "Назад");
+    assert!(army.body.contains("Солдат нет"), "{}", army.body);
+}
+
+#[test]
+fn en_us_locale_keeps_the_settlement_dialogs_english() {
+    let mut state = joined(0);
+    let id = town(&mut state, PLAYER);
+    set_locale(&mut state, "en_us");
+
+    let main = last_dialog(&command(&mut state, "settlement"));
+    assert_eq!(main.title, "Settlement oak");
+    assert_eq!(main.label_of("army"), "Army");
+    assert!(main.body.contains("Owner: "), "{}", main.body);
+    assert!(main.body.contains("Buildings: none yet"), "{}", main.body);
+
+    let army = last_dialog(&click(&mut state, id, "army", &[]));
+    assert_eq!(army.title, "Army - oak");
+    assert_eq!(army.label_of("army_recruit"), "Recruit soldier");
+    assert_eq!(army.label_of("main"), "Back");
+}
+
+#[test]
+fn play_locale_update_applies_to_the_next_open() {
+    let mut state = joined(0);
+    town(&mut state, PLAYER);
+    let first = last_dialog(&command(&mut state, "settlement"));
+    assert_eq!(first.title, "Settlement oak", "no locale yet reads English");
+
+    set_locale(&mut state, "ru_ru");
+    let second = last_dialog(&command(&mut state, "settlement"));
+    assert_eq!(second.title, "Поселение oak");
+
+    set_locale(&mut state, "en_gb");
+    let third = last_dialog(&command(&mut state, "settlement"));
+    assert_eq!(third.title, "Settlement oak");
+}
+
+#[test]
+fn locale_is_recorded_before_join_and_cleared_on_leave() {
+    let mut state = test_state();
+    run_tick(
+        &mut state,
+        &[PlayerInput::SetLocale {
+            connection: CONN,
+            locale: "ru_ru".into(),
+        }],
+    );
+    assert_eq!(state.connections.locale_of(CONN), Some("ru_ru"));
+
+    run_tick(&mut state, &[PlayerInput::Leave { connection: CONN }]);
+    assert_eq!(state.connections.locale_of(CONN), None);
 }

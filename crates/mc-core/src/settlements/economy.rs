@@ -207,7 +207,7 @@ pub(crate) fn execute(
     if worker_busy {
         return Err(Failure::Blocked);
     }
-    let owner = record.owner.clone();
+    let owner = record.owner.clone().ok_or(Failure::Forbidden)?;
     let result = match request {
         Request::Production(request) => {
             let mut state = std::mem::take(&mut world.settlements.economy_for_tick(id).production);
@@ -340,7 +340,12 @@ pub(super) fn authorize_endpoint(
             }
         }
         inventory::Endpoint::Player { uuid } => {
-            if record.owner.parse::<uuid::Uuid>().ok() != Some(*uuid) {
+            if record
+                .owner
+                .as_deref()
+                .and_then(|owner| owner.parse::<uuid::Uuid>().ok())
+                != Some(*uuid)
+            {
                 return Err(Failure::Forbidden);
             }
             inventory::load(world, endpoint)?;

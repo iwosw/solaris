@@ -219,6 +219,9 @@ pub(in crate::tick) fn use_item_on(
     if crate::sleep::use_bed(state, entity, *connection, *position) {
         return;
     }
+    if use_bell(state, *connection, *position, *face) {
+        return;
+    }
     // Interactive blocks react to the hand (doors, gates, levers).
     let rotation = state
         .entities
@@ -334,6 +337,41 @@ pub(in crate::tick) fn use_item_on(
         intent.seq = state.next_seq(entity);
         intents.push(intent);
     }
+}
+
+/// Handles the vanilla bell block action and returns whether `position` was a bell.
+fn use_bell(
+    state: &mut TickState,
+    connection: ConnectionId,
+    position: BlockPos,
+    parameter: u8,
+) -> bool {
+    let Some(state_id) = state.world.block_at(position.x, position.y, position.z) else {
+        return false;
+    };
+    let Some(block_state) = state
+        .registry
+        .blocks
+        .by_id(mc_world::BlockStateId(state_id))
+    else {
+        return false;
+    };
+    if block_state.block.id.path() != "bell" {
+        return false;
+    }
+    let Ok(block) = u32::try_from(block_state.block.raw_id) else {
+        return false;
+    };
+    let settlement = state
+        .settlements
+        .records()
+        .find(|record| record.anchor == [position.x, position.y, position.z])
+        .map(|record| record.id);
+    crate::redstone::ring_bell(state, position, block, state_id, parameter);
+    if let Some(settlement) = settlement {
+        crate::settlements::ui::open_for_settlement(state, connection, settlement);
+    }
+    true
 }
 
 pub(in crate::tick) fn interact_entity(

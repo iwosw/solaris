@@ -4,6 +4,15 @@ use mc_data::ItemStack;
 use uuid::Uuid;
 
 pub(crate) mod brain;
+pub(crate) mod building;
+#[cfg(test)]
+mod building_autonomy_tests;
+#[cfg(test)]
+mod building_housing_army_tests;
+#[cfg(test)]
+mod building_tests;
+#[cfg(test)]
+mod building_worksite_tests;
 pub(crate) mod conversion;
 #[cfg(test)]
 mod conversion_tests;
@@ -13,12 +22,18 @@ mod defense_tests;
 pub(crate) mod doors;
 pub(crate) mod generated;
 pub(crate) mod harvest;
+#[cfg(test)]
+mod harvest_tests;
 pub(crate) mod lumber;
 #[cfg(test)]
 mod lumber_tests;
 pub(crate) mod mining;
 #[cfg(test)]
 mod mining_tests;
+pub(crate) mod shepherd;
+#[cfg(test)]
+mod shepherd_tests;
+pub(crate) mod soldier;
 pub(crate) use generated::generated_uuid;
 #[cfg(test)]
 mod generated_tests;
@@ -198,9 +213,11 @@ pub enum VillagerProfession {
     Weaponsmith,
     Miner,
     Lumberjack,
+    Builder,
+    Soldier,
 }
 impl VillagerProfession {
-    pub const ALL: [Self; 17] = [
+    pub const ALL: [Self; 19] = [
         Self::None,
         Self::Armorer,
         Self::Butcher,
@@ -218,6 +235,8 @@ impl VillagerProfession {
         Self::Weaponsmith,
         Self::Miner,
         Self::Lumberjack,
+        Self::Builder,
+        Self::Soldier,
     ];
     pub fn name(self) -> &'static str {
         [
@@ -238,6 +257,8 @@ impl VillagerProfession {
             "weaponsmith",
             "miner",
             "lumberjack",
+            "builder",
+            "soldier",
         ][self as usize]
     }
     /// Vanilla projection shared by merchant titles and Anvil profession ids.
@@ -245,6 +266,8 @@ impl VillagerProfession {
         match self {
             Self::Miner => Self::Toolsmith.name(),
             Self::Lumberjack => Self::Fletcher.name(),
+            Self::Builder => Self::Mason.name(),
+            Self::Soldier => Self::Armorer.name(),
             _ => self.name(),
         }
     }
@@ -253,11 +276,13 @@ impl VillagerProfession {
             return match path {
                 "miner" => Some(Self::Miner),
                 "lumberjack" => Some(Self::Lumberjack),
+                "builder" => Some(Self::Builder),
+                "soldier" => Some(Self::Soldier),
                 _ => None,
             };
         }
         if let Some(path) = name.strip_prefix("minecraft:") {
-            if matches!(path, "miner" | "lumberjack") {
+            if matches!(path, "miner" | "lumberjack" | "builder" | "soldier") {
                 return None;
             }
             return Self::ALL.into_iter().find(|v| v.name() == path);
@@ -268,6 +293,8 @@ impl VillagerProfession {
         match self {
             Self::Miner => Self::Toolsmith as i32,
             Self::Lumberjack => Self::Fletcher as i32,
+            Self::Builder => Self::Mason as i32,
+            Self::Soldier => Self::Armorer as i32,
             _ => self as i32,
         }
     }
@@ -348,6 +375,7 @@ pub struct VillagerState {
     /// Durable extraction cursors share the entity's inventory/WAL after-image.
     pub(crate) mining_progress: mining::Progress,
     pub(crate) lumber_progress: lumber::Progress,
+    pub(crate) soldier: Option<crate::settlements::army::Soldier>,
     pub food_level: i32,
     /// Vanilla Age: negative baby growth, positive breeding cooldown.
     pub age: i32,
@@ -388,6 +416,9 @@ pub struct VillagerState {
     /// Earliest tick of this farmer's next harvest attempt.
     #[serde(skip)]
     pub(crate) harvest_at: u64,
+    /// Resumable certified-farm sweep and selected crop, owned by the tick.
+    #[serde(skip)]
+    pub(crate) harvest_progress: harvest::Progress,
     #[serde(skip)]
     pub(crate) poi_validation: crate::settlements::allocator::PoiValidation,
     #[serde(skip)]
@@ -426,6 +457,7 @@ impl Default for VillagerState {
             inventory: std::array::from_fn(|_| None),
             mining_progress: mining::Progress::default(),
             lumber_progress: lumber::Progress::default(),
+            soldier: None,
             food_level: 0,
             age: 0,
             last_restock: 0,
@@ -450,6 +482,7 @@ impl Default for VillagerState {
             navigation_progress_dist_sq: 0.0,
             opened_doors: Vec::new(),
             harvest_at: 0,
+            harvest_progress: harvest::Progress::default(),
             poi_validation: crate::settlements::allocator::PoiValidation::default(),
             trade_work: None,
             panic_until: 0,

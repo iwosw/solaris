@@ -1,16 +1,21 @@
 //! Native settlements, households, districts and physical economic policy.
-//! Military remains outside this cutover pending a separate committee vote.
+//! Native military uses resident equipment and the shared melee commit path.
 mod registry;
 pub use registry::{
     RecordImage, Registry, SettlementId, SettlementRecord, valid_name, validate_record,
 };
 
 pub(crate) mod allocator;
+pub(crate) mod army;
+pub(crate) mod autonomy;
+pub mod blueprints;
 pub(crate) mod building_commands;
 pub mod buildings;
 mod caravan;
 pub(crate) mod commands;
 mod commerce;
+pub mod construction;
+pub(crate) mod construction_crafting;
 pub(crate) mod economy;
 pub(crate) mod economy_commands;
 pub(crate) mod economy_customization;
@@ -22,7 +27,13 @@ pub mod households;
 pub(crate) mod persistence;
 pub mod startup;
 pub(crate) mod ui;
-pub(crate) use allocator::tick;
+pub(crate) mod ui_text;
+pub(crate) fn tick(state: &mut TickState, changes: &mut crate::boundary::ChangeSet) -> u64 {
+    let elapsed = allocator::tick(state, changes);
+    construction::tick(state);
+    army::tick(state);
+    elapsed
+}
 
 use crate::boundary::EntityId;
 use crate::tick::TickState;
@@ -79,20 +90,31 @@ pub(crate) fn unbind(state: &mut TickState, entity: EntityId) -> Result<(), &'st
     if villager.settlement.is_none() {
         return Ok(());
     }
+    if villager.soldier.is_some() {
+        return Err("Dismiss soldier before unbinding");
+    }
     households::detach(state, entity);
-    state
+    let v = state
         .entities
         .row_mut(slot)
         .villager
         .as_mut()
-        .expect("validated villager")
-        .settlement = None;
+        .expect("validated villager");
+    let profession = v.data.profession;
+    construction::detach(v);
+    v.settlement = None;
+    if v.data.profession != profession {
+        crate::villager::sync_appearance(state, slot);
+    }
     refresh_counts(state, [entity]);
     Ok(())
 }
 
 /// Clear membership and record in the same tick's entity and settlement WAL.
 pub(crate) fn remove(state: &mut TickState, id: SettlementId) -> bool {
+    if !construction::remove(state, id) {
+        return false;
+    }
     if !state.settlements.remove(id) {
         return false;
     }
@@ -112,8 +134,17 @@ pub(crate) fn remove(state: &mut TickState, id: SettlementId) -> bool {
                     .villager
                     .as_mut()
                     .expect("matched villager");
+                let profession = v.data.profession;
+                construction::detach(v);
                 v.settlement = None;
                 v.household = None;
+                v.soldier = None;
+                if v.data.profession == crate::villager::VillagerProfession::Soldier {
+                    v.data.profession = crate::villager::VillagerProfession::None;
+                }
+                if v.data.profession != profession {
+                    crate::villager::sync_appearance(world, slot);
+                }
             }
         }
     }
@@ -185,8 +216,17 @@ pub(crate) fn finish(state: &mut TickState) {
                     .villager
                     .as_mut()
                     .expect("matched villager");
+                let profession = v.data.profession;
+                construction::detach(v);
                 v.settlement = None;
                 v.household = None;
+                v.soldier = None;
+                if v.data.profession == crate::villager::VillagerProfession::Soldier {
+                    v.data.profession = crate::villager::VillagerProfession::None;
+                }
+                if v.data.profession != profession {
+                    crate::villager::sync_appearance(world, slot);
+                }
             }
         }
         rebuild_counts(world);

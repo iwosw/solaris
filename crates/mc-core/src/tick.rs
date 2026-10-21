@@ -186,6 +186,12 @@ pub struct Connections {
     /// and cleared on leave/remove. Never persisted: unnegotiated callers
     /// fall back to the configured server view.
     view_distances: HashMap<ConnectionId, u8>,
+    /// Transient client UI locales, keyed by live connection.
+    /// Recorded on [`PlayerInput::SetLocale`](crate::boundary::PlayerInput::SetLocale)
+    /// (which precedes Join), moved with the connection across dimensions,
+    /// and cleared on leave/remove. Never persisted: unnegotiated callers read
+    /// English.
+    locales: HashMap<ConnectionId, String>,
 }
 
 impl Connections {
@@ -234,8 +240,20 @@ impl Connections {
         self.view_distances.insert(connection, view_distance);
     }
 
+    /// Client UI locale (`ClientInformation.language`) for a connection, if the
+    /// edge admitted one. Unnegotiated callers get `None` and read English.
+    #[must_use]
+    pub fn locale_of(&self, connection: ConnectionId) -> Option<&str> {
+        self.locales.get(&connection).map(String::as_str)
+    }
+
+    pub(crate) fn set_locale(&mut self, connection: ConnectionId, locale: String) {
+        self.locales.insert(connection, locale);
+    }
+
     pub(crate) fn remove_by_connection(&mut self, connection: ConnectionId) -> Option<EntityId> {
         self.view_distances.remove(&connection);
+        self.locales.remove(&connection);
         let entity = self.by_connection.remove(&connection)?;
         self.by_entity.remove(&entity);
         self.names.remove(&connection);
@@ -254,6 +272,9 @@ impl Connections {
         destination.insert(connection, entity, uuid, name);
         if let Some(view_distance) = self.view_distances.remove(&connection) {
             destination.view_distances.insert(connection, view_distance);
+        }
+        if let Some(locale) = self.locales.remove(&connection) {
+            destination.locales.insert(connection, locale);
         }
     }
 
@@ -468,6 +489,7 @@ pub struct TickState {
     pub(crate) generated_entity_initial_scan: bool,
     pub(crate) settlements: crate::settlements::Registry,
     pub(crate) settlement_sequence: u64,
+    pub(crate) autonomy_queue: crate::settlements::autonomy::AutonomyQueue,
     /// Per-connection certify-dialog corner marks (transient UI draft, never persisted).
     pub(crate) settlement_marks: HashMap<ConnectionId, crate::settlements::ui::Marks>,
     pub(crate) tick_budget: crate::tick_budget::Budget,
@@ -639,6 +661,7 @@ impl TickState {
             generated_entity_initial_scan: false,
             settlements: Default::default(),
             settlement_sequence: 0,
+            autonomy_queue: Default::default(),
             settlement_marks: HashMap::default(),
             tick_budget: Default::default(),
         }
@@ -1892,6 +1915,7 @@ impl TickState {
             self.connections.by_connection.remove(&connection);
             self.connections.by_entity.remove(&id);
             self.connections.view_distances.remove(&connection);
+            self.connections.locales.remove(&connection);
             self.outbox.remove(&connection);
         }
         self.players.remove(&id);
@@ -2535,6 +2559,7 @@ fn run_dimension_tick_inner<'a>(
     // Block entities ride inside chunk regions: pull newly resident chunks'
     // typed maps into live storage (journal folds apply over them).
     sync_chunk_block_entities(state);
+    crate::settlements::autonomy::tick(state, &mut changes);
     crate::conduit::run(state, &mut intents);
     crate::beacon::run(state);
     crate::dolphin::run(state);
@@ -2565,6 +2590,7 @@ fn run_dimension_tick_inner<'a>(
     crate::special_mobs::raiders::run(state, &mut intents);
     crate::vehicles::run(state, &mut intents, &mut changes);
     crate::end_fight::run(state, &mut intents, &mut changes);
+    crate::villager::soldier::attacks(state, &mut intents, &mut changes);
     let entity_tail_time = entity_tail_start.elapsed();
 
     // 3. Merge (deterministic, fixed order, whole-intent rejection).
@@ -2779,6 +2805,20 @@ fn run_dimension_tick_inner<'a>(
     // Native commit-tail owners (including villager work and doors) can write
     // after the main block fold. Publish their actual chunk afterimages, not
     // an older chunk beside newer block deltas.
+    // Canonical structure work may run in the resident commit tail, after
+    // the early plugin-write drain. Seal those writes with debit/cursor now,
+    // using final owner post-images (a door/shape may have evolved meanwhile).
+    changes
+        .blocks
+        .extend(state.plugin_block_writes.drain(..).map(|(position, _)| {
+            crate::boundary::BlockChange {
+                position,
+                state: state
+                    .world
+                    .block_at(position.x, position.y, position.z)
+                    .expect("committed native block remains loaded through tick seal"),
+            }
+        }));
     state.world.fold_overlay();
     let chunks = state.world.snapshot();
     let snapshot_time = publish_start.elapsed();
@@ -4441,6 +4481,9 @@ fn apply_inputs<'a>(
                 connection,
                 view_distance,
             } => input::session::set_view_distance(state, (connection, view_distance)),
+            PlayerInput::SetLocale { connection, locale } => {
+                input::session::set_locale(state, (connection, locale))
+            }
             PlayerInput::Join {
                 connection,
                 uuid,

@@ -46,6 +46,20 @@ fn settlement_is_native_player_command_with_typed_arguments_and_help() {
         .executable
     );
     assert!(node(&["settlement", "building", "upgrade", "id"]).executable);
+    assert!(!node(&["settlement", "build"]).executable);
+    assert!(node(&["settlement", "build", "blueprint"]).executable);
+    assert!(!node(&["settlement", "build", "upgrade"]).executable);
+    assert!(node(&["settlement", "build", "upgrade", "id"]).executable);
+    assert!(
+        matches!(
+            node(&["settlement", "build", "upgrade", "id"]).kind,
+            CommandNodeKind::Argument {
+                parser: Parser::String(_),
+                ..
+            }
+        ),
+        "global building IDs exceed brigadier's signed i32 range"
+    );
     assert!(matches!(
         node(&["settlement", "create", "name", "radius"]).kind,
         CommandNodeKind::Argument {
@@ -74,6 +88,9 @@ fn settlement_is_native_player_command_with_typed_arguments_and_help() {
     for domain in ["production", "commerce", "payroll", "caravan"] {
         assert!(node(&["settlement", domain, "settlement", "status"]).executable);
     }
+    assert!(node(&["settlement", "army", "list"]).executable);
+    assert!(node(&["settlement", "army", "recruit"]).executable);
+    assert!(node(&["settlement", "claim"]).executable);
     for (domain, action) in [
         ("production", "start"),
         ("commerce", "quote"),
@@ -96,7 +113,9 @@ fn settlement_is_native_player_command_with_typed_arguments_and_help() {
         "guide",
         "menu",
         "building",
+        "build",
         "create",
+        "claim",
         "list",
         "info",
         "rename",
@@ -108,6 +127,7 @@ fn settlement_is_native_player_command_with_typed_arguments_and_help() {
         "commerce",
         "payroll",
         "caravan",
+        "army",
     ] {
         assert!(help.iter().any(|line| line.starts_with(&format!("/settlement {sub}")) && line.contains(" — ")), "missing description for {sub}: {help:?}");
     }
@@ -128,10 +148,13 @@ fn settlement_completion_covers_subcommands_without_name_lookup() {
     };
     assert_eq!(complete("/sett"), ["settlement"]);
     assert!(complete("/settlement ").contains(&"create".to_owned()));
+    assert!(complete("/settlement ").contains(&"build".to_owned()));
     assert_eq!(complete("/settlement gui"), ["guide"]);
     assert!(complete("/settlement info O").is_empty());
     assert!(complete("/settlement create O").is_empty());
     assert!(complete("/settlement rename Oak O").is_empty());
     assert!(complete("/settlement unbind O").is_empty());
     assert!(complete("/settlement caravan Oak ").contains(&"status".to_owned()));
+    assert!(complete("/settlement ").contains(&"army".to_owned()));
+    assert!(complete("/settlement ").contains(&"claim".to_owned()));
 }

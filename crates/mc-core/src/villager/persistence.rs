@@ -209,6 +209,16 @@ pub(crate) fn validate_state(state: &VillagerState) -> Result<()> {
     if state.mining_progress.layer > 2 {
         return Err(VillagerNbtError::Invalid("SolarisMiningProgress.layer"));
     }
+    if (state.data.profession == VillagerProfession::Soldier) != state.soldier.is_some()
+        || state.soldier.as_ref().is_some_and(|soldier| {
+            soldier.barracks.0 & u64::from(u32::MAX) == 0
+                || state
+                    .settlement
+                    .is_none_or(|id| soldier.barracks.0 >> 32 != id.0)
+        })
+    {
+        return Err(VillagerNbtError::Invalid("SolarisSoldier"));
+    }
     if ![
         &state.job_site_dimension,
         &state.home_dimension,
@@ -395,6 +405,7 @@ pub(crate) fn journal_eq(left: &VillagerState, right: &VillagerState) -> bool {
         conversion_player,
         mining_progress,
         lumber_progress,
+        soldier,
     )
 }
 
@@ -438,6 +449,7 @@ pub(crate) fn journal_image(state: &VillagerState) -> VillagerState {
         navigation_chunks: Vec::new(),
         opened_doors: Vec::new(),
         harvest_at: 0,
+        harvest_progress: super::harvest::Progress::default(),
         motion_geometry: super::brain::MotionGeometryCache::default(),
         navigation_repath_at: 0,
         navigation_can_open_doors: false,
@@ -453,6 +465,7 @@ pub(crate) fn journal_image(state: &VillagerState) -> VillagerState {
         conversion_player: state.conversion_player,
         mining_progress: state.mining_progress.clone(),
         lumber_progress: state.lumber_progress.clone(),
+        soldier: state.soldier.clone(),
     }
 }
 
@@ -733,9 +746,15 @@ pub(crate) fn villager_to_fields(
     if let Some(tag) = progress_to_tag(&state.lumber_progress, "SolarisLumberProgress")? {
         runtime.push(("SolarisLumberProgress".into(), tag));
     }
+    if let Some(tag) = progress_to_tag(&state.soldier, "SolarisSoldier")? {
+        runtime.push(("SolarisSoldier".into(), tag));
+    }
     if matches!(
         state.data.profession,
-        VillagerProfession::Miner | VillagerProfession::Lumberjack
+        VillagerProfession::Miner
+            | VillagerProfession::Lumberjack
+            | VillagerProfession::Builder
+            | VillagerProfession::Soldier
     ) {
         runtime.push((
             "profession".into(),
@@ -876,7 +895,10 @@ pub(crate) fn villager_from_fields(
             .ok_or(VillagerNbtError::Invalid("VillagerData.profession"))?;
         if matches!(
             profession,
-            VillagerProfession::Miner | VillagerProfession::Lumberjack
+            VillagerProfession::Miner
+                | VillagerProfession::Lumberjack
+                | VillagerProfession::Builder
+                | VillagerProfession::Soldier
         ) {
             return Err(VillagerNbtError::Invalid("VillagerData.profession"));
         }
@@ -931,6 +953,8 @@ pub(crate) fn villager_from_fields(
         state.data.profession = match tag {
             Tag::String(role) if role == "miner" => VillagerProfession::Miner,
             Tag::String(role) if role == "lumberjack" => VillagerProfession::Lumberjack,
+            Tag::String(role) if role == "builder" => VillagerProfession::Builder,
+            Tag::String(role) if role == "soldier" => VillagerProfession::Soldier,
             _ => {
                 return Err(VillagerNbtError::Invalid(
                     "solaris:VillagerRuntime.profession",
@@ -1107,6 +1131,7 @@ pub(crate) fn villager_from_fields(
     }
     state.mining_progress = progress_from_tag(runtime, "SolarisMiningProgress")?;
     state.lumber_progress = progress_from_tag(runtime, "SolarisLumberProgress")?;
+    state.soldier = progress_from_tag(runtime, "SolarisSoldier")?;
     if field(fields, "ConversionTime")?.is_some() {
         state.conversion_time = Some(integer(fields, "ConversionTime", -1)?);
     }

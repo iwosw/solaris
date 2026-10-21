@@ -14,9 +14,9 @@ use crate::connection::{Connection, text_component_nbt};
 pub(crate) async fn negotiate(
     conn: &mut Connection,
     manifest: &LoaderManifest,
-    view_distance: &mut i8,
+    prefs: &mut crate::configuration::ClientPrefs,
 ) -> anyhow::Result<LoaderSession> {
-    let result = negotiate_inner(conn, manifest, view_distance).await;
+    let result = negotiate_inner(conn, manifest, prefs).await;
     if let Err(error) = &result {
         let reason = format!(
             "This server requires the Solaris Loader client mod. Install it and reconnect. \
@@ -34,7 +34,7 @@ pub(crate) async fn negotiate(
 async fn negotiate_inner(
     conn: &mut Connection,
     manifest: &LoaderManifest,
-    view_distance: &mut i8,
+    prefs: &mut crate::configuration::ClientPrefs,
 ) -> anyhow::Result<LoaderSession> {
     conn.send_packet(&ClientboundCustomPayload {
         payload: CustomPayload::Unknown {
@@ -96,7 +96,7 @@ async fn negotiate_inner(
                 }
             }
         }
-        crate::configuration::note_ignored(view_distance, frame.id, frame.body)?;
+        crate::configuration::note_ignored(prefs, frame.id, frame.body)?;
         ignored += 1;
         anyhow::ensure!(ignored <= 32, "too many unrelated Loader handshake packets");
     }

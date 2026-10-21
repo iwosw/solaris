@@ -252,7 +252,11 @@ fn mismatched_worldgen_revision_refuses_before_generation_or_recovery() {
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
     drop(mc_world::native::NativeStore::create(&path, identity).unwrap());
     let error = Core::open(config).unwrap_err().to_string();
-    assert_eq!(error, "storage: invalid native record: identity mismatch");
+    assert!(error.starts_with("storage: invalid native record: identity mismatch"));
+    assert!(
+        error.contains("solaris-v2 world upgrade-worldgen --config"),
+        "{error}"
+    );
     mc_world::native::NativeReadOnlyStore::open_with_cache(&path, identity, 16 * 1024 * 1024)
         .expect("rejected open preserves the older header identity");
     assert!(!dir.join("journal").exists());

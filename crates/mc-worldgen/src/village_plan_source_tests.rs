@@ -314,6 +314,21 @@ fn region_scan_reports_the_villages_the_chunk_lookup_finds() {
     let site = &scanned[0];
     assert_eq!(site.start_chunk, (chunk_x, chunk_z));
     assert_eq!(site.pieces.len(), set.plans()[0].pieces().len());
+    for (visible, placed) in site.pieces.iter().zip(set.plans()[0].pieces()) {
+        assert_eq!(
+            visible.bounds,
+            visible
+                .template
+                .as_ref()
+                .map(|_| (placed.bounds_min, placed.bounds_max)),
+            "adoption uses the generator's transformed piece geometry, not a guessed shell"
+        );
+        let owner = match &placed.element {
+            crate::village::plan_source::PlanElement::Single { owner, .. } => Some(owner.as_str()),
+            crate::village::plan_source::PlanElement::Feature { .. } => None,
+        };
+        assert_eq!(visible.entity_owner.as_deref(), owner);
+    }
     assert_eq!(
         site.min,
         set.plans()[0].affected_box().0,

@@ -660,6 +660,25 @@ pub(crate) fn commit_death(
         }
         Arc::make_mut(&mut state.entities.row_mut(slot).appearance).equipment[0] = None;
     }
+    // Villager carry (fetched build materials, mined/lumber yield) is taken once
+    // under the death guard; Villager.dropEquipment-style loss obeys mob_drops.
+    let carry = state
+        .entities
+        .row_mut(slot)
+        .villager
+        .as_mut()
+        .map(|villager| std::mem::take(&mut villager.inventory));
+    if let Some(carry) = carry
+        && crate::command_rules::boolean(state, "mob_drops")
+    {
+        for stack in carry
+            .into_iter()
+            .flatten()
+            .filter(|stack| !stack.is_empty())
+        {
+            spawned.push(crate::tick::spawn_item_entity(state, pos, stack));
+        }
+    }
     if crate::command_rules::boolean(state, "mob_drops") {
         if let Some(drop) = crate::special_mobs::death_drop(state, slot) {
             spawned.push(drop);

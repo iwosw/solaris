@@ -31,6 +31,16 @@ pub(in crate::tick) fn set_view_distance(
         .set_view_distance(*connection, *view_distance);
 }
 
+pub(in crate::tick) fn set_locale(
+    state: &mut TickState,
+    (connection, locale): (&ConnectionId, &String),
+) {
+    // Pre-Join friendly, like the view radius: the edge records the configured
+    // locale before Join and every Play ClientInformation updates it in place,
+    // so the next dialog this connection opens reads the new language.
+    state.connections.set_locale(*connection, locale.clone());
+}
+
 pub(in crate::tick) fn join(
     state: &mut TickState,
     (connection, uuid, name, permission_level): (&ConnectionId, &uuid::Uuid, &String, &u8),

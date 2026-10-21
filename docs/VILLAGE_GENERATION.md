@@ -345,6 +345,35 @@ so the divergence is reported rather than left to be found in a diff.
   level each piece targets are vanilla's; the surrounding relief is a
   whole-block approximation.
 
+### Interiors, streets and farm water on slopes
+
+Three playability rules sit on top of the analogue (revision 27); each is a
+declared divergence from a vanilla outcome that is only tolerable there because
+a full 3D beard also carves the hill above a house:
+
+- **Rigid pieces clear their interior.** Vanilla's legacy pool elements ignore
+  template air, and the analogue only lowers a column by the beard value at its
+  surface, so a hill more than a block or two above a house floor stayed inside
+  the house (a grass block in front of the door left no headroom and trapped the
+  residents). Every template air cell above the floor layer of a `rigid` piece
+  is now cleared of solid terrain before the piece's own blocks are written;
+  fluids stay, so a piece in a lake does not drain it. The loader keeps these
+  cells as `StructureTemplate::air_cells`; `blocks()` is unchanged.
+- **Streets are written first.** A `terrain_matching` street is projected onto
+  the terrain surface, which can be where a hillside house stands, while its
+  3D box does not overlap the house's. Written after the house it overwrote the
+  door's upper half and walls. Rigid pieces and decor are now written after all
+  terrain-matching pieces (streets carry no chest and draw nothing from the
+  structure random, so its stream is unchanged).
+- **Exposed farm water is sealed.** The savanna streets carry irrigated farm
+  plots. Projected onto a slope, a plot's water source can sit beside a lower
+  farmland cell (air at the same level) or above an air cell, and vanilla's fluid
+  tick then lets it run over the streets; on seed 100 that was about 1,600 flowing
+  blocks within 3,000 ticks. A piece's water source whose horizontal neighbours or
+  cell below is not a solid block, water or waterlogged block (read from the
+  piece's own blocks, else the cleared footprint, else the chunk or the surface
+  height) is replaced by dry farmland, repeating until nothing is exposed.
+
 ### What full parity would require
 
 A real vanilla version has to carry a 3D density/solidity field through chunk
@@ -487,6 +516,22 @@ Anvil world or use `solaris/world.json` as an operator migration API. Use explic
 offline Anvil conversion, retain source worlds, back up before upgrades and never
 bypass an identity refusal by hand-editing metadata. See [OPERATING.md](OPERATING.md).
 
+### Keeping a world across a revision bump
+
+A revision bump is refused by default (`identity mismatch`); when the stored world
+differs only in an older revision the refusal names the operator command. On a
+stopped world, back it up, then run
+`solaris-v2 --config server.toml world upgrade-worldgen`. It refuses unless the
+seed, format and dimension records equal the configured ones apart from the revision
+(a different seed, a newer revision or a running server is refused), rewrites the
+native header identity and the `generation`/`dimensions` records to the current
+revision, and is idempotent. **The seam:** already generated chunks are not
+regenerated, so existing villages keep the layout of the revision that built them
+(for example revision-26 interiors, water and streets); only chunks generated after
+the upgrade use the current village generator, and the border of the old explored
+area is a hard revision seam. A village straddling that border is not repaired.
+Policy: [ADR 0008](decisions/0008-overworld-density-router.md).
+
 The following revision-24 paragraphs preserve the original village checkpoint
 evidence and its limits; they are not current revision numbers or operator recipes.
 **No real-client run was made for revision 24.** The checkpoint's evidence is the
@@ -498,7 +543,7 @@ silhouette on generated terrain, the villagers standing in it, the chest content
 a player opens, and the decor a player walks through — so a village walk is the
 first thing that would test this revision visually.
 
-`WORLDGEN_REVISION` is 24: revision-22 and revision-23 worlds carry villages
+`WORLDGEN_REVISION` is 27 (see the sloped-ground rules above); at 24: revision-22 and revision-23 worlds carry villages
 assembled from earlier solver fidelity (23) with no inhabitants and no decor
 (22), and are refused with the fresh-`world_dir` message above. The
 `settlement_profile_vanilla_generates_no_villages` warning is retired — the

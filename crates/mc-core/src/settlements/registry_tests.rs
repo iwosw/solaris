@@ -100,3 +100,105 @@ fn record_images_replay_idempotently_and_derived_counts_are_not_durable() {
     assert_eq!(reopened.member_count(id), 0);
     assert!(reopened.take_images().is_empty());
 }
+
+#[test]
+fn autonomous_village_identity_and_claim_survive_record_restart() {
+    let mut registry = Registry::default();
+    let mut sequence = 0;
+    let id = registry
+        .adopt_village(&mut sequence, "minecraft:overworld:12:65:-8", [12, 65, -8])
+        .unwrap();
+    assert_eq!(registry.get(id).unwrap().owner, None);
+    assert!(!registry.get(id).unwrap().can_manage("alice", true));
+    registry.take_images();
+    assert!(registry.claim(id, "alice".into(), [500, 65, 0]).is_err());
+    assert!(
+        registry.take_images().is_empty(),
+        "refused claim must not dirty a native row"
+    );
+    registry.claim(id, "alice".into(), [12, 65, -8]).unwrap();
+    assert!(registry.get(id).unwrap().can_manage("alice", false));
+    assert!(!registry.get(id).unwrap().can_manage("bob", false));
+    assert!(registry.claim(id, "bob".into(), [12, 65, -8]).is_err());
+    registry.rename(id, "claimed".into()).unwrap();
+    let bytes = serde_json::to_vec(&registry.images()).unwrap();
+    let mut restored = Registry::default();
+    for image in serde_json::from_slice::<Vec<RecordImage>>(&bytes).unwrap() {
+        restored.apply_image(image);
+    }
+    assert_eq!(
+        restored.adopt_village(&mut sequence, "minecraft:overworld:12:65:-8", [12, 65, -8]),
+        Ok(id)
+    );
+    assert_eq!(restored.records().count(), 1);
+    assert_eq!(restored.get(id).unwrap().owner.as_deref(), Some("alice"));
+    let mut fresh = Registry::default();
+    assert_eq!(
+        fresh.adopt_village(&mut 0, "minecraft:overworld:12:65:-8", [12, 65, -8]),
+        Ok(id)
+    );
+}
+
+#[test]
+fn autonomous_villages_share_settlement_sequence_and_dedupe_saved_sources() {
+    let mut registry = Registry::default();
+    let mut sequence = 0;
+    let owned = create(&mut registry, &mut sequence, "owned");
+    let source = "minecraft:overworld:12:65:-8";
+    let village = registry
+        .adopt_village(&mut sequence, source, [12, 65, -8])
+        .unwrap();
+    assert_eq!(village.0, owned.0 + 1);
+    assert_eq!(sequence, village.0);
+    assert_eq!(registry.high_water(), village.0);
+    registry
+        .claim(village, "alice".into(), [12, 65, -8])
+        .unwrap();
+    registry.rename(village, "claimed".into()).unwrap();
+
+    let mut restored = Registry::default();
+    for image in registry.images() {
+        restored.apply_image(image);
+    }
+    let mut restored_sequence = 0;
+    assert_eq!(
+        restored.adopt_village(&mut restored_sequence, source, [99, 70, 99]),
+        Ok(village)
+    );
+    assert_eq!(restored_sequence, 0, "dedupe must not allocate another ID");
+    assert!(restored.take_images().is_empty());
+    assert_eq!(restored.get(village).unwrap().anchor, [12, 65, -8]);
+    assert_eq!(
+        restored.get(village).unwrap().owner.as_deref(),
+        Some("alice")
+    );
+
+    let next = restored
+        .adopt_village(
+            &mut restored_sequence,
+            "minecraft:overworld:100:65:100",
+            [100, 65, 100],
+        )
+        .unwrap();
+    assert_eq!(next.0, village.0 + 1);
+    assert_eq!(restored_sequence, next.0);
+    assert_eq!(
+        create(&mut restored, &mut restored_sequence, "next_owned").0,
+        next.0 + 1
+    );
+}
+
+#[test]
+fn owned_permissions_and_legacy_owner_json_remain_unchanged() {
+    let mut registry = Registry::default();
+    let id = create(&mut registry, &mut 0, "owned");
+    let record = registry.get(id).unwrap();
+    assert!(record.can_manage("owner", false));
+    assert!(record.can_manage("operator", true));
+    assert!(!record.can_manage("stranger", false));
+    let value = serde_json::to_value(record).unwrap();
+    assert_eq!(value["owner"], "owner");
+    let restored: SettlementRecord = serde_json::from_value(value).unwrap();
+    assert_eq!(restored.owner.as_deref(), Some("owner"));
+    assert!(registry.claim(id, "stranger".into(), [0, 64, 0]).is_err());
+}

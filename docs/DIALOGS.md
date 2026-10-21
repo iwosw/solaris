@@ -49,6 +49,10 @@ session-lock fence) and routed by `dialog::route_click` on the owner segment of 
 are ignored. Clients can send any id/payload at any time: re-validate permission, range and state
 in the tick before acting.
 
+Dialog text is server-chosen: the edge carries the client locale from `ClientInformation.language`
+into the core as `PlayerInput::SetLocale` (configuration before Join, every Play update after),
+so `settlement` dialogs render Russian for `ru*` locales and English otherwise.
+
 Registered owners: `dialog_probe` (test hook) and `settlement` (`settlements::ui`: `/settlement` and
 `/settlement menu [page]`; every click re-resolves the settlement from the `s` payload entry and
 re-checks owner/operator before mutating). Keep forms compact: a vanilla dialog scrolls, but a small

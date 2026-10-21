@@ -1,0 +1,261 @@
+{
+  "id": "barracks",
+  "kind": "barracks",
+  "palette": {
+    "A": "chest[facing=west]",
+    "B": "white_bed[facing=north,part=head]",
+    "C": "chest[facing=south]",
+    "D": "oak_door[facing=east,half=lower]",
+    "F": "oak_fence_gate[facing=south,open=true]",
+    "G": "oak_door[facing=north,half=lower]",
+    "K": "barrel[facing=up]",
+    "L": "oak_log[axis=y]",
+    "N": "wall_torch[facing=north]",
+    "P": "oak_pressure_plate",
+    "S": "wall_torch[facing=south]",
+    "T": "crafting_table",
+    "X": "oak_log[axis=x]",
+    "Z": "oak_log[axis=z]",
+    "b": "white_bed[facing=north,part=foot]",
+    "c": "cobblestone",
+    "d": "oak_door[facing=east,half=upper]",
+    "e": "oak_stairs[facing=east,half=bottom]",
+    "f": "oak_fence",
+    "g": "oak_door[facing=north,half=upper]",
+    "k": "cobblestone_wall",
+    "n": "cobblestone_stairs[facing=north,half=bottom]",
+    "p": "oak_planks",
+    "s": "cobblestone_stairs[facing=south,half=bottom]",
+    "t": "torch",
+    "v": "oak_stairs[facing=south,half=bottom]",
+    "w": "oak_stairs[facing=west,half=bottom]"
+  },
+  "levels": [
+    {
+      "cert": [
+        9,
+        5,
+        7
+      ],
+      "entrance": [
+        0,
+        1,
+        3
+      ],
+      "layers": [
+        [
+          "ccccccccc",
+          "ccccccccc",
+          "ccccccccc",
+          "ccccccccc",
+          "ccccccccc",
+          "ccccccccc",
+          "ccccccccc"
+        ],
+        [
+          "LcccLcccL",
+          "cBCB...Kc",
+          "cb.b...Kc",
+          "D.......c",
+          "c.wffe..c",
+          "c..vv..Tc",
+          "LcccLcccL"
+        ],
+        [
+          "LcfcLcfcL",
+          "c.......c",
+          "c.......c",
+          "d.......f",
+          "c..PP...c",
+          "c.......c",
+          "LcfcLcfcL"
+        ],
+        [
+          "LcccLcccL",
+          "c...S...c",
+          "c.......c",
+          "c.......c",
+          "c.......c",
+          "c...N...c",
+          "LcccLcccL"
+        ],
+        [
+          "LXXXXXXXL",
+          "ZpppppppZ",
+          "ZpppppppZ",
+          "ZpppppppZ",
+          "ZpppppppZ",
+          "ZpppppppZ",
+          "LXXXXXXXL"
+        ],
+        [
+          "sssssssss",
+          "p.......p",
+          "p.......p",
+          "p...t...p",
+          "p.......p",
+          "p.......p",
+          "nnnnnnnnn"
+        ],
+        [
+          ".........",
+          "sssssssss",
+          "p.......p",
+          "f.......f",
+          "p.......p",
+          "nnnnnnnnn",
+          "........."
+        ],
+        [
+          ".........",
+          ".........",
+          "sssssssss",
+          "p.......p",
+          "nnnnnnnnn",
+          ".........",
+          "........."
+        ],
+        [
+          ".........",
+          ".........",
+          ".........",
+          "ccccccccc",
+          ".........",
+          ".........",
+          "........."
+        ]
+      ]
+    },
+    {
+      "cert": [
+        11,
+        5,
+        7
+      ],
+      "entrance": [
+        0,
+        1,
+        3
+      ],
+      "layers": [
+        [
+          "ccccccccccc",
+          "ccccccccccc",
+          "ccccccccccc",
+          "ccccccccccc",
+          "ccccccccccc",
+          "ccccccccccc",
+          "ccccccccccc",
+          ".....c.....",
+          ".....c.....",
+          ".....c.....",
+          "..........."
+        ],
+        [
+          "LcccLcccLcL",
+          "cBCBCBCB.Kc",
+          "cb.b.b.b.Kc",
+          "D.........c",
+          "c.wffe....c",
+          "c..vv..T.Ac",
+          "LcccLGccLcL",
+          "f.........f",
+          "f.L.....L.f",
+          "f.........f",
+          "fffffFfffff"
+        ],
+        [
+          "LcfcLcfcLfL",
+          "c.........c",
+          "c.........c",
+          "d.........f",
+          "c..PP.....c",
+          "c.........c",
+          "LcfcLgfcLfL",
+          "...........",
+          ".fLf...fLf.",
+          "...........",
+          "t...t.t...t"
+        ],
+        [
+          "LcccLcccLcL",
+          "c...S...S.c",
+          "c.........c",
+          "c.........c",
+          "c.........c",
+          "c...N...N.c",
+          "LcccLcccLcL",
+          "...........",
+          "..k.....k..",
+          "...........",
+          "..........."
+        ],
+        [
+          "LXXXXXXXLXL",
+          "ZpppppppZpZ",
+          "ZpppppppZpZ",
+          "ZpppppppZpZ",
+          "ZpppppppZpZ",
+          "ZpppppppZpZ",
+          "LXXXXXXXLXL",
+          "...........",
+          "...........",
+          "...........",
+          "..........."
+        ],
+        [
+          "sssssssssss",
+          "p.........p",
+          "p.........p",
+          "p...t.....p",
+          "p.........p",
+          "p.........p",
+          "nnnnnnnnnnn",
+          "...........",
+          "...........",
+          "...........",
+          "..........."
+        ],
+        [
+          "...........",
+          "sssssssssss",
+          "p.........p",
+          "f.........f",
+          "p.........p",
+          "nnnnnnnnnnn",
+          "...........",
+          "...........",
+          "...........",
+          "...........",
+          "..........."
+        ],
+        [
+          "...........",
+          "...........",
+          "sssssssssss",
+          "p.........p",
+          "nnnnnnnnnnn",
+          "...........",
+          "...........",
+          "...........",
+          "...........",
+          "...........",
+          "..........."
+        ],
+        [
+          "...........",
+          "...........",
+          "...........",
+          "ccccccccccc",
+          "...........",
+          "...........",
+          "...........",
+          "...........",
+          "...........",
+          "...........",
+          "..........."
+        ]
+      ]
+    }
+  ]
+}

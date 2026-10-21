@@ -40,11 +40,31 @@ use crate::connection::{Connection, text_component_nbt};
 
 const MAX_IGNORED_CONFIGURATION_PACKETS: usize = 32;
 
-/// Outcome of a successful configuration: the client's requested view
-/// distance, taken from the latest `Client Information` packet seen.
+/// Client-advertised preferences from the latest `Client Information` packet.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClientPrefs {
+    /// Requested view distance, unclamped (the edge clamps before admission).
+    pub view_distance: i8,
+    /// `ClientInformation.language`, e.g. `en_us` or `ru_ru`; empty until sent.
+    pub language: String,
+}
+
+impl Default for ClientPrefs {
+    fn default() -> Self {
+        Self {
+            view_distance: 8,
+            language: String::new(),
+        }
+    }
+}
+
+/// Outcome of a successful configuration: the client's preferences from the
+/// latest `Client Information` packet seen.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConfigOutcome {
     pub client_view_distance: i8,
+    /// Client locale carried to the core so settlement dialogs match it.
+    pub client_language: String,
     /// Bound only after the client accepted exact verified package identities.
     pub loader_session: Option<mc_loader::LoaderSession>,
 }
@@ -75,7 +95,7 @@ pub async fn handle_configuration(
     .await?;
 
     // Step 2: read frames until we see the client's KnownPacks response.
-    let mut client_view_distance: i8 = 8;
+    let mut prefs = ClientPrefs::default();
     let mut ignored = 0usize;
     let client_packs = loop {
         let frame = conn
@@ -85,7 +105,7 @@ pub async fn handle_configuration(
             let parsed = decode_exact::<ServerboundKnownPacks>(frame.id, frame.body)?;
             break parsed.packs;
         }
-        if note_ignored(&mut client_view_distance, frame.id, frame.body)? {
+        if note_ignored(&mut prefs, frame.id, frame.body)? {
             ignored += 1;
             if ignored > MAX_IGNORED_CONFIGURATION_PACKETS {
                 anyhow::bail!(
@@ -173,7 +193,7 @@ pub async fn handle_configuration(
     .await?;
 
     let loader_session = if let Some(manifest) = loader_manifest {
-        Some(crate::plugin_loader::negotiate(conn, manifest, &mut client_view_distance).await?)
+        Some(crate::plugin_loader::negotiate(conn, manifest, &mut prefs).await?)
     } else {
         None
     };
@@ -191,7 +211,7 @@ pub async fn handle_configuration(
             expect_empty(frame.id, &frame.body)?;
             break;
         }
-        if note_ignored_frame(frame.id, frame.body, &mut client_view_distance)? {
+        if note_ignored_frame(frame.id, frame.body, &mut prefs)? {
             ignored += 1;
             if ignored > MAX_IGNORED_CONFIGURATION_PACKETS {
                 anyhow::bail!(
@@ -202,7 +222,8 @@ pub async fn handle_configuration(
     }
 
     Ok(ConfigOutcome {
-        client_view_distance,
+        client_view_distance: prefs.view_distance,
+        client_language: prefs.language,
         loader_session,
     })
 }
@@ -253,13 +274,14 @@ fn expect_empty(id: i32, body: &Bytes) -> anyhow::Result<()> {
 }
 
 /// Tolerates one non-terminal inbound packet. Returns `true` when the packet
-/// counts against the ignore budget. Updates `view_distance` from client
+/// counts against the ignore budget. Updates client preferences from client
 /// information; brand custom payloads and resource-pack statuses are noted
 /// and ignored.
-pub(crate) fn note_ignored(view_distance: &mut i8, id: i32, body: Bytes) -> anyhow::Result<bool> {
+pub(crate) fn note_ignored(prefs: &mut ClientPrefs, id: i32, body: Bytes) -> anyhow::Result<bool> {
     if id == ServerboundClientInformation::ID {
         let info = decode_exact::<ServerboundClientInformation>(id, body)?.information;
-        *view_distance = info.view_distance;
+        prefs.view_distance = info.view_distance;
+        prefs.language = info.language;
         return Ok(true);
     }
     if id == ServerboundCustomPayload::ID {
@@ -273,8 +295,8 @@ pub(crate) fn note_ignored(view_distance: &mut i8, id: i32, body: Bytes) -> anyh
     Ok(true)
 }
 
-fn note_ignored_frame(id: i32, body: Bytes, view_distance: &mut i8) -> anyhow::Result<bool> {
-    note_ignored(view_distance, id, body)
+fn note_ignored_frame(id: i32, body: Bytes, prefs: &mut ClientPrefs) -> anyhow::Result<bool> {
+    note_ignored(prefs, id, body)
 }
 
 #[cfg(test)]

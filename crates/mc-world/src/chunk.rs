@@ -779,6 +779,12 @@ pub struct GeneratedVillagePiece {
     pub position: BlockPos,
     /// The piece's quarter turns, i.e. `Rotation.getIndex()`.
     pub rotation: u16,
+    /// Inclusive world-space template bounds from the placement solver.
+    /// Features have no template geometry to certify.
+    pub bounds: Option<(BlockPos, BlockPos)>,
+    /// The template-pool owner used in generated entity claims. This is not
+    /// necessarily the template ID (aliases/pools may refer another template).
+    pub entity_owner: Option<String>,
 }
 
 pub trait ChunkGenerator: Send + Sync {

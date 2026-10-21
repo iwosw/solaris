@@ -19,12 +19,16 @@ fn main() -> anyhow::Result<()> {
         .init();
     let cli = Cli::parse();
     let cfg = mc_edge::operator_cli::load_config(&cli)?;
-    tokio::runtime::Builder::new_multi_thread()
+    let result = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         // Chunk frames are encoded on runtime workers; keep bounded stack headroom.
         .thread_stack_size(16 * 1024 * 1024)
         .build()?
-        .block_on(run(cli, cfg))
+        .block_on(run(cli, cfg));
+    if let Err(error) = &result {
+        tracing::error!(error = %format_args!("{error:#}"), "server stopped with error");
+    }
+    result
 }
 
 async fn run(cli: Cli, mut cfg: mc_edge::config::EdgeConfig) -> anyhow::Result<()> {
@@ -80,14 +84,18 @@ async fn run(cli: Cli, mut cfg: mc_edge::config::EdgeConfig) -> anyhow::Result<(
     tokio::select! {
         biased;
         result = mc_edge::server::serve_with_console(listener, server, !cli.no_console) => {
-            // The edge stopped (pump death or accept failure): stop the core
-            // cleanly too instead of leaving it ticking unobserved.
+            // Record the edge result before shutdown drops the tick broadcast.
+            match &result {
+                Ok(()) => tracing::error!(cause = "edge serve loop returned", "server stopping"),
+                Err(error) => tracing::error!(error = %format_args!("{error:#}"), "edge failed; server stopping"),
+            }
             shutdown_core.shutdown();
             result
         }
-        _ = shutdown => {
+        cause = shutdown => {
+            tracing::error!(cause, "shutdown requested; stopping core");
             shutdown_core.shutdown();
-            info!("shutdown requested; core stopped");
+            info!(cause, "shutdown requested; core stopped");
             Ok(())
         }
     }
@@ -95,7 +103,7 @@ async fn run(cli: Cli, mut cfg: mc_edge::config::EdgeConfig) -> anyhow::Result<(
 
 /// Ctrl-C or SIGTERM: either requests shutdown, then the process exits.
 /// Handlers are installed when this is called, not when the future is polled.
-fn shutdown_signal() -> impl Future<Output = ()> {
+fn shutdown_signal() -> impl Future<Output = &'static str> {
     #[cfg(unix)]
     {
         use tokio::signal::unix::{SignalKind, signal};
@@ -105,18 +113,51 @@ fn shutdown_signal() -> impl Future<Output = ()> {
             match streams {
                 Ok((mut term, mut interrupt)) => {
                     tokio::select! {
-                        _ = term.recv() => {},
-                        _ = interrupt.recv() => {},
+                        _ = term.recv() => "SIGTERM",
+                        _ = interrupt.recv() => "SIGINT",
                     }
                 }
-                Err(_) => {
-                    let _ = tokio::signal::ctrl_c().await;
+                Err(error) => {
+                    tracing::error!(%error, "could not register shutdown signals; falling back to Ctrl-C");
+                    match tokio::signal::ctrl_c().await {
+                        Ok(()) => "Ctrl-C",
+                        Err(error) => {
+                            tracing::error!(%error, "shutdown signal listener failed");
+                            "shutdown signal listener failed"
+                        }
+                    }
                 }
             }
         }
     }
     #[cfg(not(unix))]
     async {
-        let _ = tokio::signal::ctrl_c().await;
+        match tokio::signal::ctrl_c().await {
+            Ok(()) => "Ctrl-C",
+            Err(error) => {
+                tracing::error!(%error, "shutdown signal listener failed");
+                "shutdown signal listener failed"
+            }
+        }
+    }
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    #[tokio::test]
+    async fn shutdown_signal_reports_sigterm() {
+        // Registration is synchronous, before the signal is delivered.
+        let shutdown = super::shutdown_signal();
+        let sent = std::process::Command::new("kill")
+            .args(["-TERM", &std::process::id().to_string()])
+            .status()
+            .expect("send test SIGTERM");
+        assert!(sent.success());
+        assert_eq!(
+            tokio::time::timeout(std::time::Duration::from_secs(5), shutdown)
+                .await
+                .expect("shutdown signal"),
+            "SIGTERM"
+        );
     }
 }
