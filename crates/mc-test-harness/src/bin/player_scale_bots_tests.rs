@@ -207,6 +207,40 @@ async fn teleport_confirmation_reports_pose_without_offering_movement() -> Resul
     Ok(())
 }
 
+#[tokio::test]
+async fn measured_position_correction_turns_the_route_but_login_sync_does_not() -> Result<()> {
+    for (preparing, expected) in [(true, 0), (false, 1)] {
+        let mut bot = terrain_bot(0.5, 64, 0.5, 0);
+        let packet = SynchronizePlayerPosition {
+            teleport_id: 3,
+            x: 0.5,
+            y: 64.0,
+            z: 0.5,
+            dx: 0.0,
+            dy: 0.0,
+            dz: 0.0,
+            yaw: 0.0,
+            pitch: 0.0,
+            relative_flags: 0,
+        };
+        let (mut client, _peer, _buffer) = connection().await?;
+        let mut body = BytesMut::new();
+        packet.encode(&mut body)?;
+        bot.frame(
+            &mut client,
+            RawFrame {
+                id: SynchronizePlayerPosition::ID,
+                body: body.freeze(),
+            },
+            2,
+            preparing,
+        )
+        .await?;
+        assert_eq!(bot.direction, expected, "preparing={preparing}");
+    }
+    Ok(())
+}
+
 async fn clears_step_before_advancing(x: f64, z: f64, direction: u32) -> Result<()> {
     let mut bot = terrain_bot(x, 63, z, direction);
     let wall = match direction {
@@ -1247,6 +1281,103 @@ async fn street_routes_off_axis_correction_stops_input_and_records_refusal() -> 
     assert_eq!(bot.metrics.walking_distance_blocks, 0.0);
     assert_eq!(bot.metrics.route_refusals_not_walkable, 1);
     assert_eq!(bot.metrics.street_waypoints_reached, 0);
+    Ok(())
+}
+
+/// Reproduces the soak kick: a tree trunk (non-passable, non-support) standing
+/// on grass over a cave. The scan used to skip the grass for lack of headroom
+/// and report the cave floor as walkable, so the body walked into the trunk.
+#[test]
+fn obstructed_surface_is_not_walkable_even_with_a_cave_floor_below() -> Result<()> {
+    const AIR: i32 = 0;
+    const STONE: i32 = 1;
+    const LOG: i32 = 2;
+    let facts = Facts {
+        states: vec![
+            StateFacts {
+                passable: true,
+                support: false,
+            },
+            StateFacts {
+                passable: false,
+                support: true,
+            },
+            StateFacts {
+                passable: false,
+                support: false,
+            },
+        ],
+        dirt_item: 1,
+        dirt_state: STONE,
+        air_state: AIR,
+        projectile_type_ids: [0; 2],
+        grass_states: vec![STONE],
+    };
+    // Indirect 2-bit palette [air, stone, log]; cells given as (local_y, column) -> state.
+    let palette = |cells: &dyn Fn(usize, usize) -> i32| {
+        let mut words = vec![0_u64; 4096 / 32];
+        for local_y in 0..16 {
+            for column in 0..256 {
+                let index = local_y * 256 + column;
+                words[index / 32] |= (cells(local_y, column) as u64) << (index % 32 * 2);
+            }
+        }
+        words
+            .into_iter()
+            .flat_map(u64::to_be_bytes)
+            .collect::<Vec<u8>>()
+    };
+    let uniform = |state: i32| {
+        let mut values = [0; 256];
+        values[0] = state;
+        (0, values, 1)
+    };
+    let indirect = [AIR, STONE, LOG];
+    // Section 7 (y 48..64): stone floor, a 3-high cave at y 49..52, stone to the
+    // surface. Section 8 (y 64..80): a trunk over column 0 only.
+    let cave_and_ground = palette(&|y, _| if (1..4).contains(&y) { AIR } else { STONE });
+    let trunk = palette(&|y, column| if column == 0 && y < 3 { LOG } else { AIR });
+    let mut palettes = Vec::new();
+    for section in 0..HEIGHT / 16 {
+        palettes.push(match section {
+            7 => Some((2, indirect_values(&indirect), 3, Some(&cave_and_ground))),
+            8 => Some((2, indirect_values(&indirect), 3, Some(&trunk))),
+            _ => None,
+        });
+    }
+    fn indirect_values(values: &[i32; 3]) -> [i32; 256] {
+        let mut out = [0; 256];
+        out[..3].copy_from_slice(values);
+        out
+    }
+    let sections: [Option<Palette<'_>>; HEIGHT / 16] = std::array::from_fn(|section| {
+        Some(match &palettes[section] {
+            Some((bits, values, len, words)) => Palette {
+                bits: *bits,
+                values: *values,
+                len: *len,
+                words: words.expect("indirect section words"),
+            },
+            None => {
+                let (bits, values, len) = uniform(if section < 7 { STONE } else { AIR });
+                Palette {
+                    bits,
+                    values,
+                    len,
+                    words: &[],
+                }
+            }
+        })
+    });
+    let clear = observed_column(&sections, 1, &facts)?;
+    assert!(clear.walkable);
+    assert_eq!(clear.feet_y, 64);
+    let blocked = observed_column(&sections, 0, &facts)?;
+    assert!(
+        !blocked.walkable,
+        "a trunk over the surface must not expose the cave floor at feet {}",
+        blocked.feet_y
+    );
     Ok(())
 }
 

@@ -887,11 +887,17 @@ fn observed_column(
     facts: &Facts,
 ) -> Result<Column> {
     let (mut above_one, mut above_two) = (true, true);
+    // A support block lacking two passable cells above it (a trunk, leaves,
+    // water, a flower the model does not know) means the surface is obstructed.
+    // A deeper cave floor found below it is not reachable by walking, and must
+    // not be reported as terrain the body can enter.
+    let mut obstructed = false;
     for section in (0..sections.len()).rev() {
         let blocks = sections[section].as_ref().expect("decoded section");
         if blocks.bits == 0 {
             let state = facts.get(blocks.values[0]);
             if !state.support || !(state.passable || above_one && above_two) {
+                obstructed |= state.support;
                 above_one = state.passable;
                 above_two = state.passable;
                 continue;
@@ -915,9 +921,10 @@ fn observed_column(
                     feet_y: (MIN_Y + section as i32 * 16 + local_y as i32 + 1) as i16,
                     top: state_id,
                     below,
-                    walkable: true,
+                    walkable: !obstructed,
                 });
             }
+            obstructed |= state.support;
             above_two = above_one;
             above_one = state.passable;
         }
@@ -1880,6 +1887,14 @@ impl Bot {
                         self.creative,
                         self.direction
                     );
+                }
+                if !preparing {
+                    // The server's collision rejected this walk: the bot's terrain
+                    // model is wrong here. Pushing into the same obstruction
+                    // again only repeats the correction (and, hovering on a
+                    // step-up the server applied, trips its anti-fly counter).
+                    // A real player who is stopped turns instead.
+                    self.direction = (self.direction + 1) % 4;
                 }
                 client
                     .write_packet(&ConfirmTeleportation {
