@@ -1162,7 +1162,12 @@ fn checkpoint_round_trip_through_real_core() {
     // via durable files, not timers).
     let journal_dir = dir.join("journal");
     let mut boundary_tick = 0u64;
-    for _ in 0..600_000 {
+    // Bounded by the child's life, not an iteration count: a fast runner can
+    // spin through any fixed count before the child's first fsync.
+    while boundary_tick == 0 {
+        if let Some(status) = child.try_wait().expect("poll crash child") {
+            panic!("crash child exited before the mutation was durable: {status:?}");
+        }
         let batches = read_complete_batches_after(&journal_dir, 0).unwrap();
         for (lo, hi, entries) in &batches {
             let _ = lo;
@@ -1175,9 +1180,6 @@ fn checkpoint_round_trip_through_real_core() {
                     boundary_tick = boundary_tick.max(*hi);
                 }
             }
-        }
-        if boundary_tick > 0 {
-            break;
         }
         std::thread::yield_now();
     }
