@@ -1092,3 +1092,145 @@ fn custom_roles_are_rejected_in_vanilla_nbt_and_invalid_runtime_roles_fail_close
         Some(VillagerProfession::Lumberjack)
     );
 }
+
+#[test]
+fn journal_baseline_static_footprint() {
+    // Exp-VillagerBox step 1: record the inline baseline footprint that every
+    // occupied AND every empty hash bucket pays while the map value is inline.
+    let inline = std::mem::size_of::<VillagerState>();
+    let entry = std::mem::size_of::<(u64, VillagerState)>();
+    let boxed_entry = std::mem::size_of::<(u64, Box<VillagerState>)>();
+    eprintln!("size_of::<VillagerState>() = {inline}");
+    eprintln!("size_of::<(u64, VillagerState)>() = {entry}");
+    eprintln!("size_of::<(u64, Box<VillagerState>)>() = {boxed_entry}");
+    eprintln!("boxed saving per map slot = {}", entry - boxed_entry);
+    assert!(
+        inline > 512,
+        "expected a heavyweight inline VillagerState, got {inline}"
+    );
+    assert!(
+        entry - boxed_entry >= 512,
+        "boxing must save >= 512 bytes per slot, saved {}",
+        entry - boxed_entry
+    );
+}
+
+#[test]
+fn journal_image_runtime_fields_are_zeroed() {
+    // Exp-VillagerBox stretch input: enumerate the runtime-only fields that
+    // `journal_image` zeroes/defaults, and price the cheapest durable
+    // projection (remove them from the stored baseline type entirely).
+    let items = mc_data::items::solaris_required_items();
+    let mut live = fixture(&items);
+    // Prove zeroing against a live state that actually holds runtime caches.
+    live.navigation_path = vec![BlockPos { x: 1, y: 2, z: 3 }];
+    live.navigation_target = Some(BlockPos { x: 4, y: 5, z: 6 });
+    live.navigation_chunks = vec![(crate::boundary::ChunkPos { x: 0, z: 0 }, 9)];
+    live.opened_doors = vec![BlockPos { x: 7, y: 8, z: 9 }];
+    live.harvest_at = 123;
+    live.navigation_repath_at = 456;
+    live.navigation_can_open_doors = true;
+    live.navigation_progress_len = 2;
+    live.navigation_progress_next = Some(BlockPos { x: 1, y: 2, z: 3 });
+    live.navigation_progress_dist_sq = 4.5;
+    let image = journal_image(&live);
+    assert!(image.navigation_path.is_empty());
+    assert!(image.navigation_target.is_none());
+    assert!(image.navigation_chunks.is_empty());
+    assert!(image.opened_doors.is_empty());
+    assert_eq!(image.harvest_at, 0);
+    assert_eq!(image.navigation_repath_at, 0);
+    assert!(!image.navigation_can_open_doors);
+    assert_eq!(image.navigation_progress_len, 0);
+    assert!(image.navigation_progress_next.is_none());
+    assert_eq!(image.navigation_progress_dist_sq, 0.0);
+    assert!(image.trade_work.is_none());
+    // Fixed-size runtime records zeroed in place (would need removal, not
+    // just zeroing, to shrink the durable type):
+    let runtime_inline = std::mem::size_of_val(&image.motion_geometry)
+        + std::mem::size_of_val(&image.harvest_progress)
+        + std::mem::size_of_val(&image.poi_validation)
+        + std::mem::size_of_val(&image.navigation_target)
+        + std::mem::size_of_val(&image.navigation_progress_next);
+    let runtime_vecs = std::mem::size_of_val(&image.navigation_path)
+        + std::mem::size_of_val(&image.navigation_chunks)
+        + std::mem::size_of_val(&image.opened_doors);
+    let trade_work = std::mem::size_of::<Option<crate::villager::trades::WorkState>>();
+    eprintln!("runtime fixed-size inline bytes in VillagerState = {runtime_inline}");
+    eprintln!("runtime empty-Vec inline bytes (3x Vec = {runtime_vecs})");
+    eprintln!("size_of Option<WorkState> = {trade_work}");
+    eprintln!(
+        "navigation/harvest/poi/trade removal estimate = {}",
+        runtime_inline + runtime_vecs + trade_work
+    );
+    eprintln!(
+        "size_of::<VillagerState>() = {}",
+        std::mem::size_of::<VillagerState>()
+    );
+}
+
+/// Deterministic footprint of N journal baselines built through the real
+/// `journal_image` path into the real (boxed) map value type. The crate
+/// forbids `unsafe_code`, so no counting allocator is possible here; instead
+/// this reports exact, allocator-independent counters: hashbrown bucket
+/// count, table bytes before/after, and the crate's own `journal_budget`
+/// heap estimate for the same image. Net saving = empty-bucket table saving
+/// minus the N box payloads (still on the heap) and malloc overhead.
+/// Run explicitly:
+/// `cargo test -p mc-core --lib journal_baseline_map_footprint -- --ignored --nocapture`
+#[test]
+#[ignore]
+fn journal_baseline_map_footprint() {
+    const N: usize = 50_000;
+    /// glibc `request2size(2032)` rounds to a 2048-byte chunk: labeled,
+    /// platform-specific estimate, not a measurement.
+    const MALLOC_BOX_OVERHEAD: usize = 16;
+    const N500: usize = 500_000;
+    let items = mc_data::items::solaris_required_items();
+    let template = fixture(&items);
+    let image = journal_image(&template);
+    let slot = std::mem::size_of::<(u64, VillagerState)>();
+    let boxed_slot = std::mem::size_of::<(u64, Box<VillagerState>)>();
+    let payload = std::mem::size_of::<VillagerState>();
+    // Heap owned by one baseline image, priced by the crate's own budget model.
+    // Identical before/after boxing, so it cancels out of the net saving.
+    let heap_each = crate::journal_budget::villager_heap_for_test(&image);
+    // The journal map stores the boxed baseline; this metered map uses the
+    // same value type to report the post-change capacity footprint.
+    let mut map: rustc_hash::FxHashMap<EntityId, (u64, Box<VillagerState>)> =
+        rustc_hash::FxHashMap::default();
+    for tick in 0..N as u64 {
+        map.insert(
+            EntityId(tick as i32),
+            (tick, Box::new(journal_image(&template))),
+        );
+    }
+    assert_eq!(map.len(), N);
+    // hashbrown load factor is 7/8 and the bucket count is a power of two, so
+    // buckets reconstruct exactly from `capacity()`; control bytes (1/bucket)
+    // are identical before/after and cancel out.
+    let buckets = map.capacity() + map.capacity() / 7;
+    assert!(buckets.is_power_of_two());
+    assert_eq!(buckets - buckets / 8, map.capacity());
+    let empty = buckets - N;
+    let table_before = buckets * slot;
+    let table_after = buckets * boxed_slot + N * (payload + MALLOC_BOX_OVERHEAD);
+    let net = table_before - table_after;
+    // 500k projection at the bucket count hashbrown would actually use
+    // (power of two >= len*8/7). Load-factor dependent: the same len just
+    // before a resize keeps far fewer empty buckets (see report).
+    let buckets500 = (N500 * 8 / 7).next_power_of_two();
+    let net500 =
+        buckets500 * slot - (buckets500 * boxed_slot + N500 * (payload + MALLOC_BOX_OVERHEAD));
+    eprintln!("N={N} buckets={buckets} len={} empty={empty}", map.len());
+    eprintln!("table before (buckets * inline value) = {table_before}");
+    eprintln!("table after (buckets * ptr + N boxed payloads) = {table_after}");
+    eprintln!("net saving N=50k = {net} bytes (~{} MiB)", net / (1 << 20));
+    eprintln!(
+        "500k: buckets={buckets500} empty={} net = {net500} bytes (~{} MiB)",
+        buckets500 - N500,
+        net500 / (1 << 20)
+    );
+    eprintln!("baseline-owned heap each (budget model, cancels out) = {heap_each}");
+    drop(map);
+}

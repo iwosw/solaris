@@ -361,7 +361,10 @@ fn villager_image(state: &mut TickState, slot: EntitySlot, tick: u64, full: &mut
     full.push(body.id);
     state.journaled_villagers.insert(
         body.id,
-        (tick, crate::villager::persistence::journal_image(villager)),
+        (
+            tick,
+            Box::new(crate::villager::persistence::journal_image(villager)),
+        ),
     );
 }
 
@@ -378,7 +381,7 @@ pub(crate) fn assert_baselines_complete(state: &TickState, tick: u64) {
                 .journaled_villagers
                 .get(&body.id)
                 .unwrap_or_else(|| panic!("villager {:?} has no journal baseline", body.id));
-            let mut old = old.clone();
+            let mut old: Box<crate::villager::VillagerState> = old.clone();
             if let Some((start, end)) = state.world.simulation_interval(chunk, *from, tick) {
                 crate::villager::persistence::advance_clocks(&mut old, start, end);
             }

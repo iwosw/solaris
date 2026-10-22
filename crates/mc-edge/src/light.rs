@@ -78,6 +78,13 @@ impl LightBaseline {
         self.sent.retain(|pos, _| held.contains_key(pos));
     }
 
+    #[cfg(test)]
+    pub(crate) fn len(&self) -> usize {
+        self.sent.len()
+    }
+
+    /// True when no light debt remains for `pos` at `revision`: its light was
+    /// verified or delivered, or the baseline tracks nothing for it.
     pub(crate) fn update(
         &mut self,
         pos: (i32, i32),
@@ -86,19 +93,19 @@ impl LightBaseline {
         connection: ConnectionId,
         out: &mut Vec<PlannedPacket>,
         credit: &mut usize,
-    ) {
-        if *credit == 0 {
-            return;
-        }
+    ) -> bool {
         let Some(state) = self.sent.get_mut(&pos) else {
-            return;
+            return true;
         };
         if state.verified == Some(revision) {
-            return;
+            return true;
+        }
+        if *credit == 0 {
+            return false;
         }
         if state.sent == chunk.section_lights {
             state.verified = Some(revision);
-            return;
+            return true;
         }
         if try_push(out, credit, |out| {
             push_best_effort(
@@ -112,7 +119,9 @@ impl LightBaseline {
             );
         }) {
             self.record(pos, chunk, revision);
+            return true;
         }
+        false
     }
 }
 

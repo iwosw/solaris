@@ -116,6 +116,19 @@ pub fn publish_with_registries<'a>(
     chunk_cache: &mut crate::plan::ChunkPacketCache,
 ) -> Vec<AddressedPacket> {
     chunk_cache.retain_resident(output);
+    chunk_cache.deltas.begin();
+    // One delta per dimension, even if the root also lists its own projection.
+    let mut chunk_deltas: HashMap<_, Option<std::sync::Arc<_>>> = HashMap::new();
+    for projection in std::iter::once(output).chain(output.snapshot.dimensions.values()) {
+        chunk_deltas
+            .entry(projection.snapshot.dimension)
+            .or_insert_with(|| {
+                chunk_cache
+                    .deltas
+                    .delta(projection)
+                    .map(std::sync::Arc::new)
+            });
+    }
     let mut viewers: Vec<&mut ViewerState> = viewers.collect();
     let cache = &*chunk_cache;
     let indices: HashMap<_, _> = std::iter::once(output)
@@ -138,7 +151,8 @@ pub fn publish_with_registries<'a>(
             (
                 dimension,
                 TickPlanIndex::with_previous(projection, previous)
-                    .with_reveals(projection, cache.anti_xray()),
+                    .with_reveals(projection, cache.anti_xray())
+                    .with_chunk_delta(chunk_deltas.get(&dimension).cloned().flatten()),
             )
         })
         .collect();
@@ -166,7 +180,7 @@ pub fn publish_with_registries<'a>(
             .iter_mut()
             .find(|viewer| viewer.connection == connection)
         {
-            viewer.loaded_chunks.remove(&pos);
+            viewer.chunk_unsent(pos);
         }
     }
     let mut addressed = Vec::new();

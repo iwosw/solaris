@@ -92,6 +92,19 @@ pub(crate) fn native_store(
 pub(crate) fn write_capture(
     capture: &ChunkCapture,
 ) -> Result<Vec<(mc_world::ChunkPos, u64)>, crate::config::CoreError> {
+    write_capture_io(capture).map(|(written, _)| written)
+}
+
+/// [`write_capture`] plus the committed record counters of the native transaction.
+pub(crate) fn write_capture_io(
+    capture: &ChunkCapture,
+) -> Result<
+    (
+        Vec<(mc_world::ChunkPos, u64)>,
+        mc_world::native::NativeCheckpointIo,
+    ),
+    crate::config::CoreError,
+> {
     let written = capture.written();
     // Reject a frozen load error even for an empty capture. Resolve chunks
     // exactly once, inside the atomic streaming commit below.
@@ -99,10 +112,10 @@ pub(crate) fn write_capture(
         return Err(crate::config::CoreError::Storage(error.to_string()));
     }
     if written.is_empty() {
-        return Ok(written);
+        return Ok((written, Default::default()));
     }
     let Some(store) = capture.store() else {
-        return Ok(Vec::new());
+        return Ok((Vec::new(), Default::default()));
     };
     let storage =
         |error: mc_world::native::NativeError| crate::config::CoreError::Storage(error.to_string());
@@ -119,7 +132,7 @@ pub(crate) fn write_capture(
     }
     image.globals.get_mut("checkpoint").unwrap().payload = serde_json::to_vec(&manifest).unwrap();
     let entities = image.entities.iter().map(Ok);
-    store
+    let io = store
         .commit_checkpoint_stream(
             NativeCheckpoint {
                 tick,
@@ -142,7 +155,7 @@ pub(crate) fn write_capture(
             capture.items(),
         )
         .map_err(storage)?;
-    Ok(written)
+    Ok((written, io))
 }
 
 fn wants(positions: &[mc_world::ChunkPos]) -> HashMap<mc_world::ChunkPos, i32> {

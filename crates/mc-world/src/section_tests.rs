@@ -345,3 +345,75 @@ fn replaced_cells_leave_no_unused_palette_state() {
     assert!(lone.palette().is_none());
     assert_eq!(lone.get(0, 0, 0), STONE);
 }
+
+/// Straightforward entry-by-entry widening: the algorithm `words_at_bits`
+/// used before the single-doubling spread fast path. Oracle for the test
+/// below; never touches production state.
+fn reference_widen(source_bits: u8, target_bits: u8, len: usize, words: &[u64]) -> Vec<u64> {
+    let source_epw = entries_per_word(source_bits);
+    let target_epw = entries_per_word(target_bits);
+    let mask = (1u64 << source_bits) - 1;
+    let mut out = vec![0u64; len.div_ceil(target_epw)];
+    for idx in 0..len {
+        let value =
+            (words[idx / source_epw] >> ((idx % source_epw) * usize::from(source_bits))) & mask;
+        out[idx / target_epw] |= value << ((idx % target_epw) * usize::from(target_bits));
+    }
+    out
+}
+
+#[test]
+fn spread_fast_path_matches_entry_loop_for_every_doubling_pair() {
+    // Every (source, 2*source) pair the `words_at_bits` fast path claims,
+    // including the real wire case 2 -> 4.
+    for source_bits in [1u8, 2, 4, 8, 16] {
+        let target_bits = source_bits * 2;
+        let source_epw = entries_per_word(source_bits);
+        let target_epw = entries_per_word(source_bits * 2);
+        let max = (1u32 << source_bits) - 1;
+        for len in [
+            0,
+            1,
+            2,
+            source_epw - 1,
+            source_epw,
+            source_epw + 1,
+            target_epw * 3 + 1,
+            4095,
+            4096,
+            4097,
+        ] {
+            let source_words = len.div_ceil(source_epw);
+            let payloads: Vec<Vec<u32>> = vec![
+                vec![0; len],
+                vec![max; len],
+                (0..len).map(|i| if i % 2 == 0 { 0 } else { max }).collect(),
+                (0..len)
+                    .map(|i| (i as u32).wrapping_mul(0x846c_a2f7) & max)
+                    .collect(),
+            ];
+            for values in &payloads {
+                // Zero padding, then all-ones padding: tail bits past `len`
+                // in the last partial word must never leak into the output.
+                let mut clean = PackedBitArray::zeroed(source_bits, len);
+                let mut dirty =
+                    PackedBitArray::from_words(source_bits, len, vec![u64::MAX; source_words]);
+                for (idx, &value) in values.iter().enumerate() {
+                    clean.set(idx, value);
+                    dirty.set(idx, value);
+                }
+                let expected = reference_widen(source_bits, target_bits, len, clean.words());
+                assert_eq!(
+                    clean.words_at_bits(target_bits).collect::<Vec<_>>(),
+                    expected,
+                    "source={source_bits} target={target_bits} len={len}"
+                );
+                assert_eq!(
+                    dirty.words_at_bits(target_bits).collect::<Vec<_>>(),
+                    expected,
+                    "source={source_bits} target={target_bits} len={len} dirty-padding"
+                );
+            }
+        }
+    }
+}

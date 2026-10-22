@@ -476,6 +476,7 @@ fn trial_spawner_corrupt_native_chunk_is_unavailable_and_never_overwritten() {
             dimension: 0,
             base: &base,
             effective: &chunk,
+            dirty_sections: None,
         }];
         store
             .commit_checkpoint(

@@ -795,6 +795,7 @@ fn plan_respawn(respawn: &Respawn, viewer: &mut ViewerState, out: &mut Vec<Plann
         // The client builds a new level: drop the whole cached view.
         viewer.dimension = respawn.dimension;
         viewer.loaded_chunks.clear();
+        viewer.chunk_sync = None;
         viewer.chunk_repairs.clear();
         viewer.tracked_entities.clear();
         viewer.entity_tick = None;

@@ -12,6 +12,8 @@ pub(super) struct PlanScratch {
     pub touched: HashSet<(i32, i32)>,
     pub blocks: Vec<mc_world::chunk::BlockPos>,
     pub events: Vec<usize>,
+    /// Held, in-window chunks named by this publish's delta.
+    pub delta_chunks: Vec<(i32, i32)>,
 }
 
 #[derive(Debug, Default)]
@@ -22,15 +24,17 @@ pub(super) struct ViewWindow {
 }
 
 impl ViewWindow {
-    pub fn update(&mut self, center: (i32, i32), distance: i32) {
+    /// Returns true when the window moved (or was never computed).
+    pub fn update(&mut self, center: (i32, i32), distance: i32) -> bool {
         let distance = distance.max(0);
         if self.key == Some((center, distance)) {
-            return;
+            return false;
         }
         self.key = Some((center, distance));
         self.order = spiral_square(center, distance);
         self.want.clear();
         self.want.extend(self.order.iter().copied());
+        true
     }
 }
 

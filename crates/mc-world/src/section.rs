@@ -396,12 +396,26 @@ impl PackedBitArray {
         let source_entries = entries_per_word(self.bits_per_entry);
         let source_end = source_entries * source_bits;
         let source_mask = (1u64 << source_bits) - 1;
+        // Single-doubling widening (`2 -> 4` on the wire, plus the `1 -> 2`
+        // and `4 -> 8` siblings): one source word fans out to exactly two
+        // target words, so each target word spreads one contiguous half-word
+        // instead of looping over entries. Both widths tile 64-bit words
+        // (powers of two), so word boundaries always line up.
+        let spread = (bits == self.bits_per_entry * 2 && self.bits_per_entry.is_power_of_two())
+            .then_some(self.bits_per_entry);
         (0..self.len.div_ceil(epw)).map(move |word| {
             if bits == self.bits_per_entry {
                 return self.data[word];
             }
             let start = word * epw;
             let end = (start + epw).min(self.len);
+            if let Some(src_bits) = spread {
+                let half = (self.data[word / 2] >> ((word % 2) * 32)) & 0xFFFF_FFFF;
+                // Entries past `len` in the last partial word stay zero,
+                // matching the entry loop (source padding never leaks).
+                let keep = u64::MAX >> ((epw - (end - start)) * usize::from(bits));
+                return spread_double(half, src_bits) & keep;
+            }
             let mut source_word = start / source_entries;
             let mut source_shift = (start % source_entries) * source_bits;
             let mut packed = 0;
@@ -418,6 +432,34 @@ impl PackedBitArray {
             packed
         })
     }
+}
+
+/// Widen every `src_bits`-wide field packed in the low 32 bits of `v` to
+/// double width, producing one full `u64` of output. Used by
+/// [`PackedBitArray::words_at_bits`] for single-doubling repacks (`1 -> 2`,
+/// `2 -> 4`, `4 -> 8`, ...): each cascade step doubles the field stride,
+/// fanning the low half-word out across the whole word. Masks are repeating
+/// `[h ones, h zeros]` rows; the shift chain is the entry-loop repack the
+/// `simd_eval` prototype proved byte-identical (`scalar_spread`).
+fn spread_double(v: u64, src_bits: u8) -> u64 {
+    debug_assert!(matches!(src_bits, 1 | 2 | 4 | 8 | 16));
+    let mut v = v & 0xFFFF_FFFF;
+    if src_bits <= 16 {
+        v = (v | (v << 16)) & 0x0000_FFFF_0000_FFFF;
+    }
+    if src_bits <= 8 {
+        v = (v | (v << 8)) & 0x00FF_00FF_00FF_00FF;
+    }
+    if src_bits <= 4 {
+        v = (v | (v << 4)) & 0x0F0F_0F0F_0F0F_0F0F;
+    }
+    if src_bits <= 2 {
+        v = (v | (v << 2)) & 0x3333_3333_3333_3333;
+    }
+    if src_bits == 1 {
+        v = (v | (v << 1)) & 0x5555_5555_5555_5555;
+    }
+    v
 }
 
 fn entries_per_word(bits_per_entry: u8) -> usize {

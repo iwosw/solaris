@@ -145,6 +145,7 @@ fn p02_bounds_expand_shrink_retains_base_coordinates_and_durable_saves() {
                 dimension: 0,
                 base: &base,
                 effective: &edited,
+                dirty_sections: None,
             }],
             &blocks,
             &items(),

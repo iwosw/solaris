@@ -11,6 +11,9 @@ use mc_protocol::packets::play::{
 use mc_world::chunk::ChunkPos;
 use std::sync::Arc;
 
+#[path = "plan/chunk_delta_tests.rs"]
+mod chunk_delta_tests;
+
 #[path = "plan_index_tests.rs"]
 mod index_tests;
 

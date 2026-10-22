@@ -61,6 +61,12 @@ pub struct ChunkWorld {
     /// Eviction retains them until a checkpoint write is acknowledged for
     /// their current revision ([`Self::mark_flushed`]).
     dirty: HashSet<ChunkPos>,
+    /// Per dirty chunk, the block sections (bit = index from the geometry's
+    /// `min_y`) edited since its last acknowledged checkpoint. Only
+    /// [`Self::fold_overlay`] changes resident block states, so a chunk dirty
+    /// for any other reason (light, ticks, block entities, clocks) has no
+    /// entry. Cleared with `dirty` by [`Self::mark_flushed`].
+    dirty_sections: HashMap<ChunkPos, u32>,
     /// Chunks with block-entity storage changes whose chunk is not
     /// resident (container edited while its chunk was evicted, or the
     /// chunk was never resident). The next checkpoint capture makes them
@@ -450,6 +456,7 @@ impl ChunkWorld {
             route_touched: Vec::new(),
             dirty: HashSet::default(),
             dirty_absent: HashSet::default(),
+            dirty_sections: HashMap::default(),
             inhabited_time: HashMap::default(),
             inhabited_tick: 0,
             inhabited_active: Vec::new(),
@@ -679,8 +686,9 @@ impl ChunkWorld {
         self.villager_route_revisions.remove(&pos);
         self.light.remove(pos);
         self.published = None;
-        self.generated.retain(|(chunk, _, _)| *chunk != pos);
+        self.generated.retain(|captured| captured.pos != pos);
         self.dirty.remove(&pos);
+        self.dirty_sections.remove(&pos);
         self.dirty_absent.insert(pos);
         if was_resident {
             self.active_revision += 1;
@@ -741,7 +749,12 @@ impl ChunkWorld {
             return false;
         }
         if let Some(base) = generated_base {
-            self.generated.push((pos, 0, base));
+            self.generated.push(CapturedChunk {
+                pos,
+                revision: 0,
+                chunk: base,
+                dirty_sections: None,
+            });
         }
         self.chunks.insert(pos, chunk);
         self.active_revision += 1;
@@ -1287,12 +1300,8 @@ impl ChunkWorld {
             if self.chunks.contains_key(&pos) {
                 capture.deferred.remove(&pos);
                 self.set_scheduled_block_ticks(pos, ticks);
-                let image = (
-                    pos,
-                    self.revisions.get(&pos).copied().unwrap_or(0),
-                    Arc::clone(&self.chunks[&pos]),
-                );
-                if let Some(captured) = capture.chunks.iter_mut().find(|entry| entry.0 == pos) {
+                let image = self.captured_chunk(pos);
+                if let Some(captured) = capture.chunks.iter_mut().find(|entry| entry.pos == pos) {
                     *captured = image;
                 } else {
                     capture.chunks.push(image);
@@ -1301,7 +1310,9 @@ impl ChunkWorld {
                 deferred.block_ticks = Some(ticks);
             }
         }
-        capture.chunks.sort_by_key(|entry| (entry.0.x, entry.0.z));
+        capture
+            .chunks
+            .sort_by_key(|entry| (entry.pos.x, entry.pos.z));
     }
 
     pub(crate) fn set_scheduled_fluid_ticks(
@@ -1336,12 +1347,8 @@ impl ChunkWorld {
             if self.chunks.contains_key(&pos) {
                 capture.deferred.remove(&pos);
                 self.set_scheduled_fluid_ticks(pos, ticks);
-                let image = (
-                    pos,
-                    self.revisions.get(&pos).copied().unwrap_or(0),
-                    Arc::clone(&self.chunks[&pos]),
-                );
-                if let Some(entry) = capture.chunks.iter_mut().find(|entry| entry.0 == pos) {
+                let image = self.captured_chunk(pos);
+                if let Some(entry) = capture.chunks.iter_mut().find(|entry| entry.pos == pos) {
                     *entry = image;
                 } else {
                     capture.chunks.push(image);
@@ -1350,7 +1357,9 @@ impl ChunkWorld {
                 deferred.fluid_ticks = Some(ticks);
             }
         }
-        capture.chunks.sort_by_key(|entry| (entry.0.x, entry.0.z));
+        capture
+            .chunks
+            .sort_by_key(|entry| (entry.pos.x, entry.pos.z));
     }
 
     /// Store opaque vanilla block-entity NBT in its checkpointed chunk.
@@ -1950,6 +1959,9 @@ impl ChunkWorld {
                 }
             }
             chunk.set_block(lx, y, lz, BlockStateId(state));
+            if let Some((section, _)) = chunk.geometry().world_y_to_section(y) {
+                *self.dirty_sections.entry(pos).or_default() |= 1 << section;
+            }
             self.dirty.insert(pos);
             revised.insert(pos);
             // Observe the exact post-image of this edit; batching all block
@@ -2390,10 +2402,7 @@ impl ChunkWorld {
                 );
                 self.bump_storage_revision(pos);
             }
-            let revision = self.revisions.get(&pos).copied().unwrap_or(0);
-            capture
-                .chunks
-                .push((pos, revision, Arc::clone(&self.chunks[&pos])));
+            capture.chunks.push(self.captured_chunk(pos));
         }
         if std::env::var("MC_CORE_PHASE_LOG").is_ok() {
             eprintln!(
@@ -2413,11 +2422,24 @@ impl ChunkWorld {
         for (pos, revision) in written {
             if self.revisions.get(pos) == Some(revision) {
                 self.dirty.remove(pos);
+                self.dirty_sections.remove(pos);
                 if let Some(debt) = self.sim_debt.get_mut(pos) {
                     debt.dirty = false;
                 }
                 self.eviction_check.insert(*pos);
             }
+        }
+    }
+
+    /// Frozen image of a resident chunk for the next checkpoint. Edits after
+    /// this call copy on write and bump the revision, so the ACK fence keeps
+    /// them (and this mask's bits) for the next capture.
+    fn captured_chunk(&self, pos: ChunkPos) -> CapturedChunk {
+        CapturedChunk {
+            pos,
+            revision: self.revisions.get(&pos).copied().unwrap_or(0),
+            chunk: Arc::clone(&self.chunks[&pos]),
+            dirty_sections: Some(self.dirty_sections.get(&pos).copied().unwrap_or(0)),
         }
     }
 
@@ -2434,8 +2456,16 @@ impl ChunkWorld {
     }
 }
 
-/// One captured chunk: position, the revision it was captured at, content.
-type CapturedChunk = (ChunkPos, u64, Arc<Chunk>);
+/// One captured chunk: position, the revision it was captured at, content, and
+/// the block sections edited since its last acknowledged checkpoint (`None`:
+/// unknown, examine all). The mask is a superset of what changed relative to
+/// durable overlays: it keeps bits already written by an unacknowledged capture.
+struct CapturedChunk {
+    pos: ChunkPos,
+    revision: u64,
+    chunk: Arc<Chunk>,
+    dirty_sections: Option<u32>,
+}
 
 /// Frozen capture-only post-images. `None` preserves that native domain;
 /// `Some(Vec::new())` clears it. These chunks never enter simulation residency.
@@ -2484,7 +2514,7 @@ impl ChunkCapture {
         let mut written: Vec<_> = self
             .chunks
             .iter()
-            .map(|(pos, revision, _)| (*pos, *revision))
+            .map(|captured| (captured.pos, captured.revision))
             .chain(
                 self.deferred
                     .iter()
@@ -2505,7 +2535,8 @@ impl ChunkCapture {
         if let Some(error) = &self.load_error {
             return Err(CoreError::Storage(error.to_string()));
         }
-        for (pos, _, chunk) in &self.chunks {
+        for captured in &self.chunks {
+            let (pos, chunk) = (&captured.pos, &captured.chunk);
             let base = self
                 .source
                 .resolve_base(*pos)
@@ -2514,6 +2545,7 @@ impl ChunkCapture {
                 dimension: self.dimension(),
                 base: &base,
                 effective: chunk,
+                dirty_sections: captured.dirty_sections,
             })?;
         }
         let mut absent: Vec<_> = self.deferred.iter().collect();
@@ -2551,6 +2583,7 @@ impl ChunkCapture {
                 dimension: self.dimension(),
                 base: &base,
                 effective: &chunk,
+                dirty_sections: Some(0),
             })?;
         }
         Ok(())
@@ -2573,7 +2606,7 @@ impl ChunkCapture {
         let bases: Vec<_> = self
             .chunks
             .into_iter()
-            .map(|(_, _, chunk)| Arc::unwrap_or_clone(chunk))
+            .map(|captured| Arc::unwrap_or_clone(captured.chunk))
             .collect();
         store
             .fill_generated(
@@ -2595,3 +2628,7 @@ impl ChunkCapture {
 #[cfg(test)]
 #[path = "world_tests.rs"]
 pub(crate) mod world_tests;
+
+#[cfg(test)]
+#[path = "world_section_dirty_tests.rs"]
+mod world_section_dirty_tests;

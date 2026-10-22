@@ -49,6 +49,7 @@ fn native_ticks_preserve_past_and_far_future_u64_deadlines_and_sequence_after_re
                 dimension: 0,
                 base: &base,
                 effective: &effective,
+                dirty_sections: None,
             }],
             &blocks,
             &items,

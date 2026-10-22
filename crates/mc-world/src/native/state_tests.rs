@@ -151,7 +151,8 @@ fn s10_entity_failure_aborts_blocks_metadata_and_watermarks_together() {
                 &[NativeChunkSnapshot {
                     dimension: 0,
                     base: &base,
-                    effective: &effective
+                    effective: &effective,
+                    dirty_sections: None,
                 }],
                 &[invalid],
                 &blocks,
@@ -356,6 +357,7 @@ fn s02_s07_reverted_chest_blocks_keep_consumed_inventory_and_runtime_history() {
                 dimension: 0,
                 base: &baseline,
                 effective: &broken,
+                dirty_sections: None,
             }],
             &blocks,
             &items,
@@ -375,6 +377,7 @@ fn s02_s07_reverted_chest_blocks_keep_consumed_inventory_and_runtime_history() {
                 dimension: 0,
                 base: &baseline,
                 effective: &restored,
+                dirty_sections: None,
             }],
             &blocks,
             &items,

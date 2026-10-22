@@ -33,9 +33,21 @@ pub(crate) struct TickPlanIndex {
     // Events can refer to an entity already removed from the snapshot, or to
     // a known entity that crossed out of the viewer square before its event.
     event_subjects: HashMap<EntityId, SubjectEvents>,
+    chunk_delta: Option<Arc<ChunkDelta>>,
 }
 
 impl TickPlanIndex {
+    /// Attach the publish's chunk revision delta (`None`: every viewer walks
+    /// its whole window).
+    pub(crate) fn with_chunk_delta(mut self, delta: Option<Arc<ChunkDelta>>) -> Self {
+        self.chunk_delta = delta;
+        self
+    }
+
+    pub(super) fn chunk_delta(&self) -> Option<&ChunkDelta> {
+        self.chunk_delta.as_deref()
+    }
+
     /// Add the anti-xray reveals of this tick's block changes (computed once
     /// per publish, shared by every viewer).
     pub(crate) fn with_reveals(

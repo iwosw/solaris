@@ -4,6 +4,11 @@
 //! walks repair window/membership gaps. Canonical dirty work and due/credit
 //! debt retain packet order. Exact-baseline movement/head frames are encoded
 //! once per publish and shared; bosses use cached candidate ids.
+//! Chunk reconciliation follows the same rule: a publish-wide chunk revision
+//! delta (`chunk_delta`) lets a viewer that was fully reconciled against the
+//! previous publish, has no delivery debt and did not move its window touch
+//! only the changed chunks; a skipped publish, moved window, respawn, unsent
+//! chunk or overflowing delta falls back to the full held-chunk walk.
 //! Chunk traffic is a Chebyshev square, nearest-first (spiral order).
 //! Dense admission caches squared distances before partial nearest selection;
 //! a full queue builds no spawn list.
@@ -24,12 +29,14 @@
 mod player_changes;
 pub use player_changes::plan_player_changes;
 
+mod chunk_delta;
 mod entity_candidates;
 mod entity_interest;
 mod entity_type_flags;
 mod scratch;
 mod shared_moves;
 mod tick_index;
+use chunk_delta::{ChunkChangeKind, ChunkDelta, ChunkDeltaLog, ChunkSync, chunk_stat};
 use scratch::{PlanScratch, ViewWindow};
 pub(crate) use tick_index::TickPlanIndex;
 use tick_index::{entity_chunk, event_subject};
@@ -70,6 +77,8 @@ const ENTITY_DATA_CUSTOM_NAME_VISIBLE_INDEX: u8 = 3;
 pub struct ChunkPacketCache {
     entries: HashMap<(mc_core::dimensions::Dimension, (i32, i32)), CachedChunk>,
     anti_xray: Option<Arc<crate::anti_xray::AntiXray>>,
+    /// Chunk revision deltas between consecutive publishes of this cache.
+    pub(crate) deltas: ChunkDeltaLog,
 }
 
 /// What an encoded chunk frame was computed from.
@@ -99,6 +108,7 @@ impl ChunkPacketCache {
         Self {
             entries: HashMap::default(),
             anti_xray: policy,
+            deltas: ChunkDeltaLog::default(),
         }
     }
 
@@ -418,6 +428,10 @@ pub struct ViewerState {
     clock_baseline: Option<(u64, i64, f32)>,
     scratch: PlanScratch,
     window: ViewWindow,
+    /// What the chunk state was last proven against; `None` forces a full walk.
+    chunk_sync: Option<ChunkSync>,
+    #[cfg(test)]
+    pub(crate) chunk_stats: chunk_delta::ChunkPlanStats,
 }
 
 impl ViewerState {
@@ -453,7 +467,17 @@ impl ViewerState {
             clock_baseline: None,
             scratch: PlanScratch::default(),
             window: ViewWindow::default(),
+            chunk_sync: None,
+            #[cfg(test)]
+            chunk_stats: chunk_delta::ChunkPlanStats::default(),
         }
+    }
+
+    /// The client never received this chunk's packet: plan it again, and let
+    /// the next plan walk the whole window.
+    pub(crate) fn chunk_unsent(&mut self, pos: (i32, i32)) {
+        self.loaded_chunks.remove(&pos);
+        self.chunk_sync = None;
     }
 }
 
@@ -641,7 +665,26 @@ fn plan_viewer_inner(
         );
         viewer.clock_baseline = Some((snapshot.tick, snapshot.day_time, snapshot.day_time_rate));
     }
-    viewer.light_baseline.retain_held(&viewer.loaded_chunks);
+    #[cfg(test)]
+    let mut stats = chunk_delta::ChunkPlanStats::default();
+    // Cleared until this plan completes: returning early leaves the next
+    // plan a full walk.
+    let sync = viewer.chunk_sync.take();
+    let delta = index.chunk_delta();
+    // A pending forget empties the held set and a skip drops block changes:
+    // neither is described by the delta.
+    let followed = !viewer.forget_all
+        && !viewer.skipped
+        && delta.zip(sync).is_some_and(|(delta, sync)| {
+            sync.quiet
+                && sync.held == viewer.loaded_chunks.len()
+                && delta.follows(&sync, snapshot.dimension)
+        });
+    if !followed {
+        chunk_stat!(stats.visited += viewer.light_baseline.len());
+        chunk_stat!(stats.probes += viewer.light_baseline.len());
+        viewer.light_baseline.retain_held(&viewer.loaded_chunks);
+    }
     if viewer.forget_all && !forget_everything(viewer, &mut out, &mut credit, scratch) {
         return out;
     }
@@ -700,31 +743,47 @@ fn plan_viewer_inner(
 
     // Chunk unloads: a chunk left without credit stays held and is
     // forgotten by a later plan.
-    viewer.window.update(center, view_distance);
-    scratch.chunks.clear();
-    scratch.chunks.extend(
-        viewer
-            .loaded_chunks
-            .keys()
-            .filter(|pos| !viewer.window.want.contains(pos))
-            .copied(),
-    );
-    for &gone in &scratch.chunks {
-        let forgotten = try_push(&mut out, &mut credit, |out| {
-            push_best_effort(
-                out,
-                conn,
-                &ForgetLevelChunk {
-                    chunk_x: gone.0,
-                    chunk_z: gone.1,
-                },
-            );
-        });
-        if forgotten {
-            viewer.loaded_chunks.remove(&gone);
-            viewer.chunk_repairs.remove(&gone);
-            viewer.block_entity_updates.remove(&gone);
-            viewer.light_baseline.forget(gone);
+    let window_moved = viewer.window.update(center, view_distance);
+    // The window is unmoved and the viewer held nothing outside it, so only
+    // the chunks the publish delta names can have moved on.
+    let fast = followed && !window_moved;
+    let mut unload_debt = false;
+    let mut light_debt = false;
+    let mut admission_debt = false;
+    let mut admit = !fast;
+    chunk_stat!(stats.plans += 1);
+    chunk_stat!(stats.delta_plans += u64::from(fast));
+    chunk_stat!(stats.full_walks += u64::from(!fast));
+    if !fast {
+        chunk_stat!(stats.visited += viewer.loaded_chunks.len());
+        chunk_stat!(stats.probes += viewer.loaded_chunks.len());
+        scratch.chunks.clear();
+        scratch.chunks.extend(
+            viewer
+                .loaded_chunks
+                .keys()
+                .filter(|pos| !viewer.window.want.contains(pos))
+                .copied(),
+        );
+        for &gone in &scratch.chunks {
+            let forgotten = try_push(&mut out, &mut credit, |out| {
+                push_best_effort(
+                    out,
+                    conn,
+                    &ForgetLevelChunk {
+                        chunk_x: gone.0,
+                        chunk_z: gone.1,
+                    },
+                );
+            });
+            if forgotten {
+                viewer.loaded_chunks.remove(&gone);
+                viewer.chunk_repairs.remove(&gone);
+                viewer.block_entity_updates.remove(&gone);
+                viewer.light_baseline.forget(gone);
+            } else {
+                unload_debt = true;
+            }
         }
     }
     // Reliable public block-entity updates and non-skipped block changes
@@ -733,45 +792,129 @@ fn plan_viewer_inner(
     let skipped = std::mem::take(&mut viewer.skipped);
     scratch.touched.clear();
     scratch.touched.extend(viewer.block_entity_updates.drain());
-    for chunk in viewer.loaded_chunks.keys() {
-        if let Some(changes_in_chunk) = index.blocks.get(chunk) {
-            scratch.touched.insert(*chunk);
-            for &change in changes_in_chunk {
-                viewer
-                    .pending_blocks
-                    .insert(changes.blocks[change].position);
+    if let Some(delta) = delta.filter(|_| fast) {
+        // Walk the shared change lists, not this viewer's held chunks.
+        for (chunk, changes_in_chunk) in &index.blocks {
+            chunk_stat!(stats.visited += 1);
+            chunk_stat!(stats.probes += 1);
+            if viewer.loaded_chunks.contains_key(chunk) {
+                for &change in changes_in_chunk {
+                    viewer
+                        .pending_blocks
+                        .insert(changes.blocks[change].position);
+                }
             }
         }
-        // Ores a block change next to them just exposed (anti-xray sent the
-        // rock stand-in): the change may sit in a neighbouring chunk, so the
-        // shared index is keyed by the ore's own chunk.
-        if let Some(revealed) = index.reveals.get(chunk) {
-            viewer.pending_blocks.extend(revealed.iter().copied());
+        for (chunk, revealed) in &index.reveals {
+            chunk_stat!(stats.visited += 1);
+            chunk_stat!(stats.probes += 1);
+            if viewer.loaded_chunks.contains_key(chunk) {
+                viewer.pending_blocks.extend(revealed.iter().copied());
+            }
         }
+        scratch.delta_chunks.clear();
+        for change in delta.changes() {
+            chunk_stat!(stats.visited += 1);
+            if change.kind == ChunkChangeKind::Unloaded {
+                continue;
+            }
+            chunk_stat!(stats.probes += 1);
+            if !viewer.window.want.contains(&change.pos) {
+                continue;
+            }
+            chunk_stat!(stats.probes += 1);
+            if viewer.loaded_chunks.contains_key(&change.pos) {
+                scratch.delta_chunks.push(change.pos);
+            } else {
+                // Newly resident inside the window: admission owns it.
+                admit = true;
+            }
+        }
+        for &pos in &scratch.delta_chunks {
+            chunk_stat!(stats.visited += 1);
+            chunk_stat!(stats.probes += 2);
+            let Some(held) = viewer.loaded_chunks.get_mut(&pos) else {
+                continue;
+            };
+            let Some(current) = find_chunk(&snapshot.chunks, pos) else {
+                continue;
+            };
+            if *held == current.revision {
+                continue;
+            }
+            chunk_stat!(stats.probes += 2);
+            let light_changed = viewer.light_baseline.observe(pos, &current.chunk);
+            if !skipped
+                && (scratch.touched.contains(&pos)
+                    || index.blocks.contains_key(&pos)
+                    || light_changed)
+            {
+                *held = current.revision;
+            } else {
+                viewer.chunk_repairs.insert(pos);
+            }
+        }
+        admit |= !viewer.chunk_repairs.is_empty();
+    } else {
+        for chunk in viewer.loaded_chunks.keys() {
+            chunk_stat!(stats.visited += 1);
+            chunk_stat!(stats.probes += 2);
+            if let Some(changes_in_chunk) = index.blocks.get(chunk) {
+                scratch.touched.insert(*chunk);
+                for &change in changes_in_chunk {
+                    viewer
+                        .pending_blocks
+                        .insert(changes.blocks[change].position);
+                }
+            }
+            // Ores a block change next to them just exposed (anti-xray sent the
+            // rock stand-in): the change may sit in a neighbouring chunk, so the
+            // shared index is keyed by the ore's own chunk.
+            if let Some(revealed) = index.reveals.get(chunk) {
+                viewer.pending_blocks.extend(revealed.iter().copied());
+            }
+        }
+        for (pos, held) in &mut viewer.loaded_chunks {
+            chunk_stat!(stats.visited += 1);
+            chunk_stat!(stats.probes += 1);
+            if !viewer.window.want.contains(pos) {
+                continue;
+            }
+            chunk_stat!(stats.probes += 1);
+            let Some(current) = find_chunk(&snapshot.chunks, *pos) else {
+                continue;
+            };
+            if *held == current.revision {
+                continue;
+            }
+            chunk_stat!(stats.probes += 1);
+            if viewer.chunk_repairs.contains(pos) {
+                continue;
+            }
+            chunk_stat!(stats.probes += 2);
+            let light_changed = viewer.light_baseline.observe(*pos, &current.chunk);
+            if !skipped && (scratch.touched.contains(pos) || light_changed) {
+                *held = current.revision;
+            } else {
+                viewer.chunk_repairs.insert(*pos);
+            }
+        }
+        chunk_stat!(stats.visited += viewer.light_baseline.len());
+        chunk_stat!(stats.probes += viewer.light_baseline.len());
+        viewer.light_baseline.retain_held(&viewer.loaded_chunks);
     }
-    for (pos, held) in &mut viewer.loaded_chunks {
-        if !viewer.window.want.contains(pos) {
-            continue;
-        }
-        let Some(current) = find_chunk(&snapshot.chunks, *pos) else {
-            continue;
-        };
-        if *held == current.revision || viewer.chunk_repairs.contains(pos) {
-            continue;
-        }
-        let light_changed = viewer.light_baseline.observe(*pos, &current.chunk);
-        if !skipped && (scratch.touched.contains(pos) || light_changed) {
-            *held = current.revision;
-        } else {
-            viewer.chunk_repairs.insert(*pos);
-        }
-    }
-    viewer.light_baseline.retain_held(&viewer.loaded_chunks);
     // Owed block updates with the newest snapshot state; one in a chunk
     // the client no longer holds is void (that chunk's packet carries it).
+    // Sorted: the owed set has no order of its own, and the delta and full
+    // walks fill it in different orders.
     scratch.blocks.clear();
     scratch.blocks.extend(viewer.pending_blocks.drain());
+    scratch
+        .blocks
+        .sort_unstable_by_key(|position| (position.x, position.y, position.z));
     for &position in &scratch.blocks {
+        chunk_stat!(stats.visited += 1);
+        chunk_stat!(stats.probes += 3);
         let chunk = (position.x.div_euclid(16), position.z.div_euclid(16));
         if !viewer.loaded_chunks.contains_key(&chunk) || viewer.chunk_repairs.contains(&chunk) {
             continue;
@@ -792,20 +935,50 @@ fn plan_viewer_inner(
         }
     }
     // A full repair covers its own newest baked light. Other light debt
-    // survives exhausted credit without replacing a chunk admission.
-    for &pos in &viewer.window.order {
-        if viewer.loaded_chunks.contains_key(&pos)
-            && !viewer.chunk_repairs.contains(&pos)
-            && let Some(resident) = find_chunk(&snapshot.chunks, pos)
-        {
-            viewer.light_baseline.update(
-                pos,
-                &resident.chunk,
-                resident.revision,
-                conn,
-                &mut out,
-                &mut credit,
-            );
+    // survives exhausted credit without replacing a chunk admission. Light
+    // moves only with a chunk revision, so the delta names every candidate.
+    if fast {
+        scratch
+            .delta_chunks
+            .sort_unstable_by_key(|&(x, z)| ((x - center.0).abs().max((z - center.1).abs()), x, z));
+        for &pos in &scratch.delta_chunks {
+            chunk_stat!(stats.visited += 1);
+            chunk_stat!(stats.probes += 3);
+            if !viewer.chunk_repairs.contains(&pos)
+                && let Some(resident) = find_chunk(&snapshot.chunks, pos)
+            {
+                light_debt |= !viewer.light_baseline.update(
+                    pos,
+                    &resident.chunk,
+                    resident.revision,
+                    conn,
+                    &mut out,
+                    &mut credit,
+                );
+            }
+        }
+    } else {
+        for &pos in &viewer.window.order {
+            chunk_stat!(stats.visited += 1);
+            chunk_stat!(stats.probes += 1);
+            if !viewer.loaded_chunks.contains_key(&pos) {
+                continue;
+            }
+            chunk_stat!(stats.probes += 1);
+            if viewer.chunk_repairs.contains(&pos) {
+                continue;
+            }
+            chunk_stat!(stats.probes += 2);
+            if let Some(resident) = find_chunk(&snapshot.chunks, pos) {
+                light_debt |= !viewer.light_baseline.update(
+                    pos,
+                    &resident.chunk,
+                    resident.revision,
+                    conn,
+                    &mut out,
+                    &mut credit,
+                );
+            }
         }
     }
     // Labels refer only to chunks held before this plan, never to an unseen
@@ -816,7 +989,12 @@ fn plan_viewer_inner(
     // bounded send budget; a deferred repair remains owed across publishes.
     let mut chunks_left = CHUNKS_PER_TICK;
     for repairs in [false, true] {
+        if !admit {
+            break;
+        }
         for &pos in &viewer.window.order {
+            chunk_stat!(stats.visited += 1);
+            chunk_stat!(stats.probes += 1);
             if if repairs {
                 !viewer.chunk_repairs.contains(&pos)
             } else {
@@ -825,9 +1003,11 @@ fn plan_viewer_inner(
                 continue;
             }
             if chunks_left == 0 || credit == 0 {
+                admission_debt = true;
                 break;
             }
             chunks_left -= 1;
+            chunk_stat!(stats.probes += 1);
             let Some(resident) = find_chunk(&snapshot.chunks, pos) else {
                 continue;
             };
@@ -855,6 +1035,16 @@ fn plan_viewer_inner(
                 .record(pos, &resident.chunk, resident.revision);
         }
     }
+    if let Some(delta) = delta {
+        let quiet = !unload_debt
+            && !light_debt
+            && !admission_debt
+            && viewer.chunk_repairs.is_empty()
+            && viewer.pending_blocks.is_empty();
+        viewer.chunk_sync = Some(delta.sync(snapshot.dimension, viewer.loaded_chunks.len(), quiet));
+    }
+    #[cfg(test)]
+    viewer.chunk_stats.add(stats);
 
     // One-shot visuals of entities this client has; lost without credit.
     // Before entity removals: vanilla sends the pickup (and death) event

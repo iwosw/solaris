@@ -10,6 +10,13 @@ The client's own loaded world is then read through `minecraft_read_block` /
 the first ore (survival, diamond pickaxe, ordinary client mining) must make the
 client receive that ore, while the second, still enclosed, ore stays hidden
 until mined into as well.
+
+A final light pass covers the publish-wide chunk-delta/light fast path for a
+stationary viewer: a lamp appears (neighbour block light >= 14) and is removed
+(back to 0) with no reconnect; the viewer then teleports 160 blocks away until
+the client forgets the chunk, the server swaps the lamp for another block/light
+(neighbour light exactly 9) while it is away, and on return the client must
+receive that block and light.
 """
 
 from __future__ import annotations
@@ -34,6 +41,10 @@ SEED = 81
 STONE = "minecraft:stone"
 DIAMOND = "minecraft:diamond_ore"
 AIR = "minecraft:air"
+GLOWSTONE = "minecraft:glowstone"  # block light 15: the neighbour cell receives 14
+CRYING_OBSIDIAN = "minecraft:crying_obsidian"  # block light 10: the neighbour cell receives 9
+AWAY_BLOCKS = 160  # x offset of the teleport: 10 chunks, far outside view_distance = 4
+
 
 REQUIRED_TOOLS = frozenset({
     "minecraft_observe",
@@ -66,6 +77,9 @@ def layout(ox: int, oy: int, oz: int) -> dict[str, Any]:
         "mine_b": (cx + 2, cy + 1, cz),
         "stand_a": (cx - 4, cy, cz),
         "stand_b": (cx + 4, cy, cz),
+        # Light pass: a lamp on the pad four blocks from stand_b, probed in the air cell above it.
+        "lamp": (cx + 4, cy, cz + 4),
+        "lamp_probe": (cx + 4, cy + 1, cz + 4),
     }
 
 
@@ -256,3 +270,65 @@ def _scenario(probe: ProbeSteps, ctx: ProfileContext, artifact: Path, address: s
                                                "timeout_seconds": probe.remaining()})
     mine("mine_b", "east")
     wait_block("ore_b", DIAMOND)
+
+    _light_pass(probe, plan, at, loaded, wait_block)
+
+
+def _light_pass(probe: ProbeSteps, plan: dict[str, Any], at: Any, loaded: Any, wait_block: Any) -> None:
+    """Stationary viewer: a light source appears and vanishes without reconnect, then the chunk
+    leaves the client's view, changes while away, and the returning viewer receives block + light.
+    Every wait is bounded by the gate deadline; any timeout fails the gate."""
+    lamp, lamp_x, lamp_z = at("lamp"), plan["lamp"][0], plan["lamp"][2]
+    details: dict[str, Any] = {"lamp": list(plan["lamp"]), "probe": list(plan["lamp_probe"])}
+    probe.report["light_pass"] = details
+
+    def probe_light(accept: Any, label: str) -> int:
+        while True:
+            state = probe.observe()
+            light = probe.call("minecraft_read_block", at("lamp_probe")).get("block_light")
+            if isinstance(light, int) and accept(light):
+                details[label] = light
+                return light
+            probe.call("minecraft_wait_for_state_change", {
+                "observed_version": state["state_version"], "timeout_seconds": probe.remaining()})
+
+    def chunk_unloaded() -> None:
+        while True:
+            state = probe.observe()
+            try:
+                probe.call("minecraft_read_block", lamp)
+            except RuntimeError as error:
+                if "not loaded" not in str(error):
+                    raise
+                return
+            probe.call("minecraft_wait_for_state_change", {
+                "observed_version": state["state_version"], "timeout_seconds": probe.remaining()})
+
+    # a) The viewer stands still (creative: no fall damage in the far teleport) while the lamp
+    # appears and is removed; the chunk delta/light update reaches the client each time.
+    sx, sy, sz = plan["stand_b"]
+    probe.fixture("gamemode creative @s")
+    probe.fixture(f"tp @s {sx} {sy} {sz}")
+    probe.fixture(f"forceload add {lamp_x} {lamp_z}")  # the server keeps the chunk while the viewer is away
+    baseline = probe_light(lambda _: True, "baseline_block_light")
+    probe.check("light_baseline_is_dark", baseline == 0)
+    probe.fixture(f"setblock {lamp['x']} {lamp['y']} {lamp['z']} {GLOWSTONE}")
+    wait_block("lamp", GLOWSTONE)
+    lit = probe_light(lambda light: light >= 14, "lit_block_light")
+    probe.check("lamp_light_reaches_neighbour", lit >= 14)
+    probe.fixture(f"setblock {lamp['x']} {lamp['y']} {lamp['z']} {AIR}")
+    wait_block("lamp", AIR)
+    probe.check("removed_lamp_light_returns_to_zero", probe_light(lambda light: light == 0, "dark_block_light") == 0)
+
+    # b) Leave the view window without reconnecting; the client forgets the chunk; the lamp's
+    # block changes server-side meanwhile; on return the new block and its light arrive.
+    probe.fixture(f"tp @s {sx + AWAY_BLOCKS} {sy + 64} {sz}")
+    chunk_unloaded()
+    probe.check("lamp_chunk_forgotten_by_client", True)
+    probe.fixture(f"setblock {lamp['x']} {lamp['y']} {lamp['z']} {CRYING_OBSIDIAN}")
+    probe.fixture(f"tp @s {sx} {sy} {sz}")
+    loaded("lamp")
+    wait_block("lamp", CRYING_OBSIDIAN)
+    returned = probe_light(lambda light: light == 9, "returned_block_light")
+    probe.check("returned_chunk_has_new_block_light", returned == 9)
+    probe.fixture(f"forceload remove {lamp_x} {lamp_z}")

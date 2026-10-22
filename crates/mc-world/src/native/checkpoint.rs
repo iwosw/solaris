@@ -59,6 +59,11 @@ pub struct NativeCheckpoint<'a> {
 pub struct NativeCheckpointIo {
     pub rewritten_chunks: usize,
     pub chunk_payload_bytes: u64,
+    /// `codec::overlay` evaluations: one per block section examined for the
+    /// durable overlay (each scans and, when it differs from base, encodes 4096 cells).
+    pub sections_encoded: u64,
+    /// Section overlay records inserted or replaced.
+    pub section_records_written: u64,
     pub rewritten_entities: usize,
     pub entity_payload_bytes: u64,
     /// Entity records presented by the owner image (the O(all) part of the pass).
@@ -688,6 +693,7 @@ impl NativeStore {
                         dimension: snapshot.dimension,
                         base: snapshot.base,
                         effective: snapshot.effective,
+                        dirty_sections: snapshot.dirty_sections,
                     })?;
                 }
                 Ok(())

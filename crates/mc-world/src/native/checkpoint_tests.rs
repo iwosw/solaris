@@ -3,7 +3,7 @@ use mc_nbt::Tag;
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 
-fn globals(tick: u64) -> BTreeMap<String, NativeDomainRecord> {
+pub(super) fn globals(tick: u64) -> BTreeMap<String, NativeDomainRecord> {
     let manifest = json!({"tick":tick,"dimensions":{},"end_fight":null,"raids":null,"tickets":{},"players":{},"world_spawn":[0,64,0],"world_spawn_rotation":[0,0],"generated_entity_claims":[],"climate":{},"border":{},"difficulty":"Normal","block_ticks":{"next_sequence":0,"chunks":[]},"fluid_ticks":{"next_sequence":0,"covered":[],"due":[]},"gamerules":{},"domain_versions":{"climate":1,"gamerules":1,"block_ticks":1,"fluid_ticks":1,"claims":1,"tickets":1,"raids":1,"end_fight":1}});
     let mut manifest = manifest;
     manifest["domain_versions"]["plugins"] = json!(1);
@@ -50,7 +50,7 @@ fn globals(tick: u64) -> BTreeMap<String, NativeDomainRecord> {
     }
     records
 }
-fn registries() -> (BlockRegistry, mc_data::items::ItemRegistry) {
+pub(super) fn registries() -> (BlockRegistry, mc_data::items::ItemRegistry) {
     (
         BlockRegistry::from_report(&mc_data::blocks::solaris_required_blocks_report()).unwrap(),
         mc_data::items::solaris_required_items(),
@@ -449,6 +449,7 @@ fn native_checkpoint_chunk_stream_late_error_rolls_back_and_retries() {
                 dimension: 0,
                 base: &chunk,
                 effective: &chunk,
+                dirty_sections: None,
             })?;
         }
         Ok(())
@@ -740,6 +741,7 @@ fn native_noop_checkpoint_keeps_stored_chunk_and_entity_bytes() {
         dimension: 0,
         base: &base,
         effective: &effective,
+        dirty_sections: None,
     }];
     store
         .commit_checkpoint(
@@ -789,6 +791,7 @@ fn native_noop_checkpoint_keeps_stored_chunk_and_entity_bytes() {
                     dimension: 0,
                     base: &base,
                     effective: &stale,
+                    dirty_sections: None,
                 }],
                 &[],
                 &blocks,
@@ -818,6 +821,7 @@ fn native_noop_checkpoint_keeps_stored_chunk_and_entity_bytes() {
                     dimension: 0,
                     base: &unknown_base,
                     effective: &unknown_chunk,
+                    dirty_sections: None,
                 }],
                 &[unknown_entity],
                 &blocks,
@@ -835,6 +839,7 @@ fn native_noop_checkpoint_keeps_stored_chunk_and_entity_bytes() {
         dimension: 0,
         base: &base,
         effective: &changed,
+        dirty_sections: None,
     }];
     let mut changed_entity = entity.clone();
     changed_entity.payload = Some(Tag::Compound(vec![("health".into(), Tag::Int(10))]));
@@ -922,6 +927,7 @@ fn native_checkpoint_chunks_roll_back_and_stamp_capture_tick() {
         dimension: 0,
         base: &base,
         effective: &effective,
+        dirty_sections: None,
     }];
     let bad = NativePlayerSnapshot {
         uuid: [9; 16],
@@ -992,6 +998,7 @@ fn native_checkpoint_chunks_roll_back_and_stamp_capture_tick() {
         dimension: 0,
         base: &base,
         effective: &effective,
+        dirty_sections: None,
     }];
     store
         .commit_checkpoint(
@@ -1030,7 +1037,8 @@ fn native_checkpoint_chunks_roll_back_and_stamp_capture_tick() {
                 &[NativeChunkSnapshot {
                     dimension: 0,
                     base: &base,
-                    effective: &effective
+                    effective: &effective,
+                    dirty_sections: None,
                 }],
                 &blocks,
                 &items
@@ -1220,6 +1228,7 @@ fn commit_checkpoint_then_crash(path: &std::path::Path) -> ! {
                     dimension: 0,
                     base: &base,
                     effective: &effective,
+                    dirty_sections: None,
                 }],
                 entities: &[entity],
                 players: &[],

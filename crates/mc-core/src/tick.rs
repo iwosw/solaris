@@ -475,7 +475,7 @@ pub struct TickState {
     pub journaled_block_entities: HashMap<(i32, i32, i32), BlockEntityImage>,
     /// Attributed block/container history behind `/co` (dimension-local).
     pub(crate) block_log: crate::block_log::BlockLog,
-    pub(crate) journaled_villagers: HashMap<EntityId, (u64, crate::villager::VillagerState)>,
+    pub(crate) journaled_villagers: HashMap<EntityId, (u64, Box<crate::villager::VillagerState>)>,
     /// Last comparison tick and chunk anchor lifecycle clocks and crossings.
     pub(crate) journaled_entity_state:
         HashMap<EntityId, (u64, ChunkPos, Arc<crate::journal::EntityStateImage>)>,

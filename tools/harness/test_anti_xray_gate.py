@@ -34,6 +34,16 @@ class AntiXrayLayoutTests(unittest.TestCase):
         for stand in (plan["stand_a"], plan["stand_b"]):
             self.assertLessEqual(abs(stand[0]), 20)
 
+    def test_lamp_is_on_the_pad_outside_the_fixture_and_probed_in_the_cell_above(self) -> None:
+        plan = anti_xray.layout(0, 70, 0)
+        lx, ly, lz = plan["lamp"]
+        x0, y0, z0, x1, y1, z1 = plan["fill"]
+        self.assertFalse(x0 <= lx <= x1 and y0 <= ly <= y1 and z0 <= lz <= z1)
+        self.assertLessEqual(max(abs(lx), abs(lz)), 20)  # inside the levelled pad
+        self.assertEqual(plan["lamp_probe"], (lx, ly + 1, lz))
+        self.assertNotIn(plan["stand_b"], (plan["lamp"], plan["lamp_probe"]))
+        self.assertGreater(anti_xray.AWAY_BLOCKS, 16 * 5)  # beyond view_distance = 4 plus margin
+
     def test_diamond_rows_selects_only_diamond_ore(self) -> None:
         rows = [{"block_id": anti_xray.STONE}, {"block_id": anti_xray.DIAMOND},
                 {"block_id": "minecraft:deepslate_diamond_ore"}]

@@ -594,6 +594,7 @@ fn persisted_malformed_native_debt_refuses_core_open_without_rewriting_it() {
                         dimension: 0,
                         base: &base,
                         effective: &effective,
+                        dirty_sections: None,
                     }],
                     entities: &[],
                     players: &[],

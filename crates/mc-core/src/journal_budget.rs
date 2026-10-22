@@ -690,3 +690,10 @@ impl Drop for CloseOnDrop<'_> {
         self.0.close();
     }
 }
+
+/// Test-only accessor for the Exp-VillagerBox footprint measurement: price one
+/// `journal_image` baseline with the same model the journal budget uses.
+#[cfg(test)]
+pub(crate) fn villager_heap_for_test(villager: &crate::villager::VillagerState) -> usize {
+    villager_heap(villager)
+}

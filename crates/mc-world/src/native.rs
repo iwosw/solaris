@@ -20,6 +20,8 @@ pub use maintenance::{NativePruneReport, NativePruneRequest};
 mod checkpoint_tests;
 #[cfg(test)]
 mod pack_tests;
+#[cfg(test)]
+mod section_dirty_tests;
 use mc_data::items::ItemRegistry;
 use mc_data::loot::chest_26_1_2::ChestLootCatalog;
 pub use state::NativeEntitySnapshot;
@@ -97,6 +99,12 @@ pub struct NativeChunkSnapshot<'a> {
     pub dimension: u32,
     pub base: &'a Chunk,
     pub effective: &'a Chunk,
+    /// World checkpoints only: block sections (bit = index from the geometry's
+    /// `min_y`) whose states may differ from the stored overlay. Other sections
+    /// are neither examined nor rewritten, so the owner must include every
+    /// section edited since the stored image. `None` examines every section;
+    /// replay always does.
+    pub dirty_sections: Option<u32>,
 }
 
 #[derive(Debug, Default, PartialEq, Eq)]
@@ -508,6 +516,7 @@ impl NativeStore {
                 dimension,
                 base,
                 effective,
+                dirty_sections: None,
             }],
             blocks,
             items,
@@ -598,6 +607,15 @@ fn write_snapshots(
         if !seen.insert(key) {
             return Err(NativeError::Invalid("duplicate snapshot participant"));
         }
+        // The mask narrows only world checkpoints: replay probes every stored
+        // section record to decide `changed`, so it keeps examining all of them.
+        let dirty = match mode {
+            SnapshotCommit::WorldCheckpoint(_) => checked_dirty_sections(snapshot)?,
+            SnapshotCommit::Replay => None,
+        };
+        let selected = |index: usize| dirty.is_none_or(|mask| (mask >> index) & 1 == 1);
+        // Overlay evaluations of the unchanged-capture probe, reused below.
+        let mut staged: Vec<(usize, Option<Vec<u8>>)> = Vec::new();
         let lsn = match mode {
             SnapshotCommit::WorldCheckpoint(tick) => tick,
             _ => snapshot.effective.world_journal_lsn(),
@@ -650,6 +668,7 @@ fn write_snapshots(
                     .iter()
                     .zip(&snapshot.effective.sections)
                     .enumerate()
+                    .filter(|(index, _)| selected(*index))
                 {
                     let section_y = snapshot.base.geometry().min_y() / 16 + index as i32;
                     let section_key = section_key(snapshot.dimension, position, section_y);
@@ -661,8 +680,12 @@ fn write_snapshots(
                         &mut dictionary,
                         previous.as_ref().map(|record| record.value()),
                     )?;
+                    if let Some(io) = io.as_deref_mut() {
+                        io.sections_encoded += 1;
+                    }
                     let same = bytes.as_deref() == previous.as_ref().map(|record| record.value());
                     drop(previous);
+                    staged.push((index, bytes));
                     if !same {
                         unchanged = false;
                         break;
@@ -683,29 +706,43 @@ fn write_snapshots(
         let mut changed = base_metadata != effective_metadata
             || matches!(mode, SnapshotCommit::WorldCheckpoint(_));
         changed |= db(metadata.get(key.as_slice()))?.is_some();
+        let mut staged = staged.into_iter().peekable();
         for (index, (base, effective)) in snapshot
             .base
             .sections
             .iter()
             .zip(&snapshot.effective.sections)
             .enumerate()
+            .filter(|(index, _)| selected(*index))
         {
             let section_y = snapshot.base.geometry().min_y() / 16 + index as i32;
             let section_key = section_key(snapshot.dimension, position, section_y);
             let previous = db(overlays.get(section_key.as_slice()))?;
-            let bytes = codec::overlay(
-                base,
-                effective,
-                blocks,
-                &mut dictionary,
-                previous.as_ref().map(|record| record.value()),
-            )?;
+            let bytes = match staged.next_if(|(staged_index, _)| *staged_index == index) {
+                Some((_, bytes)) => bytes,
+                None => {
+                    let bytes = codec::overlay(
+                        base,
+                        effective,
+                        blocks,
+                        &mut dictionary,
+                        previous.as_ref().map(|record| record.value()),
+                    )?;
+                    if let Some(io) = io.as_deref_mut() {
+                        io.sections_encoded += 1;
+                    }
+                    bytes
+                }
+            };
             changed |= previous.is_some();
             drop(previous);
             match bytes {
                 Some(bytes) => {
                     changed = true;
                     db(overlays.insert(section_key.as_slice(), bytes.as_slice()))?;
+                    if let Some(io) = io.as_deref_mut() {
+                        io.section_records_written += 1;
+                    }
                     if let Some(io) = io.as_deref_mut() {
                         io.chunk_payload_bytes += bytes.len() as u64;
                     }
@@ -738,6 +775,15 @@ fn write_snapshots(
         }
     }
     Ok(written)
+}
+
+fn checked_dirty_sections(snapshot: &NativeChunkSnapshot<'_>) -> Result<Option<u32>, NativeError> {
+    match snapshot.dirty_sections {
+        Some(mask) if u64::from(mask) >> snapshot.effective.sections.len() != 0 => {
+            Err(NativeError::Invalid("dirty section outside chunk geometry"))
+        }
+        mask => Ok(mask),
+    }
 }
 
 fn compose(

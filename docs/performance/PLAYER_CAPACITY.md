@@ -150,6 +150,10 @@ Observed:
   took 6-14 s / 19-26 s / 37-62 s wall, 120-712 MiB chunk payload each. At N=100 the checkpoint takes
   about as long as its 60 s interval. The final save on SIGTERM took 16-30 s at N=50 and 48-83 s at N=100
   (the harness default of 10 s would have SIGKILLed it).
+- Section-granular capture (after these receipts): `ChunkWorld` records which block sections `fold_overlay` edited
+  per dirty chunk and the native checkpoint examines only those (`NativeChunkSnapshot::dirty_sections`);
+  metadata-only chunks no longer encode any section overlay. `checkpoint committed` now logs
+  `sections_encoded` (overlay evaluations) and `section_records_written`; measure `rewritten_chunks` with them.
 - Ticks that complete during commits block in `journal_queue_us` ("seal plugin events and enqueue WAL,
   including bounded writer backpressure", `mc-core/src/boundary.rs`): `2ht-perf50` tick 5153 spent
   1554 ms there, five ticks in a row 0.14-1.55 s, inside the 4800 checkpoint's 21 s commit window.

@@ -1478,7 +1478,7 @@ pub(crate) fn restore_entity(
                 entity_id,
                 (
                     state.tick,
-                    crate::villager::persistence::journal_image(villager),
+                    Box::new(crate::villager::persistence::journal_image(villager)),
                 ),
             );
         }
@@ -3587,6 +3587,8 @@ fn run_native_work(
                         entity_payload_bytes = io.entity_payload_bytes,
                         rewritten_chunks = io.rewritten_chunks,
                         chunk_payload_bytes = io.chunk_payload_bytes,
+                        sections_encoded = io.sections_encoded,
+                        section_records_written = io.section_records_written,
                         "checkpoint committed"
                     );
                 }
