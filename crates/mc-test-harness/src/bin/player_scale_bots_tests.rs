@@ -631,6 +631,111 @@ async fn public_save_feedback_accepts_success_and_refuses_failure() -> Result<()
     Ok(())
 }
 
+async fn read_chat_command(peer: &mut TcpStream, buffer: &mut BytesMut) -> Result<String> {
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            if let Some(mut frame) = try_decode_frame(buffer, Compression::Disabled)? {
+                if frame.id == ServerboundChatCommand::ID {
+                    return Ok(ServerboundChatCommand::decode(&mut frame.body)?.command);
+                }
+            } else {
+                ensure!(peer.read_buf(buffer).await? > 0, "client closed early");
+            }
+        }
+    })
+    .await
+    .context("auth command deadline")?
+}
+
+async fn send_chat(peer: &mut TcpStream, text: &str) -> Result<()> {
+    let frame = system_chat_frame(text)?;
+    peer.write_all(&mc_protocol::frame::encode_frame(
+        frame.id,
+        &frame.body,
+        Compression::Disabled,
+    )?)
+    .await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn auth_registers_then_logs_in_on_account_exists_and_waits_for_unlock() -> Result<()> {
+    let mut bot = terrain_bot(0.5, 64, 0.5, 0);
+    bot.auth = Some(BotAuth::new("soakpass123".into()));
+    let (mut client, mut peer, mut buffer) = connection().await?;
+    let server = async {
+        send_chat(&mut peer, "Подождите / Please wait").await?;
+        send_chat(&mut peer, AUTH_PROMPT_REGISTER).await?;
+        assert_eq!(
+            read_chat_command(&mut peer, &mut buffer).await?,
+            "register soakpass123 soakpass123"
+        );
+        // A raced registration: the account exists, so the reply is the login prompt.
+        send_chat(&mut peer, AUTH_PROMPT_LOGIN).await?;
+        assert_eq!(
+            read_chat_command(&mut peer, &mut buffer).await?,
+            "login soakpass123"
+        );
+        send_chat(&mut peer, AUTH_UNLOCKED).await
+    };
+    let (authenticated, served) = tokio::join!(bot.authenticate(&mut client, 2), server);
+    served?;
+    authenticated?;
+    assert!(bot.auth.as_ref().is_some_and(|auth| auth.unlocked));
+    Ok(())
+}
+
+#[tokio::test]
+async fn auth_uses_a_prompt_seen_before_authentication_starts_and_rejects_wrong_password()
+-> Result<()> {
+    let mut bot = terrain_bot(0.5, 64, 0.5, 0);
+    bot.auth = Some(BotAuth::new("soakpass123".into()));
+    let (mut client, mut peer, mut buffer) = connection().await?;
+    // The join prompt can arrive while initial Play frames are still being consumed.
+    bot.frame(&mut client, system_chat_frame(AUTH_PROMPT_LOGIN)?, 2, true)
+        .await?;
+    let server = async {
+        assert_eq!(
+            read_chat_command(&mut peer, &mut buffer).await?,
+            "login soakpass123"
+        );
+        send_chat(&mut peer, AUTH_WRONG_PASSWORD).await
+    };
+    let (authenticated, served) = tokio::join!(bot.authenticate(&mut client, 2), server);
+    served?;
+    let error = authenticated.expect_err("wrong password must fail preparation");
+    assert!(error.to_string().contains("rejected --auth-password"));
+    Ok(())
+}
+
+#[test]
+fn auth_password_is_optional_and_bounded_without_whitespace() {
+    let base = [
+        "bots",
+        "--addr",
+        "127.0.0.1:1",
+        "--clients",
+        "1",
+        "--view-distance",
+        "2",
+        "--report",
+        "/unused.json",
+    ];
+    assert!(Args::try_parse_from(base).unwrap().auth_password.is_none());
+    let with =
+        |value: &str| Args::try_parse_from(base.into_iter().chain(["--auth-password", value]));
+    assert_eq!(
+        with("soakpass123").unwrap().auth_password.as_deref(),
+        Some("soakpass123")
+    );
+    assert!(with("abcd").is_ok());
+    assert!(with(&"a".repeat(128)).is_ok());
+    assert!(with("abc").is_err());
+    assert!(with(&"a".repeat(129)).is_err());
+    assert!(with("pass word").is_err());
+    assert!(with("pass\tword").is_err());
+}
+
 #[test]
 fn open_loop_is_opt_in_and_control_is_strict() {
     let args = Args::try_parse_from([

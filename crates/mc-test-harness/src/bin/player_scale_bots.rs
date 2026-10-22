@@ -12,6 +12,8 @@
 //! `--unassisted-login` removes setup admission/creative/tp/item assistance;
 //! Unassisted clients first rendezvous, then a shared watch releases every
 //! login at `login_release.unix_ns` (distinct from the gameplay Run epoch).
+//! `--auth-password PW` answers solaris-auth's register/login prompt right after Play
+//! entry (before any assistance) and waits for the plugin's unlock reply.
 //! `--verify-platform` checks five freshly decoded grass/clearance columns.
 //! Setup commands emit `fixture_commands_sent` after all writes and
 //! `fixture_setup_complete` after a unique input-ordered own chat echo.
@@ -51,6 +53,7 @@ use tokio::task::JoinSet;
 use uuid::Uuid;
 include!("player_scale_bots_mechanics.rs");
 include!("player_scale_bots_setup.rs");
+include!("player_scale_bots_auth.rs");
 include!("player_scale_bots_reader.rs");
 include!("player_scale_bots_streets.rs");
 #[path = "player_scale_bots_loader.rs"]
@@ -202,6 +205,12 @@ struct Args {
         help = "Offline username prefix (1..=11 ASCII letters, digits or underscores)"
     )]
     name_prefix: String,
+    #[arg(
+        long,
+        value_parser = auth_password_parser,
+        help = "Authenticate each bot with solaris-auth (/register, else /login) right after entering Play (4-128 bytes, no whitespace)"
+    )]
+    auth_password: Option<String>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -1187,6 +1196,7 @@ struct Bot {
     wire_trace_sequence: u64,
     reader_control: Option<watch::Sender<Option<u64>>>,
     reader_relay: Option<tokio::task::JoinHandle<()>>,
+    auth: Option<BotAuth>,
 }
 impl Bot {
     fn new(
@@ -1306,6 +1316,7 @@ impl Bot {
             wire_trace_sequence: 0,
             reader_control: None,
             reader_relay: None,
+            auth: args.auth_password.clone().map(BotAuth::new),
         }
     }
     fn current_window(&self) -> Option<usize> {
@@ -1534,6 +1545,8 @@ impl Bot {
         // Unlike connect_to_play, retain/account every Play frame and dispatch
         // out-of-order keepalives, teleports and chunks rather than discarding them.
         self.initial_play(&mut client, args.view_distance as i32)
+            .await?;
+        self.authenticate(&mut client, args.view_distance as i32)
             .await?;
         if args.mechanic_read_only {
             self.center = (
@@ -1786,6 +1799,9 @@ impl Bot {
                     frame.body.len()
                 )
             })?;
+        if frame.id == ClientboundSystemChat::ID {
+            self.observe_auth_chat(&frame)?;
+        }
         self.metrics.packets_received += 1;
         self.metrics.decoded_bytes_received += frame.body.len() as u64;
         let id = frame.id;
