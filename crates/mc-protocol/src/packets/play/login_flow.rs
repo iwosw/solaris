@@ -393,3 +393,31 @@ impl Packet for PlayDisconnect {
         Ok(Self { reason_nbt: bytes })
     }
 }
+
+/// Clientbound `Transfer` (Play): asks the client to reconnect to another
+/// host. Vanilla 26.1.2 writes a plain UTF host followed by a VarInt port and
+/// keeps the connection open; the client drops it after receiving the packet.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClientboundTransfer {
+    pub host: String,
+    pub port: i32,
+}
+
+impl Packet for ClientboundTransfer {
+    // Verified via `javap` of vanilla 26.1.2's GameProtocols:
+    // CLIENTBOUND_TRANSFER at game-CB index 129 = wire id 0x81.
+    const ID: i32 = 0x81;
+
+    fn encode<B: BufMut>(&self, buf: &mut B) -> Result<(), CodecError> {
+        buf.write_string(&self.host, 32_767)?;
+        buf.write_varint(self.port);
+        Ok(())
+    }
+
+    fn decode<B: Buf>(buf: &mut B) -> Result<Self, CodecError> {
+        Ok(Self {
+            host: buf.read_string(32_767)?,
+            port: buf.read_varint()?,
+        })
+    }
+}

@@ -18,7 +18,19 @@ pub struct RosterPlayer {
 pub(crate) enum Broadcast {
     Chat(mc_nbt::Tag),
     Scoreboard(crate::scoreboard::ScoreboardEvent),
+    BossBar {
+        players: Vec<uuid::Uuid>,
+        id: uuid::Uuid,
+        change: crate::boundary::BossBarChange,
+    },
     Difficulty(u8),
+    TickingState {
+        rate: f32,
+        frozen: bool,
+    },
+    TickingStep {
+        steps: i32,
+    },
     Weather(Weather, Option<i64>),
 }
 
@@ -56,10 +68,40 @@ fn relay(world: &mut TickState, event: &Broadcast) {
         Broadcast::Scoreboard(event) => queue_each(world, || PlayerChange::Scoreboard {
             event: event.clone(),
         }),
+        Broadcast::BossBar {
+            players,
+            id,
+            change,
+        } => {
+            for player in players {
+                let connection = world
+                    .connections
+                    .all_connections()
+                    .find(|connection| world.connections.uuid_of(*connection) == Some(*player));
+                if let Some(connection) = connection {
+                    world.push_player(
+                        connection,
+                        PlayerChange::BossBar {
+                            id: *id,
+                            change: change.clone(),
+                        },
+                    );
+                }
+            }
+        }
         Broadcast::Difficulty(difficulty) => {
             queue_each(world, || PlayerChange::DifficultyChanged {
                 difficulty: *difficulty,
             })
+        }
+        Broadcast::TickingState { rate, frozen } => {
+            queue_each(world, || PlayerChange::TickingState {
+                rate: *rate,
+                frozen: *frozen,
+            })
+        }
+        Broadcast::TickingStep { steps } => {
+            queue_each(world, || PlayerChange::TickingStep { steps: *steps })
         }
         Broadcast::Weather(..) => unreachable!("weather belongs to the overworld"),
     }

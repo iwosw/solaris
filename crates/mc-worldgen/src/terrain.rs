@@ -325,6 +325,9 @@ pub struct TerrainGenerator {
     clay_rule: ClayRule,
     vanilla_worldgen: Option<(VanillaClimate, VanillaDensity)>,
     diagnostic_cache: DiagnosticCache,
+    /// Block registry the generator was built with; spawn clearance reads
+    /// fluid states from it.
+    blocks: Arc<BlockRegistry>,
 }
 
 #[derive(Clone)]
@@ -987,6 +990,7 @@ impl TerrainGenerator {
             clay_rule: ClayRule::default(),
             vanilla_worldgen: None,
             diagnostic_cache: DiagnosticCache::default(),
+            blocks: registry,
         })
     }
 
@@ -1244,37 +1248,50 @@ impl TerrainGenerator {
     ///
     /// The search walks expanding 64-block rings around the origin and accepts
     /// only dry, low-relief inland terrain away from river centres and strong
-    /// mountain ridges. The network layer performs the final block-level support
-    /// and body-space check inside the prepared window.
+    /// mountain ridges. Each routing-level candidate is then checked against the
+    /// chunk this generator actually produces for it (features, decoration and
+    /// village pieces included): a dry, non-fluid support block at `surface_y`
+    /// and air in the two body blocks above. A candidate that fails is skipped
+    /// for the next one within the same bounded search.
     #[must_use]
     pub fn locate_safe_spawn(&self) -> Option<SpawnLocation> {
+        self.spawn_candidates()
+            .find(|spawn| self.spawn_is_clear(*spawn))
+    }
+
+    fn spawn_is_clear(&self, spawn: SpawnLocation) -> bool {
+        let chunk = ChunkGenerator::generate(self, spawn.chunk());
+        let lx = spawn.block_x.rem_euclid(16) as u8;
+        let lz = spawn.block_z.rem_euclid(16) as u8;
+        chunk.get_block(lx, spawn.surface_y, lz).is_some_and(|id| {
+            id != self.air
+                && self
+                    .blocks
+                    .by_id(id)
+                    .is_some_and(|state| !state.has_fluid())
+        }) && chunk.get_block(lx, spawn.surface_y + 1, lz) == Some(self.air)
+            && chunk.get_block(lx, spawn.surface_y + 2, lz) == Some(self.air)
+    }
+
+    /// Routing-level spawn candidates in search order: the origin, then each
+    /// expanding 64-block ring.
+    fn spawn_candidates(&self) -> impl Iterator<Item = SpawnLocation> + '_ {
         let max_ring = SPAWN_SEARCH_MAX_RADIUS_BLOCKS / SPAWN_SEARCH_STEP_BLOCKS;
-        for ring in 0..=max_ring {
-            if ring == 0 {
-                if let Some(spawn) = self.spawn_candidate(0, 0) {
-                    return Some(spawn);
-                }
-                continue;
-            }
+        let rings = (1..=max_ring).flat_map(|ring| {
             let radius = ring * SPAWN_SEARCH_STEP_BLOCKS;
-            for offset in -ring..=ring {
+            let rows = (-ring..=ring).flat_map(move |offset| {
                 let coordinate = offset * SPAWN_SEARCH_STEP_BLOCKS;
-                for (x, z) in [(coordinate, -radius), (coordinate, radius)] {
-                    if let Some(spawn) = self.spawn_candidate(x, z) {
-                        return Some(spawn);
-                    }
-                }
-            }
-            for offset in (-ring + 1)..ring {
+                [(coordinate, -radius), (coordinate, radius)]
+            });
+            let columns = ((-ring + 1)..ring).flat_map(move |offset| {
                 let coordinate = offset * SPAWN_SEARCH_STEP_BLOCKS;
-                for (x, z) in [(-radius, coordinate), (radius, coordinate)] {
-                    if let Some(spawn) = self.spawn_candidate(x, z) {
-                        return Some(spawn);
-                    }
-                }
-            }
-        }
-        None
+                [(-radius, coordinate), (radius, coordinate)]
+            });
+            rows.chain(columns)
+        });
+        std::iter::once((0, 0))
+            .chain(rings)
+            .filter_map(|(x, z)| self.spawn_candidate(x, z))
     }
 
     fn spawn_candidate(&self, block_x: i32, block_z: i32) -> Option<SpawnLocation> {
@@ -2631,6 +2648,37 @@ fn feature_hash(seed: i64, x: i32, y: i32, z: i32, salt: u64) -> u64 {
     h.wrapping_mul(0x94D0_49BB_1331_11EB) ^ (h >> 31)
 }
 
+impl TerrainGenerator {
+    /// Far-terrain LOD summary of a never-generated column: the router's
+    /// cave-free surface on the column's lattice corner and the biome there.
+    /// Villages, carvers and decoration are not applied; nothing is cached.
+    #[must_use]
+    pub fn lod_column(&self, world_x: i32, world_z: i32) -> (i32, Identifier) {
+        let clamp = |y: i32| y.clamp(self.geometry.min_y(), self.geometry.max_y() - 1);
+        if let Some((climate, density)) = self.vanilla()
+            && let Some(y) = density.lod_surface_height(world_x, world_z)
+        {
+            let y = clamp(y);
+            let biome = Identifier::parse(climate.sample(world_x, y, world_z).biome)
+                .expect("validated vanilla biome identifier");
+            return (y, biome);
+        }
+        let sample = self.diagnostic_sample_uncached(world_x, world_z, None);
+        (clamp(sample.surface_y), sample.biome)
+    }
+
+    /// The far-terrain generation program native clients may run for
+    /// never-generated columns (see [`crate::vanilla_density::program`]);
+    /// `Ok(None)` without vanilla content or the LOD surface shape. It
+    /// reveals the seed's terrain noise: send it only on operator opt-in.
+    pub fn lod_program(&self) -> Result<Option<Vec<u8>>, String> {
+        match self.vanilla() {
+            Some((climate, density)) => crate::vanilla_density::program::encode(density, climate),
+            None => Ok(None),
+        }
+    }
+}
+
 impl ChunkGenerator for TerrainGenerator {
     fn village_sites_in_region(
         &self,
@@ -2640,8 +2688,20 @@ impl ChunkGenerator for TerrainGenerator {
         TerrainGenerator::village_sites_in_region(self, min_chunk, max_chunk)
     }
 
+    fn noise_biome(&self, world_x: i32, y: i32, world_z: i32) -> Option<Identifier> {
+        Some(TerrainGenerator::noise_biome(self, world_x, y, world_z))
+    }
+
     fn surface_height(&self, world_x: i32, world_z: i32) -> Option<i32> {
         Some(Self::surface_height(self, world_x, world_z))
+    }
+
+    fn lod_column(&self, world_x: i32, world_z: i32) -> Option<(i32, Identifier)> {
+        Some(Self::lod_column(self, world_x, world_z))
+    }
+
+    fn lod_program(&self) -> Result<Option<Vec<u8>>, String> {
+        Self::lod_program(self)
     }
 
     fn generate(&self, pos: ChunkPos) -> Chunk {

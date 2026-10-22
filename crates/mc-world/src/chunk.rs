@@ -763,6 +763,9 @@ pub struct Chunk {
 pub struct GeneratedVillageSite {
     /// The chunk the placement formula started this village in.
     pub start_chunk: (i32, i32),
+    /// The structure id that placed this village (`minecraft:village_plains`,
+    /// ...): the assembly the gate resolved, so callers can filter by kind.
+    pub structure: Identifier,
     /// The region the plan reaches, in world blocks, inclusive.
     pub min: BlockPos,
     pub max: BlockPos,
@@ -777,7 +780,6 @@ pub struct GeneratedVillagePiece {
     /// The template the piece places; `None` for a `feature_pool_element`.
     pub template: Option<String>,
     pub position: BlockPos,
-    /// The piece's quarter turns, i.e. `Rotation.getIndex()`.
     pub rotation: u16,
     /// Inclusive world-space template bounds from the placement solver.
     /// Features have no template geometry to certify.
@@ -818,6 +820,29 @@ pub trait ChunkGenerator: Send + Sync {
         _max_chunk: (i32, i32),
     ) -> Vec<GeneratedVillageSite> {
         Vec::new()
+    }
+
+    /// The generator's 3D noise biome at a block position, before any edit:
+    /// the same field chunk palettes and structure gates read. Generators
+    /// without a noise biome return `None`, and `/locate biome` then reports
+    /// `not_found` instead of inventing an answer.
+    fn noise_biome(&self, _world_x: i32, _y: i32, _world_z: i32) -> Option<Identifier> {
+        None
+    }
+
+    /// Far-terrain LOD summary of a column that was never generated: the
+    /// generator's cheap surface (top solid block Y) and biome, without caves,
+    /// structures or decoration. `None` when the generator has no such field.
+    fn lod_column(&self, _world_x: i32, _world_z: i32) -> Option<(i32, Identifier)> {
+        None
+    }
+
+    /// Encoded far-terrain generation program that lets a native client
+    /// compute [`Self::lod_column`] itself (`mc_worldgen` documents the
+    /// format). It reveals the seed's terrain noise; `Ok(None)` when the
+    /// generator has none.
+    fn lod_program(&self) -> Result<Option<Vec<u8>>, String> {
+        Ok(None)
     }
 }
 

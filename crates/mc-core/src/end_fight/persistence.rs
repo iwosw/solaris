@@ -5,8 +5,10 @@ fn uuid_tag(uuid: Uuid) -> Tag {
     Tag::IntArray(
         uuid.as_u128()
             .to_be_bytes()
-            .chunks_exact(4)
-            .map(|p| i32::from_be_bytes(p.try_into().unwrap()))
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|p| i32::from_be_bytes(*p))
             .collect(),
     )
 }

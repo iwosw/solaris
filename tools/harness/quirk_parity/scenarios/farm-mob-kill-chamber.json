@@ -1,0 +1,281 @@
+{
+  "id": "farm-mob-kill-chamber",
+  "family": "farm",
+  "description": "Mob kill chamber: 16 waves of 8 skeletons summoned at y=90 fall onto a 4x4 hopper-floored pad (open drop column, glass rim walls). Fall ~25 blocks kills (20 HP) via vanilla fall damage; bones/arrows are sucked into the hoppers. Skeletons, not zombies, so no reinforcement spawns can survive and pollute the kill accounting; midnight is frozen so nothing burns. Exercises death, skeleton loot tables, fall damage and hopper item pickup. ~128 kills, ~128 expected bones.",
+  "box": [
+    0,
+    60,
+    0,
+    15,
+    95,
+    15
+  ],
+  "seeds": [
+    21,
+    22,
+    23,
+    24,
+    25
+  ],
+  "setup": [
+    "time set 18000",
+    "difficulty normal",
+    "fill 1 63 1 6 63 6 minecraft:stone",
+    "fill 2 64 2 5 64 5 minecraft:hopper[facing=down]",
+    "fill 1 65 1 6 65 6 minecraft:glass",
+    "fill 2 65 2 5 65 5 minecraft:air",
+    "fill 1 66 1 6 66 6 minecraft:glass",
+    "fill 2 66 2 5 66 5 minecraft:air"
+  ],
+  "phases": [
+    {
+      "name": "kill00",
+      "commands": [
+        "summon minecraft:skeleton 2.5 90 2.5",
+        "summon minecraft:skeleton 3.5 90 2.5",
+        "summon minecraft:skeleton 4.5 90 2.5",
+        "summon minecraft:skeleton 5.5 90 2.5",
+        "summon minecraft:skeleton 2.5 90 5.5",
+        "summon minecraft:skeleton 3.5 90 5.5",
+        "summon minecraft:skeleton 4.5 90 5.5",
+        "summon minecraft:skeleton 5.5 90 5.5"
+      ],
+      "ticks": 2000
+    },
+    {
+      "name": "kill01",
+      "commands": [
+        "summon minecraft:skeleton 2.5 90 2.5",
+        "summon minecraft:skeleton 3.5 90 2.5",
+        "summon minecraft:skeleton 4.5 90 2.5",
+        "summon minecraft:skeleton 5.5 90 2.5",
+        "summon minecraft:skeleton 2.5 90 5.5",
+        "summon minecraft:skeleton 3.5 90 5.5",
+        "summon minecraft:skeleton 4.5 90 5.5",
+        "summon minecraft:skeleton 5.5 90 5.5"
+      ],
+      "ticks": 2000
+    },
+    {
+      "name": "kill02",
+      "commands": [
+        "summon minecraft:skeleton 2.5 90 2.5",
+        "summon minecraft:skeleton 3.5 90 2.5",
+        "summon minecraft:skeleton 4.5 90 2.5",
+        "summon minecraft:skeleton 5.5 90 2.5",
+        "summon minecraft:skeleton 2.5 90 5.5",
+        "summon minecraft:skeleton 3.5 90 5.5",
+        "summon minecraft:skeleton 4.5 90 5.5",
+        "summon minecraft:skeleton 5.5 90 5.5"
+      ],
+      "ticks": 2000
+    },
+    {
+      "name": "kill03",
+      "commands": [
+        "summon minecraft:skeleton 2.5 90 2.5",
+        "summon minecraft:skeleton 3.5 90 2.5",
+        "summon minecraft:skeleton 4.5 90 2.5",
+        "summon minecraft:skeleton 5.5 90 2.5",
+        "summon minecraft:skeleton 2.5 90 5.5",
+        "summon minecraft:skeleton 3.5 90 5.5",
+        "summon minecraft:skeleton 4.5 90 5.5",
+        "summon minecraft:skeleton 5.5 90 5.5"
+      ],
+      "ticks": 2000
+    },
+    {
+      "name": "kill04",
+      "commands": [
+        "summon minecraft:skeleton 2.5 90 2.5",
+        "summon minecraft:skeleton 3.5 90 2.5",
+        "summon minecraft:skeleton 4.5 90 2.5",
+        "summon minecraft:skeleton 5.5 90 2.5",
+        "summon minecraft:skeleton 2.5 90 5.5",
+        "summon minecraft:skeleton 3.5 90 5.5",
+        "summon minecraft:skeleton 4.5 90 5.5",
+        "summon minecraft:skeleton 5.5 90 5.5"
+      ],
+      "ticks": 2000
+    },
+    {
+      "name": "kill05",
+      "commands": [
+        "summon minecraft:skeleton 2.5 90 2.5",
+        "summon minecraft:skeleton 3.5 90 2.5",
+        "summon minecraft:skeleton 4.5 90 2.5",
+        "summon minecraft:skeleton 5.5 90 2.5",
+        "summon minecraft:skeleton 2.5 90 5.5",
+        "summon minecraft:skeleton 3.5 90 5.5",
+        "summon minecraft:skeleton 4.5 90 5.5",
+        "summon minecraft:skeleton 5.5 90 5.5"
+      ],
+      "ticks": 2000
+    },
+    {
+      "name": "kill06",
+      "commands": [
+        "summon minecraft:skeleton 2.5 90 2.5",
+        "summon minecraft:skeleton 3.5 90 2.5",
+        "summon minecraft:skeleton 4.5 90 2.5",
+        "summon minecraft:skeleton 5.5 90 2.5",
+        "summon minecraft:skeleton 2.5 90 5.5",
+        "summon minecraft:skeleton 3.5 90 5.5",
+        "summon minecraft:skeleton 4.5 90 5.5",
+        "summon minecraft:skeleton 5.5 90 5.5"
+      ],
+      "ticks": 2000
+    },
+    {
+      "name": "kill07",
+      "commands": [
+        "summon minecraft:skeleton 2.5 90 2.5",
+        "summon minecraft:skeleton 3.5 90 2.5",
+        "summon minecraft:skeleton 4.5 90 2.5",
+        "summon minecraft:skeleton 5.5 90 2.5",
+        "summon minecraft:skeleton 2.5 90 5.5",
+        "summon minecraft:skeleton 3.5 90 5.5",
+        "summon minecraft:skeleton 4.5 90 5.5",
+        "summon minecraft:skeleton 5.5 90 5.5"
+      ],
+      "ticks": 2000
+    },
+    {
+      "name": "kill08",
+      "commands": [
+        "summon minecraft:skeleton 2.5 90 2.5",
+        "summon minecraft:skeleton 3.5 90 2.5",
+        "summon minecraft:skeleton 4.5 90 2.5",
+        "summon minecraft:skeleton 5.5 90 2.5",
+        "summon minecraft:skeleton 2.5 90 5.5",
+        "summon minecraft:skeleton 3.5 90 5.5",
+        "summon minecraft:skeleton 4.5 90 5.5",
+        "summon minecraft:skeleton 5.5 90 5.5"
+      ],
+      "ticks": 2000
+    },
+    {
+      "name": "kill09",
+      "commands": [
+        "summon minecraft:skeleton 2.5 90 2.5",
+        "summon minecraft:skeleton 3.5 90 2.5",
+        "summon minecraft:skeleton 4.5 90 2.5",
+        "summon minecraft:skeleton 5.5 90 2.5",
+        "summon minecraft:skeleton 2.5 90 5.5",
+        "summon minecraft:skeleton 3.5 90 5.5",
+        "summon minecraft:skeleton 4.5 90 5.5",
+        "summon minecraft:skeleton 5.5 90 5.5"
+      ],
+      "ticks": 2000
+    },
+    {
+      "name": "kill10",
+      "commands": [
+        "summon minecraft:skeleton 2.5 90 2.5",
+        "summon minecraft:skeleton 3.5 90 2.5",
+        "summon minecraft:skeleton 4.5 90 2.5",
+        "summon minecraft:skeleton 5.5 90 2.5",
+        "summon minecraft:skeleton 2.5 90 5.5",
+        "summon minecraft:skeleton 3.5 90 5.5",
+        "summon minecraft:skeleton 4.5 90 5.5",
+        "summon minecraft:skeleton 5.5 90 5.5"
+      ],
+      "ticks": 2000
+    },
+    {
+      "name": "kill11",
+      "commands": [
+        "summon minecraft:skeleton 2.5 90 2.5",
+        "summon minecraft:skeleton 3.5 90 2.5",
+        "summon minecraft:skeleton 4.5 90 2.5",
+        "summon minecraft:skeleton 5.5 90 2.5",
+        "summon minecraft:skeleton 2.5 90 5.5",
+        "summon minecraft:skeleton 3.5 90 5.5",
+        "summon minecraft:skeleton 4.5 90 5.5",
+        "summon minecraft:skeleton 5.5 90 5.5"
+      ],
+      "ticks": 2000
+    },
+    {
+      "name": "kill12",
+      "commands": [
+        "summon minecraft:skeleton 2.5 90 2.5",
+        "summon minecraft:skeleton 3.5 90 2.5",
+        "summon minecraft:skeleton 4.5 90 2.5",
+        "summon minecraft:skeleton 5.5 90 2.5",
+        "summon minecraft:skeleton 2.5 90 5.5",
+        "summon minecraft:skeleton 3.5 90 5.5",
+        "summon minecraft:skeleton 4.5 90 5.5",
+        "summon minecraft:skeleton 5.5 90 5.5"
+      ],
+      "ticks": 2000
+    },
+    {
+      "name": "kill13",
+      "commands": [
+        "summon minecraft:skeleton 2.5 90 2.5",
+        "summon minecraft:skeleton 3.5 90 2.5",
+        "summon minecraft:skeleton 4.5 90 2.5",
+        "summon minecraft:skeleton 5.5 90 2.5",
+        "summon minecraft:skeleton 2.5 90 5.5",
+        "summon minecraft:skeleton 3.5 90 5.5",
+        "summon minecraft:skeleton 4.5 90 5.5",
+        "summon minecraft:skeleton 5.5 90 5.5"
+      ],
+      "ticks": 2000
+    },
+    {
+      "name": "kill14",
+      "commands": [
+        "summon minecraft:skeleton 2.5 90 2.5",
+        "summon minecraft:skeleton 3.5 90 2.5",
+        "summon minecraft:skeleton 4.5 90 2.5",
+        "summon minecraft:skeleton 5.5 90 2.5",
+        "summon minecraft:skeleton 2.5 90 5.5",
+        "summon minecraft:skeleton 3.5 90 5.5",
+        "summon minecraft:skeleton 4.5 90 5.5",
+        "summon minecraft:skeleton 5.5 90 5.5"
+      ],
+      "ticks": 2000
+    },
+    {
+      "name": "kill15",
+      "commands": [
+        "summon minecraft:skeleton 2.5 90 2.5",
+        "summon minecraft:skeleton 3.5 90 2.5",
+        "summon minecraft:skeleton 4.5 90 2.5",
+        "summon minecraft:skeleton 5.5 90 2.5",
+        "summon minecraft:skeleton 2.5 90 5.5",
+        "summon minecraft:skeleton 3.5 90 5.5",
+        "summon minecraft:skeleton 4.5 90 5.5",
+        "summon minecraft:skeleton 5.5 90 5.5"
+      ],
+      "ticks": 2000
+    }
+  ],
+  "compare": {
+    "blocks": "exact",
+    "entities": "counts",
+    "containers": "exact"
+  },
+  "vanilla_expect": [
+    {
+      "phase": "kill15",
+      "check": "count",
+      "key": "minecraft:skeleton",
+      "min": 0,
+      "max": 0
+    }
+  ],
+  "known_divergence": "Mobs steer horizontally while airborne in Solaris (the idle-wander drive is applied mid-fall; vanilla creates no new wander path in the air, so an idle mob drops straight). Trace of farm-mob-kill-chamber wave 0 (seed 22): one skeleton drifts x 2.45->1.95, z 2.54->2.95 during the 25-block fall, lands on the glass rim (y=67) instead of the hopper pad, and its drops never reach a hopper (items rest there until the 6000-tick despawn): Solaris collects ~101 of ~128 bones (vanilla 123 +- 6.4). Fall damage, loot tables and hopper pickup match (the same chamber with 100-tick waves collects 123 bones / 114 arrows).",
+  "rate": {
+    "metric": {
+      "kind": "container_items",
+      "item": "minecraft:bone"
+    },
+    "baseline_phase": "setup",
+    "phase": "kill15",
+    "tolerance_pct": 5,
+    "min_vanilla": 20
+  }
+}

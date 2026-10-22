@@ -41,6 +41,8 @@ pub(crate) fn swap_globals(root: &mut TickState, world: &mut TickState) {
     std::mem::swap(&mut root.gamerules_dirty, &mut world.gamerules_dirty);
     std::mem::swap(&mut root.scoreboard, &mut world.scoreboard);
     std::mem::swap(&mut root.scoreboard_dirty, &mut world.scoreboard_dirty);
+    std::mem::swap(&mut root.bossbars_dirty, &mut world.bossbars_dirty);
+    std::mem::swap(&mut root.bossbars, &mut world.bossbars);
     std::mem::swap(&mut root.difficulty, &mut world.difficulty);
     std::mem::swap(
         &mut root.journaled_difficulty,
@@ -57,6 +59,7 @@ pub(crate) fn swap_globals(root: &mut TickState, world: &mut TickState) {
         &mut world.settlement_sequence,
     );
     std::mem::swap(&mut root.tick_budget, &mut world.tick_budget);
+    std::mem::swap(&mut root.tick_control, &mut world.tick_control);
 }
 
 pub(crate) fn run_tick(
@@ -106,6 +109,7 @@ pub(crate) fn run_tick(
     for world in state.other_dimensions.values_mut() {
         world.dimension_globals.active = true;
     }
+    crate::chunk_tickets::publish_online(state);
     // Build only for command-bearing ticks; normal movement ticks do not scan
     // entity custody. The set follows the command owner while worlds are taken.
     let mut reserved = std::mem::take(&mut state.dimension_globals.reserved_uuids);
@@ -165,10 +169,7 @@ pub(crate) fn run_tick(
         // Each local phase advances its clock once; remove that extra step.
         world.day_time = state
             .day_time
-            .wrapping_sub(i64::from(crate::command_rules::boolean(
-                state,
-                "advance_time",
-            )));
+            .wrapping_sub(i64::from(crate::tick_control::advances_day(state)));
         swap_globals(state, world);
         let child_start = phase_start.map(|_| std::time::Instant::now());
         // Unknown-connection metadata runs in the root before Join resolves

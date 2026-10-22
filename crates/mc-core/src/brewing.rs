@@ -435,6 +435,9 @@ pub(crate) fn run(
                 }
             }
         }
+        if slots_changed {
+            crate::redstone::containers::inventory_changed(&mut state.redstone_containers, pos);
+        }
         if let Some(remainder) = remainder {
             drops.push(spawn_item_entity(
                 state,

@@ -150,7 +150,7 @@ fn conduit_grants_wire_effect_and_break_stops_refresh() {
     assert_eq!((effect.duration, effect.ambient), (260, true));
     assert_eq!(state.players[&actor].active_effects.dig_multiplier(), 1.2);
     let events = std::mem::take(&mut state.outbox);
-    assert!(events.iter().flat_map(|(_,events)|events).any(|event|matches!(event,PlayerChange::MobEffect{effect,..} if effect.id==EffectId::ConduitPower)));
+    assert!(events.values().flatten().any(|event|matches!(event,PlayerChange::MobEffect{effect,..} if effect.id==EffectId::ConduitPower)));
     state
         .players
         .get_mut(&actor)
@@ -234,7 +234,7 @@ fn conduit_full_frame_attacks_hostile_and_syncs_exact_target() {
     let target = state.entities.row(slot).uuid;
     assert_eq!(image(&state, POS).unwrap(), Some(target));
     let events = std::mem::take(&mut state.outbox);
-    assert!(events.iter().flat_map(|(_,events)|events).any(|event|matches!(event,PlayerChange::BlockEntityData{block_entity_type:26,nbt,..} if nbt==&Tag::Compound(mc_data::conduit_nbt::fields(Some(target))))));
+    assert!(events.values().flatten().any(|event|matches!(event,PlayerChange::BlockEntityData{block_entity_type:26,nbt,..} if nbt==&Tag::Compound(mc_data::conduit_nbt::fields(Some(target))))));
     state.opaque_changes.clear();
     state.tick = 80;
     run(&mut state, &mut Vec::new());

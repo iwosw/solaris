@@ -88,18 +88,25 @@ activate. Disconnect clears the process registry, preventing content from one
 server from leaking into a later vanilla connection.
 
 The Configuration outcome carries the exact Loader acknowledgement into the
-same Play session. Both server plugin frontends submit typed view open/present/
-close requests through `ScriptBoundary`. The native owner checks the plugin,
-original session, activated `views` content and `present_views` permission.
-The server assigns each opened view an instance id and revision; updates and
-actions must match the live instance and revision. Presentation travels over
-`solaris:view`. Each adapter captures the originating connection before
+same Play session. A plugin's typed view open/present/close requests cross the
+`ScriptBoundary`; the native authority checks the plugin, original session,
+activated `views` content and `present_views` permission before delivery. The
+server assigns each opened view an instance id and revision. An `open_view`
+travels on `solaris:loader/view`; updates and actions must match the live
+instance and revision. Each adapter captures the originating connection before
 queueing client-thread work and discards work for a superseded connection.
 Within one revision, the action sequence starts at one and must increase;
 duplicate or earlier sequences do not deliver a second plugin event. A CAS
 presentation starts a new revision and resets its sequence on both sides.
 The server checks session, owner, live revision, action and field policy before
 classifying a submission as a replay.
+
+Core adds the native `solaris-settlements` bundle only to a manifest that is
+already required by a plugin bundle; it never turns a vanilla or native-client
+configuration into a Loader-required session. Its declared
+`solaris-settlements:overview` request is not a second settlement UI: after
+the normal manifest owner/content/permission admission, native authority opens
+the same server-driven dialog as `/settlement menu`.
 
 The `world_marker` placement slice binds a same-bundle, size-bounded
 `world_previews` archive entry to a declared marker ID. Shared Loader activation
@@ -156,26 +163,33 @@ verified short construction sound only after the server commits a portion
 with placed blocks; a refused or paused operation produces no sound.
 
 Input belongs to the same view/action contract, not a separate interaction
-payload. A schema-2 HUD may declare up to eight `input_bindings` using canonical
-native keyboard names and declared press/release actions. Admission requires
-`views`/`view_actions` content and `present_views`/`send_view_actions` permissions.
-Each reported edge carries its instance, revision and revision-local sequence;
-the native owner admits only actions enabled in the current model, suppresses
-replayed edges and routes accepted ones to that plugin's `loader.view_action`
-event on the original session.
+payload. A schema-2 overlay may declare up to eight `input_bindings` using
+canonical native keyboard names and declared press/release actions. It may also
+declare an additive `view_request_bindings` array of `{key, view}` pairs. Each
+pair uses the same key bound and namespace, and `view` must name a screen in
+that verified bundle. A key edge sends
+`{"protocol":3,"message":"view_request","request_kind":"<view>"}` on
+`solaris:loader/view_action`; the server decodes it only for that negotiated
+Loader connection, resolves the screen's declared owner, and emits one targeted
+`loader.view_request` event. The core-owned settlements binding is
+`key.keyboard.c` → `solaris-settlements:overview`.
 
-Shared `KeyboardHandler.keyPress` HEAD/RETURN hooks observe gameplay input
-without cancelling vanilla handling. Autorepeat is not an edge; presses must
-retain gameplay focus before and after vanilla handling. A keyboard key
-remapped to vanilla attack or use keeps the vanilla action but suppresses the
-Loader press, so a single edge never issues two gameplay intents. Declared
-F2/F11 may report edges while vanilla still takes screenshots or toggles
-fullscreen. Screen changes, overlays and the primary window's focus callback
-release held bindings once; there is no per-tick focus polling.
-Shared state is connection-scoped, and disconnect
-or content remount drops it rather than replaying it into another session.
-Fixed bindings do not add rebinding UI, chords, mouse/gamepad or client guest
-execution.
+Admission requires `views`/`view_actions` content and
+`present_views`/`send_view_actions` permissions. Each reported action edge
+carries its instance, revision and revision-local sequence; the native owner
+admits only actions enabled in the current model, suppresses replayed edges and
+routes accepted ones to that plugin's `loader.view_action` event on the
+original session. Shared `KeyboardHandler.keyPress` HEAD/RETURN hooks observe
+gameplay input without cancelling vanilla handling. Autorepeat is not an edge;
+presses must retain gameplay focus before and after vanilla handling. A
+keyboard key remapped to vanilla attack or use keeps the vanilla action but
+suppresses the Loader press, so a single edge never issues two gameplay
+intents. Declared F2/F11 may report edges while vanilla still takes screenshots
+or toggles fullscreen. Screen changes, overlays and the primary window's focus
+callback release held bindings once; there is no per-tick focus polling. Shared
+state is connection-scoped, and disconnect or content remount drops it rather
+than replaying it into another session. Fixed bindings do not add rebinding UI,
+chords, mouse/gamepad or client guest execution.
 
 The shared mixin declares `JAVA_21` compatibility because Forge's bundled
 Mixin 0.8.7 does not recognize `JAVA_25`; Minecraft still runs on Java 25.

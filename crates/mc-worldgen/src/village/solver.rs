@@ -977,7 +977,7 @@ pub(crate) fn jigsaws_for(
                 })
                 .collect();
             shuffle(&mut ranked, random);
-            ranked.sort_by(|first, second| second.0.cmp(&first.0));
+            ranked.sort_by_key(|entry| std::cmp::Reverse(entry.0));
             ranked.into_iter().map(|(_, jigsaw)| jigsaw).collect()
         }
         PlacedElement::Feature { .. } => vec![Jigsaw {

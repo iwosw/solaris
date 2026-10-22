@@ -37,6 +37,8 @@ fn contribution(plugin_id: &str) -> StartupContribution {
             })
             .to_string(),
         ]),
+        crafting_recipes: None,
+        block_tools: None,
     }
 }
 
@@ -83,4 +85,66 @@ fn cached_required_data_does_not_retain_custom_items_or_refused_tags() {
 
     convert_startup_contribution("first", &valid)
         .expect("neither refusal changes the immutable required data");
+}
+
+fn chisel_contribution() -> StartupContribution {
+    let mut contribution = contribution("chisel");
+    contribution.items.as_mut().unwrap()[0].id = "chisel:chisel".to_owned();
+    contribution.items.as_mut().unwrap()[0].carrier = "minecraft:stick".to_owned();
+    contribution.work_recipes = None;
+    contribution.crafting_recipes = Some(vec![
+        r#"{"type":"minecraft:crafting_shaped","pattern":["I","S"],
+            "key":{"I":"minecraft:iron_ingot","S":"minecraft:stick"},
+            "result":{"id":"chisel:chisel","count":1}}"#
+            .to_owned(),
+    ]);
+    contribution.block_tools = Some(vec![
+        r#"{"item":"chisel:chisel","block":"minecraft:stone_bricks","face":"up",
+            "result":"minecraft:stone_brick_slab","set":{"type":"top"},
+            "give":"minecraft:stone_brick_slab"}"#
+            .to_owned(),
+    ]);
+    contribution
+}
+
+#[test]
+fn crafting_recipes_and_block_tools_are_validated_against_declared_items() {
+    let validated = convert_startup_contribution("chisel", &chisel_contribution())
+        .expect("owned recipe and tool over a declared item");
+    assert_eq!(validated.crafting_recipes()[0].id.as_str(), "chisel:chisel");
+    assert_eq!(validated.block_tools()[0].wear, 1);
+
+    let mut foreign_result = chisel_contribution();
+    foreign_result.crafting_recipes.as_mut().unwrap()[0] =
+        foreign_result.crafting_recipes.as_ref().unwrap()[0]
+            .replace("chisel:chisel", "chisel:other");
+    assert!(matches!(
+        convert_startup_contribution("chisel", &foreign_result),
+        Err(ContributionRefusal::InvalidCraftingRecipe(_))
+    ));
+
+    let mut unknown_ingredient = chisel_contribution();
+    unknown_ingredient.crafting_recipes.as_mut().unwrap()[0] =
+        unknown_ingredient.crafting_recipes.as_ref().unwrap()[0]
+            .replace("minecraft:iron_ingot", "minecraft:not_an_item");
+    assert!(matches!(
+        convert_startup_contribution("chisel", &unknown_ingredient),
+        Err(ContributionRefusal::InvalidCraftingRecipe(_))
+    ));
+
+    let mut undeclared_tool = chisel_contribution();
+    undeclared_tool.block_tools.as_mut().unwrap()[0] =
+        undeclared_tool.block_tools.as_ref().unwrap()[0].replace("chisel:chisel", "chisel:other");
+    assert!(matches!(
+        convert_startup_contribution("chisel", &undeclared_tool),
+        Err(ContributionRefusal::InvalidBlockTool(_))
+    ));
+
+    let mut unknown_grant = chisel_contribution();
+    unknown_grant.block_tools.as_mut().unwrap()[0] = unknown_grant.block_tools.as_ref().unwrap()[0]
+        .replace("minecraft:stone_brick_slab\"}", "minecraft:not_an_item\"}");
+    assert!(matches!(
+        convert_startup_contribution("chisel", &unknown_grant),
+        Err(ContributionRefusal::InvalidBlockTool(_))
+    ));
 }

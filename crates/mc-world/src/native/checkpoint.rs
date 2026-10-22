@@ -18,6 +18,7 @@ const DOMAINS: &[&str] = &[
     "dimensions",
     "generation",
     "scoreboard",
+    "bossbars",
     "level_metadata",
     "conversion_extras",
 ];
@@ -292,7 +293,10 @@ fn validate_globals(
         if record.captured_tick != tick {
             return Err(failure(key, "capture tick mismatch"));
         }
-        if matches!(*key, "scoreboard" | "level_metadata" | "conversion_extras") {
+        if matches!(
+            *key,
+            "scoreboard" | "bossbars" | "level_metadata" | "conversion_extras"
+        ) {
             if !matches!(codec::decode(&record.payload)?, Tag::Compound(_)) {
                 return Err(failure(key, "expected NBT compound"));
             }
@@ -796,6 +800,7 @@ impl NativeStore {
                 if db(imported.get(key.as_slice()))?.is_none() {
                     let bytes = codec::baseline(snapshot.base, blocks, items)?;
                     db(imported.insert(key.as_slice(), bytes.as_slice()))?;
+                    db(db(tx.open_table(super::GENERATED))?.insert(key.as_slice(), ()))?;
                     io.chunk_payload_bytes += bytes.len() as u64;
                     base_written = true;
                 }
@@ -903,6 +908,7 @@ impl NativeStore {
             }
             let bytes = codec::baseline(chunk, blocks, items)?;
             db(imported.insert(key.as_slice(), bytes.as_slice()))?;
+            db(db(tx.open_table(super::GENERATED))?.insert(key.as_slice(), ()))?;
         }
         db(tx.commit())
     }
@@ -949,7 +955,7 @@ fn validate_player_map(
 
 /// One pinned read image for offline conversion; all reads share this transaction.
 pub struct NativeCheckpointReader {
-    tx: redb::ReadTransaction,
+    pub(super) tx: redb::ReadTransaction,
 }
 impl NativeReadOnlyStore {
     pub fn checkpoint_reader(&self) -> Result<NativeCheckpointReader, NativeError> {

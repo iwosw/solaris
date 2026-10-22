@@ -405,6 +405,7 @@ fn craft(
         }
         mc_data::inventory_semantics_26_1_2::decrement_stack(stack);
     }
+    crate::redstone::containers::inventory_changed(&mut state.redstone_containers, pos);
     let crafter = state.crafters.get_mut(&key(pos)).expect("crafter");
     crafter.settings.crafting_ticks_remaining = 6;
     crafter.dirty = true;

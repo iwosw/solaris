@@ -30,6 +30,19 @@ pub(in crate::tick) fn dig(
     let Some(current) = state.world.block_at(position.x, position.y, position.z) else {
         return;
     };
+    if crate::block_log::inspect(
+        state,
+        *connection,
+        entity,
+        *position,
+        matches!(action, DigAction::Start),
+    ) {
+        changes.blocks.push(crate::boundary::BlockChange {
+            position: *position,
+            state: current,
+        });
+        return;
+    }
     if !crate::plugin_player::allows_block(
         state,
         entity,
@@ -95,6 +108,16 @@ pub(in crate::tick) fn use_item_on(
     let Some(entity) = state.connections.by_connection.get(connection).copied() else {
         return;
     };
+    if crate::block_log::inspect(state, *connection, entity, *position, true) {
+        state.push_player(
+            *connection,
+            PlayerChange::BlockActionsAcked {
+                sequence: *sequence,
+            },
+        );
+        crate::build_precommit::resync_input(state, input);
+        return;
+    }
     if crate::tick::client_build_refused(state, entity, input) {
         crate::build_precommit::resync_input(state, input);
         return;
@@ -116,6 +139,12 @@ pub(in crate::tick) fn use_item_on(
         .any(|intent| crate::build_precommit::is_placement(intent, *position))
     {
         state.deferred_uses.push(input.clone());
+        return;
+    }
+    // A zone's public-use flag admits a non-member to this one block alone, so
+    // the click skips every held-item handler that could touch other cells.
+    if crate::plugin_player::public_use_override(state, entity, *position) {
+        use_interactive_block(state, entity, *hand, *position, intents);
         return;
     }
     // Empty-hand collection must precede the ordinary held-item
@@ -223,42 +252,7 @@ pub(in crate::tick) fn use_item_on(
         return;
     }
     // Interactive blocks react to the hand (doors, gates, levers).
-    let rotation = state
-        .entities
-        .slot_of(entity)
-        .map(|slot| state.entities.rot(slot));
-    if let Some([yaw, _, _]) = rotation
-        && let Some(cells) =
-            crate::placement::use_block(&state.registry.blocks, *position, yaw, &|pos: BlockPos| {
-                state.world.block_at(pos.x, pos.y, pos.z)
-            })
-    {
-        let Some(block_expect) = cells
-            .iter()
-            .map(|(pos, _)| {
-                state
-                    .world
-                    .block_at(pos.x, pos.y, pos.z)
-                    .map(|current| (*pos, current))
-            })
-            .collect::<Option<Vec<_>>>()
-        else {
-            return;
-        };
-        let seq = state.next_seq(entity);
-        intents.push(Intent {
-            actor: entity,
-            seq,
-            kind: IntentKind::UseBlock {
-                pos: *position,
-                hand: Some(*hand),
-            },
-            footprint: Footprint {
-                block_expect,
-                block_write: cells,
-                ..Default::default()
-            },
-        });
+    if use_interactive_block(state, entity, *hand, *position, intents) {
         return;
     }
     // Otherwise place the held block item (vanilla placement
@@ -293,6 +287,18 @@ pub(in crate::tick) fn use_item_on(
         crate::placement::Face::from_code(*face),
         changes,
     ) {
+        return;
+    }
+    // Plugin-owned tools replace the clicked block (chisel-style edits).
+    if let Some(intent) = crate::block_tools::use_intent(
+        state,
+        entity,
+        *hand,
+        *position,
+        crate::placement::Face::from_code(*face),
+        &held,
+    ) {
+        intents.push(intent);
         return;
     }
     // Hoes till soil and bone meal grows crops.
@@ -337,6 +343,58 @@ pub(in crate::tick) fn use_item_on(
         intent.seq = state.next_seq(entity);
         intents.push(intent);
     }
+}
+
+/// Hand use of a door, trapdoor, fence gate, lever or button. Returns whether
+/// the block reacts to a hand at all (and so consumed the click).
+fn use_interactive_block(
+    state: &mut TickState,
+    entity: EntityId,
+    hand: Hand,
+    position: BlockPos,
+    intents: &mut Vec<Intent>,
+) -> bool {
+    let rotation = state
+        .entities
+        .slot_of(entity)
+        .map(|slot| state.entities.rot(slot));
+    let Some([yaw, _, _]) = rotation else {
+        return false;
+    };
+    let Some(cells) =
+        crate::placement::use_block(&state.registry.blocks, position, yaw, &|pos: BlockPos| {
+            state.world.block_at(pos.x, pos.y, pos.z)
+        })
+    else {
+        return false;
+    };
+    let Some(block_expect) = cells
+        .iter()
+        .map(|(pos, _)| {
+            state
+                .world
+                .block_at(pos.x, pos.y, pos.z)
+                .map(|current| (*pos, current))
+        })
+        .collect::<Option<Vec<_>>>()
+    else {
+        return true;
+    };
+    let seq = state.next_seq(entity);
+    intents.push(Intent {
+        actor: entity,
+        seq,
+        kind: IntentKind::UseBlock {
+            pos: position,
+            hand: Some(hand),
+        },
+        footprint: Footprint {
+            block_expect,
+            block_write: cells,
+            ..Default::default()
+        },
+    });
+    true
 }
 
 /// Handles the vanilla bell block action and returns whether `position` was a bell.
@@ -390,7 +448,9 @@ pub(in crate::tick) fn interact_entity(
     ) else {
         return;
     };
-    if !within_entity_reach(state, entity, *target) {
+    if !within_entity_reach(state, entity, *target)
+        || !crate::plugin_player::allows_entity(state, entity, *target)
+    {
         return;
     }
     let secondary = matches!(input, PlayerInput::InteractEntitySecondary { .. });

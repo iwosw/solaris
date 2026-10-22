@@ -280,7 +280,7 @@ fn modern_all_domains_three_dimension_borders_roundtrip_and_unknown_entity_check
     )
     .unwrap();
     let checkpoint = store.read_checkpoint().unwrap();
-    assert_eq!(checkpoint.globals.len(), 8);
+    assert_eq!(checkpoint.globals.len(), 9);
     assert!(checkpoint.globals.contains_key("plugins"));
     assert!(checkpoint.globals.contains_key("plugin_startup"));
     let manifest: CheckpointManifest =

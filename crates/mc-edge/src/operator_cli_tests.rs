@@ -52,9 +52,12 @@ fn offline_commands_require_exact_paths_and_global_config() {
         };
         let paths = match command {
             WorldCommand::ImportAnvil(paths) | WorldCommand::ExportAnvil(paths) => paths,
-            WorldCommand::Census(_) | WorldCommand::UpgradeWorldgen => {
-                unreachable!("conversion names only")
-            }
+            WorldCommand::Census(_)
+            | WorldCommand::Probe(_)
+            | WorldCommand::UpgradeWorldgen
+            | WorldCommand::Pregenerate { .. }
+            | WorldCommand::Prune { .. }
+            | WorldCommand::Compact => unreachable!("conversion names only"),
         };
         assert_eq!(paths.source, PathBuf::from("source"));
         assert_eq!(paths.destination, PathBuf::from("destination"));
@@ -135,6 +138,67 @@ fn world_census_takes_source_and_receipt_only() {
 }
 
 #[test]
+fn world_probe_takes_source_receipt_and_blocks() {
+    let cli = Cli::try_parse_from([
+        "solaris-v2",
+        "--config",
+        "probe.toml",
+        "world",
+        "probe",
+        "--source",
+        "world",
+        "--receipt",
+        "probe.json",
+        "--block",
+        "-574,71,320",
+        "--block",
+        "8,-60,8",
+    ])
+    .unwrap();
+    assert_eq!(cli.config, PathBuf::from("probe.toml"));
+    let Some(Command::World {
+        command: WorldCommand::Probe(paths),
+    }) = cli.command
+    else {
+        panic!("world probe")
+    };
+    assert_eq!(paths.source, PathBuf::from("world"));
+    assert_eq!(paths.receipt, PathBuf::from("probe.json"));
+    assert_eq!(paths.blocks, vec![[-574, 71, 320], [8, -60, 8]]);
+    for invalid in [
+        vec!["--source", "world", "--receipt", "probe.json"],
+        vec![
+            "--source",
+            "world",
+            "--receipt",
+            "probe.json",
+            "--block",
+            "1,2",
+        ],
+        vec![
+            "--source",
+            "world",
+            "--receipt",
+            "probe.json",
+            "--block",
+            "1,2,3,4",
+        ],
+        vec![
+            "--source",
+            "world",
+            "--receipt",
+            "probe.json",
+            "--block",
+            "1,two,3",
+        ],
+    ] {
+        let mut args = vec!["solaris-v2", "world", "probe"];
+        args.extend(invalid);
+        assert!(Cli::try_parse_from(args).is_err());
+    }
+}
+
+#[test]
 fn world_upgrade_worldgen_takes_only_the_config() {
     let cli = Cli::try_parse_from([
         "solaris-v2",
@@ -154,6 +218,128 @@ fn world_upgrade_worldgen_takes_only_the_config() {
     assert!(
         Cli::try_parse_from(["solaris-v2", "world", "upgrade-worldgen", "--source", "w"]).is_err()
     );
+}
+
+#[test]
+fn world_pregenerate_takes_a_block_radius_and_optional_center() {
+    let cli = Cli::try_parse_from([
+        "solaris-v2",
+        "world",
+        "pregenerate",
+        "--radius",
+        "512",
+        "--center",
+        "-1024,2048",
+        "--config",
+        "server.toml",
+    ])
+    .unwrap();
+    assert_eq!(cli.config, PathBuf::from("server.toml"));
+    let Some(Command::World {
+        command: WorldCommand::Pregenerate { radius, center },
+    }) = cli.command
+    else {
+        panic!("world pregenerate")
+    };
+    assert_eq!(radius, 512);
+    assert_eq!(center, Some([-1024, 2048]));
+
+    let cli =
+        Cli::try_parse_from(["solaris-v2", "world", "pregenerate", "--radius", "16"]).unwrap();
+    assert!(matches!(
+        cli.command,
+        Some(Command::World {
+            command: WorldCommand::Pregenerate {
+                radius: 16,
+                center: None
+            }
+        })
+    ));
+
+    for broken in [
+        vec!["world", "pregenerate"],
+        vec!["world", "pregenerate", "--radius", "0"],
+        vec!["world", "pregenerate", "--radius", "16", "--center", "1"],
+        vec!["world", "pregenerate", "--radius", "16", "--center", "1,"],
+        vec!["world", "pregenerate", "--radius", "16", "--center", "a,b"],
+        vec!["world", "pregenerate", "--radius", "16", "--source", "w"],
+    ] {
+        let mut args = vec!["solaris-v2"];
+        args.extend(broken);
+        assert!(Cli::try_parse_from(args).is_err());
+    }
+}
+
+#[test]
+fn world_prune_needs_a_keep_radius_and_defaults_to_never_inhabited_chunks() {
+    let cli = Cli::try_parse_from([
+        "solaris-v2",
+        "world",
+        "prune",
+        "--keep-radius",
+        "1024",
+        "--center",
+        "-64,32",
+        "--dry-run",
+    ])
+    .unwrap();
+    assert!(matches!(
+        cli.command,
+        Some(Command::World {
+            command: WorldCommand::Prune {
+                keep_radius: 1024,
+                center: Some([-64, 32]),
+                max_inhabited_ticks: 0,
+                dry_run: true,
+            }
+        })
+    ));
+    let cli = Cli::try_parse_from([
+        "solaris-v2",
+        "world",
+        "prune",
+        "--keep-radius",
+        "0",
+        "--max-inhabited-ticks",
+        "20",
+    ])
+    .unwrap();
+    assert!(matches!(
+        cli.command,
+        Some(Command::World {
+            command: WorldCommand::Prune {
+                keep_radius: 0,
+                center: None,
+                max_inhabited_ticks: 20,
+                dry_run: false,
+            }
+        })
+    ));
+    for broken in [
+        vec!["world", "prune"],
+        vec!["world", "prune", "--keep-radius", "-1"],
+        vec![
+            "world",
+            "prune",
+            "--keep-radius",
+            "16",
+            "--max-inhabited-ticks",
+            "-1",
+        ],
+        vec!["world", "prune", "--keep-radius", "16", "--center", "1"],
+    ] {
+        let mut args = vec!["solaris-v2"];
+        args.extend(broken);
+        assert!(Cli::try_parse_from(args.clone()).is_err(), "{args:?}");
+    }
+    assert!(matches!(
+        Cli::try_parse_from(["solaris-v2", "world", "compact"])
+            .unwrap()
+            .command,
+        Some(Command::World {
+            command: WorldCommand::Compact
+        })
+    ));
 }
 
 #[test]

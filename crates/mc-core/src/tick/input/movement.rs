@@ -1,7 +1,107 @@
-use crate::boundary::{ConnectionId, PlayerInput};
+use crate::boundary::{ConnectionId, PlayerChange, PlayerInput};
+use crate::effects::EffectId;
 use crate::intent::{Footprint, Intent, IntentKind};
 use crate::tick::{SNEAKING_FLAG, TickSampler, TickState, update_player_crouching};
 use mc_physics::mth;
+
+const FLY_KICK_REASON: &str = "Flying is not enabled on this server";
+
+fn air_time_exception(
+    state: &TickState,
+    entity: crate::boundary::EntityId,
+    slot: crate::entities::EntitySlot,
+    position: [f64; 3],
+) -> bool {
+    let Some(player) = state.players.get(&entity) else {
+        return true;
+    };
+    if player.creative()
+        || player.spectator()
+        || player.fall_flying
+        || player.active_effects.has(EffectId::Levitation)
+        || player.active_effects.has(EffectId::SlowFalling)
+        || state.entities.vel(slot)[1] > 0.0
+    {
+        return true;
+    }
+    let at = |y: f64| {
+        state
+            .world
+            .block_at(
+                position[0].floor() as i32,
+                y.floor() as i32,
+                position[2].floor() as i32,
+            )
+            .and_then(|id| state.registry.blocks.by_id(mc_world::BlockStateId(id)))
+    };
+    let water = |y| {
+        at(y).is_some_and(|block| {
+            block.block.id.path() == "water"
+                || block
+                    .properties
+                    .iter()
+                    .any(|(name, value)| name == "waterlogged" && value == "true")
+        })
+    };
+    let body = state.entities.body(slot);
+    let supported = mc_physics::resolve_collision_displacement(
+        &TickSampler {
+            world: &state.world,
+            registry: &state.registry,
+        },
+        mc_physics::Vec3::new(position[0], position[1], position[2]),
+        mc_physics::Aabb {
+            half_width: body.half_width,
+            height: body.height,
+        },
+        mc_physics::Vec3::new(0.0, -0.001, 0.0),
+        false,
+        0.0,
+    )
+    .is_some_and(|resolved| resolved.grounded);
+    water(position[1])
+        || water(
+            position[1] + crate::tick::player_eye_height(state.entities.row(slot).appearance.pose),
+        )
+        || at(position[1])
+            .is_some_and(|block| crate::statistics::climbable(state, block.block.raw_id))
+        || supported
+}
+
+fn exceeds_air_time(
+    state: &mut TickState,
+    entity: crate::boundary::EntityId,
+    slot: crate::entities::EntitySlot,
+    old: [f64; 3],
+    new: [f64; 3],
+    input: &PlayerInput,
+) -> Option<[f64; 3]> {
+    if state.max_airtime_ticks == 0 || !matches!(input, PlayerInput::Move { .. }) {
+        return None;
+    }
+    let reset = state.entities.ground(slot)
+        || new[1] < old[1]
+        || air_time_exception(state, entity, slot, new);
+    let player = state.players.get_mut(&entity)?;
+    if reset {
+        player.airtime_ticks = 0;
+        player.airtime_sample_tick = Some(state.tick);
+        player.airtime_safe_position = Some(new);
+        return None;
+    }
+    if player.airtime_safe_position.is_none() {
+        player.airtime_safe_position = Some(old);
+    }
+    if player.airtime_sample_tick != Some(state.tick) {
+        player.airtime_sample_tick = Some(state.tick);
+        player.airtime_ticks = player.airtime_ticks.saturating_add(1);
+    }
+    (player.airtime_ticks >= state.max_airtime_ticks).then_some(
+        player
+            .airtime_safe_position
+            .expect("airtime sample initialized safe position"),
+    )
+}
 
 pub(in crate::tick) fn move_input(
     state: &mut TickState,
@@ -104,6 +204,18 @@ pub(in crate::tick) fn move_input(
         state.entities.set_ground(slot, *on_ground);
         *position
     };
+    if let Some(safe_position) = exceeds_air_time(state, entity, slot, old, new_pos, input) {
+        state.entities.set_pos(slot, safe_position);
+        state.entities.set_ground(slot, false);
+        state.correct_position(*connection, safe_position, *yaw, *pitch);
+        state.push_player(
+            *connection,
+            PlayerChange::Disconnect {
+                reason: FLY_KICK_REASON.to_owned(),
+            },
+        );
+        return;
+    }
     crate::physical_defense::accepted_movement(
         state,
         slot,

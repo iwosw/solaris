@@ -1,0 +1,99 @@
+{
+ "id": "farm-iron-golem",
+ "family": "farm",
+ "description": "Sealed-room summon-seeded iron farm with command kill: phase 1 (night, no hostile) 5 villagers sleep in dormitory beds (LAST_SLEPT); phase 2 (day) a NoAI drowned is summoned onto the open post and the clock freezes at day; 60 x 600-tick cycles each open with kill @e[type=minecraft:iron_golem] so every spawned golem drops loot onto the hopper-bed floor. Metric: container iron_ingot.",
+ "box": [
+  -12,
+  -64,
+  -12,
+  22,
+  80,
+  18
+ ],
+ "seed": 1,
+ "seeds": [
+  11,
+  22,
+  33,
+  44,
+  55
+ ],
+ "setup": [
+  "fill 0 62 0 10 62 6 minecraft:stone",
+  "fill 0 63 0 10 67 0 minecraft:stone",
+  "fill 0 63 6 10 67 6 minecraft:stone",
+  "fill 0 63 0 0 67 6 minecraft:stone",
+  "fill 10 63 0 10 67 6 minecraft:stone",
+  "fill 0 68 0 10 68 6 minecraft:glass",
+  "fill 1 63 1 9 63 5 minecraft:hopper",
+  "setblock 5 63 3 minecraft:chest",
+  "fill 1 64 1 9 64 5 minecraft:stone",
+  "fill 3 64 1 3 64 2 minecraft:stone",
+  "fill 3 64 4 3 64 5 minecraft:stone",
+  "setblock 9 64 3 minecraft:air",
+  "setblock 9 65 3 minecraft:air",
+  "setblock 1 65 1 minecraft:white_bed[facing=east,occupied=false,part=foot]",
+  "setblock 2 65 1 minecraft:white_bed[facing=east,occupied=false,part=head]",
+  "setblock 1 65 2 minecraft:white_bed[facing=east,occupied=false,part=foot]",
+  "setblock 2 65 2 minecraft:white_bed[facing=east,occupied=false,part=head]",
+  "setblock 1 65 4 minecraft:white_bed[facing=east,occupied=false,part=foot]",
+  "setblock 2 65 4 minecraft:white_bed[facing=east,occupied=false,part=head]",
+  "setblock 1 65 5 minecraft:white_bed[facing=east,occupied=false,part=foot]",
+  "setblock 2 65 5 minecraft:white_bed[facing=east,occupied=false,part=head]",
+  "setblock 1 65 3 minecraft:white_bed[facing=east,occupied=false,part=foot]",
+  "setblock 2 65 3 minecraft:white_bed[facing=east,occupied=false,part=head]",
+  "time set 12500",
+  "gamerule advance_time true",
+  "gamerule mob_griefing false",
+  "difficulty normal",
+  "summon villager 1 65 1 {PersistenceRequired:1b}",
+  "summon villager 3 65 2 {PersistenceRequired:1b}",
+  "summon villager 1 65 4 {PersistenceRequired:1b}",
+  "summon villager 3 65 5 {PersistenceRequired:1b}",
+  "summon villager 4 65 3 {PersistenceRequired:1b}"
+ ],
+ "phases": [
+  {
+   "name": "night",
+   "commands": [],
+   "ticks": 13000
+  },
+  {
+   "name": "panic",
+   "commands": [
+    "time set 1000",
+    "gamerule advance_time false",
+    "summon drowned 9 65 3 {PersistenceRequired:1b,NoAI:1b}"
+   ],
+   "ticks": 11000
+  },
+  {
+   "name": "cycle00",
+   "commands": [
+    "kill @e[type=minecraft:iron_golem]"
+   ],
+   "ticks": 600
+  },
+  {
+   "name": "cycle01",
+   "commands": [
+    "kill @e[type=minecraft:iron_golem]"
+   ],
+   "ticks": 600
+  }
+ ],
+ "compare": {
+  "blocks": "exact",
+  "entities": "counts"
+ },
+ "rate": {
+  "metric": {
+   "kind": "item_entities",
+   "item": "minecraft:iron_ingot"
+  },
+  "baseline_phase": "night",
+  "phase": "cycle00",
+  "tolerance_pct": 40,
+  "min_vanilla": 3
+ }
+}

@@ -1,0 +1,30 @@
+{
+  "id": "attribute-swap",
+  "description": "MC-28289: same-tick held-item swap attacks with the OLD item's attack_damage/attack_speed",
+  "setup": {
+    "platform": "kill @e[type=!player]; fill -6 63 -2 6 63 6 minecraft:stone; fill -6 64 -2 6 66 6 minecraft:glass hollow",
+    "victim": "summon minecraft:zombie 0.5 64.0 2.5 {NoAI:1b,PersistenceRequired:1b}",
+    "victim_fallback_nbt": "summon minecraft:zombie 0.5 64.0 2.5 {PersistenceRequired:1b}",
+    "player_tp": "tp {name} 0.5 64.0 0.8 0 0",
+    "items": [
+      "gamerule doMobSpawning false",
+      "time set midnight",
+      "give {name} minecraft:netherite_sword 1",
+      "give {name} minecraft:stick 1",
+      "gamemode survival {name}",
+      "difficulty normal"
+    ],
+    "notes": "sword must land in hotbar slot 0, stick in slot 1; verify via ContainerSetContent. Summon NBT identical on both servers (Solaris rejects Silent/Tags); handshake guarantees chunks loaded so absolute coords work.",
+    "victim_live_resummon": false
+  },
+  "cases": [
+    "damage_no_swap_sword",
+    "damage_swap_wait_stick",
+    "damage_same_tick_sword_then_stick",
+    "damage_same_tick_stick_then_sword"
+  ],
+  "tolerance": {
+    "kind": "exact_swap_semantics",
+    "rule": "same-tick damage must equal the OLD held item's full-strength damage on the oracle; Solaris passes iff its same-tick damages match vanilla's within 0.01"
+  }
+}

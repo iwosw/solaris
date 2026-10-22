@@ -44,13 +44,11 @@ fn uuid(tag: &Tag) -> Result<uuid::Uuid, CommandError> {
         _ => Err(error("Invalid UUID")),
     }
 }
-fn prepare_stack(
+/// Item stack authored as `{id, count, components}`, admitted like `/give`.
+fn parse_stack(
     items: &mc_data::items::ItemRegistry,
     fields: &[(String, Tag)],
-) -> Result<Vec<(String, Tag)>, String> {
-    if fields.is_empty() {
-        return Ok(Vec::new());
-    }
+) -> Result<mc_data::ItemStack, String> {
     for (index, (key, _)) in fields.iter().enumerate() {
         if !matches!(key.as_str(), "id" | "count" | "components")
             || fields[..index].iter().any(|(seen, _)| seen == key)
@@ -82,11 +80,86 @@ fn prepare_stack(
             return Err(format!("duplicate item component {key}"));
         }
     }
-    // The same component admission as /give, followed by the native stack codec.
+    // The same component admission as /give.
     let mut stack = mc_data::item_nbt::stack_from_component_patch(items, &id, components)
         .map_err(|e| e.to_string())?;
     stack.count = count;
+    Ok(stack)
+}
+fn prepare_stack(
+    items: &mc_data::items::ItemRegistry,
+    fields: &[(String, Tag)],
+) -> Result<Vec<(String, Tag)>, String> {
+    if fields.is_empty() {
+        return Ok(Vec::new());
+    }
+    let stack = parse_stack(items, fields)?;
     mc_data::item_nbt::stack_to_fields(items, &stack).map_err(|e| e.to_string())
+}
+
+/// `summon minecraft:item` payload: the stack plus the authored item-entity fields.
+pub(crate) struct ItemSummon {
+    pub(crate) stack: mc_data::ItemStack,
+    pub(crate) pickup_delay: Option<u32>,
+    pub(crate) age: Option<u32>,
+    pub(crate) motion: Option<[f64; 3]>,
+}
+/// Validate item-entity summon NBT (`Item`, `PickupDelay`, `Age`, `Motion`) before any spawn.
+pub(crate) fn prepare_item(state: &TickState, nbt: &Tag) -> Result<ItemSummon, CommandError> {
+    let Tag::Compound(authored) = nbt else {
+        return Err(error("Summon NBT must be a compound"));
+    };
+    let mut stack = None;
+    let (mut pickup_delay, mut age, mut motion) = (None, None, None);
+    for (index, (key, value)) in authored.iter().enumerate() {
+        if authored[..index].iter().any(|(seen, _)| seen == key) {
+            return Err(error(format!("Duplicate summon NBT field {key}")));
+        }
+        match key.as_str() {
+            "id" | "Pos" => {}
+            "Item" => {
+                let Tag::Compound(fields) = value else {
+                    return Err(error("Invalid Item: expected compound"));
+                };
+                stack = Some(
+                    parse_stack(&state.registry.items, fields)
+                        .map_err(|e| error(format!("Invalid Item: {e}")))?,
+                );
+            }
+            "PickupDelay" => {
+                // Vanilla stores a short; 32767 means "never".
+                pickup_delay = Some(number(value, key)?.clamp(0.0, 32767.0) as u32);
+            }
+            "Age" => {
+                age = Some(number(value, key)?.clamp(0.0, 6000.0) as u32);
+            }
+            "Motion" => {
+                let Tag::List(list) = value else {
+                    return Err(error("Invalid Motion"));
+                };
+                if list.elements.len() != 3 {
+                    return Err(error("Motion must contain 3 values"));
+                }
+                let mut values = [0.0; 3];
+                for (slot, element) in values.iter_mut().zip(&list.elements) {
+                    *slot = number(element, key)?;
+                }
+                motion = Some(values);
+            }
+            _ => {
+                return Err(error(format!(
+                    "Unknown or unsupported summon NBT field {key}"
+                )));
+            }
+        }
+    }
+    let stack = stack.ok_or_else(|| error("Item entity summon requires an Item"))?;
+    Ok(ItemSummon {
+        stack,
+        pickup_delay,
+        age,
+        motion,
+    })
 }
 pub(crate) fn prepare(
     state: &TickState,
@@ -134,6 +207,7 @@ pub(crate) fn prepare(
             "equipment" => living || name == "minecraft:armor_stand",
             "Age" => ageable || matches!(name, "minecraft:villager" | "minecraft:tadpole"),
             "IsBaby" => name == "minecraft:zombie_villager",
+            "VillagerData" => matches!(name, "minecraft:villager" | "minecraft:zombie_villager"),
             "InLove" | "LoveCause" => ageable,
             "Color" | "Sheared" => name == "minecraft:sheep",
             "Type" | "stew_effects" => name == "minecraft:mooshroom",
@@ -259,10 +333,19 @@ pub(crate) fn prepare(
                     value
                         .as_u128()
                         .to_be_bytes()
-                        .chunks_exact(4)
-                        .map(|p| i32::from_be_bytes(p.try_into().unwrap()))
+                        .as_chunks::<4>()
+                        .0
+                        .iter()
+                        .map(|p| i32::from_be_bytes(*p))
                         .collect(),
                 )
+            }
+            // Validated (profession/type/level) by `villager_from_fields` below.
+            "VillagerData" => {
+                let Tag::Compound(_) = value else {
+                    return Err(error("Invalid VillagerData: expected compound"));
+                };
+                value.clone()
             }
             "equipment" => {
                 let Tag::Compound(slots) = value else {

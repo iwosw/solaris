@@ -1038,6 +1038,29 @@ fn wither_los_range_spawn_immunity_and_grief_rule_are_enforced() {
     );
 }
 
+/// `[mob_griefing] wither_block_damage = false` stops the hurt-triggered
+/// block break just like the master gamerule does.
+#[test]
+fn wither_block_damage_switch_stops_the_hurt_break() {
+    let (mut state, wither, player, pos) = fixture("wither", 8.0);
+    let slot = state.entities.slot_of(wither).unwrap();
+    state.entities.row_mut(slot).special_mob = Some(Box::new(Retained::Wither { invulnerable: 0 }));
+    state.mob_griefing.wither_block_damage = false;
+    state.entities.body_mut(slot).hurt_at = Some(80);
+    state.world.set_block(
+        pos[0] as i32,
+        pos[1] as i32,
+        pos[2] as i32,
+        state.registry.states.stone,
+    );
+    assert!(
+        !advance(&mut state, wither, 100, GoalKind::WitherBarrage, player)
+            .iter()
+            .any(|intent| matches!(intent.kind, IntentKind::BreakBlock { .. })),
+        "the per-mob switch stops the break"
+    );
+}
+
 #[test]
 fn casting_and_wind_recovery_cooldowns_survive_target_loss() {
     for (name, kind, charge, recovery, cooldown) in [

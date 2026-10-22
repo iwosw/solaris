@@ -15,7 +15,7 @@ interface events {
     use npc-routes.{npc-route-result};
     use client-presentation.{view-field};
     use operation-types.{operation-failure};
-    use world-events.{player-block-broken, player-block-placed, player-item-crafted, player-item-picked-up, player-entity-killed, player-entity-interacted, player-died};
+    use world-events.{player-block-broken, player-block-placed, player-item-crafted, player-item-picked-up, player-entity-killed, player-entity-interacted, player-died, player-grave-created};
 
     /// What one event says about its own origin. A batch carries the tick and
     /// the owner of the events in it, so a plugin can order its own work without
@@ -608,6 +608,9 @@ interface events {
         client-selection-started(client-selection-started),
         /// The result of one `grant-loader-block-item` this plugin issued.
         loader-item-grant-result(loader-item-grant-result),
+        /// One death container the server created for a player whose drops it
+        /// took custody of. Addressed to the declaring `death_graves` package.
+        player-grave-created(player-grave-created),
     }
 
     /// One batch of events for the plugin, in delivery order for this plugin.

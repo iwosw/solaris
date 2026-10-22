@@ -515,10 +515,11 @@ pub(super) fn fix_node(
                 report.applied(version, "VillagerFollowRangeFix");
             }
         }
-        2535 if entity && named(nbt::get(tag, "id"), "minecraft:shulker") => {
-            if shulker_rotation(tag) {
-                report.applied(version, "EntityShulkerRotationFix");
-            }
+        2535 if entity
+            && named(nbt::get(tag, "id"), "minecraft:shulker")
+            && shulker_rotation(tag) =>
+        {
+            report.applied(version, "EntityShulkerRotationFix");
         }
         _ => {}
     }
@@ -785,7 +786,7 @@ fn shift_tiles(tag: &mut Tag) {
         nbt::set(tag, key, Tag::Int(base.wrapping_add(delta)));
     }
     nbt::remove(tag, "Direction");
-    nbt::set(tag, "Facing", Tag::Byte(index as i8));
+    nbt::set(tag, "Facing", Tag::Byte(index));
 }
 
 /// v113 EntityRedundantChanceTagsFix: drop-chance lists that are all zero

@@ -1,5 +1,5 @@
 //! Generic physical world operations. Answers arrive asynchronously through operation events.
-use crate::{domain_operations, world_structures as wire, Command};
+use crate::{Command, domain_operations, world_structures as wire};
 
 /// Read bounded exact physical facts without registering a worksite.
 #[must_use]
@@ -207,6 +207,9 @@ fn state_change(
     }
 }
 fn operation(request: &str, value: wire::WorldStructureOperation) -> Command {
-    Command::Operation(domain_operations::OperationRequest { expected_plugin_storage_versions: Vec::new(), request: request.to_owned(),
-    operation: domain_operations::DomainOperation::WorldStructure(value), })
+    Command::Operation(domain_operations::OperationRequest {
+        expected_plugin_storage_versions: Vec::new(),
+        request: request.to_owned(),
+        operation: domain_operations::DomainOperation::WorldStructure(value),
+    })
 }

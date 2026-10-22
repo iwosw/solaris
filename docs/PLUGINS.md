@@ -75,7 +75,8 @@ breaks and placements (including paired/construction cells), bone-meal growth,
 successful composter fills, clicked/raycast bucket edits, and server-owned block
 edits (`SetWorldBlock`, plugin/NPC physical structure portions, and NPC harvest,
 tree-cut, mine and replant work). Ordinary interactions, tools such as hoes or
-ignition, environmental simulation and damage are not newly made build hooks.
+ignition, environmental simulation and damage are not build hooks; protected
+zones (below) cover them natively instead.
 Hook-free deployment keeps the direct native path.
 
 With `[auth].require_plugin_login = true`, the native session gate denies
@@ -123,6 +124,58 @@ manifest/artifact/ACK protocol; sound requires that session's actual Loader
 readiness and the bundle's sound permission.
 
 
+## Protected zones
+
+`upsert-protected-zone` (capability `zones`) gives a plugin-owned box a native
+allow-list of up to 32 player UUIDs plus a `public-use` flag; `upsert-zone` is the
+event-only variant. The native owners enforce the list inside the box on every
+tick path, with no guest call and no deadline: block break/place, buckets,
+bone meal and every block use (so opening chests, barrels, furnaces and other
+containers, and ignition by flint and steel or fire charges, are refused),
+interaction with entities (item frames, armor stands, animals, villagers, boats,
+minecarts, horses), and damage from a player's melee, sweep, mace or projectile to
+anything but a hostile mob (PvP included). Operators are always admitted.
+Explosion blasts spare every protected block and fire (spread from fire blocks or
+lava) never enters one, whoever caused them. A zone with `public-use` additionally
+admits everyone to doors, trapdoors, fence gates, buttons and levers, and only
+those. Refusals repair client prediction without a world edit. An unlisted
+hopper or piston still moves items and blocks across a boundary; claims guard
+players and environmental fire and blasts, not redstone machinery. A zone
+is keyed by its owning plugin, replaced atomically by re-sending the command, and
+persists in the native checkpoint and WAL.
+
+## Death graves
+
+The manifest capability `death_graves` is a deployment surface rather than a
+command grant: it changes what the native death path does for every player, so an
+operator authorizes it by deploying the package that declares it. With the
+capability deployed and `keepInventory` off, a player death moves the exact
+dropped stacks into a `minecraft:barrel` placed at the death spot in the same
+tick, journaled with the rest of the world; the packs a barrel's 27 slots cannot
+hold are dropped beside it, so nothing is lost when a full inventory does not fit.
+
+The placement tries the death cell, the cell above it, then a ring of radius 1–2
+at the death level, one above and one below. A cell inside another package's
+protected zone is skipped, so a grave never appears in a claim. Every candidate
+must also stand on full-block collision ground that is not already a hopper: a
+slab or a rail is not enough, because the remaining space in that cell is what a
+hopper minecart needs. The full cell is what the zone can keep full, so no hopper
+block, rail or minecart can be placed or rolled under the grave later, and an
+existing hopper directly beneath it already pulls. A death in mid-air or over a
+fluid therefore moves the grave to the nearest grounded ring cell, and when no
+free grounded cell exists the drops stay ordinary items. Vanishing-curse stacks are destroyed by the
+death before custody, exactly as in vanilla, and experience stays with the
+player, because Solaris spawns no death XP orbs. The `keepInventory` gamerule wins
+over the declaration: a retained inventory never reaches a grave.
+
+The server then publishes `player.grave_created` to the declaring package only
+(the event is targeted, like `inventory.menu.clicked`), carrying the owner, the
+dimension, the grave cell and how many stacks went in and spilled. Product policy
+- protecting the grave for its owner, announcing the coordinates and making it
+public after a timer - belongs to that package and uses the zone owner above. One
+deployment may declare the capability once; a second declaring package refuses
+startup.
+
 ## Package manifest
 
 A minimal server-only component package can declare no subscriptions,
@@ -137,9 +190,10 @@ api = "0.7.0"
 
 The optional `entry` names a component file inside the package and defaults to
 `plugin.wasm`. `events`, `capabilities`, `required_features`,
-`player_commands`, `hooks`, `[client]`, and `[worldgen]` are validated package
-declarations. Unknown fields and invalid or duplicate values refuse the
-package before guest code is compiled.
+`player_commands`, `command_permissions`, `permission_provider`, `hooks`,
+`[client]`, and `[worldgen]` are validated package declarations. Unknown fields
+and invalid or duplicate values refuse the package before guest code is
+compiled.
 
 `required_features` describes authored data core must load. It does not grant
 access. Feature capabilities must also appear in `required_features`. Packages
@@ -154,6 +208,19 @@ hashes, sizes, content kinds, supported loaders, and permissions are validated
 before a player is served content. There is no server-only substitute for a
 package that requires client content. See [`SOLARIS_LOADER.md`](SOLARIS_LOADER.md)
 for player installation.
+
+A bundle may set `required = false` (default `true`) in its `[[client.bundles]]`
+table for content that enriches rather than enables the package, such as a custom
+item texture. When every bundle of a deployment is optional, Configuration sends
+a `solaris:loader/probe` payload (empty) before known-pack negotiation. A Loader
+client answers `solaris:loader/hello` (empty) while handling it, so the hello
+precedes its known-pack reply; the server then runs the normal manifest/artifact/
+ACK negotiation. A client that does not answer (a vanilla client, or a Loader
+build that predates the probe) joins without any Loader content, and its item
+stacks omit non-`minecraft:` `item_model` components so plugin items show as
+their carrier item with their custom name rather than the missing-model cube.
+One required bundle anywhere in the deployment keeps the unchanged behavior:
+every client negotiates and a client without the Loader is refused.
 
 ## Build, encode, and deploy a Rust guest
 
@@ -210,6 +277,40 @@ WAL/checkpoint. Restart creates fresh component-local state; it is not a guest
 instance migration. The current server does not support SIGHUP deployment reload.
 Retain the same startup/world identity when restarting an existing world.
 
+## Custom items, crafting recipes and block tools
+
+`configure` may declare up to 16 plugin-owned `items` (a vanilla `carrier`
+identity, stack size, optional durability), which need a Loader bundle with
+`register_items` to present their own model/texture. Two further startup
+fields extend them, both immutable, bounded and fingerprinted into the world
+contract (omitted from it when unused):
+
+- `crafting-recipes` (at most 32 strings, 64 KiB): vanilla-format
+  `minecraft:crafting_shaped` / `crafting_shapeless` recipe JSON. The recipe id is
+  `result.id`, which must be one of the plugin's declared items; every ingredient
+  must be a registered item, an owned item or a known item tag.
+- `block-tools` (at most 1024 strings, 1 MiB): rules for what a held plugin-owned
+  item does to the block it is used on. A rule is strict JSON
+  `{"item","block","when"?,"face","result","set"?,"wear"?,"give"?}`: the held
+  `item` used on `block` (whose properties include `when`) at a clicked `face`
+  (`up`, `down`, `side` = any horizontal face, or `any`) replaces it with
+  `result`, whose default state takes the `set` properties. A `set` value is a
+  literal, `"$face"` (the clicked face name) or `"@name"` (the source block's
+  property `name`). `wear` (default 1) is durability charged and `give` one
+  vanilla item granted to the player (dropped at their feet when the inventory is
+  full). Creative players pay no wear and receive no grant; main hand only. The
+  first rule of the item and block matching the face, `when` and a changing result
+  wins. Startup resolves every rule against the block registry for every face it
+  covers and refuses the deployment when a block, property or value does not
+  exist.
+
+The use is one native intent (`IntentKind::BlockTool`) planned beside hoe tilling in
+`use_item_on`: the block replacement, the wear and the grant commit or are refused
+together against the world and inventory they were planned on. Protection zones
+and reach are checked by the same early use gate as block placement; plugin
+before-build hooks do not cover it, like hoes. The `chisel` package in
+`solaris-default-plugins` is the reference user.
+
 ## Events, commands, and capability boundaries
 
 A manifest subscribes only to the named events it needs and claims only its own
@@ -225,6 +326,39 @@ teleportation, zones, inventory, or world changes. They are not client
 permissions and they do not make a request authoritative. Every native owner
 still checks the live player session, ownership, revisions, input bounds,
 capacity, and its domain invariants before committing work.
+
+### Command permission nodes
+
+A manifest may require one node per command root it already declares:
+
+```toml
+player_commands = ["home", "sethome"]
+command_permissions = { home = "solaris.essentials.use", sethome = "solaris.essentials.use" }
+```
+
+Nodes are enforced only while the deployment names exactly one permission
+provider package:
+
+```toml
+permission_provider = true
+```
+
+The provider is the only instance handed the `publish-command-permissions` host
+import. It replaces the whole grant table with `"<identity> <node>"` rows:
+`identity` is a dashed or compact lower-case UUID, or `*` for the default row
+that applies to a player the table has no explicit row for; a node of `*` grants
+every node. Rows are rebuilt from the provider's own durable state, so the table
+is not persisted by the host. A publication is bounded (8192 entries, 192 bytes
+per entry, 128-byte nodes), all-or-nothing, and refused during a pre-commit hook
+like every other import.
+
+Command admission checks the table on the tick thread before an owned root
+receives an event. A denied root answers `You do not have permission to use this
+plugin command.` and never reaches the guest; operator-only roots keep requiring
+operator level 2 first. A second `permission_provider` package, or a node for a
+root the package does not declare, refuses the deployment. Without a provider,
+node declarations are inert: an operator who never deployed a permission
+authority never has a package silently disabled by metadata it did not opt into.
 
 `client-presentation.view-marker.position` is optional, display-only geometry:
 a resource-identifier dimension plus finite coordinates within the native

@@ -110,8 +110,11 @@ async fn queued_heartbeat_then_dirty_jump_is_fifo_at_the_play_writer() {
         Arc::clone(&server.net_counters),
         Arc::clone(&server.connections),
         id,
-        reliable_rx,
-        world_rx,
+        PlayReceivers {
+            reliable: reliable_rx,
+            world: world_rx,
+            dh: mpsc::channel(1).1,
+        },
     ));
     let mut client = crate::connection::Connection::new(client_socket);
     client.set_compression(mc_protocol::frame::Compression::Threshold(256));

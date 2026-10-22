@@ -86,13 +86,22 @@ def _entry(**kwargs: object) -> Scenario:
 
 SCENARIOS: dict[str, Scenario] = {
     "loader-v2-settlements-smoke": _entry(
-        id="loader-v2-settlements-smoke", summary="Frozen v2 server native settlement commands through Fabric Loader",
+        id="loader-v2-settlements-smoke", summary="Frozen v2 server C-key settlement overview through Fabric Loader",
         owner="core:harness", evidence="graphical", profile="loader-live", scenario_id="loader-v2-settlements-smoke",
         requires=("sibling:solaris-loader", "client-token", "xvfb"),
         sources=("tools/harness/loader.py", "tools/harness/loader_settlements.py"),
         fixture="explicit --server-bin and --plugins-dir; isolated Loader permission/cache; no settlements package deployed",
-        proves="Loader connection, native settlement create/list/info and repeated read-only info command",
-        limits="minimal native settlement command smoke, not plugin production/war coverage; visual review required",
+        proves="Loader connection, core-owned C binding opens the native settlement dialog, and native settlement create/list/info",
+        limits="minimal native settlement smoke, not plugin production/war coverage; visual review required",
+    ),
+    "dh-baseline": _entry(
+        id="dh-baseline", summary="Real Java DH baseline: MC 26.1.2 + DH 3.3.3 protocol 16",
+        owner="core:harness", evidence="graphical", profile="dh-gate",
+        requires=("sibling:solaris-loader", "xvfb"),
+        sources=("tools/harness/backends/dh_gate.py",),
+        fixture="MC 26.1.2 + DH 3.3.3 on --platform fabric|neoforge; isolated world and independent control/enabled caches",
+        proves="actual Java DH handshake, never-visited distant data versus disabled control, edit/reconnect/dimension/reset isolation and vanilla packet bounds",
+        limits="26.1.2 baseline only; 26.2/26.3 await profile integration; screenshots require visual review; no performance claim",
     ),
     "native-v2-p5-humanoid-armor": _entry(
         id="native-v2-p5-humanoid-armor", summary="One native graphical observer views a headless actor's worn armor and unchanged stand",
@@ -137,8 +146,8 @@ SCENARIOS: dict[str, Scenario] = {
         requires=("sibling:solaris-loader", "xvfb"),
         sources=("tools/harness/backends/java_p5.py", "tools/harness/backends/client_probes.py"),
         fixture="server plugin deployment; temporary fixture op grants revoked before all tested player actions",
-        proves="non-op leader creates/claims/builds, guest builds are corrected without item loss, town/claim survive restart",
-        limits="one graphical process at a time; bounded town build protection, not all plugin commands",
+        proves="non-op leader creates/claims/builds and may open the claim chest, light fire and hurt a cow; a non-member guest's builds are corrected without item loss and cannot open the chest, light fire or hurt the cow; after the leader trusts the guest by UUID the guest can do all of it; town/claim survive restart",
+        limits="one graphical process at a time; build, container, ignition and animal-damage protection, not PvP, explosions or every plugin command (unit-tested natively)",
     ),
     "java-v2-p5-cursor": _entry(
         id="java-v2-p5-cursor", summary="Bounded vanilla Java cursor split, swap, merge and carried-close custody",

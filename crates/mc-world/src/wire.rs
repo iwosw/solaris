@@ -406,10 +406,38 @@ pub fn encode_chunk_data_with_block_projection(
     blocks: &BlockRegistry,
     project: &dyn Fn(crate::block::BlockStateId) -> crate::block::BlockStateId,
 ) -> Result<Vec<u8>, WireError> {
+    encode_chunk_data_inner(chunk, biomes, blocks, project, &[])
+}
+
+/// Encode chunk data with some sections replaced on the wire (anti-xray hides
+/// ores in copies; the authoritative chunk is untouched). `overrides[i]`, when
+/// present, stands in for section `i`; an empty or shorter slice leaves the
+/// remaining sections as stored. A replacement must keep the section's
+/// non-air and fluid counts (it only swaps solid blocks for solid blocks).
+pub fn encode_chunk_data_with_sections(
+    chunk: &Chunk,
+    biomes: &Registry,
+    blocks: &BlockRegistry,
+    overrides: &[Option<ChunkSection>],
+) -> Result<Vec<u8>, WireError> {
+    encode_chunk_data_inner(chunk, biomes, blocks, &|state| state, overrides)
+}
+
+fn encode_chunk_data_inner(
+    chunk: &Chunk,
+    biomes: &Registry,
+    blocks: &BlockRegistry,
+    project: &dyn Fn(crate::block::BlockStateId) -> crate::block::BlockStateId,
+    overrides: &[Option<ChunkSection>],
+) -> Result<Vec<u8>, WireError> {
     debug_assert_eq!(chunk.sections.len(), chunk.geometry().section_count());
     debug_assert_eq!(chunk.biomes.len(), chunk.geometry().section_count());
     let mut buf = Vec::with_capacity(chunk.geometry().section_count() * 16);
-    for (sec, bsec) in chunk.sections.iter().zip(chunk.biomes.iter()) {
+    for (index, (stored, bsec)) in chunk.sections.iter().zip(chunk.biomes.iter()).enumerate() {
+        let sec = overrides
+            .get(index)
+            .and_then(Option::as_ref)
+            .unwrap_or(stored);
         // Both section counters are big-endian on the wire. The client uses
         // fluid_count as a fast gate before scanning entity/fluid overlap.
         buf.extend_from_slice(&(sec.non_air_count() as i16).to_be_bytes());

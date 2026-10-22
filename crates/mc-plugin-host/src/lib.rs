@@ -219,6 +219,11 @@ pub struct InstanceState<S: HostServices> {
     hook_phase: bool,
     /// Imports the current hook phase refused, reset when the phase begins.
     hook_violations: u32,
+    /// The command-permission table this instance may publish to.
+    ///
+    /// Only the deployment's permission provider is handed one; every other
+    /// instance calls the import and is answered `false` without publishing.
+    command_permissions: Option<Arc<mc_script::ScriptCommandPermissions>>,
 }
 
 impl<S: HostServices> InstanceState<S> {
@@ -240,7 +245,20 @@ impl<S: HostServices> InstanceState<S> {
             log_lines_dropped: 0,
             hook_phase: false,
             hook_violations: 0,
+            command_permissions: None,
         }
+    }
+
+    /// Hand this instance the deployment's command-permission table.
+    ///
+    /// The host sets it on the permission provider's runtime instance before
+    /// `init`, so the table a publication reaches is the one command admission
+    /// reads.
+    pub fn set_command_permissions(
+        &mut self,
+        permissions: Option<Arc<mc_script::ScriptCommandPermissions>>,
+    ) {
+        self.command_permissions = permissions;
     }
 
     /// The services this instance was built with.

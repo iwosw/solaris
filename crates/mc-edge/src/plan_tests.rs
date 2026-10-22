@@ -3282,3 +3282,171 @@ fn indexed_entity_wire_trace_keeps_spawn_move_event_and_remove_bytes() {
     );
     assert_eq!(wire(&packets), wire(&expected));
 }
+
+#[test]
+fn title_changes_plan_matching_title_packets() {
+    use mc_core::boundary::TitleChange;
+    use mc_protocol::packets::play::{
+        ClientboundClearTitles, ClientboundSetActionBarText, ClientboundSetSubtitleText,
+        ClientboundSetTitleText, ClientboundSetTitlesAnimation,
+    };
+    type TitleCase<'a> = (PlayerChange, i32, Box<dyn Fn(bytes::Bytes) + 'a>);
+    let text = || mc_nbt::Tag::Compound(vec![("text".into(), mc_nbt::Tag::String("Hi".into()))]);
+    let cases: Vec<TitleCase<'_>> = vec![
+        (
+            PlayerChange::Title(TitleChange::Title(text())),
+            ClientboundSetTitleText::ID,
+            Box::new(|body| {
+                assert_eq!(
+                    ClientboundSetTitleText::decode(&mut &body[..]).unwrap(),
+                    ClientboundSetTitleText { content: text() }
+                );
+            }),
+        ),
+        (
+            PlayerChange::Title(TitleChange::Subtitle(text())),
+            ClientboundSetSubtitleText::ID,
+            Box::new(|body| {
+                assert_eq!(
+                    ClientboundSetSubtitleText::decode(&mut &body[..]).unwrap(),
+                    ClientboundSetSubtitleText { content: text() }
+                );
+            }),
+        ),
+        (
+            PlayerChange::Title(TitleChange::ActionBar(text())),
+            ClientboundSetActionBarText::ID,
+            Box::new(|body| {
+                assert_eq!(
+                    ClientboundSetActionBarText::decode(&mut &body[..]).unwrap(),
+                    ClientboundSetActionBarText { content: text() }
+                );
+            }),
+        ),
+        (
+            PlayerChange::Title(TitleChange::Times {
+                fade_in: 10,
+                stay: 70,
+                fade_out: 20,
+            }),
+            ClientboundSetTitlesAnimation::ID,
+            Box::new(|body| {
+                assert_eq!(
+                    ClientboundSetTitlesAnimation::decode(&mut &body[..]).unwrap(),
+                    ClientboundSetTitlesAnimation {
+                        fade_in: 10,
+                        stay: 70,
+                        fade_out: 20,
+                    }
+                );
+            }),
+        ),
+        (
+            PlayerChange::Title(TitleChange::Clear { reset_times: true }),
+            ClientboundClearTitles::ID,
+            Box::new(|body| {
+                assert_eq!(
+                    ClientboundClearTitles::decode(&mut &body[..]).unwrap(),
+                    ClientboundClearTitles { reset_times: true }
+                );
+            }),
+        ),
+    ];
+    for (change, id, check) in cases {
+        let mut viewer = viewer_at(7, [0.0; 3]);
+        let packets = plan_player_changes(&[change], &mut viewer);
+        assert_eq!(packets.len(), 1);
+        assert_eq!(packets[0].connection, viewer.connection);
+        assert!(packets[0].reliable);
+        assert_eq!(packets[0].id, id);
+        check(body_of(&packets[0]));
+    }
+}
+
+#[test]
+fn ticking_state_and_step_plan_matching_packets() {
+    use mc_protocol::packets::play::{ClientboundTickingState, ClientboundTickingStep};
+    let mut viewer = viewer_at(7, [0.0; 3]);
+    let packets = plan_player_changes(
+        &[PlayerChange::TickingState {
+            rate: 4.0,
+            frozen: true,
+        }],
+        &mut viewer,
+    );
+    assert_eq!(packets.len(), 1);
+    assert!(packets[0].reliable);
+    assert_eq!(packets[0].id, ClientboundTickingState::ID);
+    assert_eq!(
+        ClientboundTickingState::decode(&mut &body_of(&packets[0])[..]).unwrap(),
+        ClientboundTickingState {
+            tick_rate: 4.0,
+            frozen: true,
+        }
+    );
+
+    let mut viewer = viewer_at(7, [0.0; 3]);
+    let packets = plan_player_changes(&[PlayerChange::TickingStep { steps: 3 }], &mut viewer);
+    assert_eq!(packets.len(), 1);
+    assert!(packets[0].reliable);
+    assert_eq!(packets[0].id, ClientboundTickingStep::ID);
+    assert_eq!(
+        ClientboundTickingStep::decode(&mut &body_of(&packets[0])[..]).unwrap(),
+        ClientboundTickingStep { tick_steps: 3 }
+    );
+}
+
+#[test]
+fn boss_bar_changes_plan_matching_boss_operations() {
+    use mc_core::boundary::BossBarChange;
+    use mc_protocol::packets::play::{BossOperation, ClientboundBossEvent};
+    let id = uuid::Uuid::from_u128(0x0102030405060708090a0b0c0d0e0f10);
+    let name = || mc_nbt::Tag::String("Boss".into());
+    let cases: Vec<(BossBarChange, BossOperation)> = vec![
+        (
+            BossBarChange::Add {
+                name: name(),
+                progress: 0.5,
+                color: 5,
+                overlay: 0,
+                flags: 1,
+            },
+            BossOperation::Add {
+                name: name(),
+                progress: 0.5,
+                color: 5,
+                overlay: 0,
+                flags: 1,
+            },
+        ),
+        (BossBarChange::Remove, BossOperation::Remove),
+        (BossBarChange::Progress(0.25), BossOperation::Progress(0.25)),
+        (BossBarChange::Name(name()), BossOperation::Name(name())),
+        (
+            BossBarChange::Style {
+                color: 5,
+                overlay: 0,
+            },
+            BossOperation::Style {
+                color: 5,
+                overlay: 0,
+            },
+        ),
+        (BossBarChange::Properties(7), BossOperation::Properties(7)),
+    ];
+    for (change, operation) in cases {
+        let mut viewer = viewer_at(7, [0.0; 3]);
+        let packets = plan_player_changes(&[PlayerChange::BossBar { id, change }], &mut viewer);
+        assert_eq!(packets.len(), 1);
+        assert_eq!(packets[0].connection, viewer.connection);
+        assert!(packets[0].reliable);
+        assert_eq!(packets[0].id, ClientboundBossEvent::ID);
+        assert_eq!(
+            ClientboundBossEvent::decode(&mut &body_of(&packets[0])[..]).unwrap(),
+            ClientboundBossEvent {
+                uuid: id,
+                operation,
+            }
+        );
+    }
+}

@@ -646,6 +646,55 @@ fn copy_deployment_assets(source: &Path, destination: &Path) {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires the genuine first-party chisel package and its Loader bundle"]
+async fn real_chisel_package_admits_item_recipe_and_block_tools() {
+    let source = real_economy_package()
+        .parent()
+        .expect("deployed package has a sibling root")
+        .join("chisel");
+    let directory = TestDirectory::new();
+    let target = directory.0.join("plugins").join("chisel");
+    for file in ["plugin.toml", "plugin.wasm"] {
+        assert!(
+            source.join(file).is_file(),
+            "missing integration prerequisite: {}; build the genuine chisel component",
+            source.join(file).display()
+        );
+        std::fs::create_dir_all(&target).unwrap();
+        std::fs::copy(source.join(file), target.join(file)).unwrap();
+    }
+    copy_deployment_assets(&source.join("client"), &target.join("client"));
+    let core = RunningCore(
+        Core::open(configuration(
+            &directory.0.join("world"),
+            &directory.0.join("plugins"),
+        ))
+        .expect("the real chisel component must configure and admit its native catalogs"),
+    );
+    let registry = core.0.registry();
+    let items: Vec<_> = registry
+        .plugin_items()
+        .map(|item| (item.id.to_string(), item.carrier.to_string()))
+        .collect();
+    assert!(
+        items.contains(&("chisel:chisel".to_owned(), "minecraft:stick".to_owned())),
+        "the chisel item is admitted over its stick carrier: {items:?}"
+    );
+    assert!(
+        registry
+            .recipes
+            .iter()
+            .any(|recipe| recipe.id.as_str() == "chisel:chisel"),
+        "the shaped chisel recipe is in the crafting catalog"
+    );
+    assert_eq!(
+        registry.block_tool_rule_count(),
+        232,
+        "58 slab+stairs families, four rules each"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires all six genuine first-party packages and their unmodified assets"]
 async fn real_sibling_complete_deployment_admits_physical_items_and_work_recipes() {
     // An explicit acceptance roster is not a production bundled-package list.

@@ -11,6 +11,35 @@ use mc_protocol::packets::{CustomPayload, Packet};
 
 use crate::connection::{Connection, text_component_nbt};
 
+/// Ask whether the client speaks the Loader. Vanilla clients ignore the unknown
+/// configuration payload; a Loader client answers `solaris:loader/hello`.
+pub(crate) async fn send_probe(conn: &mut Connection) -> anyhow::Result<()> {
+    conn.send_packet(&ClientboundCustomPayload {
+        payload: CustomPayload::Unknown {
+            channel: mc_loader::loader_probe_channel().clone(),
+            payload: Vec::new(),
+        },
+    })
+    .await?;
+    Ok(())
+}
+
+/// Whether a client configuration frame is the empty Loader hello.
+pub(crate) fn is_hello(id: i32, body: &bytes::Bytes) -> anyhow::Result<bool> {
+    if id != ServerboundCustomPayload::ID {
+        return Ok(false);
+    }
+    match CustomPayload::decode_serverbound(&mut body.clone())? {
+        CustomPayload::Unknown { channel, payload }
+            if channel == *mc_loader::loader_hello_channel() =>
+        {
+            anyhow::ensure!(payload.is_empty(), "Loader hello carries no payload");
+            Ok(true)
+        }
+        _ => Ok(false),
+    }
+}
+
 pub(crate) async fn negotiate(
     conn: &mut Connection,
     manifest: &LoaderManifest,

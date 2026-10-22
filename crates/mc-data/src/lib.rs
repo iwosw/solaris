@@ -47,6 +47,7 @@ pub mod block_light;
 pub mod block_mining;
 pub mod block_placement_26_1_2;
 pub mod block_semantics_26_1_2;
+pub mod block_tools;
 pub mod blocks;
 pub mod collision_shapes;
 pub mod conduit_nbt;

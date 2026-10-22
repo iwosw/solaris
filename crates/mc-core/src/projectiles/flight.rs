@@ -255,6 +255,17 @@ pub(super) fn run(
         let Some(slot) = state.entities.slot_of(id) else {
             continue;
         };
+        // A pearl whose owner is offline is saved with the owner: it does not
+        // fly, land or age until the owner joins again.
+        if state
+            .entities
+            .row(slot)
+            .projectile
+            .as_deref()
+            .is_some_and(|record| crate::chunk_tickets::parked(state, record))
+        {
+            continue;
+        }
         let ppos = state.entities.pos(slot);
         if !state.world.is_active(
             (ppos[0].floor() as i32).div_euclid(16),
@@ -393,7 +404,10 @@ fn step(
         }
         return pickup(state, record, pos);
     }
-    if record.age > authored.map_or(1200, |profile| profile.lifetime_ticks) {
+    // Vanilla ThrowableProjectile has no lifetime: a pearl may hover for ever.
+    if record.kind != ProjectileKind::EnderPearl
+        && record.age > authored.map_or(1200, |profile| profile.lifetime_ticks)
+    {
         return true;
     }
     if let super::ProjectileData::Homing { target } = record.data

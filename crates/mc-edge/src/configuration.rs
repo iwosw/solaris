@@ -78,6 +78,7 @@ pub async fn handle_configuration(
     data: &mc_data::VanillaData,
     tags: &mc_data::tags::TagsData,
     loader_manifest: Option<&mc_loader::LoaderManifest>,
+    loader_required: bool,
 ) -> anyhow::Result<ConfigOutcome> {
     // Vanilla publishes feature flags before registry/known-pack negotiation.
     conn.send_packet(&UpdateEnabledFeatures {
@@ -86,6 +87,14 @@ pub async fn handle_configuration(
         ],
     })
     .await?;
+
+    // Optional-only Loader content: ask whether the client speaks the Loader before
+    // known-pack negotiation, so its hello (sent while handling the probe) is read
+    // ahead of its known-pack reply.
+    let mut loader_hello = false;
+    if loader_manifest.is_some() && !loader_required {
+        crate::plugin_loader::send_probe(conn).await?;
+    }
 
     // Step 1: advertise our known data packs.
     let our_pack = server_known_pack();
@@ -104,6 +113,10 @@ pub async fn handle_configuration(
         if frame.id == ServerboundKnownPacks::ID {
             let parsed = decode_exact::<ServerboundKnownPacks>(frame.id, frame.body)?;
             break parsed.packs;
+        }
+        if crate::plugin_loader::is_hello(frame.id, &frame.body)? {
+            loader_hello = true;
+            continue;
         }
         if note_ignored(&mut prefs, frame.id, frame.body)? {
             ignored += 1;
@@ -192,10 +205,14 @@ pub async fn handle_configuration(
     })
     .await?;
 
-    let loader_session = if let Some(manifest) = loader_manifest {
-        Some(crate::plugin_loader::negotiate(conn, manifest, &mut prefs).await?)
-    } else {
-        None
+    // Required bundles negotiate with every client (a vanilla client is refused
+    // there). Optional-only manifests negotiate only with a client that answered
+    // the probe; everyone else joins without Loader content.
+    let loader_session = match loader_manifest {
+        Some(manifest) if loader_required || loader_hello => {
+            Some(crate::plugin_loader::negotiate(conn, manifest, &mut prefs).await?)
+        }
+        _ => None,
     };
 
     // Step 4: tell the client we are done configuring.

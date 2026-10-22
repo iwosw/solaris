@@ -25,7 +25,7 @@ fn block_pos([x, y, z]: [i32; 3]) -> BlockPos {
     BlockPos { x, y, z }
 }
 
-fn working(state: &TickState, v: &VillagerState) -> bool {
+pub(crate) fn working(state: &TickState, v: &VillagerState) -> bool {
     v.data.profession == VillagerProfession::Builder
         && v.age >= 0
         && !v.sleeping

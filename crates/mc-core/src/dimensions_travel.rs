@@ -203,6 +203,7 @@ fn move_between(
             );
             let air = destination.players[&id].air_change();
             destination.push_player(connection, air);
+            crate::bossbar::sync_dimension(destination, connection);
         }
     }
     if alive && destination.players.contains_key(&id) {
@@ -437,7 +438,9 @@ fn execute(
         args.extend(position.map(|coordinate| text(coordinate.to_string())));
         "location"
     };
-    let (dimension, _) = locate(state, request.executor).expect("executor survived teleport");
+    // The console executor is not an entity: its feedback stays in the current world.
+    let dimension =
+        locate(state, request.executor).map_or(state.dimension, |(dimension, _)| dimension);
     let world = if dimension == state.dimension {
         state
     } else {

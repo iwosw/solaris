@@ -227,6 +227,7 @@ fn hopper_balances_enabled_slots_and_extracts_crafter_inputs() {
             furnace: None,
         },
     );
+    crate::redstone::containers::register(&mut state, hopper);
     step(&mut state);
     assert_eq!(state.block_entities[&KEY].slots[0].count, 4);
     assert_eq!(state.block_entities[&(8, 200, 8)].slots[0].count, 1);

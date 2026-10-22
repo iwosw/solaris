@@ -1,0 +1,85 @@
+{
+ "id": "qc-piston-bud",
+ "family": "quasi-connectivity",
+ "description": "Quasi-connectivity: a piston (and sticky piston) is powered by a source adjacent to the block ABOVE it, but only reacts once a neighbouring block update reaches the piston itself (BUD). An unpowered control piston must stay retracted. The power sources are placed one phase after the pistons: vanilla pistons check power synchronously in onPlace, Solaris on the next scheduled tick, so same-tick placement would not be QC but a placement-order race. Solaris polls every reactive cell once after chunk hydration, so the setup settles 4 ticks before any power source exists.",
+ "box": [
+  0,
+  60,
+  0,
+  15,
+  70,
+  15
+ ],
+ "setup": [
+  "fill 0 63 0 15 63 15 minecraft:stone",
+  "setblock 2 64 2 minecraft:piston[facing=east]",
+  "setblock 6 64 2 minecraft:sticky_piston[facing=east]",
+  "setblock 7 64 2 minecraft:cobblestone",
+  "setblock 10 64 2 minecraft:piston[facing=east]"
+ ],
+ "phases": [
+  {
+   "name": "idle",
+   "commands": [
+    "setblock 2 66 2 minecraft:redstone_block",
+    "setblock 6 66 2 minecraft:redstone_block",
+    "setblock 7 65 2 minecraft:redstone_block"
+   ],
+   "ticks": 6
+  },
+  {
+   "name": "bud",
+   "commands": [
+    "setblock 2 64 1 minecraft:stone",
+    "setblock 6 64 1 minecraft:stone",
+    "setblock 10 64 1 minecraft:stone"
+   ],
+   "ticks": 10
+  },
+  {
+   "name": "retract-on-removal",
+   "commands": [
+    "setblock 2 66 2 minecraft:air",
+    "setblock 2 64 3 minecraft:stone"
+   ],
+   "ticks": 10
+  }
+ ],
+ "compare": {
+  "blocks": "exact",
+  "entities": "counts"
+ },
+ "vanilla_expect": [
+  {
+   "phase": "idle",
+   "check": "block",
+   "pos": [
+    2,
+    64,
+    2
+   ],
+   "equals": "minecraft:piston[extended=false,facing=east]"
+  },
+  {
+   "phase": "bud",
+   "check": "block",
+   "pos": [
+    2,
+    64,
+    2
+   ],
+   "equals": "minecraft:piston[extended=true,facing=east]"
+  },
+  {
+   "phase": "bud",
+   "check": "block",
+   "pos": [
+    10,
+    64,
+    2
+   ],
+   "equals": "minecraft:piston[extended=false,facing=east]"
+  }
+ ],
+ "settle_ticks": 4
+}

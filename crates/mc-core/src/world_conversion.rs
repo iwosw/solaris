@@ -8,6 +8,10 @@ mod census;
 #[cfg(test)]
 mod census_tests;
 pub use census::{CensusReceipt, DimensionCensus, SettlementCensus, census_native};
+mod probe;
+#[cfg(test)]
+mod probe_tests;
+pub use probe::{ProbeReceipt, probe_native};
 mod export;
 #[cfg(test)]
 mod export_tests;

@@ -3,11 +3,22 @@ name = "solaris-alpha"
 motd = "Solaris public alpha"
 view_distance = 8
 simulation_distance = 8
+# Vanilla `accepts-transfers`: admit players another server transferred here.
+accepts_transfers = false
+# Vanilla `pause-when-empty-seconds`: with no players online for this many
+# seconds the world stops advancing (mobs, weather, redstone, growth). Network,
+# console commands and saves keep working; the first join resumes ticking.
+# Zero or negative never pauses (vanilla accepts -1).
+pause_when_empty_seconds = 60
 
 [network]
 # 0.0.0.0 accepts remote IPv4 connections; use 127.0.0.1 for local play.
 bind_address = "0.0.0.0"
 port = 25565
+# Per-address admission limits; 0 disables each one. A refused connection is
+# closed before the handshake.
+connection_throttle_ms = 0
+max_connections_per_ip = 0
 
 [auth]
 # Enable Mojang session authentication for public play.
@@ -18,6 +29,15 @@ online_mode = false
 # Login prompts come from the plugin; deploy it before enabling this.
 require_plugin_login = false
 
+[proxy]
+# Upstream proxy trust. `none` accepts direct clients. `velocity` enables
+# Velocity modern forwarding: set `secret` to the contents of the proxy's
+# forwarding.secret and keep auth.online_mode = false (the proxy
+# authenticates players). The forwarded UUID, name, skin and client address
+# become the session identity.
+mode = "none"
+# secret = ""
+
 [dashboard]
 # Optional read-only operator dashboard; disabled and loopback-only by default.
 enabled = false
@@ -25,6 +45,60 @@ bind_address = "127.0.0.1"
 port = 8080
 # Non-loopback binds additionally require allow_remote = true.
 # allow_remote = false
+
+[anti_xray]
+# Send ores fully enclosed by solid blocks as plain rock until a neighbouring
+# block is mined. Both default to true; the End has no ores.
+overworld = true
+nether = true
+
+[lod]
+# Far terrain beyond the view distance for the native Solaris client (vanilla
+# clients never see it). The client keeps summaries of every chunk it received
+# and asks for tiles beyond its view distance: stored chunks answer with their
+# top block (player edits after the last stored image are not shown),
+# never-generated columns with the router surface generation will produce.
+# Any player can thus see the terrain surface up to max_distance blocks away.
+enabled = true
+max_distance = 8192
+# Per connection tiles queued or in progress, and blocking tile threads in total.
+max_inflight_tiles = 4
+workers = 1
+# Lets the client generate never-generated far terrain on its own GPU instead
+# of asking the server. Treat it as revealing the world seed (and with it ore,
+# structure and slime-chunk positions) to every native client: the noise
+# parameters derive from the seed through a non-cryptographic generator.
+share_terrain_keys = false
+
+[distant_horizons]
+# Optional Java Distant Horizons protocol 16 (DH 3.3.3/3.3.4).
+# Samples actual server chunks; never shares the seed or terrain program.
+# Pregenerate the stopped world first; see docs/OPERATING.md.
+enabled = false
+# Chunk units, not blocks; hard maximum 128.
+radius_chunks = 128
+
+[mob_griefing]
+# Finer switches under the vanilla `mobGriefing` gamerule, which stays the
+# master gate (`/gamerule mob_griefing false` disables all of them). Vanilla
+# 26.1.2 has no per-mob gamerules, so these are server configuration. Every
+# switch defaults to true (vanilla behaviour).
+# A disabled blast still hurts entities; only block damage stops.
+creeper_block_damage = true
+ghast_block_damage = true
+wither_block_damage = true
+# Villager crop harvesting and replanting (farmers keep trading and breeding).
+villager_farming = true
+# Sheared sheep eating grass into dirt; wool still regrows.
+sheep_grazing = true
+
+[anti_cheat]
+# Token bucket per Play packet id. Set either packet value to 0 to disable it.
+packet_rate_per_second = 500
+packet_burst = 1000
+# Unsupported, non-descending survival movement ticks before correction + kick.
+# Set 0 only when another authoritative movement check replaces it.
+max_airtime_ticks = 80
 
 [plugins]
 # External component packages; each child contains plugin.toml and plugin.wasm.
@@ -39,5 +113,7 @@ world_dir = "world"
 #   solaris-v2 content import --version 26.1.2 --download
 # Content is never redistributed. Verify a cache with `content verify`.
 # vanilla_data_dir = "data/vanilla"
+# Console `backup` copies the running world here (see docs/OPERATING.md).
+# backup_dir = "backups"
 # Changing the seed requires a fresh world directory.
 seed = 0

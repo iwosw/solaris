@@ -143,3 +143,73 @@ fn owner_order_in_a_cluttered_village_finds_the_nearest_site_at_once() {
         project.origin
     );
 }
+
+fn profession(state: &TickState, slot: crate::entities::EntitySlot) -> Profession {
+    state
+        .entities
+        .row(slot)
+        .villager
+        .as_ref()
+        .unwrap()
+        .data
+        .profession
+}
+
+/// Seed 87122 autonomy QA: the storage project was admitted at once, but its
+/// builder woke inside a house whose door step was roofed by a tree crown. It
+/// stood in the doorway for 7000 daytime ticks, and no resident replaced it
+/// because a builder, once chosen, was never re-checked. A builder on shift
+/// that cannot walk to storage is released and a resident who can takes over.
+#[test]
+fn trapped_builder_on_shift_is_replaced_by_a_resident_who_reaches_storage() {
+    use crate::settlements::allocator::tests::villager;
+    let (mut state, id, trapped) = fixture();
+    fund(&mut state, "storage", 1);
+    // Shut the fixture's builder in a stone cell at (10, 201..202, 10).
+    for x in 9..=11 {
+        for z in 9..=11 {
+            for y in 201..=203 {
+                if (x, z) != (10, 10) || y == 203 {
+                    state.world.set_block(x, y, z, state.registry.states.stone);
+                }
+            }
+        }
+    }
+    state.world.fold_overlay();
+    state.entities.set_pos(trapped, [10.5, 201.0, 10.5]);
+    let free = villager(&mut state, [4.5, 201.0, 4.5]);
+    let entity = state.entities.body(free).id;
+    crate::settlements::bind(&mut state, id, entity).unwrap();
+    assert_eq!(profession(&state, trapped), Profession::Builder);
+    assign_builder(&mut state, id);
+    assert_eq!(profession(&state, trapped), Profession::None);
+    assert_eq!(profession(&state, free), Profession::Builder);
+}
+
+/// The re-check never costs a working builder its slot, and an off-shift
+/// builder (asleep behind a closed door at night) is left alone.
+#[test]
+fn reachable_or_off_shift_builder_keeps_the_slot() {
+    use crate::settlements::allocator::tests::villager;
+    let (mut state, id, builder) = fixture();
+    let free = villager(&mut state, [4.5, 201.0, 4.5]);
+    let entity = state.entities.body(free).id;
+    crate::settlements::bind(&mut state, id, entity).unwrap();
+    assign_builder(&mut state, id);
+    assert_eq!(profession(&state, builder), Profession::Builder);
+    assert_eq!(profession(&state, free), Profession::None);
+    for x in 9..=11 {
+        for z in 9..=11 {
+            for y in 201..=203 {
+                if (x, z) != (10, 10) || y == 203 {
+                    state.world.set_block(x, y, z, state.registry.states.stone);
+                }
+            }
+        }
+    }
+    state.world.fold_overlay();
+    state.entities.set_pos(builder, [10.5, 201.0, 10.5]);
+    state.day_time = 15_000;
+    assign_builder(&mut state, id);
+    assert_eq!(profession(&state, builder), Profession::Builder);
+}

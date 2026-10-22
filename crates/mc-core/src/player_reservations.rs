@@ -94,6 +94,9 @@ impl PlayerState {
             sprinting: false,
             known_horizontal_movement_squared: 0.0,
             statistics_grounded: self.statistics_grounded,
+            airtime_ticks: 0,
+            airtime_sample_tick: None,
+            airtime_safe_position: None,
             last_vehicle_move_tick: None,
             using: self.using,
             shield_cooldown: self.shield_cooldown,
@@ -108,6 +111,7 @@ impl PlayerState {
             attribute_equipment: None,
             sent_attributes: Vec::new(),
             soul_speed_active: false,
+            attribute_snapshot_held: self.attribute_snapshot_held.clone(),
         };
         let mut container = container.to_vec();
         let effects = transition(&mut candidate, &mut container);

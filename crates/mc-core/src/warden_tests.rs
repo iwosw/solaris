@@ -100,8 +100,8 @@ fn anger_checkpoint_and_replay_restore_uuid_and_pose() {
     let root = std::env::temp_dir().join(format!("solaris-warden-{}", uuid::Uuid::new_v4()));
     let (_, regions, _) = crate::core::checkpoint_data_for(&state, state.tick);
     let checkpoint = regions
-        .iter()
-        .flat_map(|(_, entities)| entities.entities.iter())
+        .values()
+        .flat_map(|entities| entities.entities.iter())
         .find(|e| e.uuid == row.uuid)
         .unwrap();
     assert_eq!(
@@ -240,8 +240,8 @@ fn sparse_warden_index_retains_native_identity_before_vibration() {
     let uuid = state.entities.row(slot).uuid;
     let (_, regions, _) = crate::core::checkpoint_data_for(&state, state.tick);
     let entity = regions
-        .iter()
-        .flat_map(|(_, chunk)| &chunk.entities)
+        .values()
+        .flat_map(|chunk| &chunk.entities)
         .find(|entity| entity.uuid == uuid)
         .unwrap();
     let payload = Tag::Compound(

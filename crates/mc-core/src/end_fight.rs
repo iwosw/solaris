@@ -632,7 +632,7 @@ pub(crate) fn crystal_hits(state: &mut TickState) {
             }
         }
         if kind != crate::survival::DamageKind::Explosion {
-            crate::explosion::apply(state, Some(id), state.entities.pos(slot), 6.0, false, None);
+            crate::explosion::apply(state, Some(id), state.entities.pos(slot), 6.0, None, None);
         }
     }
 }

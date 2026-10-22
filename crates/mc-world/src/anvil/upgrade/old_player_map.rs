@@ -41,10 +41,8 @@ pub(super) fn fix_node(
                 report.applied(version, "AttributesRenameLegacy");
             }
         }
-        2537 => {
-            if dimension(tag, "Dimension") {
-                report.applied(version, "PlayerLegacyDimensionFix");
-            }
+        2537 if dimension(tag, "Dimension") => {
+            report.applied(version, "PlayerLegacyDimensionFix");
         }
         _ => {}
     }

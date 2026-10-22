@@ -466,7 +466,10 @@ fn inert_section_becomes_tickable_only_after_overlay_commit() {
 }
 
 #[test]
-fn night_stops_crop_growth_until_a_torch_lights_it() {
+fn open_sky_crops_grow_at_night_because_crops_gate_on_undarkened_light() {
+    // Vanilla CropBlock.randomTick tests `getRawBrightness(pos, 0)`: no sky
+    // darkening, so a night field under open sky keeps growing even though the
+    // darkened spawn brightness there is 4.
     let (mut state, _) = setup();
     state.day_time = 18_000;
     state
@@ -480,16 +483,12 @@ fn night_stops_crop_growth_until_a_torch_lights_it() {
     plant(&mut state, 0, Y + 1, 0, "wheat", &[("age", "0")]);
     let young = at(&state, 0, Y + 1, 0);
     assert_eq!(state.brightness(0, Y + 1, 0), 4);
-    run(&mut state, 40);
-    assert_eq!(at(&state, 0, Y + 1, 0), young, "dark crops do not grow");
-    let torch = state.registry.states.torch;
-    put(&mut state, 1, Y + 1, 0, torch);
-    assert!(state.brightness(0, Y + 1, 0) >= 9);
+    assert!(state.raw_brightness(0, Y + 1, 0) >= 9);
     run(&mut state, 40);
     assert_ne!(
         at(&state, 0, Y + 1, 0),
         young,
-        "real block light enables growth"
+        "night does not stop an open-sky crop"
     );
 }
 

@@ -207,7 +207,7 @@ fn upsert_zone(
     })
 }
 
-/// One protected zone: the same box, with the one actor the owner admits in it.
+/// One protected zone: the same box, with the actors the owner admits in it.
 #[must_use]
 fn upsert_protected_zone(
     zone: &str,
@@ -219,7 +219,8 @@ fn upsert_protected_zone(
     commands::Command::UpsertProtectedZone(commands::UpsertProtectedZone {
         zone: zone.to_owned(),
         dimension: dimension.to_owned(),
-        allowed_actor_uuid: allowed_actor_uuid.to_owned(),
+        allowed_actor_uuids: vec![allowed_actor_uuid.to_owned()],
+        public_use: false,
         minimum,
         maximum,
     })
@@ -664,6 +665,8 @@ fn placement_contribution() -> StartupContribution {
         spawning: None,
         items: None,
         work_recipes: None,
+        crafting_recipes: None,
+        block_tools: None,
     }
 }
 
@@ -722,6 +725,8 @@ impl Plugin for Hello {
                         spawning: None,
                         items: Some(items),
                         work_recipes: None,
+                        crafting_recipes: None,
+                        block_tools: None,
                     }
                 }))
             }
@@ -742,6 +747,8 @@ impl Plugin for Hello {
                 spawning: None,
                 items: None,
                 work_recipes: None,
+                crafting_recipes: None,
+                block_tools: None,
             })),
             // The one probe that the two phases do not share a store: this mode
             // answers a valid contribution like `placement` and writes a marker

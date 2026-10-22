@@ -55,6 +55,9 @@ def _parse_center(text: str, fallback: tuple[int, int, int]) -> tuple[int, int, 
 USERNAME = "VillageAuto"
 SECOND_USERNAME = "VillageAutoB"
 SEED = QA_SEED
+# Owner-order candidates, preferred first. Storage needs ~25 logs of stock; Wall
+# is cobblestone-only, which the founding chest keeps after autonomous growth.
+OWNER_ORDER_BLUEPRINTS = ("storage", "wall")
 # Survey receipt: seed 100 safe spawn (128,69,0); village site start chunk (7,0),
 # bounds x 35..206, y 50..118, z -74..89, 160 pieces. Recorded 2026-10-20 by a
 # temporary in-tree survey test (since removed).
@@ -217,19 +220,30 @@ def _project_status(probe: ProbeSteps) -> dict[str, Any]:
 
 
 def _wait_owner_order(
-    probe: ProbeSteps, detail: dict[str, Any], blueprint: str, timeout: float = 600.0,
+    probe: ProbeSteps, detail: dict[str, Any], blueprints: str | tuple[str, ...],
+    timeout: float = 600.0,
 ) -> bool:
+    """Order the first blueprint the settlement can fund, retrying every refusal.
+
+    Funding is the settlement's real stock: after a long autonomous run the
+    founding chest can hold plenty of cobblestone yet too few logs for Storage,
+    and the non-operator owner cannot add stock. Each pass therefore offers the
+    candidates in preference order, and only a live project of the started
+    blueprint counts.
+    """
+    candidates = (blueprints,) if isinstance(blueprints, str) else blueprints
     deadline = time.monotonic() + timeout
     attempts: list[list[str]] = []
     detail["owner_order_attempts"] = attempts
     while time.monotonic() < deadline:
-        lines = _recent_chat(_send(probe, f"settlement build {blueprint}"), 8)
-        attempts.append(lines)
-        detail["post_claim_order_chat"] = lines
-        if lines and lines[0] == f"Started {blueprint} construction.":
-            project = _project_progress(_project_status(probe))
-            detail["owner_order_project"] = project
-            return bool(project and project["blueprint"] == blueprint and project["level"] == 1)
+        for blueprint in candidates:
+            lines = _recent_chat(_send(probe, f"settlement build {blueprint}"), 8)
+            attempts.append(lines)
+            detail["post_claim_order_chat"] = lines
+            if lines and lines[0] == f"Started {blueprint} construction.":
+                project = _project_progress(_project_status(probe))
+                detail["owner_order_project"] = project
+                return bool(project and project["blueprint"] == blueprint and project["level"] == 1)
         probe.call("minecraft_wait_ticks", {"ticks": 200})
     return False
 
@@ -846,6 +860,16 @@ def _scenario(
                                         "min": [-475, 78, 334], "max": [-469, 81, 338],
                                         "resumed": True}
     detail["storage_l1_ticks"] = _gametime(probe) - build_start
+    _verdict(detail, "builder_completes_storage_l1", "PASS" if storage_done else "FAIL",
+             f"storage done={storage_done} after {detail['storage_l1_ticks']} game ticks",
+             "building certificate and every authored non-air block must match through the client")
+    if not storage_done:
+        # Fail-closed but observed: record planner status + census, then stop
+        # before the progress waiter (it needs the storage record).
+        detail["planner_status"] = _planner_status(probe, detail, chest_pos)
+        detail["residents_at_storage_fail"] = _resident_census(probe, detail)
+        probe.check("storage_l1_built", False)
+        return None
     accounted = {
         item: totals_now.get(item, 0) + amount for item, amount in STORAGE_L1_NEEDS.items()
     }
@@ -943,10 +967,10 @@ def _scenario(
     probe.check("second_claim_refused", second_refused)
 
     # --- (9) owner can now order a building ---
-    order_ok = _wait_owner_order(probe, detail, "storage")
+    order_ok = _wait_owner_order(probe, detail, OWNER_ORDER_BLUEPRINTS)
     order_chat = detail["post_claim_order_chat"]
     _verdict(detail, "owner_orders_building", "PASS" if order_ok else "FAIL",
-             f"chat={order_chat}", "settlement build storage after claim must start a funded project")
+             f"chat={order_chat}", "settlement build <storage|wall> after claim must start a funded project")
     probe.check("owner_can_order", order_ok)
 
     # --- (10) restart mid-project resumes: stop server, restart same world ---

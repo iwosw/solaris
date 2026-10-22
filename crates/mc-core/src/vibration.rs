@@ -394,7 +394,7 @@ pub(crate) fn intent(state: &mut TickState, intent: &crate::intent::Intent) {
         }
         IntentKind::UseBlock { pos, .. } => (centre(*pos), GameEvent::BlockActivate),
         IntentKind::Bucket { pos, .. } => (centre(*pos), GameEvent::FluidPlace),
-        IntentKind::Cultivate { .. } => {
+        IntentKind::Cultivate { .. } | IntentKind::BlockTool { .. } => {
             let Some((pos, _)) = intent.footprint.block_write.first() else {
                 return;
             };
@@ -483,8 +483,10 @@ pub(crate) fn listener_nbt(pending: Option<&Pending>, tick: u64) -> Tag {
                     name.into(),
                     Tag::IntArray(
                         uuid.as_bytes()
-                            .chunks_exact(4)
-                            .map(|b| i32::from_be_bytes(b.try_into().expect("UUID word")))
+                            .as_chunks::<4>()
+                            .0
+                            .iter()
+                            .map(|b| i32::from_be_bytes(*b))
                             .collect(),
                     ),
                 ));

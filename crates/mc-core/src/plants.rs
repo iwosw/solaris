@@ -29,7 +29,7 @@ impl PlantBlockRead for Read<'_> {
     }
 
     fn combined_light_at(&self, pos: mc_world::BlockPos) -> Option<u8> {
-        Some(self.state.brightness(pos.x, pos.y, pos.z))
+        Some(self.state.raw_brightness(pos.x, pos.y, pos.z))
     }
 }
 

@@ -21,7 +21,8 @@ Solaris v0.0.8 is a **draft prerelease** for Minecraft Java 26.1.2. Start with t
 - [Generated crate graph](generated/crate-graph.md), [contract index](generated/contract-index.md)
   and [scenario index](generated/scenario-index.md): source-derived navigation.
 - [Physics oracles](physics-oracles.md), [core profiling](performance/CORE_PROFILE_MATRIX.md)
-  and [entity scale profiling](performance/ENTITY_SCALE_PROFILE.md).
+  and [entity scale profiling](performance/ENTITY_SCALE_PROFILE.md),
+  [v2 player capacity receipt](performance/PLAYER_CAPACITY.md).
 - [Settlements owner decisions](settlements/OWNER_DECISIONS.md) and
   [warehouse binding](architecture/pilot-warehouse-binding.md): scoped domain contracts.
 
@@ -30,6 +31,8 @@ Solaris v0.0.8 is a **draft prerelease** for Minecraft Java 26.1.2. Start with t
 - [Contributing](../CONTRIBUTING.md) and [agent working rules](../AGENTS.md).
 - [Agent tooling and harness](AGENT_TOOLING.md): commands, profiles and prerequisites.
 - [Definition of done](DEFINITION_OF_DONE.md) and [real-client QA protocol](QA_AGENT_PROTOCOL.md).
+- [Quirk and farm parity gate](QUIRK_PARITY.md): vanilla-oracle proof that player-relied quirks and farm rates are preserved.
+- [Vanilla compatibility matrix](COMPATIBILITY.md): 26.1.2 mechanics coverage per area.
 - [Playable scenarios](playable/README.md) and [real-client regression manifests](real-client-regression/README.md).
 - [Validation ledger](VALIDATION_LEDGER.md): retained input to `coverage_audit`, not a claim of current acceptance.
 - [Optional core audit runbook](agents/PRO_CORE_AUDIT_RUNBOOK.md).

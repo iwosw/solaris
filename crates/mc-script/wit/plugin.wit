@@ -12,6 +12,7 @@ package solaris:plugin@0.7.0;
 
 world plugin {
     import host;
+    import command-permissions;
     export lifecycle;
     export events;
     export precommit;

@@ -291,18 +291,19 @@ fn convert(
                 position(zone.maximum, "zone maximum")?,
             )?,
         }),
-        // The protected variant is the same box with one protection record: the one
-        // actor the owner admits inside it. The uuid is the guest's own, normalized
-        // by the server's own validator, and a uuid it cannot accept is refused
-        // rather than replaced with an actor the plugin never named.
+        // The protected variant is the same box with one protection record: the
+        // actors the owner admits inside it. The uuids are the guest's own,
+        // normalized by the server's own validator, and a list it cannot accept is
+        // refused rather than replaced with actors the plugin never named.
         Command::UpsertProtectedZone(zone) => Ok(ScriptCommand::UpsertZone {
             zone: ScriptAxisAlignedZone::try_new_with_protection(
                 zone.zone,
                 zone.dimension,
                 position(zone.minimum, "zone minimum")?,
                 position(zone.maximum, "zone maximum")?,
-                Some(ScriptZoneProtection::try_actor_or_operator(
-                    zone.allowed_actor_uuid,
+                Some(ScriptZoneProtection::try_new(
+                    zone.allowed_actor_uuids,
+                    zone.public_use,
                 )?),
             )?,
         }),

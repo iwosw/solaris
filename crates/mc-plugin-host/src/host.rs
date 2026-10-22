@@ -311,11 +311,22 @@ struct PluginReloadRequest {
     response: tokio::sync::oneshot::Sender<Result<PluginReloadReport, PluginReloadError>>,
 }
 
+/// One package's admission policy inside a reload contract.
+#[derive(Clone, PartialEq, Eq)]
+struct PackageRoutes {
+    player_roots: Vec<String>,
+    operator_roots: Vec<String>,
+    channels: Vec<String>,
+    /// Declared command root → permission node.
+    command_permissions: Vec<(String, String)>,
+    permission_provider: bool,
+}
+
 #[derive(Clone)]
 struct PluginReloadContract {
     identities: Vec<String>,
     catalog: Vec<mc_script::PluginPackage>,
-    routes: Vec<(Vec<String>, Vec<String>, Vec<String>)>,
+    routes: Vec<PackageRoutes>,
     grants: Vec<mc_script::CommandCapabilities>,
     precommit_hooks: Vec<mc_script::precommit::HookRegistration>,
     surface: DeploymentSurface,
@@ -338,16 +349,23 @@ impl PluginReloadContract {
             catalog,
             routes: manifests
                 .iter()
-                .map(|manifest| {
-                    (
-                        manifest.player_command_roots().to_vec(),
-                        manifest.operator_command_roots().to_vec(),
-                        manifest
-                            .custom_payload_channels()
-                            .into_iter()
-                            .map(str::to_owned)
-                            .collect(),
-                    )
+                .map(|manifest| PackageRoutes {
+                    player_roots: manifest.player_command_roots().to_vec(),
+                    operator_roots: manifest.operator_command_roots().to_vec(),
+                    channels: manifest
+                        .custom_payload_channels()
+                        .into_iter()
+                        .map(str::to_owned)
+                        .collect(),
+                    // Node requirements and the provider role are admission
+                    // policy: a reload that changes either is not the same
+                    // deployment contract.
+                    command_permissions: manifest
+                        .command_permissions()
+                        .iter()
+                        .map(|(root, node)| (root.clone(), node.clone()))
+                        .collect(),
+                    permission_provider: manifest.is_permission_provider(),
                 })
                 .collect(),
             grants: manifests
@@ -569,7 +587,7 @@ where
         let compiled = crate::package::compile_package(&engine, &package, &limits)
             .map_err(|error| refuse(error.to_string()))?;
         let admission = HostCommandAdmission::from_manifest(package.manifest());
-        let config = crate::check::read_config(package.root(), &limits).map_err(&refuse)?;
+        let config = crate::check::read_config(package.root(), &limits).map_err(refuse)?;
         // The startup phase runs in a store of its own, and that store is dropped
         // here - before the runtime store below exists - so no state the guest
         // wrote while answering startup rules can reach `init`. The sequence is
@@ -595,6 +613,11 @@ where
         let mut instance =
             PluginInstance::instantiate(&linker, compiled.component(), services(&id), limits)
                 .map_err(|error| refuse(error.to_string()))?;
+        if package.manifest().is_permission_provider() {
+            instance
+                .state()
+                .set_command_permissions(Some(boundary.command_permissions()));
+        }
         let subscriptions = package
             .manifest()
             .event_subscriptions()
@@ -699,6 +722,7 @@ where
                             ReloadGeneration {
                                 current_tick: tick,
                                 contract: &reload_contract,
+                                permissions: endpoint.command_permissions(),
                             },
                             sessions.as_ref(),
                             &services,
@@ -854,6 +878,8 @@ struct PluginReloadCandidate<S: HostServices + 'static> {
 struct ReloadGeneration<'a> {
     current_tick: u64,
     contract: &'a PluginReloadContract,
+    /// The table a candidate permission provider publishes to while it loads.
+    permissions: Arc<mc_script::ScriptCommandPermissions>,
 }
 
 fn ensure_reload_candidate_memory(
@@ -918,7 +944,7 @@ where
         let compiled = crate::package::compile_package(engine, &package, &limits)
             .map_err(|error| refuse(error.to_string()))?;
         let admission = HostCommandAdmission::from_manifest(package.manifest());
-        let config = crate::check::read_config(package.root(), &limits).map_err(&refuse)?;
+        let config = crate::check::read_config(package.root(), &limits).map_err(refuse)?;
         let configured = {
             let mut startup =
                 PluginStartup::instantiate(linker, compiled.component(), services(&id), limits)
@@ -932,6 +958,11 @@ where
         let mut instance =
             PluginInstance::instantiate(linker, compiled.component(), services(&id), limits)
                 .map_err(|error| refuse(error.to_string()))?;
+        if package.manifest().is_permission_provider() {
+            instance
+                .state()
+                .set_command_permissions(Some(Arc::clone(&active.permissions)));
+        }
         let subscriptions = package
             .manifest()
             .event_subscriptions()
@@ -1705,10 +1736,11 @@ fn contract_events(event: &ScriptEvent, tick: u64) -> Option<(EventContext, Vec<
             request_id,
             operation_id,
             outcome,
-        } => match operation_answered(request_id, operation_id.as_deref(), outcome) {
-            Some(answer) => vec![Event::OperationAnswered(answer)],
-            None => return None,
-        },
+        } => vec![Event::OperationAnswered(operation_answered(
+            request_id,
+            operation_id.as_deref(),
+            outcome,
+        )?)],
         // The server's zone owner answers one bit, and this is that bit in the
         // contract's own shape. It names the zone it acted on rather than a request,
         // so the answer is keyed by the zone and the host adds no correlation id the
@@ -1781,16 +1813,16 @@ fn contract_events(event: &ScriptEvent, tick: u64) -> Option<(EventContext, Vec<
             menu_id,
             slot,
             click,
-        } => match inventory_click(*click) {
-            Some(click) => vec![Event::InventoryMenuClicked(InventoryMenuClicked {
+        } => {
+            let click = inventory_click(*click)?;
+            vec![Event::InventoryMenuClicked(InventoryMenuClicked {
                 player: context.uuid().to_owned(),
                 session: session_of(*player_id),
                 menu: menu_id.clone(),
                 slot: *slot,
                 click,
-            })],
-            None => return None,
-        },
+            })]
+        }
         kind => vec![
             crate::world_events::map_event(kind)
                 .or_else(|| crate::client_presentation::map_event(kind))?,
@@ -1954,6 +1986,71 @@ fn session_of(player_id: ScriptPlayerId) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// E5: the publication import is the provider's alone, and a refused entry
+    /// leaves the table command admission reads untouched.
+    #[test]
+    fn only_the_provider_handle_publishes_command_permissions() {
+        use crate::bindings::solaris::plugin::command_permissions::Host as HostImport;
+
+        const PLAYER: &str = "069a79f4-44e9-4726-a5be-fca90e38aaf5";
+        let (boundary, endpoint) =
+            script_boundary_pair(NonZeroUsize::new(1).unwrap(), NonZeroUsize::new(1).unwrap());
+        let provider = mc_script::ScriptPluginManifest::new(
+            "solaris-permissions",
+            "Permissions",
+            "0.1.0",
+            mc_script::COMPONENT_PLUGIN_API_VERSION,
+        )
+        .declare_player_command_root("perm")
+        .declare_permission_provider()
+        .validate()
+        .unwrap();
+        endpoint.register_plugin_routes(&provider).unwrap();
+
+        let limits = PluginLimits::default();
+        let mut ordinary = crate::InstanceState::new(
+            Tracing {
+                id: "solaris-essentials".into(),
+            },
+            &limits,
+        );
+        assert!(!HostImport::publish(
+            &mut ordinary,
+            vec![format!("{PLAYER} solaris.essentials.use")]
+        ));
+        assert!(
+            !boundary
+                .command_permissions()
+                .allows(PLAYER, "solaris.essentials.use")
+        );
+
+        let mut published = crate::InstanceState::new(
+            Tracing {
+                id: "solaris-permissions".into(),
+            },
+            &limits,
+        );
+        published.set_command_permissions(Some(boundary.command_permissions()));
+        assert!(HostImport::publish(
+            &mut published,
+            vec![format!("{PLAYER} solaris.essentials.use")]
+        ));
+        assert!(
+            boundary
+                .command_permissions()
+                .allows(PLAYER, "solaris.essentials.use")
+        );
+        assert!(!HostImport::publish(
+            &mut published,
+            vec!["not an entry".into()]
+        ));
+        assert!(
+            boundary
+                .command_permissions()
+                .allows(PLAYER, "solaris.essentials.use")
+        );
+    }
 
     #[test]
     fn operator_root_change_requires_command_ownership_restart() {

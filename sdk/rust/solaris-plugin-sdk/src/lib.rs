@@ -29,8 +29,8 @@ pub mod bindings {
 pub use bindings::export as __export;
 pub use bindings::exports::solaris::plugin::{events, lifecycle, precommit};
 pub use bindings::solaris::plugin::{
-    client_presentation, commands, domain_operations, host, inventories, npc_routes, npcs,
-    operation_types, settlements, storage, types, world_events,
+    client_presentation, command_permissions, commands, domain_operations, host, inventories,
+    npc_routes, npcs, operation_types, settlements, storage, types, world_events,
 };
 
 mod glue;
@@ -100,7 +100,7 @@ pub use storage::{StorageCasOutcome, StorageFailure, StorageGetOutcome, StorageR
 pub use types::{LogLevel, PluginError};
 pub use world_events::{
     BlockPosition, PlayerBlockBroken, PlayerBlockPlaced, PlayerDied, PlayerEntityInteracted,
-    PlayerEntityKilled, PlayerItemCrafted, PlayerItemPickedUp,
+    PlayerEntityKilled, PlayerGraveCreated, PlayerItemCrafted, PlayerItemPickedUp,
 };
 
 /// Failures a plugin reports back to the host.
@@ -657,4 +657,24 @@ pub fn password_verify(password: &str, phc: &str) -> bool {
     let _ = (password, phc);
     #[cfg(not(target_arch = "wasm32"))]
     panic!("password_verify is a wasm guest host call");
+}
+
+/// Replace the deployment's command-permission grants (provider only).
+///
+/// Each entry is `"<identity> <node>"`; `*` as the identity is the default row
+/// for players the table has no explicit row for, and `*` as the node grants
+/// every node. The publication is all-or-nothing: `false` means the host refused
+/// it (this package is not the deployment's permission provider, or an entry was
+/// invalid or over a bound) and the previous table is still in force. Outside the
+/// wasm guest the call is refused the same way instead of panicking, because a
+/// provider's native unit tests may exercise the publication path.
+#[must_use]
+pub fn publish_command_permissions(entries: &[String]) -> bool {
+    #[cfg(target_arch = "wasm32")]
+    return command_permissions::publish(entries);
+
+    #[cfg(not(target_arch = "wasm32"))]
+    let _ = entries;
+    #[cfg(not(target_arch = "wasm32"))]
+    false
 }

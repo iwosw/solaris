@@ -41,7 +41,7 @@ const TICKET_PATHS: [(crate::dimensions::Dimension, &str); 3] = [
         "dimensions/minecraft/the_end/data/minecraft/chunk_tickets.dat",
     ),
 ];
-const FORCED_TICKET_OWNER: &str = "minecraft:forced:";
+const FORCED_TICKET_OWNER: &str = crate::forceload::OWNER_PREFIX;
 
 fn failure(path: &str, detail: impl std::fmt::Display) -> CoreError {
     CoreError::Storage(format!("vanilla metadata {path}: {detail}"))

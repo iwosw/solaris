@@ -229,6 +229,22 @@ fn parallel_sample_matches_serial_reference_order_and_rolls() {
         assert_eq!(describe(&super::sample(&mut state, speed, 0)), expected);
     }
     assert!(total > 100, "fixture must produce ticking cells: {total}");
+    // Unfolded edits sit in chunk (0, 0) only: its samples read through the
+    // overlay (a removed crop, a crop above bare air), the other chunks read
+    // committed cells. Both must match the overlay-for-all reference.
+    let air = state.registry.states.air;
+    let sprout = block(&state, "wheat", &[("age", "0")]);
+    state.world.set_block(1, Y + 1, 1, air);
+    state.world.set_block(2, Y + 2, 2, sprout);
+    assert!(!state.world.overlay_is_empty());
+    for _ in 0..3 {
+        state.tick += 1;
+        let expected = describe(&sample_reference(&mut state, 700));
+        assert_eq!(
+            describe(&super::sample(&mut state, 700, usize::MAX)),
+            expected
+        );
+    }
 }
 
 /// B,A,B,A micro: `cargo test -p mc-core --release farming::cache_tests::parallel_sample_micro -- --ignored --nocapture`.

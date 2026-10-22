@@ -303,10 +303,12 @@ pub(crate) fn use_on(
         let Some(player) = state.players.get_mut(&actor) else {
             return true;
         };
-        for (cell, hotbar) in cells
-            .into_iter()
-            .zip(player.inventory.slots[start..9].chunks_exact_mut(3))
-        {
+        for (cell, hotbar) in cells.into_iter().zip(
+            player.inventory.slots[start..9]
+                .as_chunks_mut::<3>()
+                .0
+                .iter_mut(),
+        ) {
             let shelf = &mut state
                 .block_entities
                 .get_mut(&key(cell))

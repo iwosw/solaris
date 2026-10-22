@@ -178,6 +178,7 @@ impl mc_world::ChunkGenerator for VillageGenerator {
         );
         vec![mc_world::GeneratedVillageSite {
             start_chunk: (0, 0),
+            structure: mc_data::Identifier::parse("minecraft:village_plains").expect("static id"),
             min: mc_world::BlockPos {
                 x: -32,
                 y: 188,

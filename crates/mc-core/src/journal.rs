@@ -95,6 +95,12 @@ pub enum JournalEntry {
     Scoreboard {
         value: crate::scoreboard::Scoreboard,
     },
+    /// Absolute bossbar post-image after a bossbar mutation: named-NBT bytes
+    /// of the vanilla saved-data envelope (Tag has no serde); decoded on
+    /// replay, fail-closed like checkpoints.
+    Bossbars {
+        value: Vec<u8>,
+    },
     /// Player post-image; omitted heavy fields retain the previous image.
     /// Inventory 41 + cursor + open crafting grid ride as separate stacks
     /// (real custody; never folded). Containers ride as block-entity
@@ -261,6 +267,16 @@ pub enum JournalEntry {
         high_water: u64,
         tick: u64,
     },
+    /// Tombstone for a durable ticket that no longer exists (`/forceload remove`,
+    /// plugin/API release). Appended last: earlier variant indices are unchanged.
+    TicketRemoved {
+        owner: String,
+        tick: u64,
+    },
+    /// Dimension-local block-log records and rollback marks (`block_log`).
+    BlockLog {
+        value: Box<crate::block_log::Delta>,
+    },
 }
 
 fn deserialize_statistics_changes<'de, D: serde::Deserializer<'de>>(
@@ -325,6 +341,13 @@ pub struct JournalWriter {
     /// either by startup recovery or the first checkpoint gate.
     pre_open_verified: Option<(u64, u64)>,
 }
+
+/// Test-only rendezvous inside the unpublished WAL write, before file fsync.
+#[cfg(test)]
+type WalWriteObserver = (PathBuf, Box<dyn Fn(&mut File, &[u8]) + Send>);
+#[cfg(test)]
+pub(crate) static WAL_WRITE_OBSERVER: parking_lot::Mutex<Option<WalWriteObserver>> =
+    parking_lot::const_mutex(None);
 
 impl JournalWriter {
     pub fn open(world_dir: &Path, fsync_every: u32) -> Result<Self, CoreError> {
@@ -470,6 +493,14 @@ impl JournalWriter {
         let final_path = self.dir.join(&name);
         {
             let mut file = File::create(&tmp).map_err(|err| CoreError::Storage(err.to_string()))?;
+            #[cfg(test)]
+            if let Some((_, observe)) = WAL_WRITE_OBSERVER
+                .lock()
+                .as_ref()
+                .filter(|(dir, _)| dir == &self.dir)
+            {
+                observe(&mut file, &frame);
+            }
             file.write_all(&frame)
                 .map_err(|err| CoreError::Storage(err.to_string()))?;
             file.sync_all()
@@ -492,8 +523,20 @@ impl JournalWriter {
     }
 }
 
+impl JournalWriter {
+    /// Highest tick durable in the WAL from this writer's point of view:
+    /// appended since open or verified at startup. `None` before either.
+    pub(crate) fn covered_through(&self) -> Option<u64> {
+        self.appended
+            .map(|(_, hi)| hi)
+            .into_iter()
+            .chain(self.pre_open_verified.map(|(_, hi)| hi))
+            .max()
+    }
+}
+
 /// Parse `batch-<lo>-<hi>.bin`.
-fn parse_batch_name(name: &str) -> Option<(u64, u64)> {
+pub(crate) fn parse_batch_name(name: &str) -> Option<(u64, u64)> {
     let rest = name.strip_prefix("batch-")?.strip_suffix(".bin")?;
     let (lo, hi) = rest.split_once('-')?;
     Some((lo.parse().ok()?, hi.parse().ok()?))
@@ -1875,6 +1918,8 @@ pub struct Replay {
     pub tickets: BTreeMap<String, ([i32; 2], (u64, i32))>,
     /// Latest scoreboard image, including an empty-board reset.
     pub scoreboard: Option<crate::scoreboard::Scoreboard>,
+    /// Latest bossbar image (named-NBT bytes), including an empty-registry reset.
+    pub bossbars: Option<Vec<u8>>,
     pub end_fight: Option<crate::end_fight::Fight>,
     pub raids: Option<crate::raids::Raids>,
     pub wandering_trader: Option<crate::mob_lanes::TraderSpawner>,
@@ -1893,6 +1938,8 @@ pub struct Replay {
     pub settlements: BTreeMap<u64, crate::settlements::SettlementRecord>,
     pub settlement_removed: BTreeSet<u64>,
     pub settlement_high_water: u64,
+    /// Block-log table rows followed by WAL-tail deltas, in order.
+    pub block_log: Vec<crate::block_log::Delta>,
     /// Highest tick seen.
     pub tick: u64,
 }
@@ -2163,7 +2210,7 @@ impl EntityStateImage {
             && self.breed_cooldown == row.breed_cooldown
             && self.entity_life == row.entity_life
             && self.loot == row.loot
-            && self.controls == row.controls
+            && self.controls.journal_eq(&row.controls)
             && self.falling == row.falling
             && self.tnt == row.tnt
             && self.special_mob.as_ref() == row.special_mob.as_deref()
@@ -2465,6 +2512,9 @@ pub(crate) fn apply_batch_images(
                 JournalEntry::Scoreboard { value } => {
                     replay.scoreboard = Some(value.clone());
                 }
+                JournalEntry::Bossbars { value } => {
+                    replay.bossbars = Some(value.clone());
+                }
                 JournalEntry::Raids { value } => {
                     replay.raids = Some(value.clone());
                 }
@@ -2473,6 +2523,9 @@ pub(crate) fn apply_batch_images(
                 }
                 JournalEntry::Block { pos, state } => {
                     replay.blocks.insert((pos[0], pos[1], pos[2]), *state);
+                }
+                JournalEntry::BlockLog { value } => {
+                    replay.block_log.push((**value).clone());
                 }
                 JournalEntry::Statistics {
                     uuid,
@@ -2773,6 +2826,9 @@ pub(crate) fn apply_batch_images(
                     replay
                         .tickets
                         .insert(owner.clone(), (*chunk, (*tick, *radius)));
+                }
+                JournalEntry::TicketRemoved { owner, .. } => {
+                    replay.tickets.remove(owner);
                 }
                 JournalEntry::Settlement {
                     image, high_water, ..

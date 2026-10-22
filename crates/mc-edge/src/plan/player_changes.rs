@@ -5,25 +5,28 @@
 //! in queue order: `Joined` adopts the core's entity id and a respawn or
 //! dimension change resets the cached world view before later changes.
 
-use mc_core::boundary::{PlayerAttribute, PlayerChange};
+use mc_core::boundary::{BossBarChange, PlayerAttribute, PlayerChange, TitleChange};
 use mc_data::item_stack::ItemStack;
 use mc_protocol::codec::Identifier;
 use mc_protocol::packets::play::{
-    AttributeId, AttributeModifierOperation, BlockChangedAck, BlockUpdate, ClientboundAwardStats,
-    ClientboundBlockEntityData, ClientboundBlockEvent, ClientboundChangeDifficulty,
-    ClientboundClearDialog, ClientboundContainerClose, ClientboundContainerSetContent,
-    ClientboundContainerSetData, ClientboundContainerSetSlot, ClientboundCooldown,
-    ClientboundCustomPayload, ClientboundMerchantOffers, ClientboundMoveVehicle,
-    ClientboundOpenScreen, ClientboundOpenSignEditor, ClientboundPlayerAbilities,
-    ClientboundRecipeBookAdd, ClientboundRemoveEntityEffect, ClientboundRespawn,
-    ClientboundSelectAdvancementsTab, ClientboundSetCursorItem, ClientboundSetEntityData,
-    ClientboundSetExperience, ClientboundSetHealth, ClientboundShowDialog, ClientboundSound,
-    ClientboundSystemChat, ClientboundUpdateEntityAttributes, ClientboundUpdateEntityEffect,
-    ENTITY_DATA_AIR_SUPPLY_INDEX, EntityAttributeModifier, EntityAttributeSnapshot,
-    EntityDataValue as WireEntityDataValue, EntityEffectFlags, EntityEvent as WireEntityEvent,
-    GameEvent, LevelEvent, MerchantItemCost, MerchantOffer, MobEffectId,
-    PLAYER_DATA_ABSORPTION_INDEX, PlayDisconnect, PlayerInfoActions, PlayerInfoEntry,
-    PlayerInfoRemove, PlayerInfoUpdate, SetEntityMotion, SynchronizePlayerPosition, pack_block_pos,
+    AttributeId, AttributeModifierOperation, BlockChangedAck, BlockUpdate, BossOperation,
+    ClientboundAwardStats, ClientboundBlockEntityData, ClientboundBlockEvent, ClientboundBossEvent,
+    ClientboundChangeDifficulty, ClientboundClearDialog, ClientboundClearTitles,
+    ClientboundContainerClose, ClientboundContainerSetContent, ClientboundContainerSetData,
+    ClientboundContainerSetSlot, ClientboundCooldown, ClientboundCustomPayload,
+    ClientboundMerchantOffers, ClientboundMoveVehicle, ClientboundOpenScreen,
+    ClientboundOpenSignEditor, ClientboundPlayerAbilities, ClientboundRecipeBookAdd,
+    ClientboundRemoveEntityEffect, ClientboundRespawn, ClientboundSelectAdvancementsTab,
+    ClientboundSetActionBarText, ClientboundSetCursorItem, ClientboundSetEntityData,
+    ClientboundSetExperience, ClientboundSetHealth, ClientboundSetSubtitleText,
+    ClientboundSetTitleText, ClientboundSetTitlesAnimation, ClientboundShowDialog,
+    ClientboundSound, ClientboundSystemChat, ClientboundTickingState, ClientboundTickingStep,
+    ClientboundUpdateEntityAttributes, ClientboundUpdateEntityEffect, ENTITY_DATA_AIR_SUPPLY_INDEX,
+    EntityAttributeModifier, EntityAttributeSnapshot, EntityDataValue as WireEntityDataValue,
+    EntityEffectFlags, EntityEvent as WireEntityEvent, GameEvent, LevelEvent, MerchantItemCost,
+    MerchantOffer, MobEffectId, PLAYER_DATA_ABSORPTION_INDEX, PlayDisconnect, PlayerInfoActions,
+    PlayerInfoEntry, PlayerInfoRemove, PlayerInfoUpdate, SetEntityMotion,
+    SynchronizePlayerPosition, pack_block_pos,
 };
 
 use super::{PlannedPacket, ViewerState, per_tick, push_reliable};
@@ -234,6 +237,16 @@ fn plan_change(change: &PlayerChange, viewer: &mut ViewerState, out: &mut Vec<Pl
                 payload: mc_protocol::packets::CustomPayload::Unknown {
                     channel: mc_loader::loader_sound_channel().clone(),
                     payload: mc_loader::sound_payload(sound),
+                },
+            },
+        ),
+        PlayerChange::PluginClientView { payload } => push_reliable(
+            out,
+            conn,
+            &ClientboundCustomPayload {
+                payload: mc_protocol::packets::CustomPayload::Unknown {
+                    channel: mc_loader::loader_view_channel().clone(),
+                    payload: payload.clone(),
                 },
             },
         ),
@@ -675,6 +688,90 @@ fn plan_change(change: &PlayerChange, viewer: &mut ViewerState, out: &mut Vec<Pl
             conn,
             &PlayDisconnect {
                 reason_nbt: text_component_nbt(reason).unwrap_or_default(),
+            },
+        ),
+        PlayerChange::Title(change) => match change {
+            TitleChange::Title(content) => push_reliable(
+                out,
+                conn,
+                &ClientboundSetTitleText {
+                    content: content.clone(),
+                },
+            ),
+            TitleChange::Subtitle(content) => push_reliable(
+                out,
+                conn,
+                &ClientboundSetSubtitleText {
+                    content: content.clone(),
+                },
+            ),
+            TitleChange::ActionBar(content) => push_reliable(
+                out,
+                conn,
+                &ClientboundSetActionBarText {
+                    content: content.clone(),
+                },
+            ),
+            TitleChange::Times {
+                fade_in,
+                stay,
+                fade_out,
+            } => push_reliable(
+                out,
+                conn,
+                &ClientboundSetTitlesAnimation {
+                    fade_in: *fade_in,
+                    stay: *stay,
+                    fade_out: *fade_out,
+                },
+            ),
+            TitleChange::Clear { reset_times } => push_reliable(
+                out,
+                conn,
+                &ClientboundClearTitles {
+                    reset_times: *reset_times,
+                },
+            ),
+        },
+        PlayerChange::TickingState { rate, frozen } => push_reliable(
+            out,
+            conn,
+            &ClientboundTickingState {
+                tick_rate: *rate,
+                frozen: *frozen,
+            },
+        ),
+        PlayerChange::TickingStep { steps } => {
+            push_reliable(out, conn, &ClientboundTickingStep { tick_steps: *steps })
+        }
+        PlayerChange::BossBar { id, change } => push_reliable(
+            out,
+            conn,
+            &ClientboundBossEvent {
+                uuid: *id,
+                operation: match change {
+                    BossBarChange::Add {
+                        name,
+                        progress,
+                        color,
+                        overlay,
+                        flags,
+                    } => BossOperation::Add {
+                        name: name.clone(),
+                        progress: *progress,
+                        color: *color,
+                        overlay: *overlay,
+                        flags: *flags,
+                    },
+                    BossBarChange::Remove => BossOperation::Remove,
+                    BossBarChange::Progress(value) => BossOperation::Progress(*value),
+                    BossBarChange::Name(name) => BossOperation::Name(name.clone()),
+                    BossBarChange::Style { color, overlay } => BossOperation::Style {
+                        color: *color,
+                        overlay: *overlay,
+                    },
+                    BossBarChange::Properties(flags) => BossOperation::Properties(*flags),
+                },
             },
         ),
     }

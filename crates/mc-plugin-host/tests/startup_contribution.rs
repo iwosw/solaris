@@ -127,6 +127,8 @@ fn no_categories() -> StartupContribution {
         spawning: None,
         items: None,
         work_recipes: None,
+        crafting_recipes: None,
+        block_tools: None,
     }
 }
 
@@ -259,6 +261,8 @@ fn one_tree(spacing: u32) -> StartupContribution {
         spawning: None,
         items: None,
         work_recipes: None,
+        crafting_recipes: None,
+        block_tools: None,
     }
 }
 
@@ -309,6 +313,8 @@ fn component_rules_fingerprint_matches_its_independent_construction() {
         }]),
         items: None,
         work_recipes: None,
+        crafting_recipes: None,
+        block_tools: None,
     };
     let from_component = convert_startup_contribution("planner", &plan)
         .expect("a plan inside every bound is accepted")
@@ -386,6 +392,8 @@ fn a_value_wider_than_its_contract_field_is_refused_rather_than_truncated() {
         spawning: None,
         items: None,
         work_recipes: None,
+        crafting_recipes: None,
+        block_tools: None,
     };
 
     // 272 truncated to a byte is 16, which is a legal water depth: this is the
@@ -475,6 +483,8 @@ fn a_contribution_that_breaks_an_enforced_bound_is_refused_with_the_check_that_r
         spawning: None,
         items: None,
         work_recipes: None,
+        crafting_recipes: None,
+        block_tools: None,
     };
     convert_startup_contribution("planner", &declarations(64))
         .expect("64 tree declarations are the bound");
@@ -502,6 +512,8 @@ fn a_contribution_that_breaks_an_enforced_bound_is_refused_with_the_check_that_r
         }]),
         items: None,
         work_recipes: None,
+        crafting_recipes: None,
+        block_tools: None,
     };
     convert_startup_contribution("planner", &spawn_group("creature", 1, 4))
         .expect("a supported group is accepted");

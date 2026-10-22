@@ -283,9 +283,30 @@ policy index for local reads. Updating a rule changes that publication; normal
 block admission remains local to the region.
 
 Plugins register those rules through generic typed policy commands. The current
-actor-or-operator zone policy carries an opaque plugin-scoped zone id, bounds,
-and one normalized allowed actor UUID. Core routing never matches a plugin id or parses an
-id convention; the plugin owns claim meaning and persistence.
+protected-zone policy carries an opaque plugin-scoped zone id, bounds, an
+allow-list of up to 32 normalized player UUIDs and a public-use flag. The native
+owners enforce it locally for block edits, block use (containers, ignition),
+entity interaction and player damage, and spare protected blocks from explosions
+and fire spread; the guest is never called on those paths. Core routing never
+matches a plugin id or parses an id convention; the plugin owns claim meaning and
+persistence.
+
+Death-grave custody is the one gameplay decision a deployment still makes
+synchronously, and it is recorded here because an asynchronous observation cannot
+carry it: drop spawning and the death commit are one native step, so a guest
+answering `player.died` would already be one tick late and a killer standing on
+the corpse would have taken the stacks. The manifest capability `death_graves`
+is therefore a startup declaration, not a command grant; the native death path
+resolves the single declaring package once at startup and, with the same
+capability deployed, moves the exact dropped stacks into a barrel at the death
+spot in the tick that committed the death, journaled with the world. The
+container is the only custody: core spawns no item entity for a stack it stored
+and drops the stacks a full container cannot hold, so no stack is ever in two
+places. Experience stays with the player because core spawns no death XP orbs;
+`keepInventory` wins over the declaration. Two packages declaring the capability
+refuse startup rather than sharing one death's drops. The protected-zone policy
+above remains the plugin's tool for the owner window: core creates the container,
+the plugin protects, announces and later opens it.
 
 Startup world generation follows the same boundary in declarative form. A
 settlement-profile owner may publish one bounded immutable plan of known

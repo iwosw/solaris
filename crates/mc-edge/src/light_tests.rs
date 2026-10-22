@@ -218,7 +218,7 @@ fn light_wire_masks_nibbles_and_varint_coordinates_round_trip() {
 fn viewer_light_baseline_shares_nibble_storage_until_snapshot_mutation() {
     let mut baseline = LightBaseline::default();
     let source = &FIXTURES.lit[0];
-    baseline.record((0, 0), source);
+    baseline.record((0, 0), source, 1);
     let allocation = source.section_lights[8]
         .block
         .as_ref()
@@ -246,7 +246,7 @@ fn viewer_light_baseline_shares_nibble_storage_until_snapshot_mutation() {
     );
     assert!(baseline.observe((0, 0), &next));
     let mut packets = Vec::new();
-    baseline.update((0, 0), &next, ConnectionId(7), &mut packets, &mut 0);
+    baseline.update((0, 0), &next, 2, ConnectionId(7), &mut packets, &mut 0);
     assert!(packets.is_empty());
     assert_eq!(
         baseline.sent[&(0, 0)].sent[8]
@@ -256,9 +256,36 @@ fn viewer_light_baseline_shares_nibble_storage_until_snapshot_mutation() {
             .shared_allocation(),
         allocation
     );
-    baseline.update((0, 0), &next, ConnectionId(7), &mut packets, &mut 1);
+    baseline.update((0, 0), &next, 2, ConnectionId(7), &mut packets, &mut 1);
     assert_eq!(updates(&packets)[0].light, chunk_light(&next));
-    assert!(!baseline.changed((0, 0), &next));
+    baseline.update((0, 0), &next, 3, ConnectionId(7), &mut packets, &mut 1);
+    assert_eq!(updates(&packets).len(), 1);
+}
+
+#[test]
+fn viewer_light_baseline_diffs_a_chunk_only_when_its_revision_moves() {
+    let mut baseline = LightBaseline::default();
+    let source = &FIXTURES.lit[0];
+    baseline.record((0, 0), source, 1);
+    let mut next = (**source).clone();
+    next.section_lights[8].block.as_mut().unwrap().set(0, 1);
+    let mut packets = Vec::new();
+    // Core bumps the revision on every light change: the same revision is
+    // never diffed, so this (deliberately inconsistent) input sends nothing.
+    baseline.update((0, 0), &next, 1, ConnectionId(7), &mut packets, &mut 1);
+    assert!(packets.is_empty());
+    // A new revision with identical light is diffed once, sends nothing and
+    // is then remembered as verified: a changed chunk at that revision is skipped.
+    baseline.update((0, 0), source, 2, ConnectionId(7), &mut packets, &mut 1);
+    assert!(packets.is_empty());
+    baseline.update((0, 0), &next, 2, ConnectionId(7), &mut packets, &mut 1);
+    assert!(packets.is_empty());
+    // Real light change at a new revision, without credit: not lost.
+    baseline.update((0, 0), &next, 3, ConnectionId(7), &mut packets, &mut 0);
+    assert!(packets.is_empty());
+    baseline.update((0, 0), &next, 3, ConnectionId(7), &mut packets, &mut 1);
+    assert_eq!(updates(&packets).len(), 1);
+    assert_eq!(updates(&packets)[0].light, chunk_light(&next));
 }
 
 #[test]

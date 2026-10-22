@@ -171,6 +171,15 @@ enum JournalWork {
     SaveGenerated(crate::world::ChunkCapture),
     /// Stop the thread.
     Shutdown,
+    /// Copy the native database and WAL after the last committed checkpoint into
+    /// a caller-owned directory (hot backup).
+    Backup(BackupJob),
+}
+
+/// One hot backup request; the answer arrives once the native writer has copied.
+struct BackupJob {
+    out: PathBuf,
+    reply: std::sync::mpsc::Sender<Result<crate::hot_backup::HotBackup, CoreError>>,
 }
 /// Bounded journal work queue: 128 queued batches (6.4 s of ticks) behind the
 /// one the journal thread is draining. The depth only absorbs journal-thread
@@ -248,6 +257,7 @@ struct CoreInner {
     spawn_tx: Sender<SpawnRequest>,
     ticket_tx: Sender<RemoteTicket>,
     checkpoint_tx: std::sync::mpsc::Sender<std::sync::mpsc::Sender<bool>>,
+    backup_tx: std::sync::mpsc::Sender<BackupJob>,
     input_dropped: AtomicU64,
     /// Weak: only the tick thread owns the `Sender`, so its exit (halt or
     /// shutdown) closes every subscriber instead of leaving them waiting.
@@ -271,6 +281,68 @@ struct CoreInner {
     /// Fail-closed edge projection: only tick-observed unlocked sessions pass.
     require_plugin_login: bool,
     unlocked_sessions: Arc<parking_lot::RwLock<BTreeSet<ConnectionId>>>,
+    /// Overworld far-terrain LOD tiles, read beside the chunk workers.
+    lod: crate::lod::LodSource,
+    /// Bounded immutable real-chunk terrain sources per dimension.
+    terrain: [Arc<crate::terrain::TerrainSource>; 3],
+    /// Stable opaque world identity for DH LevelInit (random hex, persisted
+    /// through the native owner path, never seed-derived).
+    terrain_epoch: String,
+}
+
+/// Immutable overworld terrain for this configuration and registry: the
+/// vanilla router/density cache when mc-edge supplies its content directory,
+/// the shared village plan source, and plugin worldgen rules.
+///
+/// Serving and the offline `world pregenerate` command build the same terrain
+/// here, so pregenerated chunks match what a join would otherwise generate.
+pub(crate) fn overworld_terrain(
+    config: &CoreConfig,
+    registry: &CoreRegistry,
+) -> Result<mc_worldgen::TerrainGenerator, CoreError> {
+    let mut terrain = mc_worldgen::TerrainGenerator::new(config.seed, Arc::clone(&registry.blocks));
+    if let Some(vanilla_data_dir) = config.vanilla_data_dir.as_deref() {
+        terrain
+            .load_vanilla_worldgen(vanilla_data_dir)
+            .map_err(CoreError::Worldgen)?;
+        // Listing sites and placing their blocks/inhabitants share this
+        // one validated plan source, built once before the tick thread.
+        let tags = registry
+            .worldgen_tags
+            .as_ref()
+            .expect("full vanilla registry has shared worldgen tags");
+        let closure = Arc::new(
+            mc_worldgen::village::load_village_closure(
+                vanilla_data_dir,
+                &mc_data::Identifier::parse("minecraft:villages")
+                    .expect("static village structure set"),
+                &registry.blocks,
+            )
+            .map_err(|error| CoreError::Worldgen(error.to_string()))?,
+        );
+        let decor = Arc::new(
+            mc_worldgen::village::VillageDecor::compile(
+                vanilla_data_dir,
+                &closure,
+                &mc_worldgen::vanilla_features::BlockSemantics::new(
+                    &registry.blocks,
+                    tags.as_ref(),
+                ),
+            )
+            .map_err(|error| CoreError::Worldgen(error.to_string()))?,
+        );
+        let plans = mc_worldgen::village::plan_source::VillagePlanSource::new(
+            closure,
+            decor,
+            config.seed,
+            Arc::clone(&registry.blocks),
+            tags.clone(),
+            tags.clone(),
+        )
+        .map_err(|error| CoreError::Worldgen(error.to_string()))?;
+        terrain = terrain.with_village_plans(Arc::new(plans));
+    }
+    crate::plugin_startup::apply_worldgen(registry, terrain)
 }
 
 fn load_dimension_state(
@@ -298,51 +370,7 @@ fn load_dimension_state(
     // Worldgen: load the same vanilla router/density cache used by the
     // production v1 startup when mc-edge supplies its content directory.
     let terrain = if dimension == crate::dimensions::Dimension::Overworld {
-        let mut terrain =
-            mc_worldgen::TerrainGenerator::new(config.seed, Arc::clone(&registry.blocks));
-        if let Some(vanilla_data_dir) = config.vanilla_data_dir.as_deref() {
-            terrain
-                .load_vanilla_worldgen(vanilla_data_dir)
-                .map_err(CoreError::Worldgen)?;
-            // Listing sites and placing their blocks/inhabitants share this
-            // one validated plan source, built once before the tick thread.
-            let tags = registry
-                .worldgen_tags
-                .as_ref()
-                .expect("full vanilla registry has shared worldgen tags");
-            let closure = Arc::new(
-                mc_worldgen::village::load_village_closure(
-                    vanilla_data_dir,
-                    &mc_data::Identifier::parse("minecraft:villages")
-                        .expect("static village structure set"),
-                    &registry.blocks,
-                )
-                .map_err(|error| CoreError::Worldgen(error.to_string()))?,
-            );
-            let decor = Arc::new(
-                mc_worldgen::village::VillageDecor::compile(
-                    vanilla_data_dir,
-                    &closure,
-                    &mc_worldgen::vanilla_features::BlockSemantics::new(
-                        &registry.blocks,
-                        tags.as_ref(),
-                    ),
-                )
-                .map_err(|error| CoreError::Worldgen(error.to_string()))?,
-            );
-            let plans = mc_worldgen::village::plan_source::VillagePlanSource::new(
-                closure,
-                decor,
-                config.seed,
-                Arc::clone(&registry.blocks),
-                tags.clone(),
-                tags.clone(),
-            )
-            .map_err(|error| CoreError::Worldgen(error.to_string()))?;
-            terrain = terrain.with_village_plans(Arc::new(plans));
-        }
-        terrain = crate::plugin_startup::apply_worldgen(&registry, terrain)?;
-        Some(terrain)
+        Some(overworld_terrain(config, &registry)?)
     } else {
         None
     };
@@ -352,26 +380,6 @@ fn load_dimension_state(
         let spawn = terrain
             .locate_safe_spawn()
             .ok_or_else(|| CoreError::Worldgen("no bounded dry land spawn found".into()))?;
-        let chunk = terrain.generate(spawn.chunk());
-        let lx = spawn.block_x.rem_euclid(16) as u8;
-        let lz = spawn.block_z.rem_euclid(16) as u8;
-        let air = mc_world::BlockStateId(registry.states.air);
-        let support = chunk.get_block(lx, spawn.surface_y, lz);
-        let dry_support = support.is_some_and(|id| {
-            id != air
-                && registry
-                    .blocks
-                    .by_id(id)
-                    .is_some_and(|state| !state.has_fluid())
-        });
-        if !dry_support
-            || chunk.get_block(lx, spawn.surface_y + 1, lz) != Some(air)
-            || chunk.get_block(lx, spawn.surface_y + 2, lz) != Some(air)
-        {
-            return Err(CoreError::Worldgen(
-                "natural spawn candidate failed block-level clearance".into(),
-            ));
-        }
         [spawn.block_x, spawn.surface_y + 1, spawn.block_z]
     } else {
         [0, 80, 0]
@@ -465,6 +473,8 @@ fn load_dimension_state(
         config.player_outbox_cap,
     );
     tick_state.require_plugin_login = config.require_plugin_login;
+    tick_state.max_airtime_ticks = config.max_airtime_ticks;
+    tick_state.mob_griefing = config.mob_griefing;
     tick_state.config_view_distance = i32::from(config.view_distance);
     tick_state.dimension = dimension;
     tick_state.tick = recovered_tick;
@@ -516,11 +526,19 @@ fn load_dimension_state(
         climate.restore(&mut tick_state)?;
     }
     tick_state.scoreboard = replay.scoreboard.unwrap_or_default();
+    tick_state.bossbars = replay
+        .bossbars
+        .as_deref()
+        .map(crate::bossbar::BossBars::from_bytes)
+        .transpose()
+        .map_err(crate::config::CoreError::Storage)?
+        .unwrap_or_default();
     tick_state.generated_entity_claims = replay.generated_entity_claims.clone();
     tick_state.end_fight = replay.end_fight.unwrap_or_default();
     tick_state.raids = replay.raids.unwrap_or_default();
     tick_state.raids.validate()?;
     tick_state.trader_spawner = replay.wandering_trader.unwrap_or_default();
+    tick_state.block_log = crate::block_log::BlockLog::restore(config.block_log, replay.block_log);
 
     // Replay player + entity records. Full player state (inventory,
     // vitals, xp, mode) restores here once the inventory/survival modules
@@ -820,6 +838,35 @@ impl Core {
         )?;
         crate::dimensions::validate_identity(&mut tick_state)?;
         let world_spawn = tick_state.world.world_spawn();
+        let terrain_epoch = crate::terrain::epoch_for_open(&tick_state)?;
+        // Fresh epoch (minted when the stored record had none): stage it in
+        // the in-memory globals image now, on the opening thread before any
+        // tick/journal owner exists. The initial checkpoint below carries it
+        // through the normal atomic transaction; reopened worlds already have
+        // it in their record.
+        crate::terrain::stage_epoch(&mut tick_state.native_globals, &terrain_epoch)?;
+        let lod = crate::lod::LodSource::new(tick_state.world.chunk_source());
+        let terrain_sources = |state: &crate::tick::TickState| {
+            Arc::new(crate::terrain::TerrainSource::new(
+                state.world.chunk_source(),
+                terrain_epoch.clone(),
+            ))
+        };
+        let terrain = [
+            terrain_sources(&tick_state),
+            terrain_sources(
+                tick_state
+                    .other_dimensions
+                    .get(&crate::dimensions::Dimension::Nether)
+                    .expect("nether dimension state"),
+            ),
+            terrain_sources(
+                tick_state
+                    .other_dimensions
+                    .get(&crate::dimensions::Dimension::End)
+                    .expect("end dimension state"),
+            ),
+        ];
         let world_dir = config.world_dir.clone();
         if fresh {
             let (work_tx, work_rx) = journal_work_channel();
@@ -856,6 +903,7 @@ impl Core {
         let (work_tx, work_rx) = journal_work_channel();
         let (shutdown_tx, shutdown_rx) = std::sync::mpsc::channel::<()>();
         let (checkpoint_tx, checkpoint_rx) = std::sync::mpsc::channel();
+        let (backup_tx, backup_rx) = std::sync::mpsc::channel();
         // At most one generated-chunk save queued or running: a slow disk
         // holds generated chunks in the world's bounded buffer, and the
         // bounded journal queue applies backpressure, instead of parking
@@ -897,6 +945,7 @@ impl Core {
         let unlocked_sessions = Arc::new(parking_lot::RwLock::new(BTreeSet::new()));
         let channels = TickChannels {
             checkpoint_every: checkpoint_every.max(1),
+            pause_when_empty_seconds: config.pause_when_empty_seconds,
             input_rx,
             spawn_rx,
             ticket_rx,
@@ -909,6 +958,12 @@ impl Core {
             unlocked_sessions: Arc::clone(&unlocked_sessions),
             shutdown_rx,
             checkpoint_rx,
+            backup_rx,
+            terrain: [
+                Arc::clone(&terrain[0]),
+                Arc::clone(&terrain[1]),
+                Arc::clone(&terrain[2]),
+            ],
         };
         let tick_handle = std::thread::Builder::new()
             .name("mc-core-tick".to_owned())
@@ -926,6 +981,7 @@ impl Core {
                 spawn_tx,
                 ticket_tx,
                 checkpoint_tx,
+                backup_tx,
                 input_dropped: AtomicU64::new(0),
                 tick_tx: tick_tx.downgrade(),
                 timing_tx: timing_tx.downgrade(),
@@ -943,6 +999,9 @@ impl Core {
                 build_gate,
                 require_plugin_login: config.require_plugin_login,
                 unlocked_sessions,
+                lod,
+                terrain,
+                terrain_epoch,
             }),
         })
     }
@@ -1052,6 +1111,81 @@ impl Core {
         self.inner.world_spawn
     }
 
+    /// One overworld far-terrain LOD tile (see [`crate::lod`]). Blocking store
+    /// reads and router sampling on the caller's thread, never the tick.
+    pub fn lod_tile(
+        &self,
+        tile_x: i32,
+        tile_z: i32,
+        level: u8,
+        stored_only: bool,
+    ) -> Result<Vec<crate::lod::LodSample>, CoreError> {
+        self.inner.lod.tile(tile_x, tile_z, level, stored_only)
+    }
+
+    /// Stable opaque world identity for DH LevelInit: random per world,
+    /// persisted through the native owner path, preserved across restarts,
+    /// rotated on world reset. Never seed-derived. Cheap clone; samples no
+    /// chunks.
+    #[must_use]
+    pub fn terrain_identity(&self) -> &str {
+        &self.inner.terrain_epoch
+    }
+
+    /// Cheap per-dimension publication fence for edge cache invalidation
+    /// (atomic load, no locks). Advanced by the tick owner only when a
+    /// publication carries terrain changes (block writes, admissions,
+    /// evictions); idle ticks leave it untouched. `u64::MAX` means busy
+    /// (a terrain-changing publication is swapping its coherent bundle
+    /// right now) or unknown dimension — never a real fence. The sampler
+    /// rejects a busy or changed fence before/after sampling and retries.
+    pub fn terrain_revision(&self, dimension: u32) -> u64 {
+        self.inner
+            .terrain
+            .get(dimension as usize)
+            .map_or(u64::MAX, |source| source.revision())
+    }
+
+    /// One immutable 6x6 real-chunk terrain section centered on the requested
+    /// DH detail-6 leaf (see [`crate::terrain`]). Live committed resident
+    /// chunks outrank the native store; missing chunks resolve through the
+    /// normal load-or-generate path with light baked on the caller thread;
+    /// corrupt stored coverage fails closed. Exactly 36 chunks, bounded and
+    /// fixed. Blocking off-tick only: never call on the tick thread or a
+    /// network thread — the presentation layer runs this on its shared
+    /// bounded LOD worker lane.
+    pub fn terrain_section(
+        &self,
+        dimension: u32,
+        section_x: i32,
+        section_z: i32,
+    ) -> Result<crate::terrain::TerrainSection, CoreError> {
+        self.inner.terrain.get(dimension as usize).map_or_else(
+            || {
+                Err(CoreError::Storage(format!(
+                    "terrain section: unknown dimension {dimension}"
+                )))
+            },
+            |source| source.section(dimension, section_x, section_z),
+        )
+    }
+
+    /// The terrain publication's resident snapshot, for regression probes.
+    #[cfg(test)]
+    pub(crate) fn latest_snapshot(
+        &self,
+        dimension: crate::dimensions::Dimension,
+    ) -> Option<Arc<crate::boundary::WorldSnapshot>> {
+        self.inner.terrain[dimension as usize].snapshot()
+    }
+
+    /// The overworld generator's far-terrain program, zlib-compressed, built
+    /// once on first use (see [`crate::lod::LodSource::program`]). It reveals
+    /// the seed's terrain noise: callers send it only on operator opt-in.
+    pub fn lod_program(&self) -> Option<std::sync::Arc<Vec<u8>>> {
+        self.inner.lod.program()
+    }
+
     /// Edge-side effects fail closed until the native tick has observed this
     /// exact session unlocked. Unknown and not-yet-joined connections are locked
     /// when authentication is required; configuration-off is unchanged.
@@ -1099,6 +1233,30 @@ impl Core {
     pub fn checkpoint(&self) -> bool {
         let (tx, rx) = std::sync::mpsc::channel();
         self.inner.checkpoint_tx.send(tx).is_ok() && rx.recv().unwrap_or(false)
+    }
+
+    /// Hot backup of the running world into the existing empty directory `out`:
+    /// a forced checkpoint, then a copy of that native database and the WAL
+    /// appended since (see [`crate::hot_backup`]). Blocking; network callers
+    /// must use a blocking task. The tick is not paused. The caller owns
+    /// `out`'s manifest and cleanup after an error.
+    pub fn backup(&self, out: &std::path::Path) -> Result<crate::hot_backup::HotBackup, CoreError> {
+        if !self.checkpoint() {
+            return Err(CoreError::Storage(
+                "hot backup: checkpoint failed or the core stopped".into(),
+            ));
+        }
+        let (reply, result) = std::sync::mpsc::channel();
+        let job = BackupJob {
+            out: out.to_path_buf(),
+            reply,
+        };
+        if self.inner.backup_tx.send(job).is_err() {
+            return Err(CoreError::Storage("hot backup: the core stopped".into()));
+        }
+        result
+            .recv()
+            .unwrap_or_else(|_| Err(CoreError::Storage("hot backup: the core stopped".into())))
     }
 
     /// Graceful shutdown: signals the tick thread, then joins tick and
@@ -1427,6 +1585,8 @@ fn restore_data_value(
 /// Channels owned by the tick thread.
 struct TickChannels {
     checkpoint_every: u64,
+    /// Vanilla `pause-when-empty-seconds`; zero never pauses.
+    pause_when_empty_seconds: u32,
     input_rx: Receiver<PlayerInput>,
     spawn_rx: Receiver<SpawnRequest>,
     ticket_rx: Receiver<RemoteTicket>,
@@ -1443,6 +1603,19 @@ struct TickChannels {
     unlocked_sessions: Arc<parking_lot::RwLock<BTreeSet<ConnectionId>>>,
     shutdown_rx: std::sync::mpsc::Receiver<()>,
     checkpoint_rx: std::sync::mpsc::Receiver<std::sync::mpsc::Sender<bool>>,
+    backup_rx: std::sync::mpsc::Receiver<BackupJob>,
+    /// Coherent terrain publications, one per dimension index: swapped by
+    /// the tick owner under each source's write lock so edge samplers read
+    /// a consistent (snapshot, supplement) bundle plus fence without state.
+    terrain: [Arc<crate::terrain::TerrainSource>; 3],
+}
+
+/// Online players across every dimension; the empty-server pause counts them.
+fn online_players(state: &TickState) -> usize {
+    std::iter::once(state)
+        .chain(state.other_dimensions.values().map(|world| &**world))
+        .map(|world| world.players.len())
+        .sum()
 }
 
 fn tick_loop(mut state: TickState, mut channels: TickChannels) {
@@ -1459,6 +1632,9 @@ fn tick_loop(mut state: TickState, mut channels: TickChannels) {
     let mut pending_input = None;
     let (plugin_ack_tx, plugin_ack_rx) = std::sync::mpsc::channel();
     let mut plugin_written_tick = state.tick;
+    // Empty-server pause bookkeeping (vanilla `pause-when-empty-seconds`).
+    let mut empty_ticks = 0u64;
+    let mut paused = false;
     'ticks: loop {
         let wall_start = std::time::Instant::now();
         let wall_start_unix_ns = std::time::SystemTime::now()
@@ -1489,9 +1665,11 @@ fn tick_loop(mut state: TickState, mut channels: TickChannels) {
         while let Ok(input) = channels.input_rx.try_recv() {
             inputs.push(input);
         }
+        let mut activity = !inputs.is_empty();
         // Debug/test spawns drain here (bench + tests only).
         while let Ok(request) = channels.spawn_rx.try_recv() {
             apply_spawn_request(&mut state, &request);
+            activity = true;
         }
         // Remote tickets drain here; the journal records them each tick.
         while let Ok(ticket) = channels.ticket_rx.try_recv() {
@@ -1505,6 +1683,90 @@ fn tick_loop(mut state: TickState, mut channels: TickChannels) {
                     ticket.radius as i32,
                 ),
             );
+            activity = true;
+        }
+        // Vanilla `pause-when-empty-seconds`: after the grace period with no
+        // online player the world stops advancing. Inputs (a join, a console
+        // command) wake one tick; the first player resets the counter and
+        // resumes continuous ticking. Saves, backups and shutdown stay
+        // serviced while paused, exactly as the vanilla server does.
+        let pause_limit = u64::from(channels.pause_when_empty_seconds) * 20;
+        let pause_tick = state.tick;
+        if pause_limit == 0 {
+            paused = false;
+        } else if online_players(&state) == 0 {
+            empty_ticks = empty_ticks.saturating_add(1);
+            if empty_ticks >= pause_limit && !paused {
+                paused = true;
+                tracing::info!(
+                    seconds = channels.pause_when_empty_seconds,
+                    "server empty, pausing world"
+                );
+                // Vanilla autoSave()-s once on entering the pause.
+                if !checkpoint_in_flight {
+                    checkpoint_in_flight = start_checkpoint(
+                        &mut state,
+                        &channels.work_tx,
+                        &checkpoint_done_tx,
+                        pause_tick,
+                    );
+                    if checkpoint_in_flight {
+                        since_checkpoint = 0;
+                    }
+                }
+            }
+        } else {
+            empty_ticks = 0;
+            paused = false;
+        }
+        if paused && !activity {
+            if !checkpoint_in_flight && let Ok(reply) = channels.checkpoint_rx.try_recv() {
+                checkpoint_in_flight = start_checkpoint_with_reply(
+                    &mut state,
+                    &channels.work_tx,
+                    &checkpoint_done_tx,
+                    pause_tick,
+                    Some(reply),
+                );
+                if checkpoint_in_flight {
+                    since_checkpoint = 0;
+                }
+            }
+            while let Ok(job) = channels.backup_rx.try_recv() {
+                if let Err(std::sync::mpsc::SendError(JournalWork::Backup(job))) =
+                    channels.work_tx.send(JournalWork::Backup(job))
+                {
+                    let _ = job
+                        .reply
+                        .send(Err(CoreError::Storage("journal thread stopped".into())));
+                }
+            }
+            if channels.shutdown_rx.try_recv().is_ok() {
+                start_checkpoint(
+                    &mut state,
+                    &channels.work_tx,
+                    &checkpoint_done_tx,
+                    pause_tick,
+                );
+                send_shutdown(&mut state, &channels.work_tx);
+                break;
+            }
+            next_tick += TICK_PERIOD;
+            let now = std::time::Instant::now();
+            if next_tick <= now {
+                next_tick = now + TICK_PERIOD;
+            }
+            if channels.shutdown_rx.recv_timeout(next_tick - now).is_ok() {
+                start_checkpoint(
+                    &mut state,
+                    &channels.work_tx,
+                    &checkpoint_done_tx,
+                    pause_tick,
+                );
+                send_shutdown(&mut state, &channels.work_tx);
+                break;
+            }
+            continue;
         }
         let tick_start = std::time::Instant::now();
         let (mut output, drains, times) = run_tick(&mut state, &inputs);
@@ -1599,7 +1861,83 @@ fn tick_loop(mut state: TickState, mut channels: TickChannels) {
                 );
             }
         }
+
         // Broadcast: laggards skip to latest (world state is skippable).
+        // Terrain freshness: publish the coherent per-dimension bundle
+        // (resident snapshot + committed-but-unflushed supplement, fenced)
+        // so off-tick sampling never mixes a new snapshot with an old
+        // supplement (or the reverse) under an unchanged fence.
+        // Block edits, chunk loads and unloads all surface in the change
+        // set; anything else is not terrain. Changed publications advance
+        // each per-dimension fence; idle ticks leave every fence (and every
+        // bundle) untouched so the edge before/after sampling check does
+        // not reject slow generations and the shared cache does not
+        // invalidate continuously.
+        let terrain_changed = crate::dimensions::Dimension::ALL
+            .into_iter()
+            .any(|dimension| {
+                output.in_dimension(dimension).is_some_and(|output| {
+                    !output.changes.blocks.is_empty()
+                        || !output.changes.chunks_loaded.is_empty()
+                        || !output.changes.chunks_unloaded.is_empty()
+                })
+            });
+        if terrain_changed {
+            // Mark every fence busy BEFORE swapping any bundle: a sampler
+            // that grabbed a pre-fence retries instead of mixing a swapped
+            // dimension bundle with a not-yet-swapped one.
+            for source in &channels.terrain {
+                source.begin_publish();
+            }
+        }
+        // Committed-but-unflushed supplement per dimension: resident dirty
+        // chunks plus non-resident overlay writes. Covers edit -> evict ->
+        // sample before checkpoint, when neither the snapshot nor the
+        // native store carries the edit. Shared-empty when clean (no
+        // per-tick allocation); rebuilt every publication so flushed
+        // entries drop as soon as the checkpoint ACK clears them.
+        // Per-dimension bundle swap, indexed explicitly
+        // (0 = overworld, 1 = nether, 2 = end): never rely on map order.
+        for (index, dimension) in crate::dimensions::Dimension::ALL.into_iter().enumerate() {
+            let world = if dimension == state.dimension {
+                &state.world
+            } else {
+                let Some(world) = state.other_dimensions.get(&dimension) else {
+                    // Dimension absent this tick (never on the live path:
+                    // all three exist): on a changed publication the fence
+                    // is already busy and the bundle swaps below with no
+                    // snapshot; on idle there is nothing to publish.
+                    if terrain_changed {
+                        let source = &channels.terrain[index];
+                        source.finish_publish(
+                            None,
+                            crate::terrain::TerrainSource::empty_supplement(),
+                            output.tick,
+                        );
+                    }
+                    continue;
+                };
+                &world.world
+            };
+            let source = &channels.terrain[index];
+            if !terrain_changed {
+                // Idle: leave the fence AND the bundle untouched (no
+                // re-swap of identical Arcs) so long generations under a
+                // stable fence are never spuriously rejected.
+                continue;
+            }
+            let revision = output.tick;
+            let snapshot = output
+                .in_dimension(dimension)
+                .map(|output| Arc::clone(&output.snapshot));
+            let dirty = world.dirty_supplement_data();
+            let supplement = if dirty.chunks.is_empty() && dirty.overlay.is_empty() {
+                crate::terrain::TerrainSource::empty_supplement()
+            } else {
+                Arc::new(dirty)
+            };
+            source.finish_publish(snapshot, supplement, revision);
+        }
         let mut tick_times = output.times;
         let _ = channels.tick_broadcast.send(output);
         // Disconnects sealed before this tick: the edge has had a full tick
@@ -1627,6 +1965,17 @@ fn tick_loop(mut state: TickState, mut channels: TickChannels) {
                 since_checkpoint = 0;
             }
         }
+        // Hot backup requests ride the same FIFO as checkpoints, so the journal
+        // thread sees them behind every append of this and earlier ticks.
+        while let Ok(job) = channels.backup_rx.try_recv() {
+            if let Err(std::sync::mpsc::SendError(JournalWork::Backup(job))) =
+                channels.work_tx.send(JournalWork::Backup(job))
+            {
+                let _ = job
+                    .reply
+                    .send(Err(CoreError::Storage("journal thread stopped".into())));
+            }
+        }
         // Checkpoint: every `checkpoint_every` ticks, one in flight at a
         // time (a cadence that comes due while one is writing starts as soon
         // as it is acknowledged). See `start_checkpoint`.
@@ -1649,6 +1998,7 @@ fn tick_loop(mut state: TickState, mut channels: TickChannels) {
         }
         tick_times.owner_post_us = owner_post_start.elapsed().as_micros() as u64;
         tick_times.wall_us = wall_start.elapsed().as_micros().min(u128::from(u64::MAX)) as u64;
+        state.tick_control.record_tick(tick_times.wall_us);
         if std::env::var("MC_CORE_PHASE_LOG").is_ok() {
             let pre_time = tick_start.duration_since(wall_start);
             eprintln!(
@@ -1669,8 +2019,13 @@ fn tick_loop(mut state: TickState, mut channels: TickChannels) {
         // Keep the hook-free shutdown/deadline wait unchanged. A hook-enabled
         // tick also services read-only previews when explicitly unparked: that
         // spends no extra game tick and never renews the admission deadline.
-        next_tick += TICK_PERIOD;
+        next_tick += state.tick_control.period();
         let now = std::time::Instant::now();
+        // A sprint runs ticks back to back; it still takes the shutdown poll
+        // of the behind-schedule branch below.
+        if state.tick_control.sprinting() {
+            next_tick = now;
+        }
         if next_tick > now {
             if state.build_queries.is_none() {
                 if channels.shutdown_rx.recv_timeout(next_tick - now).is_ok() {
@@ -2128,8 +2483,8 @@ pub(crate) fn checkpoint_data_for(
 ) {
     let mut players: Vec<CheckpointPlayerData> = state
         .players
-        .iter()
-        .filter_map(|(id, _)| {
+        .keys()
+        .filter_map(|id| {
             let slot = state.entities.slot_of_any(*id)?;
             let uuid = state.entities.row(slot).uuid.to_string();
             let record = player_record_for(state, *id, tick)?;
@@ -2505,6 +2860,7 @@ struct CheckpointJob {
     world_spawn: [i32; 3],
     world_spawn_rotation: [f32; 2],
     scoreboard: crate::scoreboard::Scoreboard,
+    bossbars: crate::bossbar::BossBars,
     raids: crate::raids::Raids,
     wandering_trader: crate::mob_lanes::TraderSpawner,
     generated_entity_claims: std::collections::BTreeSet<String>,
@@ -2520,6 +2876,8 @@ struct CheckpointJob {
     /// Per-record settlement rows (`settlement/<id>`) plus the shared
     /// `settlement_sequence` row. No aggregate registry blob.
     settlements: std::collections::BTreeMap<String, mc_world::native::NativeDomainRecord>,
+    /// Block-log deltas since the previous capture and retention floors.
+    block_log: crate::block_log::Persist,
     /// Chunks written at which revision, or `None` when the checkpoint
     /// failed (no manifest; the journal retains everything).
     done: std::sync::mpsc::Sender<CheckpointAck>,
@@ -2601,6 +2959,7 @@ fn start_checkpoint_with_reply(
         world_spawn: state.world.world_spawn(),
         world_spawn_rotation: state.world.world_spawn_rotation(),
         scoreboard: state.scoreboard.clone(),
+        bossbars: state.bossbars.clone(),
         raids: state.raids.clone(),
         wandering_trader: state.trader_spawner,
         generated_entity_claims: state.generated_entity_claims.clone(),
@@ -2627,6 +2986,7 @@ fn start_checkpoint_with_reply(
                 return false;
             }
         },
+        block_log: crate::block_log::checkpoint(state),
         done: done.clone(),
         reply,
     };
@@ -2799,6 +3159,13 @@ pub(crate) fn journal_entries_for_tick(
             value: state.scoreboard.clone(),
         });
     }
+    if state.dimension == crate::dimensions::Dimension::Overworld
+        && std::mem::take(&mut state.bossbars_dirty)
+    {
+        entries.push(JournalEntry::Bossbars {
+            value: state.bossbars.to_bytes(),
+        });
+    }
     // Removals precede final storage images: a replacement at the same cell
     // must clear its old family without deleting the newly installed entity.
     let mut removed = std::mem::take(&mut state.block_entity_removed);
@@ -2869,6 +3236,7 @@ pub(crate) fn journal_entries_for_tick(
             nbt,
         });
     }
+    crate::block_log::journal(state, &mut entries);
     // Player post-images whose durable fields (inventory, selected, vitals
     // incl. xp, game mode, position) differ from the last journaled one.
     // The open menu's grid/cursor fold back via close semantics at journal
@@ -2938,17 +3306,7 @@ pub(crate) fn journal_entries_for_tick(
             tick: output.tick,
         });
     }
-    for (owner, (centre, radius)) in &state.tickets {
-        if owner.starts_with("solaris:portal:") {
-            continue;
-        }
-        entries.push(JournalEntry::Ticket {
-            owner: owner.clone(),
-            chunk: [centre.x, centre.z],
-            tick: output.tick,
-            radius: *radius,
-        });
-    }
+    crate::chunk_tickets::journal(state, output.tick, &mut entries);
     for (dimension, world) in &mut state.other_dimensions {
         let child_output = output
             .snapshot
@@ -2975,6 +3333,11 @@ enum NativeWork {
         plugins: Result<Box<crate::plugin::PluginState>, CoreError>,
     },
     SaveGenerated(crate::world::ChunkCapture),
+    /// Copy the last committed checkpoint and the WAL after it (hot backup).
+    Backup {
+        job: BackupJob,
+        through: u64,
+    },
 }
 
 /// Journal thread: owns WAL appends and their fsyncs, and gates each
@@ -3088,6 +3451,23 @@ fn journal_loop(
                         return;
                     }
                 }
+                JournalWork::Backup(job) => match writer.flush() {
+                    // Everything appended so far is durable; the native writer
+                    // copies it behind every earlier checkpoint commit.
+                    Ok(()) => {
+                        let through = writer.covered_through().unwrap_or(0);
+                        if native_tx.send(NativeWork::Backup { job, through }).is_err() {
+                            tracing::error!(
+                                cause = "native writer channel closed",
+                                "journal backup handoff failed; world halting"
+                            );
+                            return;
+                        }
+                    }
+                    Err(error) => {
+                        let _ = job.reply.send(Err(error));
+                    }
+                },
                 JournalWork::SaveGenerated(chunks) => {
                     if native_tx.send(NativeWork::SaveGenerated(chunks)).is_err() {
                         tracing::error!(
@@ -3132,10 +3512,12 @@ fn native_writer_loop(
 ) {
     // The current complete manifest is the recovery/pruning authority.
     let mut prev_manifest = initial_manifest;
+    let mut block_log = crate::block_log::Backlog::default();
     while let Ok(work) = work_rx.recv() {
         let notify = match &work {
             NativeWork::Checkpoint { job, .. } => Some((job.done.clone(), job.reply.clone())),
             NativeWork::SaveGenerated(_) => None,
+            NativeWork::Backup { .. } => None,
         };
         let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             run_native_work(
@@ -3144,6 +3526,7 @@ fn native_writer_loop(
                 generated_busy,
                 committed_tick,
                 &mut prev_manifest,
+                &mut block_log,
             );
         }));
         if let Err(payload) = outcome {
@@ -3173,12 +3556,22 @@ fn run_native_work(
     generated_busy: &std::sync::atomic::AtomicBool,
     committed_tick: &std::sync::atomic::AtomicU64,
     prev_manifest: &mut CheckpointManifest,
+    block_log: &mut crate::block_log::Backlog,
 ) {
     match work {
-        NativeWork::Checkpoint { job, plugins } => {
+        NativeWork::Checkpoint { mut job, plugins } => {
             let started = std::time::Instant::now();
-            let written = plugins
-                .and_then(|plugins| commit_checkpoint(world_dir, &job, &plugins, prev_manifest));
+            // Block-log rows join the table before the commit that may prune
+            // their WAL; a failed write keeps them queued for the next job.
+            block_log.absorb(std::mem::take(&mut job.block_log));
+            let written = plugins.and_then(|plugins| {
+                let store = job
+                    .regions
+                    .store()
+                    .ok_or_else(|| CoreError::Storage("checkpoint has no native store".into()))?;
+                block_log.write(store, job.regions.registry(), &job.items)?;
+                commit_checkpoint(world_dir, &job, &plugins, prev_manifest)
+            });
             let committed = written.is_ok();
             match &written {
                 Ok((_, _, io)) => {
@@ -3241,6 +3634,22 @@ fn run_native_work(
                 tracing::warn!(%error, "generated chunks not saved");
             }
             generated_busy.store(false, std::sync::atomic::Ordering::Release);
+        }
+        NativeWork::Backup { job, through } => {
+            let started = std::time::Instant::now();
+            let result =
+                crate::hot_backup::copy_world(world_dir, &job.out, prev_manifest.tick, through);
+            match &result {
+                Ok(backup) => tracing::info!(
+                    checkpoint_tick = backup.checkpoint_tick,
+                    wal_tick = backup.wal_tick,
+                    files = backup.files.len(),
+                    total_ms = started.elapsed().as_millis() as u64,
+                    "hot backup copied"
+                ),
+                Err(error) => tracing::warn!(%error, "hot backup failed"),
+            }
+            let _ = job.reply.send(result);
         }
     }
 }
@@ -3360,6 +3769,10 @@ fn commit_checkpoint(
         "scoreboard".into(),
         crate::native_checkpoint::tag_record(job.tick, &job.scoreboard.to_nbt())?,
     );
+    globals.insert(
+        "bossbars".into(),
+        crate::native_checkpoint::tag_record(job.tick, &job.bossbars.to_nbt())?,
+    );
     crate::native_checkpoint::refresh_metadata(&mut globals, &manifest)?;
     let extras = globals
         .get("conversion_extras")
@@ -3436,6 +3849,10 @@ fn commit_checkpoint(
 #[cfg(test)]
 #[path = "native_checkpoint_crash_tests.rs"]
 mod native_checkpoint_crash_tests;
+
+#[cfg(all(test, target_os = "linux"))]
+#[path = "persistence_crash_tests.rs"]
+mod persistence_crash_tests;
 
 #[cfg(all(test, target_os = "linux"))]
 #[path = "native_population_tests.rs"]

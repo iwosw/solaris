@@ -239,7 +239,11 @@ pub(crate) fn resolve_target(
     }
 }
 
-fn player_targets(state: &TickState, executor: EntityId, target: &Target) -> Vec<EntityId> {
+pub(crate) fn player_targets(
+    state: &TickState,
+    executor: EntityId,
+    target: &Target,
+) -> Vec<EntityId> {
     let mut targets = resolve_target(state, executor, target);
     targets.retain(|id| state.players.contains_key(id));
     targets
@@ -806,7 +810,10 @@ pub(crate) fn execute(
             state,
             connection,
             "commands.time.query",
-            vec![text(query.value(state.tick, state.day_time))],
+            vec![text(query.value(
+                state.tick_control.game_ticks(state.tick),
+                state.day_time,
+            ))],
         ),
         Command::Weather {
             weather,
@@ -960,6 +967,35 @@ pub(crate) fn execute(
                 );
                 return;
             }
+            if entity.as_str() == "minecraft:item" {
+                let item = match crate::command_summon::prepare_item(state, nbt) {
+                    Ok(item) => item,
+                    Err(failure) => {
+                        error(state, connection, failure.message());
+                        return;
+                    }
+                };
+                let id = crate::tick::spawn_item_entity(state, at, item.stack);
+                if let Some(slot) = state.entities.slot_of(id) {
+                    if let Some(delay) = item.pickup_delay {
+                        state.entities.body_mut(slot).pickup_delay = delay;
+                    }
+                    if let Some(age) = item.age {
+                        state.entities.row_mut(slot).age = age;
+                    }
+                    if let Some(motion) = item.motion {
+                        state.entities.set_vel(slot, motion.map(|v| v * 20.0));
+                    }
+                }
+                changes.entities_spawned.push(id);
+                feedback(
+                    state,
+                    connection,
+                    "commands.summon.success",
+                    vec![entity_name(state, id)],
+                );
+                return;
+            }
             let image =
                 match crate::command_summon::prepare(state, type_id, entity.as_str(), at, nbt) {
                     Ok(image) => image,
@@ -1020,6 +1056,30 @@ pub(crate) fn execute(
         }
         Command::World(command) => {
             crate::command_world::execute(state, connection, executor, command, changes)
+        }
+        Command::BlockLog(command) => {
+            crate::block_log::execute(state, connection, executor, command);
+        }
+        Command::BossBar(command) => {
+            crate::bossbar::execute(state, connection, executor, command);
+        }
+        Command::ForceLoad(command) => {
+            let reply = crate::forceload::execute(state, executor, command);
+            let args = reply.args.into_iter().map(text).collect();
+            if reply.failure {
+                let Tag::Compound(mut fields) = translated(reply.key, args) else {
+                    unreachable!("translated builds a compound");
+                };
+                fields.push(("color".into(), Tag::String("red".into())));
+                state.push_player(
+                    connection,
+                    PlayerChange::StyledChat {
+                        content: Tag::Compound(fields),
+                    },
+                );
+            } else {
+                feedback(state, connection, reply.key, args);
+            }
         }
         Command::Scoreboard(command) => {
             let message = crate::scoreboard::execute(state, executor, command);
@@ -1105,6 +1165,12 @@ pub(crate) fn execute(
                 );
             }
         }
+        Command::TellRaw { target, message } => {
+            crate::command_text::execute_tellraw(state, connection, executor, target, message);
+        }
+        Command::Title { target, action } => {
+            crate::command_text::execute_title(state, connection, executor, target, action);
+        }
         Command::Settlement(command) => {
             settlement(state, connection, executor, command);
         }
@@ -1114,6 +1180,10 @@ pub(crate) fn execute(
             "commands.seed.success",
             vec![text(state.world.seed())],
         ),
+        Command::Tick(tick) => crate::command_tick::execute(state, connection, tick),
+        Command::Locate(locate) => {
+            crate::command_locate::execute(state, connection, executor, locate)
+        }
     }
 }
 

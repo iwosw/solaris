@@ -25,6 +25,9 @@ pub(crate) struct TickPlanIndex {
     pub(super) explosions: HashMap<(i32, i32), Vec<usize>>,
     pub(super) events: HashMap<(i32, i32), Vec<usize>>,
     pub(super) entity_base: Option<u64>,
+    /// Anti-xray: hideable ores a block change this tick just exposed, keyed by
+    /// the ore's own chunk (the change may be in a neighbouring chunk).
+    pub(super) reveals: HashMap<(i32, i32), Vec<mc_world::chunk::BlockPos>>,
     entity_chunks: HashMap<(i32, i32), Vec<EntityDelta>>,
     pub(super) moves: super::shared_moves::SharedMoves,
     // Events can refer to an entity already removed from the snapshot, or to
@@ -33,6 +36,36 @@ pub(crate) struct TickPlanIndex {
 }
 
 impl TickPlanIndex {
+    /// Add the anti-xray reveals of this tick's block changes (computed once
+    /// per publish, shared by every viewer).
+    pub(crate) fn with_reveals(
+        mut self,
+        output: &TickOutput,
+        policy: Option<&crate::anti_xray::AntiXray>,
+    ) -> Self {
+        let Some(policy) = policy.filter(|policy| policy.enabled(output.snapshot.dimension)) else {
+            return self;
+        };
+        let mut revealed = Vec::new();
+        for change in &output.changes.blocks {
+            policy.reveal_around(
+                output.snapshot.dimension,
+                &output.snapshot.chunks,
+                change.position,
+                &mut revealed,
+            );
+        }
+        revealed.sort_unstable_by_key(|pos| (pos.x, pos.y, pos.z));
+        revealed.dedup();
+        for pos in revealed {
+            self.reveals
+                .entry((pos.x.div_euclid(16), pos.z.div_euclid(16)))
+                .or_default()
+                .push(pos);
+        }
+        self
+    }
+
     pub(crate) fn new(output: &TickOutput) -> Self {
         let mut index = Self::default();
         for (i, change) in output.changes.blocks.iter().enumerate() {

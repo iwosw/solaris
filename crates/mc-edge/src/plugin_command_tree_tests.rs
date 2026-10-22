@@ -42,10 +42,10 @@ fn loaded_plugin_roots_share_permissions_tree_help_and_suggestions() {
             .iter()
             .any(|line| line.starts_with("/settlement"))
     );
-    let completions = suggestions(7, "/sett", 0, &[], &[], &[], &[], &plugins);
+    let completions = suggestions(7, "/sett", 0, &[], &[], &[], &[], &[], &plugins);
     assert_eq!(completions.suggestions[0].text, "settlement");
     assert!(
-        suggestions(8, "/aud", 0, &[], &[], &[], &[], &plugins)
+        suggestions(8, "/aud", 0, &[], &[], &[], &[], &[], &plugins)
             .suggestions
             .is_empty()
     );
@@ -116,12 +116,12 @@ fn manifest_owned_native_literals_have_one_permission_filtered_plugin_branch() {
         CommandNodeKind::Literal(root) if root == "tell")
         && node.redirect.is_some()));
     assert!(
-        suggestions(1, "/msg", 0, &[], &[], &[], &[], &plugins)
+        suggestions(1, "/msg", 0, &[], &[], &[], &[], &[], &plugins)
             .suggestions
             .is_empty()
     );
     assert_eq!(
-        suggestions(2, "/msg", 2, &[], &[], &[], &[], &plugins)
+        suggestions(2, "/msg", 2, &[], &[], &[], &[], &[], &plugins)
             .suggestions
             .iter()
             .map(|entry| entry.text.as_str())
@@ -134,6 +134,7 @@ fn manifest_owned_native_literals_have_one_permission_filtered_plugin_branch() {
             "/msg Native",
             2,
             &["NativePlayer".into()],
+            &[],
             &[],
             &[],
             &[],

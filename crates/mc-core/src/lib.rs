@@ -17,9 +17,14 @@ pub mod bees;
 mod block_drop_context;
 pub mod block_drops;
 mod block_entity_defaults;
+pub mod block_log;
 pub(crate) mod block_ticks;
+pub(crate) mod block_tools;
+#[cfg(test)]
+mod block_tools_tests;
 pub mod blocks;
 pub mod blueprint;
+pub mod bossbar;
 mod bottles;
 pub mod boundary;
 mod brewing;
@@ -27,15 +32,20 @@ pub mod build_precommit;
 mod campfire;
 mod chests;
 mod chunk_loader;
+pub(crate) mod chunk_tickets;
 pub mod combat;
 pub mod command_border;
+pub mod command_bossbar;
 pub mod command_console;
 pub mod command_enchant;
 mod command_execution;
 pub mod command_items;
+pub mod command_locate;
 pub mod command_rules;
-mod command_snbt;
+pub(crate) mod command_snbt;
 mod command_summon;
+pub(crate) mod command_text;
+pub mod command_tick;
 pub mod command_world;
 pub mod commands;
 mod composter;
@@ -72,10 +82,14 @@ pub mod falling;
 pub mod farming;
 pub(crate) mod fire;
 pub mod fluids;
+pub mod forceload;
 pub mod golden_dandelion;
 mod golems;
 mod horde_bench;
 pub mod hostile;
+pub mod hot_backup;
+#[cfg(test)]
+mod hot_backup_tests;
 pub mod intent;
 pub mod inventory;
 pub(crate) mod item_hazards;
@@ -88,9 +102,11 @@ pub mod leash;
 pub(crate) mod leaves;
 mod level_metadata;
 mod light;
+pub mod lod;
 pub(crate) mod mace;
 mod mob_equipment;
 mod mob_equipment_pickup;
+pub(crate) mod mob_fall;
 pub(crate) mod mob_lanes;
 pub mod mob_loot;
 pub mod mounts;
@@ -104,6 +120,7 @@ pub mod placement;
 pub(crate) mod plants;
 pub mod player;
 mod plugin;
+mod plugin_graves;
 mod plugin_inventories;
 mod plugin_npcs;
 mod plugin_player;
@@ -116,6 +133,7 @@ mod plugin_structures;
 mod plugin_tests;
 pub mod portals;
 mod pov_ray;
+pub mod pregenerate;
 pub mod projectiles;
 pub mod raids;
 pub(crate) mod redstone;
@@ -136,8 +154,10 @@ mod statistics;
 pub mod survival;
 pub mod taming;
 mod target_grid;
+pub mod terrain;
 pub mod tick;
 pub(crate) mod tick_budget;
+pub(crate) mod tick_control;
 pub mod tnt;
 mod trial_spawner;
 mod vault;
@@ -171,7 +191,13 @@ mod merge_tests;
 #[cfg(test)]
 mod natural_spawn_tests;
 #[cfg(test)]
+mod pause_when_empty_tests;
+#[cfg(test)]
+mod quirk_parity_tests;
+#[cfg(test)]
 mod rare_mobs_tests;
+#[cfg(test)]
+mod spawn_clearance_tests;
 #[cfg(test)]
 mod species_tests;
 #[cfg(test)]
@@ -181,6 +207,7 @@ mod tick_tests;
 #[cfg(test)]
 mod view_negotiation_tests;
 pub mod world_conversion;
+pub mod world_maintenance;
 pub mod worldgen_upgrade;
 
 pub use config::{CoreConfig, CoreError};

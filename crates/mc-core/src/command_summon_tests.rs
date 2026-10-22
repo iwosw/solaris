@@ -676,3 +676,62 @@ fn summon_equipment_rejects_the_same_unsupported_components_as_give() {
         );
     }
 }
+
+#[test]
+fn item_entity_summon_carries_stack_pickup_delay_age_and_motion() {
+    let (state, id) = summon(
+        "item",
+        "{Item:{id:\"minecraft:carrot\",count:3},PickupDelay:25,Age:100,Motion:[0.0,0.5,0.0]}",
+    );
+    let slot = state.entities.slot_of(id).unwrap();
+    let row = state.entities.row(slot);
+    let stack = row.item.as_ref().expect("item entity stack");
+    assert_eq!(stack.count, 3);
+    assert_eq!(
+        state
+            .registry
+            .items
+            .name_of(stack.item_id)
+            .unwrap()
+            .to_string(),
+        "minecraft:carrot"
+    );
+    assert_eq!(state.entities.body(slot).pickup_delay, 25);
+    assert_eq!(row.age, 100);
+    assert!((state.entities.vel(slot)[1] - 10.0).abs() < 1e-9);
+}
+
+#[test]
+fn item_entity_summon_rejects_missing_item_and_unknown_fields() {
+    let (mut state, actor, _) = crate::hostile_tests::setup(8.0);
+    for nbt in [
+        "{}",
+        "{Item:{id:\"minecraft:carrot\",count:0}}",
+        "{Item:{id:\"minecraft:carrot\"},Owner:\"x\"}",
+    ] {
+        let parsed = crate::commands::parse(&format!("summon item ~ ~ ~ {nbt}"), true).unwrap();
+        let mut changes = ChangeSet::default();
+        crate::command_execution::execute(
+            &mut state,
+            ConnectionId(1),
+            actor,
+            &parsed,
+            &mut changes,
+        );
+        assert!(changes.entities_spawned.is_empty(), "{nbt} must be refused");
+    }
+}
+
+#[test]
+fn villager_summon_keeps_its_authored_profession_and_rejects_bad_data() {
+    let (state, id) = summon(
+        "villager",
+        "{VillagerData:{profession:'minecraft:farmer',type:'minecraft:plains',level:2}}",
+    );
+    let slot = state.entities.slot_of(id).unwrap();
+    let data = &state.entities.row(slot).villager.as_ref().unwrap().data;
+    assert_eq!(data.profession, crate::villager::VillagerProfession::Farmer);
+    assert_eq!(data.level, 2);
+    rejected_tag_reaches_sender("villager", "VillagerData", "{profession:'minecraft:bogus'}");
+    rejected_tag_reaches_sender("cow", "VillagerData", "{profession:'minecraft:farmer'}");
+}

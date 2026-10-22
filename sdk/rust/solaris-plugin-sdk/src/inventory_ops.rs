@@ -8,7 +8,7 @@
 //! [`Event::OperationAnswered`](crate::events::Event::OperationAnswered) with the
 //! same `request`.
 
-use crate::{domain_operations, inventories, Command};
+use crate::{Command, domain_operations, inventories};
 
 /// Read one owned endpoint, optionally fenced to a revision.
 ///
@@ -221,6 +221,9 @@ pub fn release_inventory_reservation(
 /// One owned-inventory record wrapped in the single operation envelope every
 /// family shares.
 fn operation(request: &str, record: inventories::InventoryOperation) -> Command {
-    Command::Operation(domain_operations::OperationRequest { expected_plugin_storage_versions: Vec::new(), request: request.to_owned(),
-    operation: domain_operations::DomainOperation::Inventory(record), })
+    Command::Operation(domain_operations::OperationRequest {
+        expected_plugin_storage_versions: Vec::new(),
+        request: request.to_owned(),
+        operation: domain_operations::DomainOperation::Inventory(record),
+    })
 }

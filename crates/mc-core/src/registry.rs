@@ -123,6 +123,10 @@ pub struct CoreRegistry {
     pub(crate) plugin_item_ids: Vec<Identifier>,
     /// Authored work identities, resolved through the same native facts authority.
     pub(crate) plugin_work_recipe_ids: Vec<Identifier>,
+    /// Plugin-authored crafting recipes (also present in `recipes`), kept for the world identity.
+    pub(crate) plugin_crafting_recipes: Vec<mc_data::recipes::Recipe>,
+    /// Plugin-authored block-tool rules admitted against the block registry.
+    pub(crate) block_tools: crate::block_tools::BlockToolTable,
 }
 
 impl std::fmt::Debug for CoreRegistry {
@@ -143,6 +147,12 @@ impl CoreRegistry {
             tags: &self.tags,
             recipes: &self.recipes,
         }
+    }
+
+    /// How many plugin-authored block-tool rules were admitted at startup.
+    #[must_use]
+    pub fn block_tool_rule_count(&self) -> usize {
+        self.block_tools.rules().len()
     }
 
     /// Borrow all canonical custom item definitions from the admitted facts.
@@ -473,6 +483,8 @@ impl CoreRegistry {
             plugin_client_bundles: Vec::new(),
             plugin_item_ids: Vec::new(),
             plugin_work_recipe_ids: Vec::new(),
+            plugin_crafting_recipes: Vec::new(),
+            block_tools: crate::block_tools::BlockToolTable::default(),
         })
     }
 

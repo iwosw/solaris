@@ -96,6 +96,14 @@ interface lifecycle {
         items: option<list<item-definition>>,
         /// Immutable native WorkRecipe JSON, bounded and validated at startup.
         work-recipes: option<list<string>>,
+        /// Vanilla-format `minecraft:crafting_shaped` / `crafting_shapeless`
+        /// recipe JSON for this plugin's crafting results. At most 32 strings;
+        /// the result item must be one of this plugin's declared items.
+        crafting-recipes: option<list<string>>,
+        /// Native block-tool rule JSON: what a held plugin-owned item does to
+        /// the clicked block (replacement state, durability wear, item grant).
+        /// At most 1024 strings totaling 1 MiB, validated at startup.
+        block-tools: option<list<string>>,
     }
 
     /// Values the host fixes for the instance, independent of the package.

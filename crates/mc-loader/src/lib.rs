@@ -68,6 +68,10 @@ pub struct LoaderBundle {
     pub content: Vec<LoaderContentKind>,
     pub permissions: Vec<LoaderPermission>,
     pub cache_key: String,
+    /// Server-local admission policy. It stays out of the wire manifest because
+    /// clients only acknowledge bundles selected for their platform.
+    #[serde(skip)]
+    pub required: bool,
     /// Screen keys this bundle's verified artifact index declares. Server-local
     /// routing input; never crosses the wire and never replaces the artifact.
     #[serde(skip)]
@@ -184,6 +188,7 @@ impl LoaderManifest {
                         })
                         .collect(),
                     cache_key: bundle.cache_key(),
+                    required: bundle.required(),
                     view_kinds,
                     source_path: Some(bundle.artifact_path().to_path_buf()),
                     artifact_bytes: Some(bundle.artifact_bytes_arc()),
@@ -280,6 +285,18 @@ impl LoaderManifest {
         }
         Ok(payload)
     }
+    fn bundles_for_ack<'a>(
+        &'a self,
+        ack: &'a LoaderClientAck,
+    ) -> impl Iterator<Item = &'a LoaderBundle> {
+        self.bundles.iter().filter(move |bundle| {
+            bundle.loaders.contains(&ack.platform)
+                && ack
+                    .cached_bundles
+                    .iter()
+                    .any(|cache_key| cache_key == &bundle.cache_key)
+        })
+    }
 
     pub fn validate_ack(&self, ack: &LoaderClientAck) -> Result<(), LoaderHandshakeError> {
         if ack.protocol != self.protocol {
@@ -303,11 +320,23 @@ impl LoaderManifest {
             .collect::<BTreeSet<_>>();
         for bundle in &self.bundles {
             if !bundle.loaders.contains(&ack.platform) {
-                return Err(LoaderHandshakeError::UnsupportedPlatform {
-                    owner: bundle.owner.clone(),
-                    bundle: bundle.id.clone(),
-                    platform: ack.platform,
-                });
+                if bundle.required {
+                    return Err(LoaderHandshakeError::UnsupportedPlatform {
+                        owner: bundle.owner.clone(),
+                        bundle: bundle.id.clone(),
+                        platform: ack.platform,
+                    });
+                }
+                continue;
+            }
+            if !cached.contains(bundle.cache_key.as_str()) {
+                if bundle.required {
+                    return Err(LoaderHandshakeError::BundleUnavailable {
+                        owner: bundle.owner.clone(),
+                        bundle: bundle.id.clone(),
+                    });
+                }
+                continue;
             }
             if let Some(permission) = bundle
                 .permissions
@@ -320,12 +349,6 @@ impl LoaderManifest {
                     permission: *permission,
                 });
             }
-            if !cached.contains(bundle.cache_key.as_str()) {
-                return Err(LoaderHandshakeError::BundleUnavailable {
-                    owner: bundle.owner.clone(),
-                    bundle: bundle.id.clone(),
-                });
-            }
         }
         Ok(())
     }
@@ -333,8 +356,7 @@ impl LoaderManifest {
     pub fn bind_ack(&self, ack: &LoaderClientAck) -> Result<LoaderSession, LoaderHandshakeError> {
         self.validate_ack(ack)?;
         let block_ids = self
-            .bundles
-            .iter()
+            .bundles_for_ack(ack)
             .filter_map(|bundle| bundle.block_id.as_deref())
             .collect::<BTreeSet<_>>();
         let mut block_states = BTreeMap::new();
@@ -361,8 +383,7 @@ impl LoaderManifest {
             }
             block_states.insert(id.to_owned(), state_id);
             if let Some(name) = self
-                .bundles
-                .iter()
+                .bundles_for_ack(ack)
                 .find(|bundle| bundle.block_id.as_deref() == Some(id))
                 .and_then(|bundle| bundle.block_name.as_deref())
             {
@@ -1243,6 +1264,27 @@ impl LoaderManifest {
     }
 }
 
+/// Server-to-client configuration probe, sent before known-pack negotiation
+/// when every bundle is optional. Its payload is empty.
+#[must_use]
+pub fn loader_probe_channel() -> &'static Identifier {
+    static CHANNEL: OnceLock<Identifier> = OnceLock::new();
+    CHANNEL.get_or_init(|| {
+        Identifier::parse("solaris:loader/probe").expect("static loader probe channel")
+    })
+}
+
+/// Client-to-server answer to the probe: this client speaks the Loader. A Loader
+/// client sends it (empty payload) while handling the probe, so it precedes the
+/// client's known-pack reply. Vanilla clients never send it.
+#[must_use]
+pub fn loader_hello_channel() -> &'static Identifier {
+    static CHANNEL: OnceLock<Identifier> = OnceLock::new();
+    CHANNEL.get_or_init(|| {
+        Identifier::parse("solaris:loader/hello").expect("static loader hello channel")
+    })
+}
+
 #[must_use]
 pub fn loader_ack_channel() -> &'static Identifier {
     static CHANNEL: OnceLock<Identifier> = OnceLock::new();
@@ -1332,6 +1374,7 @@ mod tests {
                     LoaderPermission::SendViewActions,
                 ],
                 cache_key: format!("example:rich-content/1/{}", "a".repeat(64)),
+                required: false,
                 view_kinds: Vec::new(),
                 source_path: None,
                 artifact_bytes: None,
@@ -1368,55 +1411,71 @@ mod tests {
     }
 
     #[test]
-    fn native_ack_requires_explicit_bundle_platform_and_verified_identity() {
+    fn optional_java_bundle_allows_native_ack_without_a_bound_bundle() {
         let mut manifest = manifest();
-        let mut ack = LoaderClientAck {
+        manifest.bundles[0]
+            .loaders
+            .retain(|platform| *platform != LoaderPlatform::Native);
+
+        let native_ack = LoaderClientAck {
             protocol: LOADER_PROTOCOL_VERSION,
             platform: LoaderPlatform::Native,
             loader_version: "solaris-client-0.0.8".to_owned(),
+            accepted_permissions: Vec::new(),
+            cached_bundles: Vec::new(),
+            carrier_block_state_ids: BTreeMap::new(),
+        };
+        let session = manifest.bind_ack(&native_ack).unwrap();
+        assert_eq!(session.platform(), LoaderPlatform::Native);
+    }
+
+    #[test]
+    fn java_ack_binds_optional_java_bundle() {
+        let mut manifest = manifest();
+        manifest.bundles[0]
+            .loaders
+            .retain(|platform| *platform != LoaderPlatform::Native);
+
+        let java_ack = LoaderClientAck {
+            protocol: LOADER_PROTOCOL_VERSION,
+            platform: LoaderPlatform::Fabric,
+            loader_version: "fabric-26.1.2".to_owned(),
             accepted_permissions: manifest.bundles[0].permissions.clone(),
             cached_bundles: vec![manifest.bundles[0].cache_key.clone()],
             carrier_block_state_ids: BTreeMap::new(),
         };
-        let encoded = serde_json::to_vec(&ack).unwrap();
-        let decoded = LoaderClientAck::decode(&encoded).unwrap();
-        assert_eq!(decoded.platform, LoaderPlatform::Native);
-        let session = manifest.bind_ack(&decoded).unwrap();
-        assert_eq!(session.platform(), LoaderPlatform::Native);
+        let session = manifest.bind_ack(&java_ack).unwrap();
+        assert_eq!(session.platform(), LoaderPlatform::Fabric);
+    }
 
+    #[test]
+    fn required_java_bundle_refuses_native_ack() {
+        let mut manifest = manifest();
         manifest.bundles[0]
             .loaders
             .retain(|platform| *platform != LoaderPlatform::Native);
+        manifest.bundles[0].required = true;
+
+        let native_ack = LoaderClientAck {
+            protocol: LOADER_PROTOCOL_VERSION,
+            platform: LoaderPlatform::Native,
+            loader_version: "solaris-client-0.0.8".to_owned(),
+            accepted_permissions: Vec::new(),
+            cached_bundles: Vec::new(),
+            carrier_block_state_ids: BTreeMap::new(),
+        };
         assert!(matches!(
-            manifest.bind_ack(&ack),
+            manifest.bind_ack(&native_ack),
             Err(LoaderHandshakeError::UnsupportedPlatform {
                 platform: LoaderPlatform::Native,
                 ..
             })
         ));
-        manifest.bundles[0].loaders.push(LoaderPlatform::Native);
-        ack.cached_bundles[0].push_str("-wrong");
-        assert!(matches!(
-            manifest.bind_ack(&ack),
-            Err(LoaderHandshakeError::BundleUnavailable { .. })
-        ));
-        ack.cached_bundles = vec![manifest.bundles[0].cache_key.clone()];
-        ack.accepted_permissions.clear();
-        assert!(matches!(
-            manifest.bind_ack(&ack),
-            Err(LoaderHandshakeError::PermissionDenied { .. })
-        ));
-        ack.accepted_permissions = manifest.bundles[0].permissions.clone();
-        ack.protocol += 1;
-        assert!(matches!(
-            manifest.bind_ack(&ack),
-            Err(LoaderHandshakeError::Protocol { .. })
-        ));
     }
 
     #[test]
     fn ack_requires_permission_and_exact_cache_identity() {
-        let manifest = manifest();
+        let mut manifest = manifest();
         let mut ack = LoaderClientAck {
             protocol: LOADER_PROTOCOL_VERSION,
             platform: LoaderPlatform::NeoForge,
@@ -1429,8 +1488,15 @@ mod tests {
             manifest.validate_ack(&ack),
             Err(LoaderHandshakeError::PermissionDenied { .. })
         ));
+        // The fixture bundle is optional: granting permissions binds it, and
+        // clearing the cache then unbinds it instead of failing the ack.
         ack.accepted_permissions = manifest.bundles[0].permissions.clone();
+        manifest.validate_ack(&ack).unwrap();
         ack.cached_bundles.clear();
+        manifest.validate_ack(&ack).unwrap();
+        // Required bundles restore the old strict contract: the selected
+        // platform must be cached before permissions are even checked.
+        manifest.bundles[0].required = true;
         assert!(matches!(
             manifest.validate_ack(&ack),
             Err(LoaderHandshakeError::BundleUnavailable { .. })

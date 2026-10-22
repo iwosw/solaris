@@ -18,6 +18,9 @@ impl TickState {
         type AdmittedDamage = (DamagePiece, (f32, f32));
         let mut damage_by_slot: HashMap<EntitySlot, Vec<AdmittedDamage>> = HashMap::default();
         for (slot, piece) in std::mem::take(&mut self.merge_damage) {
+            if crate::plugin_player::shields_damage(self, slot, piece.source) {
+                continue;
+            }
             damage_by_slot
                 .entry(slot)
                 .or_default()
@@ -97,6 +100,9 @@ impl TickState {
             });
         }
         for (slot, mut piece) in std::mem::take(&mut self.merge_damage) {
+            if crate::plugin_player::shields_damage(self, slot, piece.source) {
+                continue;
+            }
             let raw = piece.amount;
             if (slot.0 as usize) >= self.entities.len()
                 || !self.commit_damage_piece(slot, &mut piece, &mut events, &mut spawned)
@@ -333,18 +339,36 @@ impl TickState {
                         crate::scoreboard::automatic(self, &[id], &[]);
                     }
                     let keep_inventory = crate::command_rules::boolean(self, "keep_inventory");
+                    // A deployed `death_graves` package takes custody of the drops
+                    // this death would have scattered. `keepInventory` wins, as in
+                    // vanilla: a retained inventory never reaches a grave. A death
+                    // with no live connection keeps the vanilla drop too, because
+                    // nobody could be told where the grave is.
+                    let grave_owner =
+                        if keep_inventory || self.connections.entity_connection(id).is_none() {
+                            None
+                        } else {
+                            self.plugin_runtime
+                                .as_ref()
+                                .and_then(|runtime| runtime.death_graves.clone())
+                        };
+                    let keep_experience = grave_owner.is_some();
                     let rules = self.registry.item_rules();
                     let effects = self
                         .players
                         .get_mut(&id)
-                        .map(|player| player.die(&rules, keep_inventory))
+                        .map(|player| player.die(&rules, keep_inventory, keep_experience))
                         .unwrap_or_default();
+                    let pos = self.entities.pos(slot);
+                    let mut dropped = effects.dropped;
+                    let grave = grave_owner.and_then(|owner| {
+                        crate::plugin_graves::bury(self, &owner, pos, &mut dropped)
+                    });
                     if let Some(connection) = self.connections.entity_connection(id) {
-                        let pos = self.entities.pos(slot);
                         for change in effects.changes {
                             self.push_player(connection, change);
                         }
-                        for stack in effects.dropped {
+                        for stack in dropped {
                             let drop = spawn_item_entity(self, pos, stack);
                             spawned.push(drop);
                         }
@@ -365,11 +389,13 @@ impl TickState {
                     } else {
                         // Offline/dead-connection victim: drops still spawn
                         // (journaled below); nobody to sync to.
-                        let pos = self.entities.pos(slot);
-                        for stack in effects.dropped {
+                        for stack in dropped {
                             let drop = spawn_item_entity(self, pos, stack);
                             spawned.push(drop);
                         }
+                    }
+                    if let Some(grave) = grave {
+                        crate::plugin::player_grave_created(self, id, &grave);
                     }
                 } else if health_changed
                     && let Some(connection) = self.connections.entity_connection(id)

@@ -720,7 +720,49 @@ fn reaches_storage(
 /// Residents tried per pass; the rest wait for the next planning pass.
 const BUILDER_CANDIDATES: usize = 8;
 
+/// A builder that is on shift but cannot walk to storage is shut in (a house
+/// door under a tree crown) and holds the single builder slot without ever
+/// building. It is released so a resident who can reach storage takes over.
+fn release_trapped_builder(state: &mut TickState, id: SettlementId) -> bool {
+    let incumbent = residents(state, id).find(|&slot| {
+        state.entities.body(slot).alive
+            && state.entities.row(slot).villager.as_ref().is_some_and(|v| {
+                v.settlement == Some(id)
+                    && v.age >= 0
+                    && v.conversion_time.is_none()
+                    && v.data.profession == Profession::Builder
+            })
+    });
+    let Some(slot) = incumbent else {
+        return false;
+    };
+    let on_shift = state
+        .entities
+        .row(slot)
+        .villager
+        .as_ref()
+        .is_some_and(|v| crate::villager::building::working(state, v));
+    let mut cache = super::allocator::PoiCache::default();
+    let mut path = Vec::new();
+    if !on_shift || reaches_storage(state, id, slot, &mut cache, &mut path) {
+        return true;
+    }
+    let released = detach(
+        state
+            .entities
+            .row_mut(slot)
+            .villager
+            .as_mut()
+            .expect("builder incumbent"),
+    );
+    crate::villager::sync_appearance(state, slot);
+    !released
+}
+
 fn assign_builder(state: &mut TickState, id: SettlementId) {
+    if release_trapped_builder(state, id) {
+        return;
+    }
     let mut candidates = Vec::new();
     for slot in residents(state, id) {
         let body = state.entities.body(slot);

@@ -319,3 +319,29 @@ fn non_air_count_matches_linear_scan() {
     }
     assert_eq!(s.non_air_count(), linear);
 }
+
+#[test]
+fn replaced_cells_leave_no_unused_palette_state() {
+    const DIRT: BlockStateId = BlockStateId(2);
+    const ORE: BlockStateId = BlockStateId(3);
+    let mut s = ChunkSection::filled(STONE, AIR);
+    s.set(1, 2, 3, ORE);
+    s.set(4, 5, 6, DIRT);
+    let replaced = s.with_cells_replaced(&[(1, 2, 3, STONE)]);
+    assert_eq!(replaced.get(1, 2, 3), STONE);
+    assert_eq!(replaced.get(4, 5, 6), DIRT);
+    let palette = replaced.palette().expect("two states stay indirect");
+    assert!(
+        !palette.contains(&ORE),
+        "removed state must not reach the wire"
+    );
+    assert_eq!(palette.len(), 2);
+    assert_eq!(replaced.non_air_count(), s.non_air_count());
+    assert_eq!(s.get(1, 2, 3), ORE, "original untouched");
+    // One state left collapses to Single storage.
+    let mut lone = ChunkSection::filled(STONE, AIR);
+    lone.set(0, 0, 0, ORE);
+    let lone = lone.with_cells_replaced(&[(0, 0, 0, STONE)]);
+    assert!(lone.palette().is_none());
+    assert_eq!(lone.get(0, 0, 0), STONE);
+}

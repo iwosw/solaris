@@ -64,3 +64,15 @@ fn console_uses_existing_parser_errors_and_player_permission_gate() {
     assert!(crate::commands::parse("time set 1234", false).is_err());
     assert!(pose(&state, EntityId(999)).is_none());
 }
+
+#[test]
+fn console_teleport_of_a_player_moves_it_instead_of_halting_the_core() {
+    // The console executor (EntityId(-1)) is not an entity; teleport feedback used to
+    // `expect` it to still exist and panicked the tick thread.
+    let (mut state, player, _) = crate::hostile_tests::setup(8.0);
+    let (command, mut completed) = ConsoleCommand::new("tp target 3.5 90 4.5".into());
+    let _ = crate::tick::run_tick(&mut state, &[PlayerInput::ConsoleCommand(command)]);
+    assert!(completed.try_recv().is_ok());
+    let slot = state.entities.slot_of(player).unwrap();
+    assert_eq!(state.entities.pos(slot), [3.5, 90.0, 4.5]);
+}

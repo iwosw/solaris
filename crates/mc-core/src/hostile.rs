@@ -464,7 +464,7 @@ fn swell(
             kind: IntentKind::Explode {
                 center: pos,
                 power: CREEPER_POWER,
-                mob_source: true,
+                mob_grief: Some(crate::command_rules::MobGrief::Creeper),
                 kill_credit: crate::statistics::living_type(state, id).map(|type_id| (id, type_id)),
             },
             footprint: Footprint::default(),

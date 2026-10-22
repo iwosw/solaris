@@ -321,6 +321,11 @@ pub struct TickState {
     /// Opt-in native login fence; authorization belongs to the live session.
     pub(crate) require_plugin_login: bool,
     pub(crate) locked_sessions: BTreeSet<ConnectionId>,
+    /// Consecutive unsupported non-descending movement samples permitted before
+    /// anti-flight corrects and disconnects the player; zero disables it.
+    pub(crate) max_airtime_ticks: u32,
+    /// Per-mob switches layered under the `mob_griefing` gamerule.
+    pub(crate) mob_griefing: crate::config::MobGriefingRules,
     /// Player state per player entity (inventory, menus, vitals, mode).
     pub players: HashMap<EntityId, crate::player::PlayerState>,
     /// Recovered offline records by uuid: consumed by Join to restore full
@@ -401,11 +406,16 @@ pub struct TickState {
     pub(crate) leash_knots: HashMap<[i32; 3], (EntityId, bool)>,
     /// Remote tickets: owner -> (centre chunk, radius).
     pub tickets: BTreeMap<String, (ChunkPos, i32)>,
+    /// Derived pearl tickets, owner presence and the WAL ticket diff.
+    pub(crate) chunk_tickets: crate::chunk_tickets::ChunkTickets,
     /// World revision when the previous entity phase read the world: a
     /// resting mob whose footprint chunks are no newer stays valid.
     pub entity_phase_revision: u64,
     /// Reused, non-authoritative entity-phase buffers; empty between ticks.
     entity_phase_scratch: EntityPhaseScratch,
+    /// Reused per-tick explosion line-of-sight results; never persists or
+    /// changes the ordered explosion application.
+    pub(crate) explosion_exposure: crate::explosion::ExposureCache,
     /// Last swing tick per attacker (combat strength recharge).
     pub last_swing: HashMap<EntityId, u64>,
     /// Stand-specific player double-punch window; environmental hurt is unrelated.
@@ -463,6 +473,8 @@ pub struct TickState {
     /// the checkpoint.
     pub journaled_players: HashMap<EntityId, crate::journal::ReplayPlayer>,
     pub journaled_block_entities: HashMap<(i32, i32, i32), BlockEntityImage>,
+    /// Attributed block/container history behind `/co` (dimension-local).
+    pub(crate) block_log: crate::block_log::BlockLog,
     pub(crate) journaled_villagers: HashMap<EntityId, (u64, crate::villager::VillagerState)>,
     /// Last comparison tick and chunk anchor lifecycle clocks and crossings.
     pub(crate) journaled_entity_state:
@@ -482,6 +494,7 @@ pub struct TickState {
     pub(crate) journaled_trader_spawner: Option<crate::mob_lanes::TraderSpawner>,
     pub scoreboard: crate::scoreboard::Scoreboard,
     pub scoreboard_dirty: bool,
+    pub bossbars_dirty: bool,
     pub(crate) dimension_globals: crate::dimensions::globals::Globals,
     pub(crate) villager_pois: crate::settlements::allocator::PoiCache,
     pub(crate) generated_entity_claims: std::collections::BTreeSet<String>,
@@ -493,6 +506,12 @@ pub struct TickState {
     /// Per-connection certify-dialog corner marks (transient UI draft, never persisted).
     pub(crate) settlement_marks: HashMap<ConnectionId, crate::settlements::ui::Marks>,
     pub(crate) tick_budget: crate::tick_budget::Budget,
+    /// Global `/tick` rate manager (moved between worlds with the other globals).
+    pub(crate) tick_control: crate::tick_control::TickControl,
+    /// Global `/bossbar` registry (moved between worlds with the other globals).
+    pub bossbars: crate::bossbar::BossBars,
+    /// `/locate` async searches owned by this dimension's tick (worker + drain).
+    pub(crate) locate: crate::command_locate::LocateState,
 }
 
 /// Journaled block-entity contents: slots + furnace progress.
@@ -557,6 +576,8 @@ impl TickState {
             connections: Connections::default(),
             require_plugin_login: false,
             locked_sessions: BTreeSet::new(),
+            max_airtime_ticks: 80,
+            mob_griefing: crate::config::MobGriefingRules::default(),
             players: HashMap::default(),
             offline_players: HashMap::default(),
             advancement_events: Vec::new(),
@@ -601,8 +622,10 @@ impl TickState {
             left_players: Vec::new(),
             leash_knots: HashMap::default(),
             tickets: BTreeMap::new(),
+            chunk_tickets: crate::chunk_tickets::ChunkTickets::default(),
             entity_phase_revision: 0,
             entity_phase_scratch: EntityPhaseScratch::default(),
+            explosion_exposure: crate::explosion::ExposureCache::default(),
             last_swing: HashMap::default(),
             armor_stand_hits: HashMap::default(),
             // Vanilla dedicated-server default; the join sends it.
@@ -640,6 +663,7 @@ impl TickState {
             sleepers: HashMap::default(),
             journaled_players: HashMap::default(),
             journaled_block_entities: HashMap::default(),
+            block_log: Default::default(),
             journaled_villagers: HashMap::default(),
             journaled_entity_state: HashMap::default(),
             journal_scan: Default::default(),
@@ -654,6 +678,8 @@ impl TickState {
             journaled_trader_spawner: None,
             scoreboard: crate::scoreboard::Scoreboard::default(),
             scoreboard_dirty: false,
+            bossbars_dirty: false,
+            bossbars: Default::default(),
             dimension_globals: Default::default(),
             villager_pois: Default::default(),
             generated_entity_claims: Default::default(),
@@ -664,6 +690,8 @@ impl TickState {
             autonomy_queue: Default::default(),
             settlement_marks: HashMap::default(),
             tick_budget: Default::default(),
+            tick_control: Default::default(),
+            locate: Default::default(),
         }
     }
 
@@ -1129,6 +1157,18 @@ impl TickState {
                     self.merge_block_writes.push((*write_pos, *write_state));
                 }
             }
+            IntentKind::BlockTool { wear, give } => {
+                let Ok(plan) = self.player_tool_wear_plan(intent.actor, *wear) else {
+                    return false;
+                };
+                self.apply_player_tool_wear(intent.actor, plan);
+                for (write_pos, write_state) in &intent.footprint.block_write {
+                    self.merge_block_writes.push((*write_pos, *write_state));
+                }
+                if let Some(item) = give {
+                    self.merge_gives.push((intent.actor, *item));
+                }
+            }
             IntentKind::ComposterFill { pos, maturing } => {
                 self.merge_block_writes
                     .extend_from_slice(&intent.footprint.block_write);
@@ -1243,7 +1283,7 @@ impl TickState {
             IntentKind::Explode {
                 center,
                 power,
-                mob_source,
+                mob_grief,
                 kill_credit,
             } => {
                 crate::explosion::apply(
@@ -1251,7 +1291,7 @@ impl TickState {
                     Some(intent.actor),
                     *center,
                     *power,
-                    *mob_source,
+                    *mob_grief,
                     *kill_credit,
                 );
             }
@@ -1260,7 +1300,7 @@ impl TickState {
                     self.world.set_block(pos.x, pos.y, pos.z, *block);
                     self.merge_block_writes.push((*pos, *block));
                 }
-                crate::explosion::apply(self, None, *center, *power, false, None);
+                crate::explosion::apply(self, None, *center, *power, None, None);
             }
             IntentKind::SetRespawn { pos } => {
                 let rotation = self
@@ -1287,6 +1327,7 @@ impl TickState {
                     IntentKind::PlaceBlock { .. }
                         | IntentKind::Bucket { .. }
                         | IntentKind::Cultivate { .. }
+                        | IntentKind::BlockTool { .. }
                         | IntentKind::UseBlock { .. }
                 ) && claim.owner == intent.actor
                 {
@@ -1342,6 +1383,7 @@ impl TickState {
         let mut accepted = 0;
         let mut interactions = std::mem::take(&mut self.plugin_interactions);
         for intent in &staged {
+            let writes = self.merge_block_writes.len();
             if let IntentKind::AuthorizedBuild { authorization } = &intent.kind {
                 if crate::build_precommit::commit_authorized(
                     self,
@@ -1353,6 +1395,7 @@ impl TickState {
                     Self::apply_intent,
                 ) {
                     accepted += 1;
+                    crate::block_log::note_merge(self, intent.actor, writes);
                     crate::plugin::enqueue_result(
                         self,
                         interactions.remove(&(intent.actor, intent.seq)),
@@ -1365,6 +1408,7 @@ impl TickState {
                 && self.apply_intent(intent)
             {
                 accepted += 1;
+                crate::block_log::note_merge(self, intent.actor, writes);
                 crate::plugin::enqueue_result(
                     self,
                     interactions.remove(&(intent.actor, intent.seq)),
@@ -2040,9 +2084,8 @@ impl TickState {
                 .clone()
                 .eq(self.active_player_centers.iter().copied())
             && self
-                .tickets
-                .values()
-                .copied()
+                .ticket_areas()
+                .map(|(center, _, radius)| (center, radius))
                 .eq(self.active_ticket_ranges.iter().copied())
         {
             self.world.refresh_active_clock(tick);
@@ -2050,9 +2093,11 @@ impl TickState {
         }
         self.active_player_centers.clear();
         self.active_player_centers.extend(centers);
-        self.active_ticket_ranges.clear();
-        self.active_ticket_ranges
-            .extend(self.tickets.values().copied());
+        let ranges: Vec<_> = self
+            .ticket_areas()
+            .map(|(center, _, radius)| (center, radius))
+            .collect();
+        self.active_ticket_ranges = ranges;
         self.active_sim_radius = radius;
         let mut active = HashSet::default();
         for center in &self.active_player_centers {
@@ -2069,7 +2114,7 @@ impl TickState {
                 }
             }
         }
-        for (center, radius) in self.tickets.values() {
+        for (center, _, radius) in self.ticket_areas() {
             for z in center.z - radius..=center.z + radius {
                 for x in center.x - radius..=center.x + radius {
                     active.insert(ChunkPos { x, z });
@@ -2160,8 +2205,8 @@ impl TickState {
                 }
             }
         }
-        for (centre, radius) in self.tickets.values() {
-            add(*centre, *radius);
+        for (centre, load, _) in self.ticket_areas() {
+            add(centre, load);
         }
         for chunk in self.world.active_positions().chain(self.world.dirty_pins()) {
             want.entry(chunk).or_insert(i32::MAX);
@@ -2403,6 +2448,7 @@ pub fn run_tick(
         .is_some()
         .then(std::time::Instant::now);
     crate::plugin::pump(state);
+    crate::tick_control::begin_tick(state);
     let pump_done = phase_start.map(|start| start.elapsed()).unwrap_or_default();
     let dimensions_start = std::time::Instant::now();
     let mut result = crate::dimensions::run_tick(state, inputs);
@@ -2498,36 +2544,60 @@ fn run_dimension_tick_inner<'a>(
     TickTimes,
 ) {
     let input_start = std::time::Instant::now();
+    // False while `/tick freeze` holds the world: only players, input, chunk
+    // loading and merge/commit run; see `tick_control`.
+    let sim = state.tick_control.runs_normally();
     let previous_weather = crate::weather::view(state);
     for player in state.players.values_mut() {
         player.statistics.advance_tick(state.tick);
     }
+    crate::chunk_tickets::refresh(state);
     state.refresh_active_chunks(state.tick + 1);
     // 1. Natural spawns/despawns, then inputs: player join/leave/move/dig/
     // attack/chat; intents staged.
     let mut intents: Vec<Intent> = Vec::new();
     let mut changes = ChangeSet::default();
-    crate::natural_spawn::advance_ages_and_run(state, &mut changes);
-    crate::mob_lanes::traders(state, &mut changes);
-    crate::vibration::tick(state);
-    crate::plugin_npcs::advance(state);
+    if sim {
+        crate::natural_spawn::advance_ages_and_run(state, &mut changes);
+        crate::mob_lanes::traders(state, &mut changes);
+        crate::vibration::tick(state);
+        crate::plugin_npcs::advance(state);
+    }
     changes.entities_spawned.append(&mut state.plugin_spawned);
     state
         .merge_block_writes
         .append(&mut state.plugin_block_writes);
     let deferred = std::mem::take(&mut state.deferred_uses);
+    // MC-28289: snapshot each player's held main-hand stack BEFORE this
+    // tick's inputs run, so the melee path resolves attack_damage /
+    // attack_speed from the pre-tick item when a swap+attack share a tick.
+    for player in state.players.values_mut() {
+        let held = player
+            .inventory
+            .slots
+            .get(usize::from(player.inventory.selected.min(8)))
+            .cloned()
+            .unwrap_or(mc_data::ItemStack::EMPTY);
+        player.attribute_snapshot_held = Some(held);
+    }
     apply_inputs(state, &deferred, &mut intents, &mut changes);
     apply_inputs(state, inputs, &mut intents, &mut changes);
     state.refresh_active_chunks(state.tick + 1);
     crate::physical_attacks::advance(state, &mut intents);
-    crate::shrieker::run(state);
+    if sim {
+        crate::shrieker::run(state);
+    }
     tick_players(state, &mut changes, &mut intents);
-    crate::raids::raid_omens(state);
+    if sim {
+        crate::raids::raid_omens(state);
+    }
     crate::effects::run(state, &mut intents);
     crate::contact_hazards::run(state, &mut intents);
     crate::dimensions::rules::void_intents(state, &mut intents);
     crate::enchantment_locations::run(state, &mut intents);
-    crate::end_fight::prepare(state);
+    if sim {
+        crate::end_fight::prepare(state);
+    }
     let input_time = input_start.elapsed();
 
     // Desired chunks from players + tickets; load/unload.
@@ -2559,10 +2629,12 @@ fn run_dimension_tick_inner<'a>(
     // Block entities ride inside chunk regions: pull newly resident chunks'
     // typed maps into live storage (journal folds apply over them).
     sync_chunk_block_entities(state);
-    crate::settlements::autonomy::tick(state, &mut changes);
-    crate::conduit::run(state, &mut intents);
-    crate::beacon::run(state);
-    crate::dolphin::run(state);
+    if sim {
+        crate::settlements::autonomy::tick(state, &mut changes);
+        crate::conduit::run(state, &mut intents);
+        crate::beacon::run(state);
+        crate::dolphin::run(state);
+    }
     // Immediate respawn retries after off-tick chunk loading; unavailable
     // personal spawn chunks must never turn into a fallback-world respawn.
     if crate::command_rules::boolean(state, "immediate_respawn") {
@@ -2579,18 +2651,24 @@ fn run_dimension_tick_inner<'a>(
 
     // 2. Entity phase (parallel by data over the fixed pool).
     let entity_start = std::time::Instant::now();
-    crate::entity_life::advance(state);
-    crate::piglin::run(state, &mut changes);
-    crate::tnt::run(state, &mut intents);
-    crate::mob_lanes::snowballs(state);
-    let entity_intents = run_entity_phase(state);
+    if sim {
+        crate::entity_life::advance(state);
+        crate::piglin::run(state, &mut changes);
+        crate::tnt::run(state, &mut intents);
+        crate::mob_lanes::snowballs(state);
+    }
+    let entity_intents = run_entity_phase(state, sim);
     let entity_time = entity_start.elapsed();
     let entity_tail_start = std::time::Instant::now();
     intents.extend(entity_intents);
-    crate::special_mobs::raiders::run(state, &mut intents);
+    if sim {
+        crate::special_mobs::raiders::run(state, &mut intents);
+    }
     crate::vehicles::run(state, &mut intents, &mut changes);
-    crate::end_fight::run(state, &mut intents, &mut changes);
-    crate::villager::soldier::attacks(state, &mut intents, &mut changes);
+    if sim {
+        crate::end_fight::run(state, &mut intents, &mut changes);
+        crate::villager::soldier::attacks(state, &mut intents, &mut changes);
+    }
     let entity_tail_time = entity_tail_start.elapsed();
 
     // 3. Merge (deterministic, fixed order, whole-intent rejection).
@@ -2617,18 +2695,20 @@ fn run_dimension_tick_inner<'a>(
     // Attached blocks whose support went away pop off with their loot.
     let mut popped_drops = Vec::new();
     pop_unsupported(state, &mut block_writes, &mut popped_drops);
-    // Random ticks: crops, farmland, saplings, grass.
-    crate::farming::run(state, &mut block_writes, &mut popped_drops);
-    // Due water/lava ticks, then schedule the fluid around every write.
-    crate::fluids::run(state, &mut block_writes, &mut popped_drops);
-    // Furnace cooking over live block-entity storage (input/fuel/output).
-    tick_furnaces(state, &mut block_writes, None);
-    crate::sculk::run(state, &mut block_writes);
-    crate::crafter::advance(state, &mut block_writes);
-    crate::redstone::run(state, &mut block_writes, &mut popped_drops);
-    crate::jukebox::run(state, &mut block_writes, &mut popped_drops);
-    crate::brewing::run(state, &mut block_writes, &mut popped_drops);
-    crate::crafter::run(state);
+    if sim {
+        // Random ticks: crops, farmland, saplings, grass.
+        crate::farming::run(state, &mut block_writes, &mut popped_drops);
+        // Due water/lava ticks, then schedule the fluid around every write.
+        crate::fluids::run(state, &mut block_writes, &mut popped_drops);
+        // Furnace cooking over live block-entity storage (input/fuel/output).
+        tick_furnaces(state, &mut block_writes, None);
+        crate::sculk::run(state, &mut block_writes);
+        crate::crafter::advance(state, &mut block_writes);
+        crate::redstone::run(state, &mut block_writes, &mut popped_drops);
+        crate::jukebox::run(state, &mut block_writes, &mut popped_drops);
+        crate::brewing::run(state, &mut block_writes, &mut popped_drops);
+        crate::crafter::run(state);
+    }
     crate::shelf::run(state);
     crate::shulker::run(state);
     // Scheduled ignition and dispenser actions prime after the early merge
@@ -2643,12 +2723,18 @@ fn run_dimension_tick_inner<'a>(
         &mut popped_drops,
         &mut changes.entities_removed,
     );
-    crate::special_mobs::after_blocks(state, &mut block_writes);
-    crate::bees::run(state, &mut block_writes, &mut changes);
-    crate::copper_golem::after_blocks(state, &mut block_writes);
+    if sim {
+        crate::special_mobs::after_blocks(state, &mut block_writes);
+        crate::bees::run(state, &mut block_writes, &mut changes);
+    }
+    if sim {
+        crate::copper_golem::after_blocks(state, &mut block_writes);
+    }
     crate::golems::after_blocks(state, &mut block_writes);
-    crate::copper_golem::tick(state, &mut block_writes);
-    crate::mob_lanes::snow_trails(state, &mut block_writes);
+    if sim {
+        crate::copper_golem::tick(state, &mut block_writes);
+        crate::mob_lanes::snow_trails(state, &mut block_writes);
+    }
     crate::portals::nether::after_blocks(state, &mut block_writes);
     crate::fluids::schedule(state, &block_writes);
     let block_time = block_start.elapsed();
@@ -2670,15 +2756,20 @@ fn run_dimension_tick_inner<'a>(
     crate::block_entity_defaults::after_blocks(state, &block_writes);
     crate::trial_spawner::after_blocks(state, &block_writes);
     crate::vault::after_blocks(state, &block_writes);
-    crate::trial_spawner::run(state, &mut block_writes, &mut changes);
-    crate::vault::run(state, &mut block_writes, &mut changes);
+    crate::block_log::after_blocks(state);
+    if sim {
+        crate::trial_spawner::run(state, &mut block_writes, &mut changes);
+        crate::vault::run(state, &mut block_writes, &mut changes);
+    }
     changes.entities_spawned.extend(spawned_drops);
     changes.entities_spawned.extend(popped_drops);
     changes.entities_spawned.append(&mut state.hostile.spawned);
     changes
         .entities_spawned
         .append(&mut state.projectiles.spawned);
-    crate::experience_orbs::run(state, &mut changes, &mut events);
+    if sim {
+        crate::experience_orbs::run(state, &mut changes, &mut events);
+    }
     changes.explosions.append(&mut state.hostile.explosions);
     events.append(&mut state.hostile.events);
     changes.entities_removed.append(&mut state.hostile.removed);
@@ -2689,22 +2780,33 @@ fn run_dimension_tick_inner<'a>(
     // tick (durable pickup: credit + tombstone share one batch).
     changes.entities_removed.extend(committed_removals);
     state.merge_block_writes.clear();
-    crate::bees::commit(state, &mut changes);
-    crate::villager::conversion::tick(state);
+    if sim {
+        crate::bees::commit(state, &mut changes);
+        crate::villager::conversion::tick(state);
+    }
     // Settlements allocator: sole POI authority, immediately before the brain,
     // sharing the global tick budget with its own telemetry phase.
-    let allocator_us = crate::settlements::tick(state, &mut changes);
-    crate::villager::brain::tick(state, &mut changes);
+    let allocator_us = if sim {
+        let allocator_us = crate::settlements::tick(state, &mut changes);
+        crate::villager::brain::tick(state, &mut changes);
+        allocator_us
+    } else {
+        0
+    };
     if let Some(log) = phase_log.as_mut() {
         log.allocator_us += allocator_us;
     }
-    merchant::maintain(state, &mut changes);
-    crate::mounts::tick(state, &mut changes);
-    crate::allay::run(state, &mut changes);
-    crate::mob_equipment_pickup::run(state, &mut changes);
+    if sim {
+        merchant::maintain(state, &mut changes);
+        crate::mounts::tick(state, &mut changes);
+        crate::allay::run(state, &mut changes);
+        crate::mob_equipment_pickup::run(state, &mut changes);
+    }
     crate::entity_life::commit_drops(state, &mut changes.entities_spawned);
-    crate::end_fight::commit(state, &mut changes);
-    crate::raids::run(state, &mut changes);
+    if sim {
+        crate::end_fight::commit(state, &mut changes);
+        crate::raids::run(state, &mut changes);
+    }
 
     // NOTE: Health(0) + Died emit inside commit_merge_effects (death-screen
     // order, same tick as the drops) — no second emission here; commit is
@@ -2719,11 +2821,15 @@ fn run_dimension_tick_inner<'a>(
 
     state.tick += 1;
     crate::statistics::tick(state, state.tick);
-    crate::end_portals::tick(state);
-    if crate::command_rules::boolean(state, "advance_time") {
+    if sim {
+        crate::end_portals::tick(state);
+    }
+    if crate::tick_control::advances_day(state) {
         state.day_time = state.day_time.wrapping_add(1);
     }
-    if state.dimension.has_weather() {
+    if !sim {
+        // Frozen: the weather clock, sleep and fades hold with the world.
+    } else if state.dimension.has_weather() {
         crate::weather::advance_cycle(state);
         crate::sleep::run(state);
         crate::weather::fade_and_publish(state, previous_weather);
@@ -2733,7 +2839,7 @@ fn run_dimension_tick_inner<'a>(
         state.thunder_level = 0.0;
     }
     crate::scoreboard::automatic(state, &[], &[]);
-
+    crate::command_locate::drain(state);
     changes
         .blocks
         .extend(
@@ -3392,6 +3498,11 @@ pub(crate) fn client_build_refused(
                 || crate::plugin_inventories::has_reservations_for_block(state, *position)
         }
         PlayerInput::UseItemOn { position, face, .. } => {
+            // A zone's public-use flag lets a non-member flip a door-like block;
+            // the click then never places, so only that block is checked.
+            if crate::plugin_player::public_use_override(state, entity, *position) {
+                return !within_block_reach(state, entity, *position);
+            }
             let step = crate::placement::Face::from_code(*face).offset();
             let adjacent = BlockPos {
                 x: position.x.saturating_add(step[0]),
@@ -3809,11 +3920,16 @@ fn store_container_slots(
             record.slots.clear();
             record.slots.extend_from_slice(mine);
             crate::brewing::slots_replaced(&mut state.brewing, *cell, &record.slots);
-            state.world.mark_block_entity_dirty(BlockPos {
+            let position = BlockPos {
                 x: cell.0,
                 y: cell.1,
                 z: cell.2,
-            });
+            };
+            crate::redstone::containers::inventory_changed(
+                &mut state.redstone_containers,
+                position,
+            );
+            state.world.mark_block_entity_dirty(position);
         }
     }
 }
@@ -4045,6 +4161,12 @@ pub(crate) fn tick_furnaces(
                     });
                 }
             }
+        }
+        if outcome.changed {
+            crate::redstone::containers::inventory_changed(
+                &mut state.redstone_containers,
+                position,
+            );
         }
         if let Some(lit) = outcome.lit {
             set_lit_prop(state, pos, lit, block_writes, catch_up.is_some());
@@ -4466,6 +4588,20 @@ fn apply_inputs<'a>(
             input::session::plugin_client_ready(state, connection);
             continue;
         }
+        if let PlayerInput::LoaderViewRequest {
+            connection,
+            owner,
+            request_kind,
+        } = input
+        {
+            crate::plugin_player::loader_view_request(
+                state,
+                *connection,
+                owner,
+                request_kind.clone(),
+            );
+            continue;
+        }
         match input {
             PlayerInput::BuildPreviewFence { .. }
             | PlayerInput::AuthorizedBuild { .. }
@@ -4474,6 +4610,7 @@ fn apply_inputs<'a>(
                 input::social::seen_advancements(state, (connection, tab))
             }
             PlayerInput::PluginClientReady { .. } => {}
+            PlayerInput::LoaderViewRequest { .. } => {}
             PlayerInput::PermissionLevel { connection, level } => {
                 input::session::permission_level(state, (connection, level))
             }
@@ -4779,6 +4916,7 @@ pub(crate) fn respawn_player(
         .map(|player| player.respawn(position, yaw, pitch, state.dimension))
         .unwrap_or_default();
     apply_player_effects(state, connection, entity, effects, changes);
+    crate::bossbar::sync_dimension(state, connection);
     true
 }
 
@@ -5669,8 +5807,10 @@ fn read_row(
 /// next state plus intents. Parallel by data over scoped threads; workers
 /// return owned writes applied in slot order afterwards. No locks: the only
 /// synchronization is the scope join.
-fn run_entity_phase(state: &mut TickState) -> Vec<Intent> {
-    crate::enderman::tick(state);
+fn run_entity_phase(state: &mut TickState, sim: bool) -> Vec<Intent> {
+    if sim {
+        crate::enderman::tick(state);
+    }
     let prep_start = std::time::Instant::now();
     state.entities.prepare_motion_hints(&state.registry);
     let unchanged_since = state.entity_phase_revision;
@@ -5715,7 +5855,10 @@ fn run_entity_phase(state: &mut TickState) -> Vec<Intent> {
     }
     // Exact, mostly active membership lets hot flags/positions replace per-ID
     // index traversal even when a few occupied chunks are inactive.
-    if prefer_dense_entity_admission(state) {
+    if !sim {
+        // Frozen (`/tick freeze`): only player bodies step; every other
+        // entity keeps its position, velocity and timers.
+    } else if prefer_dense_entity_admission(state) {
         let mut previous: Option<(ChunkPos, u8)> = None;
         for slot in state.entities.motion_slots(MOTION_OWNED) {
             if state.entities.motion_flags(slot) & MOTION_PLAYER != 0 {
@@ -5807,6 +5950,11 @@ fn run_entity_phase(state: &mut TickState) -> Vec<Intent> {
         };
         return Vec::new();
     }
+    let golem_targets = if crate::piglin::iron_golem_present(state) {
+        crate::villager::defense::targets(state)
+    } else {
+        Vec::new()
+    };
     let world = &state.world;
     let registry = &state.registry;
     let chunk_loaded = |x: i32, z: i32| world.has_chunk(x.div_euclid(16), z.div_euclid(16));
@@ -5869,11 +6017,6 @@ fn run_entity_phase(state: &mut TickState) -> Vec<Intent> {
         Vec::new()
     };
     let villagers = resident_villager_targets(&state.entities);
-    let golem_targets = if crate::piglin::iron_golem_present(state) {
-        crate::villager::defense::targets(state)
-    } else {
-        Vec::new()
-    };
     // Chase searches per class this tick (over-counted: not every chaser
     // thinks). Only a class with many consumers pays for an index; the rest
     // scan linearly as before (see target_grid.rs for boundary and fence).
@@ -5938,7 +6081,7 @@ fn run_entity_phase(state: &mut TickState) -> Vec<Intent> {
             body.attack_cooldown.saturating_sub(1),
         );
     }
-    for (write, raw) in ordered.drain(..).flatten() {
+    for (write, mut raw) in ordered.drain(..).flatten() {
         let attack_cooldown = raw
             .iter()
             .any(|intent| {
@@ -5951,6 +6094,7 @@ fn run_entity_phase(state: &mut TickState) -> Vec<Intent> {
                 )
             })
             .then_some(MELEE_ATTACK_INTERVAL);
+        let was_ground = state.entities.ground(write.slot);
         let old = state.entities.apply_motion_result(
             write.slot,
             &crate::entities::MotionResult {
@@ -5964,6 +6108,36 @@ fn run_entity_phase(state: &mut TickState) -> Vec<Intent> {
                 attack_cooldown,
             },
         );
+        if matches!(
+            state.entities.body(write.slot).kind,
+            EntityKind::Item { .. }
+        ) {
+            crate::redstone::containers::item_moved(&mut state.redstone_containers, write.pos);
+        }
+        let fall = crate::mob_fall::after_move(
+            state,
+            write.slot,
+            old,
+            write.pos,
+            was_ground,
+            write.ground,
+        );
+        if fall > 0.0 {
+            let actor = state.entities.body(write.slot).id;
+            raw.push(RawIntent {
+                actor,
+                kind: IntentKind::DamageEntity {
+                    target: actor,
+                    amount: fall,
+                    kind: crate::survival::DamageKind::Fall,
+                    source: None,
+                },
+                footprint: Footprint {
+                    entity_writes: vec![actor],
+                    ..Default::default()
+                },
+            });
+        }
         // Only a player or a body wearing armor can spend movement stamina;
         // the hot flags answer that without dereferencing the row's
         // appearance (a cache miss per unarmored mob).
@@ -5990,15 +6164,20 @@ fn run_entity_phase(state: &mut TickState) -> Vec<Intent> {
         }
     }
     state.seq_counter = seq;
+    crate::item_motion::merge_neighbours(state);
     let commit_time = commit_start.elapsed();
     let post_start = std::time::Instant::now();
     // Pickup intents: players collect mature item entities in reach.
     // Exact kind lanes, authoritative maturity and post-move positions.
-    collect_pickup_intents(state, &mut intents);
+    if sim {
+        collect_pickup_intents(state, &mut intents);
+    }
     // Shooting skeletons, flying arrows, swelling creepers (serial: they
     // read the world and every entity).
-    crate::hostile::run(state, &mut intents, &specials);
-    crate::projectiles::run(state, &mut intents, &specials);
+    if sim {
+        crate::hostile::run(state, &mut intents, &specials);
+        crate::projectiles::run(state, &mut intents, &specials);
+    }
     if std::env::var("MC_CORE_PHASE_LOG").is_ok() {
         eprintln!(
             "  entity detail ms: scope={:.1} n={} prep={:.1} commit={:.1} post={:.1} rest={}",

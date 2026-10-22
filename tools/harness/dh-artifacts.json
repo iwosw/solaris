@@ -1,0 +1,61 @@
+{
+  "protocol": 16,
+  "source": "DHCompat release-evidence.json, Modrinth publisher metadata inspected 2026-10-22",
+  "artifacts": [
+    {
+      "minecraft": "26.1.2",
+      "distant_horizons": "3.3.3",
+      "loaders": [
+        "fabric",
+        "neoforge"
+      ],
+      "filename": "DistantHorizons-3.3.3-26.1.2-fabric-neoforge.jar",
+      "url": "https://cdn.modrinth.com/data/uCdwusMi/versions/QHxoccsN/DistantHorizons-3.3.3-26.1.2-fabric-neoforge.jar",
+      "size": 28281131,
+      "sha512": "c008cca63283fababf354ddc88bf76318aeea760da83cd1a491d024c369dd79b8c76fa586b05d8f001908ae7155f1e05a350e41d0476d6336bf3f9ac8a96129a",
+      "sha1": "c37821c81a07cb5852511341a9f6d4357bb85493"
+    },
+    {
+      "minecraft": "26.2",
+      "distant_horizons": "3.3.3",
+      "loaders": [
+        "fabric",
+        "neoforge"
+      ],
+      "filename": "DistantHorizons-3.3.3-26.2-fabric-neoforge.jar",
+      "url": "https://cdn.modrinth.com/data/uCdwusMi/versions/aAow4a9f/DistantHorizons-3.3.3-26.2-fabric-neoforge.jar",
+      "size": 27766022,
+      "sha512": "cc0e5e13b7af9a1b7e3319f9328825cff5a6e4169649231a7acae44e1362034028cfb904e023e417063cf033ef2d7c481f1f0cfff60947dd32842eb529614959",
+      "sha1": "22fa56cc57d6ed045ef3c4a3758ea5207ca5bcff"
+    },
+    {
+      "minecraft": "26.3",
+      "distant_horizons": "3.3.4",
+      "loaders": [
+        "fabric",
+        "neoforge"
+      ],
+      "filename": "DistantHorizons-3.3.4-26.3-fabric-neoforge.jar",
+      "url": "https://cdn.modrinth.com/data/uCdwusMi/versions/TGgEbP9A/DistantHorizons-3.3.4-26.3-fabric-neoforge.jar",
+      "size": 28476894,
+      "sha512": "0b90b1b08d99974bfc3c8e86b2ceb252e2f91715ed66b925004c28335fb44e1bddbbb6b8043e4d4d53c87ed247789cd1788b1ba4e3f4394efe154e0c59cff236",
+      "sha1": "310c0363068dfae18e91f799ed671a591b6ad49a"
+    }
+  ],
+  "baseline_loader": {
+    "minecraft": "26.1.2",
+    "fabric_loader": "0.19.3",
+    "fabric_api": "0.155.2+26.1.2",
+    "neoforge": "26.1.2.76",
+    "source": "solaris-loader gradle.properties at 3016bd89e50f690c8b412ecce4dd680424859292",
+    "runtime_verified": false
+  },
+  "client_requirements": [
+    "Licensed graphical Minecraft Java client for each exact matrix release, pinned client/asset/library manifest and hashes",
+    "Pinned loader/dependency artifact hashes for each Fabric and NeoForge cell",
+    "Java 25 and fresh Xvfb display, client bridge/MCP credentials",
+    "DH scenario driver in sibling solaris-loader with control/landmark/packet/render evidence",
+    "Clean, independently isolated DH caches for server-enabled and disabled control runs",
+    "Worktree-built solaris-v2 candidate, exact config/world/epoch and binary SHA-256"
+  ]
+}

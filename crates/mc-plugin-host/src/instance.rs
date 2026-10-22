@@ -561,6 +561,29 @@ impl<S: HostServices> crate::bindings::solaris::plugin::domain_operations::Host
 
 impl<S: HostServices> crate::bindings::solaris::plugin::operation_types::Host for InstanceState<S> {}
 
+impl<S: HostServices> crate::bindings::solaris::plugin::command_permissions::Host
+    for InstanceState<S>
+{
+    /// The provider's publication. Only the instance the host handed a table can
+    /// succeed; every other guest is answered `false` without publishing.
+    fn publish(&mut self, entries: Vec<String>) -> bool {
+        if !self.allow_import() {
+            return false;
+        }
+        let Some(permissions) = self.command_permissions.clone() else {
+            return false;
+        };
+        match permissions.publish(&entries) {
+            Ok(()) => true,
+            Err(error) => {
+                let plugin = self.services().plugin_id().to_owned();
+                tracing::warn!(plugin = %plugin, %error, "command permissions refused");
+                false
+            }
+        }
+    }
+}
+
 impl<S: HostServices> crate::bindings::solaris::plugin::world_events::Host for InstanceState<S> {}
 
 impl<S: HostServices + 'static> Host for InstanceState<S> {

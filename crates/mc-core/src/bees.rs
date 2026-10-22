@@ -104,7 +104,7 @@ pub(crate) fn uuid(tag: &Tag, key: &str) -> Result<uuid::Uuid, CoreError> {
         return Err(fail(key, "expected four-int UUID"));
     }
     let mut bytes = [0; 16];
-    for (out, word) in bytes.chunks_exact_mut(4).zip(words) {
+    for (out, word) in bytes.as_chunks_mut::<4>().0.iter_mut().zip(words) {
         out.copy_from_slice(&word.to_be_bytes());
     }
     Ok(uuid::Uuid::from_bytes(bytes))

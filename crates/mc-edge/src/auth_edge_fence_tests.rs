@@ -42,7 +42,12 @@ fn fixture(require_plugin_login: bool) -> (EdgeServer, std::path::PathBuf) {
         suggestion_items: vec!["minecraft:stone".into()],
         suggestion_blocks: vec!["minecraft:stone".into()],
         suggestion_entities: vec!["minecraft:pig".into()],
+        suggestion_structures: vec![],
         online_authentication: None,
+        velocity: None,
+        loader_required: false,
+        lod: None,
+        dh: None,
     };
     (server, dir)
 }

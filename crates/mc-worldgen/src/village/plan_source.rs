@@ -267,6 +267,7 @@ impl VillagePlan {
     pub fn site(&self) -> GeneratedVillageSite {
         GeneratedVillageSite {
             start_chunk: self.start_chunk(),
+            structure: self.assembly.structure.clone(),
             min: self.affected_min,
             max: self.affected_max,
             pieces: self

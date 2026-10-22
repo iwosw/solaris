@@ -306,7 +306,10 @@ pub(crate) fn lava_tick(
     let Some(target) = lava_target(state, pos, roll) else {
         return false;
     };
-    if !spread_enabled(state, target) || raining_at(state, target) || !ignite_block(state, target) {
+    if !spread_into_enabled(state, target)
+        || raining_at(state, target)
+        || !ignite_block(state, target)
+    {
         return false;
     }
     let next = state
@@ -352,8 +355,14 @@ fn spread_enabled(state: &TickState, pos: BlockPos) -> bool {
     })
 }
 
+/// Fire, from fire blocks or lava, never spreads into a protected zone's cells.
+fn spread_into_enabled(state: &TickState, pos: BlockPos) -> bool {
+    spread_enabled(state, pos) && !crate::plugin_player::protects_cell(state, pos)
+}
+
 fn write(state: &mut TickState, writes: &mut Vec<(BlockPos, u32)>, pos: BlockPos, next: u32) {
     if state.world.block_at(pos.x, pos.y, pos.z) != Some(next) {
+        crate::block_log::note_fire(state, pos, next);
         state.world.set_block(pos.x, pos.y, pos.z, next);
     }
     writes.retain(|(cell, _)| *cell != pos);
@@ -416,7 +425,9 @@ pub(crate) fn scheduled_tick(
         let Some(target) = offset(pos, NEIGHBOURS[(start + index) % NEIGHBOURS.len()]) else {
             continue;
         };
-        if !fact(state, target).burn || !spread_enabled(state, target) || raining_at(state, target)
+        if !fact(state, target).burn
+            || !spread_into_enabled(state, target)
+            || raining_at(state, target)
         {
             continue;
         }
@@ -437,7 +448,7 @@ pub(crate) fn scheduled_tick(
             continue;
         };
         if !fact(state, target).air
-            || !spread_enabled(state, target)
+            || !spread_into_enabled(state, target)
             || raining_at(state, target)
             || !NEIGHBOURS
                 .into_iter()

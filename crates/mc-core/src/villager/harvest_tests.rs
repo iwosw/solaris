@@ -82,6 +82,27 @@ fn certified_farmer_walks_to_distant_crop_and_repeats() {
     assert_eq!(journal.len(), 2, "both harvests are journaled");
 }
 
+/// `[mob_griefing] villager_farming = false` stops crop work while the
+/// master gamerule stays on.
+#[test]
+fn villager_farming_switch_stops_harvesting() {
+    let (mut state, slot, mut v) = fixture();
+    state.mob_griefing.villager_farming = false;
+    let mature = crop(&mut state, 12, 3);
+    state.world.fold_overlay();
+    state.entities.set_pos(slot, [12.5, 201.0, 3.5]);
+    let mut changes = ChangeSet::default();
+    for _ in 0..20 {
+        harvest::work(&mut state, slot, &mut v, &mut changes);
+        state.tick += 40;
+    }
+    assert_eq!(state.world.block_at(12, 201, 3), Some(mature));
+    assert!(
+        changes.blocks.is_empty(),
+        "the disabled switch harvests nothing"
+    );
+}
+
 #[test]
 fn certified_farmer_never_harvests_outside_bounds_or_after_work() {
     let (mut state, slot, mut v) = fixture();

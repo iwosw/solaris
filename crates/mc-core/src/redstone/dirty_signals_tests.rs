@@ -486,7 +486,7 @@ fn explosion_removal_forgets_cached_signal_and_unpowers_surviving_comparator() {
     assert_eq!(comparator_output(&state, COMPARATOR), 1);
     // Starting inside the chest destroys it immediately. Its resistance then
     // exhausts these short rays before they can reach the adjacent comparator.
-    crate::explosion::apply(&mut state, None, [6.5, 200.5, 6.5], 1.5, false, None);
+    crate::explosion::apply(&mut state, None, [6.5, 200.5, 6.5], 1.5, None, None);
     run_tick(&mut state, &[]);
     assert_eq!(
         state.world.block_at(CHEST.x, CHEST.y, CHEST.z),

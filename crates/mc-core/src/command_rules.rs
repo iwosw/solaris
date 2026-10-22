@@ -249,6 +249,37 @@ pub fn boolean(state: &TickState, name: &str) -> bool {
     boolean_value(&state.gamerules, name)
 }
 
+/// Which finer block-damage switch a call site belongs to. Vanilla 26.1.2 has
+/// only the master `mobGriefing` gamerule; these finer switches live in server
+/// configuration (all default to true, so vanilla behaviour is unchanged).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MobGrief {
+    /// A blast no specific mob owns; only the master gamerule applies.
+    Other,
+    Creeper,
+    Ghast,
+    Wither,
+    VillagerFarming,
+    SheepGrazing,
+}
+
+/// `mobGriefing` combined with the per-mob switch for `grief`.
+#[must_use]
+pub fn mob_griefing(state: &TickState, grief: MobGrief) -> bool {
+    if !boolean(state, "mob_griefing") {
+        return false;
+    }
+    let rules = &state.mob_griefing;
+    match grief {
+        MobGrief::Other => true,
+        MobGrief::Creeper => rules.creeper_block_damage,
+        MobGrief::Ghast => rules.ghast_block_damage,
+        MobGrief::Wither => rules.wither_block_damage,
+        MobGrief::VillagerFarming => rules.villager_farming,
+        MobGrief::SheepGrazing => rules.sheep_grazing,
+    }
+}
+
 fn boolean_value(values: &rustc_hash::FxHashMap<String, String>, name: &str) -> bool {
     let Some((rule, _)) = find(name) else {
         return false;

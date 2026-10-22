@@ -1610,23 +1610,48 @@ fn bounded_dtos_reject_oversized_ids_values_invalid_bounds_and_resources() {
 
 #[test]
 fn zone_protection_is_explicit_normalized_and_plugin_agnostic() {
-    let protection =
-        ScriptZoneProtection::try_actor_or_operator("12345678-1234-5678-1234-567812345678")
-            .unwrap();
+    let protection = ScriptZoneProtection::try_new(
+        [
+            "12345678-1234-5678-1234-567812345678",
+            "BBBBBBBB-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+            "12345678123456781234567812345678",
+        ],
+        true,
+    )
+    .unwrap();
     assert_eq!(
-        protection.allowed_actor_uuid(),
-        "12345678123456781234567812345678"
+        protection.allowed_actor_uuids(),
+        [
+            "12345678123456781234567812345678",
+            "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        ]
     );
+    assert!(protection.public_use());
     assert!(protection.allows_actor("12345678123456781234567812345678", false));
+    assert!(protection.allows_actor("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", false));
     assert!(protection.allows_actor("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", true));
     assert!(!protection.allows_actor("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", false));
     assert!(matches!(
-        ScriptZoneProtection::try_actor_or_operator("claim-owner"),
+        ScriptZoneProtection::try_new(["claim-owner"], false),
         Err(ScriptDtoError::InvalidId {
             field: "protection actor uuid",
             ..
         })
     ));
+    assert!(matches!(
+        ScriptZoneProtection::try_new(Vec::<String>::new(), false),
+        Err(ScriptDtoError::EmptyValue {
+            field: "protection actor uuids"
+        })
+    ));
+    let many = (0..=MAX_SCRIPT_ZONE_ACTORS)
+        .map(|index| format!("{index:032x}"))
+        .collect::<Vec<_>>();
+    assert!(matches!(
+        ScriptZoneProtection::try_new(&many, false),
+        Err(ScriptDtoError::TooManyEntries { .. })
+    ));
+    assert!(ScriptZoneProtection::try_new(&many[..MAX_SCRIPT_ZONE_ACTORS], false).is_ok());
 }
 
 #[test]
@@ -2204,4 +2229,138 @@ fn component_api_version_requires_the_current_contract_version() {
             })
         );
     }
+}
+
+/// E5: a declared node gates another package's command, and only the deployed
+/// permission provider's published table decides it.
+#[test]
+fn declared_command_node_gates_admission_through_the_provider_table() {
+    const PLAYER: &str = "069a79f4-44e9-4726-a5be-fca90e38aaf5";
+    let (boundary, endpoint) = script_boundary_pair(nonzero(4), nonzero(4));
+    let provider = ScriptPluginManifest::new(
+        "solaris-permissions",
+        "Permissions",
+        "0.1.0",
+        COMPONENT_PLUGIN_API_VERSION,
+    )
+    .declare_player_command_root("perm")
+    .declare_permission_provider()
+    .validate()
+    .unwrap();
+    let gated = ScriptPluginManifest::new(
+        "solaris-essentials",
+        "Essentials",
+        "0.1.0",
+        COMPONENT_PLUGIN_API_VERSION,
+    )
+    .declare_player_command_root("home")
+    .declare_player_command_root("delwarp")
+    .declare_command_permission("delwarp", "solaris.essentials.manage")
+    .validate()
+    .unwrap();
+    let player = ScriptPlayerId::new(1);
+    let context = |operator: bool| {
+        ScriptPlayerContext::try_new(PLAYER, "Alex", operator, 0.0, 64.0, 0.0).unwrap()
+    };
+    let admit = |command: &str, operator: bool| {
+        boundary.prepare_player_command_with_context(player, context(operator), command)
+    };
+
+    // Without a provider the declaration is inert: nobody could answer it.
+    endpoint.register_plugin_routes(&gated).unwrap();
+    assert!(matches!(
+        admit("delwarp x", false),
+        Ok(PreparedPlayerCommand::Event(_))
+    ));
+    assert!(matches!(
+        admit("home", false),
+        Ok(PreparedPlayerCommand::Event(_))
+    ));
+
+    endpoint.register_plugin_routes(&provider).unwrap();
+    // A provider that has not published yet denies rather than admits.
+    assert!(matches!(
+        admit("delwarp x", true),
+        Ok(PreparedPlayerCommand::PermissionDenied)
+    ));
+    assert!(matches!(
+        admit("home", true),
+        Ok(PreparedPlayerCommand::Event(_))
+    ));
+
+    boundary
+        .command_permissions()
+        .publish(&[format!("{PLAYER} solaris.essentials.manage")])
+        .unwrap();
+    assert!(matches!(
+        admit("delwarp x", false),
+        Ok(PreparedPlayerCommand::Event(_))
+    ));
+    boundary.command_permissions().publish(&[]).unwrap();
+    assert!(matches!(
+        admit("delwarp x", false),
+        Ok(PreparedPlayerCommand::PermissionDenied)
+    ));
+}
+
+#[test]
+fn command_permission_for_an_undeclared_root_and_a_second_provider_are_refused() {
+    assert!(matches!(
+        ScriptPluginManifest::new("a", "A", "0.1.0", COMPONENT_PLUGIN_API_VERSION)
+            .declare_command_permission("home", "solaris.essentials.use")
+            .validate(),
+        Err(ScriptPluginManifestError::CommandPermissionUnknownRoot { .. })
+    ));
+    assert!(matches!(
+        ScriptPluginManifest::new("a", "A", "0.1.0", COMPONENT_PLUGIN_API_VERSION)
+            .declare_player_command_root("home")
+            .declare_command_permission("home", "Solaris Upper")
+            .validate(),
+        Err(ScriptPluginManifestError::InvalidField {
+            field: "command permission"
+        })
+    ));
+
+    let (_, endpoint) = script_boundary_pair(nonzero(2), nonzero(2));
+    for (id, root) in [("first", "one"), ("second", "two")] {
+        let provider = ScriptPluginManifest::new(id, id, "0.1.0", COMPONENT_PLUGIN_API_VERSION)
+            .declare_player_command_root(root)
+            .declare_permission_provider()
+            .validate()
+            .unwrap();
+        let result = endpoint.register_plugin_routes(&provider);
+        if id == "first" {
+            result.unwrap();
+        } else {
+            assert!(matches!(
+                result,
+                Err(ScriptRouteRegistrationError::DuplicatePermissionProvider { .. })
+            ));
+        }
+    }
+}
+
+#[test]
+fn death_graves_is_a_deployment_declaration_with_one_declarer() {
+    let validated =
+        ScriptPluginManifest::new("graves", "Graves", "0.1.0", COMPONENT_PLUGIN_API_VERSION)
+            .declare_capability("death_graves")
+            .expect("packages declare this capability by name")
+            .validate()
+            .unwrap();
+    assert!(
+        validated
+            .declared_command_capabilities()
+            .contains(&ScriptCommandCapability::DeathGraves)
+    );
+    // It is the native death path's declaration, not a privileged command grant.
+    let twice =
+        ScriptPluginManifest::new("graves", "Graves", "0.1.0", COMPONENT_PLUGIN_API_VERSION)
+            .declare_death_graves()
+            .declare_death_graves()
+            .validate();
+    assert!(matches!(
+        twice,
+        Err(ScriptPluginManifestError::DuplicateCapability { .. })
+    ));
 }

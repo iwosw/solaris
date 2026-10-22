@@ -59,6 +59,11 @@ pub struct PlayerState {
     /// Last accepted vanilla movement ground flag, for jump/movement awards.
     /// Collision resolution alone loses support on zero-vertical walking moves.
     pub(crate) statistics_grounded: bool,
+    /// Connection-local anti-flight sample count and last support/descending
+    /// position. They reset on reconnect and are never persisted.
+    pub(crate) airtime_ticks: u32,
+    pub(crate) airtime_sample_tick: Option<u64>,
+    pub(crate) airtime_safe_position: Option<[f64; 3]>,
     /// Connection-local fence: vehicle physics/corrections run at most once per tick.
     pub(crate) last_vehicle_move_tick: Option<u64>,
     /// Connection-local vanilla teleport sequence; retained across respawns
@@ -81,6 +86,11 @@ pub struct PlayerState {
     pub(crate) attribute_equipment: Option<[ItemStack; 6]>,
     pub(crate) sent_attributes: Vec<crate::boundary::PlayerAttribute>,
     pub(crate) soul_speed_active: bool,
+    /// Held main-hand stack as of the previous tick's end (MC-28289): the
+    /// melee path resolves `attack_damage`/`attack_speed` attribute values
+    /// from this snapshot, so a same-tick swap+attack hits with the OLD
+    /// item's attributes. `None` until the first tick snapshots it.
+    pub(crate) attribute_snapshot_held: Option<ItemStack>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -146,6 +156,9 @@ impl PlayerState {
             sprinting: false,
             known_horizontal_movement_squared: 0.0,
             statistics_grounded: true,
+            airtime_ticks: 0,
+            airtime_sample_tick: None,
+            airtime_safe_position: None,
             last_vehicle_move_tick: None,
             teleport_id: 0,
             awaiting_teleport: None,
@@ -162,6 +175,7 @@ impl PlayerState {
             attribute_equipment: None,
             sent_attributes: Vec::new(),
             soul_speed_active: false,
+            attribute_snapshot_held: None,
         }
     }
 
@@ -288,6 +302,11 @@ impl PlayerState {
             self.current_impulse_impact_pos = None;
             return 0.0;
         }
+        // Vanilla `Entity.checkFallDamage` adds the move's own downward travel
+        // before the ground test: the landing packet's drop counts too.
+        if dy < 0.0 {
+            self.fall_distance -= f64::from(dy as f32);
+        }
         if on_ground {
             if self.current_impulse_impact_pos.take().is_some() {
                 self.fall_distance = 0.0;
@@ -309,9 +328,6 @@ impl PlayerState {
             );
             self.fall_distance = 0.0;
             return damage;
-        }
-        if dy < 0.0 {
-            self.fall_distance -= dy;
         }
         0.0
     }
@@ -1000,7 +1016,16 @@ impl PlayerState {
     }
 
     /// Death closes the menu; only non-retained inventories and XP are lost.
-    pub fn die(&mut self, rules: &ItemRules<'_>, keep_inventory: bool) -> PlayerEffects {
+    ///
+    /// `keep_experience` is separate from `keep_inventory` because the two answers
+    /// come from different owners: the gamerule retains both, while native grave
+    /// custody takes the items into a container and still leaves the bar alone.
+    pub fn die(
+        &mut self,
+        rules: &ItemRules<'_>,
+        keep_inventory: bool,
+        keep_experience: bool,
+    ) -> PlayerEffects {
         self.statistics.increment_custom(CustomStat::Deaths, 1);
         self.statistics.set_custom(CustomStat::TimeSinceDeath, 0);
         self.statistics.set_custom(CustomStat::TimeSinceRest, 0);
@@ -1024,8 +1049,10 @@ impl PlayerState {
             effects
                 .dropped
                 .retain(|stack| crate::enchantments::level(stack, "vanishing_curse") == 0);
-            self.vitals.experience = crate::survival::Experience::default();
-            effects.changes.push(self.experience_change());
+            if !keep_experience {
+                self.vitals.experience = crate::survival::Experience::default();
+                effects.changes.push(self.experience_change());
+            }
         }
         self.using = None;
         effects.changes.extend(closed.changes);

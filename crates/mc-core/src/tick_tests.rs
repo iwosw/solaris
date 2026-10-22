@@ -22,6 +22,8 @@ mod effects_trigger_tests;
 mod elytra_tests;
 #[path = "mace_tests.rs"]
 mod mace_tests;
+#[path = "tick/movement_tests.rs"]
+mod movement_tests;
 #[path = "tick/statistics_tests.rs"]
 mod statistics_tests;
 
@@ -1643,11 +1645,12 @@ fn breaking_a_door_half_removes_the_whole_door() {
     );
 }
 
-/// Landing after a 10-block fall costs 7 health (one per block beyond
+/// Landing after an 11-block fall (the landing move's own 1-block drop counts,
+/// vanilla `Entity.checkFallDamage`) costs 8 health (one per block beyond
 /// three, armor ignored); creative players take none.
 #[test]
 fn landing_after_a_fall_hurts_survival_players_only() {
-    for (mode, expected) in [(0u8, 13.0f32), (1u8, 20.0f32)] {
+    for (mode, expected) in [(0u8, 12.0f32), (1u8, 20.0f32)] {
         let mut state = test_state();
         let player = join(&mut state, 1, "faller");
         if mode == 1 {
@@ -1669,8 +1672,8 @@ fn landing_after_a_fall_hurts_survival_players_only() {
                 }],
             );
         };
-        // Climb (no fall distance), fall 10 blocks airborne, then land; the
-        // landing move's own drop is not counted (vanilla `checkFallDamage`).
+        // Climb (no fall distance), fall 10 blocks airborne, then land with a
+        // final 1-block drop that vanilla adds before the ground test.
         for rise in 1..=11 {
             step(&mut state, ground[1] + f64::from(rise), false);
         }
@@ -2199,7 +2202,7 @@ fn feeding_gates_breeding_and_takes_one_food() {
     ];
     for farmer in farmers {
         let slot = state.entities.slot_of(farmer).expect("farmer slot");
-        state.entities.set_pos(slot, [8.0, 80.0, 7.0]);
+        state.entities.set_pos(slot, [8.0, 64.0, 7.0]);
         state
             .players
             .get_mut(&farmer)
@@ -2207,9 +2210,10 @@ fn feeding_gates_breeding_and_takes_one_food() {
             .inventory
             .slots[0] = mc_data::ItemStack::new(carrot, 3);
     }
-    let a = state.spawn_mob(pig, [8.0, 80.0, 8.0], 10.0);
-    let b = state.spawn_mob(pig, [9.0, 80.0, 8.0], 10.0);
-    let cow = state.spawn_mob(registry.cow_type_id, [8.0, 80.0, 9.0], 10.0);
+    // Ground is y=64: mobs spawned higher now take fall damage on landing.
+    let a = state.spawn_mob(pig, [8.0, 64.0, 8.0], 10.0);
+    let b = state.spawn_mob(pig, [9.0, 64.0, 8.0], 10.0);
+    let cow = state.spawn_mob(registry.cow_type_id, [8.0, 64.0, 9.0], 10.0);
     let cow_slot = state.entities.slot_of(cow).expect("cow");
     state.entities.row_mut(cow_slot).love = 600;
     let count = |state: &TickState, type_id: u32| {
@@ -7328,4 +7332,528 @@ fn live_player_enumeration_matches_the_dense_scan() {
     let live = crate::tick::live_players(&state);
     assert_eq!(live, crate::tick::live_players_by_scan(&state));
     assert_eq!(live.len(), actors.len() - 1);
+}
+
+/// A deployment whose manifest declares `death_graves` takes one death's drops
+/// into a barrel at the death spot, journals that container, keeps the bar and
+/// publishes the grave to that package only.
+#[test]
+fn grave_custody_buries_drops_keeps_experience_and_publishes_the_grave() {
+    use crate::survival::DamageKind;
+    let (mut state, player, pos) = flat_player_fixture();
+    state
+        .gamerules
+        .insert("keep_inventory".into(), "false".into());
+    let (boundary, _host) = mc_script::script_boundary_pair(
+        std::num::NonZeroUsize::new(16).unwrap(),
+        std::num::NonZeroUsize::new(16).unwrap(),
+    );
+    let mut runtime = crate::plugin::PluginRuntime::with_test_boundary(boundary);
+    runtime.death_graves = Some("graves".into());
+    state.plugin_runtime = Some(runtime);
+    let dirt = state
+        .registry
+        .items
+        .id_of(&mc_data::Identifier::parse("minecraft:dirt").unwrap())
+        .unwrap();
+    let actor = state.players.get_mut(&player).unwrap();
+    actor.inventory.slots[0] = mc_data::ItemStack::new(dirt, 7);
+    actor.vitals.experience.add_points(42);
+    let experience = actor.vitals.experience;
+    let slot = state.entities.slot_of(player).unwrap();
+    state.merge_damage.push((
+        slot,
+        crate::tick::DamagePiece {
+            physical: None,
+            custom_armor: false,
+            amount: f32::MAX,
+            kind: DamageKind::Void,
+            source: None,
+        },
+    ));
+    let (deaths, _, spawned, _) = state.commit_merge_effects();
+    assert_eq!(deaths, vec![player]);
+    assert!(
+        spawned.is_empty(),
+        "a taken-in-custody drop must not also spawn as an item entity"
+    );
+    assert_eq!(
+        state.players[&player].vitals.experience, experience,
+        "grave custody retains the bar instead of resetting it"
+    );
+    let cell = (
+        pos[0].floor() as i32,
+        pos[1].floor() as i32,
+        pos[2].floor() as i32,
+    );
+    let block = state
+        .registry
+        .blocks
+        .by_id(mc_world::BlockStateId(
+            state.world.block_at(cell.0, cell.1, cell.2).unwrap(),
+        ))
+        .unwrap();
+    assert_eq!(block.block.id.path(), "barrel");
+    let storage = state.block_entities.get(&cell).unwrap();
+    assert_eq!(storage.slots[0], mc_data::ItemStack::new(dirt, 7));
+    assert!(storage.slots[1..].iter().all(mc_data::ItemStack::is_empty));
+    let published: Vec<_> = state
+        .plugin_runtime
+        .as_ref()
+        .unwrap()
+        .pending_events
+        .iter()
+        .filter_map(|event| match event.kind() {
+            mc_script::ScriptEventKind::PlayerGraveCreated {
+                items,
+                spilled,
+                x,
+                y,
+                z,
+                ..
+            } => Some((*items, *spilled, *x, *y, *z, event.target_plugin_id())),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        published,
+        vec![(1, 0, cell.0, cell.1, cell.2, Some("graves"))]
+    );
+}
+
+/// `keepInventory` wins over a deployed grave package exactly as it wins over the
+/// vanilla drop: the inventory never leaves the player and no container appears.
+#[test]
+fn keep_inventory_bypasses_grave_custody() {
+    use crate::survival::DamageKind;
+    let (mut state, player, pos) = flat_player_fixture();
+    state
+        .gamerules
+        .insert("keep_inventory".into(), "true".into());
+    let (boundary, _host) = mc_script::script_boundary_pair(
+        std::num::NonZeroUsize::new(16).unwrap(),
+        std::num::NonZeroUsize::new(16).unwrap(),
+    );
+    let mut runtime = crate::plugin::PluginRuntime::with_test_boundary(boundary);
+    runtime.death_graves = Some("graves".into());
+    state.plugin_runtime = Some(runtime);
+    let dirt = state
+        .registry
+        .items
+        .id_of(&mc_data::Identifier::parse("minecraft:dirt").unwrap())
+        .unwrap();
+    state.players.get_mut(&player).unwrap().inventory.slots[0] = mc_data::ItemStack::new(dirt, 7);
+    let slot = state.entities.slot_of(player).unwrap();
+    state.merge_damage.push((
+        slot,
+        crate::tick::DamagePiece {
+            physical: None,
+            custom_armor: false,
+            amount: f32::MAX,
+            kind: DamageKind::Void,
+            source: None,
+        },
+    ));
+    let (deaths, _, spawned, _) = state.commit_merge_effects();
+    assert_eq!(deaths, vec![player]);
+    assert!(spawned.is_empty());
+    assert_eq!(
+        state.players[&player].inventory.slots[0],
+        mc_data::ItemStack::new(dirt, 7)
+    );
+    let cell = (
+        pos[0].floor() as i32,
+        pos[1].floor() as i32,
+        pos[2].floor() as i32,
+    );
+    let block = state
+        .registry
+        .blocks
+        .by_id(mc_world::BlockStateId(
+            state.world.block_at(cell.0, cell.1, cell.2).unwrap(),
+        ))
+        .unwrap();
+    assert_ne!(block.block.id.path(), "barrel");
+    assert!(!state.block_entities.contains_key(&cell));
+    assert!(
+        !state
+            .plugin_runtime
+            .as_ref()
+            .unwrap()
+            .pending_events
+            .iter()
+            .any(|event| matches!(
+                event.kind(),
+                mc_script::ScriptEventKind::PlayerGraveCreated { .. }
+            ))
+    );
+}
+
+/// A deployed grave package, exactly as `PluginRuntime::open` would resolve one.
+fn grave_runtime(state: &mut TickState) {
+    let (boundary, _host) = mc_script::script_boundary_pair(
+        std::num::NonZeroUsize::new(16).unwrap(),
+        std::num::NonZeroUsize::new(16).unwrap(),
+    );
+    let mut runtime = crate::plugin::PluginRuntime::with_test_boundary(boundary);
+    runtime.death_graves = Some("graves".into());
+    state.plugin_runtime = Some(runtime);
+}
+
+/// Put one hopper block with its inventory at `cell`, so it can really pull.
+fn hopper_at(state: &mut TickState, cell: (i32, i32, i32)) -> u32 {
+    let hopper = state
+        .registry
+        .blocks
+        .block(&mc_data::Identifier::parse("minecraft:hopper").unwrap())
+        .unwrap()
+        .default
+        .0;
+    state.world.set_block(cell.0, cell.1, cell.2, hopper);
+    crate::block_entity_defaults::after_blocks(
+        state,
+        &[(
+            crate::boundary::BlockPos {
+                x: cell.0,
+                y: cell.1,
+                z: cell.2,
+            },
+            hopper,
+        )],
+    );
+    hopper
+}
+
+/// A dying player standing on an existing hopper keeps a grave that the hopper
+/// cannot empty: the container goes to the cell above, and the hopper's own
+/// inventory stays empty across the pull cycles that follow.
+#[test]
+fn grave_placement_avoids_an_existing_hopper_below_the_death_cell() {
+    use crate::survival::DamageKind;
+    let (mut state, player, pos) = flat_player_fixture();
+    state
+        .gamerules
+        .insert("keep_inventory".into(), "false".into());
+    grave_runtime(&mut state);
+    let death_cell = (
+        pos[0].floor() as i32,
+        pos[1].floor() as i32,
+        pos[2].floor() as i32,
+    );
+    let hopper_cell = (death_cell.0, death_cell.1 - 1, death_cell.2);
+    hopper_at(&mut state, hopper_cell);
+    // Register the hopper in the redstone lane so the pull cycles really run:
+    // without the placement guard it would drain a barrel in the death cell.
+    crate::redstone::containers::inventory_changed(
+        &mut state.redstone_containers,
+        crate::boundary::BlockPos {
+            x: hopper_cell.0,
+            y: hopper_cell.1,
+            z: hopper_cell.2,
+        },
+    );
+    let dirt = state
+        .registry
+        .items
+        .id_of(&mc_data::Identifier::parse("minecraft:dirt").unwrap())
+        .unwrap();
+    state.players.get_mut(&player).unwrap().inventory.slots[0] = mc_data::ItemStack::new(dirt, 7);
+    let slot = state.entities.slot_of(player).unwrap();
+    state.merge_damage.push((
+        slot,
+        crate::tick::DamagePiece {
+            physical: None,
+            custom_armor: false,
+            amount: f32::MAX,
+            kind: DamageKind::Void,
+            source: None,
+        },
+    ));
+    let (deaths, _, spawned, _) = state.commit_merge_effects();
+    assert_eq!(deaths, vec![player]);
+    assert!(spawned.is_empty());
+    // The death cell stands on the hopper and the cell above has no ground, so
+    // the first ring cell with solid ground under it takes the grave.
+    let grave_cell = (death_cell.0 - 1, death_cell.1, death_cell.2 - 1);
+    let barrel = state
+        .registry
+        .blocks
+        .by_id(mc_world::BlockStateId(
+            state
+                .world
+                .block_at(grave_cell.0, grave_cell.1, grave_cell.2)
+                .unwrap(),
+        ))
+        .unwrap();
+    assert_eq!(
+        barrel.block.id.path(),
+        "barrel",
+        "a cell above an existing hopper is not a grave cell"
+    );
+    assert_eq!(
+        state.block_entities[&grave_cell].slots[0],
+        mc_data::ItemStack::new(dirt, 7)
+    );
+    assert!(
+        state.block_entities[&hopper_cell]
+            .slots
+            .iter()
+            .all(mc_data::ItemStack::is_empty)
+    );
+    for _ in 0..16 {
+        crate::tick::run_tick(&mut state, &[]);
+    }
+    assert!(
+        state.block_entities[&hopper_cell]
+            .slots
+            .iter()
+            .all(mc_data::ItemStack::is_empty),
+        "the hopper must not be able to pull the grave's items"
+    );
+    assert_eq!(
+        state.block_entities[&grave_cell].slots[0],
+        mc_data::ItemStack::new(dirt, 7)
+    );
+}
+
+/// A partial block under the death cell is not ground: a slab collides as a
+/// partial shape, which leaves the rest of the cell free for a hopper minecart,
+/// so the grave moves to the first fully grounded ring cell.
+#[test]
+fn grave_placement_avoids_a_partial_block_below_the_death_cell() {
+    use crate::survival::DamageKind;
+    let (mut state, player, pos) = flat_player_fixture();
+    state
+        .gamerules
+        .insert("keep_inventory".into(), "false".into());
+    grave_runtime(&mut state);
+    let death_cell = (
+        pos[0].floor() as i32,
+        pos[1].floor() as i32,
+        pos[2].floor() as i32,
+    );
+    let slab = state
+        .registry
+        .blocks
+        .block(&mc_data::Identifier::parse("minecraft:stone_slab").unwrap())
+        .unwrap()
+        .default
+        .0;
+    state
+        .world
+        .set_block(death_cell.0, death_cell.1 - 1, death_cell.2, slab);
+    let dirt = state
+        .registry
+        .items
+        .id_of(&mc_data::Identifier::parse("minecraft:dirt").unwrap())
+        .unwrap();
+    state.players.get_mut(&player).unwrap().inventory.slots[0] = mc_data::ItemStack::new(dirt, 7);
+    let slot = state.entities.slot_of(player).unwrap();
+    state.merge_damage.push((
+        slot,
+        crate::tick::DamagePiece {
+            physical: None,
+            custom_armor: false,
+            amount: f32::MAX,
+            kind: DamageKind::Void,
+            source: None,
+        },
+    ));
+    let (deaths, _, _, _) = state.commit_merge_effects();
+    assert_eq!(deaths, vec![player]);
+    assert_eq!(
+        state
+            .world
+            .block_at(death_cell.0, death_cell.1 - 1, death_cell.2),
+        Some(slab),
+        "a partial block is never replaced by the grave"
+    );
+    let grave_cell = (death_cell.0 - 1, death_cell.1, death_cell.2 - 1);
+    let barrel = state
+        .registry
+        .blocks
+        .by_id(mc_world::BlockStateId(
+            state
+                .world
+                .block_at(grave_cell.0, grave_cell.1, grave_cell.2)
+                .unwrap(),
+        ))
+        .unwrap();
+    assert_eq!(
+        barrel.block.id.path(),
+        "barrel",
+        "a cell standing on a partial block is not a grave cell"
+    );
+    assert_eq!(
+        state.block_entities[&grave_cell].slots[0],
+        mc_data::ItemStack::new(dirt, 7)
+    );
+}
+
+/// A hopper minecart sitting under the death cell is the same drain through a
+/// moving body: the cell has no solid ground, so the grave moves to the first
+/// ring cell that does, and the cart's own inventory stays empty while it tries.
+#[test]
+fn grave_placement_avoids_a_cell_a_hopper_minecart_occupies() {
+    use crate::survival::DamageKind;
+    let (mut state, player, pos) = flat_player_fixture();
+    state
+        .gamerules
+        .insert("keep_inventory".into(), "false".into());
+    grave_runtime(&mut state);
+    let death_cell = (
+        pos[0].floor() as i32,
+        pos[1].floor() as i32,
+        pos[2].floor() as i32,
+    );
+    // Open the ground under the death cell: a cart can only ever sit in a
+    // non-solid cell, which is exactly the ground the rule forbids.
+    state.world.set_block(
+        death_cell.0,
+        death_cell.1 - 1,
+        death_cell.2,
+        state.registry.states.air,
+    );
+    let cart = state
+        .registry
+        .entity_types
+        .id_of(&mc_data::Identifier::parse("minecraft:hopper_minecart").unwrap())
+        .unwrap();
+    let cart_entity = state.spawn_mob(
+        cart,
+        [
+            f64::from(death_cell.0) + 0.5,
+            f64::from(death_cell.1) - 1.0 + 0.0625,
+            f64::from(death_cell.2) + 0.5,
+        ],
+        4.0,
+    );
+    let cart_slot = state.entities.slot_of(cart_entity).unwrap();
+    let dirt = state
+        .registry
+        .items
+        .id_of(&mc_data::Identifier::parse("minecraft:dirt").unwrap())
+        .unwrap();
+    state.players.get_mut(&player).unwrap().inventory.slots[0] = mc_data::ItemStack::new(dirt, 7);
+    let slot = state.entities.slot_of(player).unwrap();
+    state.merge_damage.push((
+        slot,
+        crate::tick::DamagePiece {
+            physical: None,
+            custom_armor: false,
+            amount: f32::MAX,
+            kind: DamageKind::Void,
+            source: None,
+        },
+    ));
+    let (deaths, _, _, _) = state.commit_merge_effects();
+    assert_eq!(deaths, vec![player]);
+    let grave_cell = (death_cell.0 - 1, death_cell.1, death_cell.2 - 1);
+    let barrel = state
+        .registry
+        .blocks
+        .by_id(mc_world::BlockStateId(
+            state
+                .world
+                .block_at(grave_cell.0, grave_cell.1, grave_cell.2)
+                .unwrap(),
+        ))
+        .unwrap();
+    assert_eq!(
+        barrel.block.id.path(),
+        "barrel",
+        "a cell a hopper minecart could occupy is not a grave cell"
+    );
+    assert_eq!(
+        state.block_entities[&grave_cell].slots[0],
+        mc_data::ItemStack::new(dirt, 7)
+    );
+    for _ in 0..16 {
+        let mut intents = Vec::new();
+        let mut changes = crate::boundary::ChangeSet::default();
+        crate::vehicles::run(&mut state, &mut intents, &mut changes);
+    }
+    let cart_slots = &state
+        .entities
+        .row(cart_slot)
+        .entity_life
+        .vehicle
+        .as_ref()
+        .unwrap()
+        .slots;
+    assert!(
+        cart_slots.iter().all(mc_data::ItemStack::is_empty),
+        "the cart must not be able to pull the grave's items"
+    );
+    assert_eq!(
+        state.block_entities[&grave_cell].slots[0],
+        mc_data::ItemStack::new(dirt, 7)
+    );
+}
+
+#[test]
+fn same_tick_slot_swap_attack_uses_previous_tick_held_attributes() {
+    // MC-28289 at the tick level: SelectSlot + Attack in one input batch
+    // must resolve attack_damage from the pre-tick held stack.
+    use crate::boundary::ConnectionId;
+    use crate::boundary::PlayerInput;
+    let (mut state, player, pos) = flat_player_fixture();
+    state.tick = 20;
+    state.last_swing.insert(player, 0);
+    let actor_slot = state.entities.slot_of(player).unwrap();
+    state.entities.set_ground(actor_slot, true);
+    let sword = state
+        .registry
+        .items
+        .id_of(&mc_data::Identifier::parse("minecraft:wooden_sword").unwrap())
+        .unwrap();
+    let stick = state
+        .registry
+        .items
+        .id_of(&mc_data::Identifier::parse("minecraft:stick").unwrap())
+        .unwrap();
+    let actor = state.players.get_mut(&player).unwrap();
+    actor.inventory.slots[0] = mc_data::ItemStack::new(sword, 1);
+    actor.inventory.slots[1] = mc_data::ItemStack::new(stick, 1);
+    actor.inventory.selected = 0;
+    let zombie = state
+        .registry
+        .entity_types
+        .id_of(&mc_data::Identifier::parse("minecraft:zombie").unwrap())
+        .unwrap();
+    let victim = state.spawn_mob(zombie, [pos[0], pos[1], pos[2] + 1.5], 20.0);
+    state.day_time = 14_000;
+    // Prime the snapshot with one quiet tick (held = sword).
+    run_tick(&mut state, &[]);
+    // Same tick: swap to stick, then attack. Vanilla (oracle) hits with the
+    // sword's damage; without the snapshot this deals stick damage.
+    let (output, _, _) = run_tick(
+        &mut state,
+        &[
+            PlayerInput::SelectSlot {
+                connection: ConnectionId(1),
+                slot: 1,
+            },
+            PlayerInput::Attack {
+                connection: ConnectionId(1),
+                target: victim,
+            },
+        ],
+    );
+    let victim_slot = state.entities.slot_of(victim).unwrap();
+    let health = state.entities.row(victim_slot).health;
+    // Wooden sword full-strength vs zombie (armor 2): raw 5.0 mitigated to
+    // ~4.7; a stick would deal ~0.94. Assert well above stick range.
+    assert!(
+        health < 20.0 - 2.0,
+        "same-tick swap+attack must use pre-tick sword attributes, health={health}"
+    );
+    assert!(
+        output
+            .changes
+            .entity_events
+            .iter()
+            .any(|event| matches!(event, crate::boundary::EntityEvent::Damage { .. })),
+        "attack must land"
+    );
 }

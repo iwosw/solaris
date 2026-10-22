@@ -230,30 +230,41 @@ interface commands {
     /// One protected zone: the same box as `upsert-zone`, plus the one protection
     /// record that belongs to it.
     ///
-    /// The protection record names the one actor whose edits inside the box the
-    /// owner admits, whoever runs it; an operator of the server is admitted either
-    /// way. Naming nobody is not a way to build an unprotectable box - a zone the
-    /// owner cannot protect is refused, and a plugin that wants no protection sends
-    /// `upsert-zone` instead.
+    /// The protection record is an allow-list: the players (owner and trusted
+    /// members alike) whose actions inside the box the server admits, whoever
+    /// runs them; an operator of the server is admitted either way. For every
+    /// other actor the native owners refuse, inside the box: block edits and
+    /// block uses (including opening containers), ignition, entity interaction
+    /// and damage to every entity but hostile mobs. Explosions and fire never
+    /// destroy or spread into a protected box's blocks, whoever lit them.
+    /// `public-use` additionally admits everyone to doors, trapdoors, fence
+    /// gates, buttons and levers. Naming nobody is not a way to build an
+    /// unprotectable box - a zone the owner cannot protect is refused, and a
+    /// plugin that wants no protection sends `upsert-zone` instead.
     ///
     /// `zone`, `dimension`, `minimum` and `maximum` are `upsert-zone`'s own four
     /// fields under the bounds documented there, and the same `zones` capability
-    /// admits this command. The protection record is one player uuid of at most
-    /// `mc_script::MAX_SCRIPT_PLAYER_UUID_BYTES` (64) bytes, enforced by
-    /// `ScriptZoneProtection::try_actor_or_operator` when the host converts this
-    /// record: a value the server's validator cannot accept is refused as the
-    /// plugin's own malformed answer, never clamped and never replaced with a
-    /// default actor. The answer is `zone-command-answered`, as for `upsert-zone`.
+    /// admits this command. The allow-list is 1..`mc_script::MAX_SCRIPT_ZONE_ACTORS`
+    /// (32) player uuids of at most `mc_script::MAX_SCRIPT_PLAYER_UUID_BYTES` (64)
+    /// bytes each, enforced by `ScriptZoneProtection::try_new` when the host
+    /// converts this record: a value the server's validator cannot accept is
+    /// refused as the plugin's own malformed answer, never clamped, truncated or
+    /// replaced with a default actor. The answer is `zone-command-answered`, as
+    /// for `upsert-zone`.
     record upsert-protected-zone {
         /// The zone's id, 1..`mc_script::MAX_SCRIPT_ID_BYTES` (64) bytes.
         zone: string,
         /// The dimension the box lives in, 1..`mc_script::MAX_SCRIPT_RESOURCE_ID_BYTES`
         /// (128) bytes as a contract resource id.
         dimension: string,
-        /// The uuid of the one actor the owner admits inside the box, 1..64 bytes.
-        /// The owner normalizes it the way it normalizes every player uuid, so a
-        /// uuid the server accepts is the same actor however it is written.
-        allowed-actor-uuid: string,
+        /// The uuids of the actors the owner admits inside the box. The owner
+        /// normalizes each the way it normalizes every player uuid, so a uuid the
+        /// server accepts is the same actor however it is written; repeats
+        /// collapse.
+        allowed-actor-uuids: list<string>,
+        /// Whether non-listed players may still use doors, trapdoors, fence
+        /// gates, buttons and levers inside the box.
+        public-use: bool,
         /// The box's lower corner, with every coordinate inside the `position`
         /// bounds.
         minimum: position,

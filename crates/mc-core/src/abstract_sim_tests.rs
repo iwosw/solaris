@@ -556,7 +556,24 @@ fn crop_catch_up_missing_neighbour_hydration_or_light_does_not_grow() {
 fn crop_catch_up_dark_loaded_crop_does_not_grow() {
     let mut state = fixture(&[CHUNK]);
     let (young, _) = plant_crop(&mut state, 8);
-    state.day_time = 18000;
+    // Vanilla crops gate on undarkened light (`getRawBrightness(pos, 0)`), so
+    // night alone never stops an open-sky crop; sealing the crop and its
+    // farmland inside stone does (light also seeps in through open sides).
+    let wall = state.registry.states.stone;
+    for x in 6..=10 {
+        for y in 98..=102 {
+            for z in 6..=10 {
+                let inside = (7..=9).contains(&x)
+                    && (7..=9).contains(&z)
+                    && (y == 99 || (y == 100 && x == 8 && z == 8));
+                if !inside {
+                    state.world.set_block(x, y, z, wall);
+                }
+            }
+        }
+    }
+    state.world.fold_overlay();
+    assert!(state.raw_brightness(8, 100, 8) < 9);
     owe(&mut state, &[CHUNK], 200);
     step(&mut state);
     assert_eq!(state.world.block_at(8, 100, 8), Some(young));

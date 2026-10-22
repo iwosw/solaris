@@ -30,13 +30,24 @@ pub fn encode_chunk_packet(
     chunk: &Chunk,
     inputs: EncodeInputs<'_>,
 ) -> Result<LevelChunkWithLight, mc_world::wire::WireError> {
+    encode_chunk_packet_with_sections(pos, chunk, inputs, &[])
+}
+
+/// [`encode_chunk_packet`] with some block sections replaced on the wire
+/// (anti-xray's rock stand-ins; see [`mc_world::wire::encode_chunk_data_with_sections`]).
+pub fn encode_chunk_packet_with_sections(
+    pos: ChunkPos,
+    chunk: &Chunk,
+    inputs: EncodeInputs<'_>,
+    sections: &[Option<mc_world::ChunkSection>],
+) -> Result<LevelChunkWithLight, mc_world::wire::WireError> {
     let EncodeInputs {
         biomes,
         blocks,
         items,
         block_entity_types,
     } = inputs;
-    let data = mc_world::wire::encode_chunk_data(chunk, biomes, blocks)?;
+    let data = mc_world::wire::encode_chunk_data_with_sections(chunk, biomes, blocks, sections)?;
     let heightmaps: Vec<ChunkHeightmap> = mc_world::wire::client_heightmaps(chunk)
         .into_iter()
         .map(|h| ChunkHeightmap {

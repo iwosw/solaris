@@ -1293,12 +1293,6 @@ def _scenario(probe: ProbeSteps, detail: dict[str, Any], ctx: ProfileContext,
             break
         # engagement without a kill still proves soldiers fight: HP drop with
         # a soldier in reach counts as a weak pass.
-        for zu, hps in hp_seen.items():
-            if zu in alive and kill_evidence.get(zu, {}).get("soldier_within_4") and hps and (max(hps) - min(hps) > 0.5):
-                kill_evidence["engaged"] = zu
-                kill_evidence["hp_drop"] = max(hps) - min(hps)
-        if not (alive & zombie_uuids) and (zombie_uuids - alive):
-            kill_evidence["unexplained_clear"] = sorted(zombie_uuids - alive)
     after_combat_villagers = {str(r.get("entity_uuid")) for r in _villagers(probe)
                                 if str(r.get("entity_uuid")) not in recruited}
     detail["soldiers_after_combat"] = sorted(
@@ -1355,15 +1349,26 @@ def _scenario(probe: ProbeSteps, detail: dict[str, Any], ctx: ProfileContext,
                  "Guard here (all); lure skipped")
         detail["lure_skipped_no_live_soldiers"] = True
     else:
-        # Pin the lure to the zombie nearest the guard post at summon time:
-        # night strays from the main combat wander through the 128-block
-        # radius, and lz[0] can lock onto a bystander the soldiers never
-        # engage. The lure is the one summoned 5 blocks from the post.
+        # Tightened oracle: track ONE soldier UUID end-to-end (the live
+        # recruit nearest the post at order time). Summon the lure ~7
+        # blocks from the post (outside 2-block melee reach, inside the
+        # 12-block tether). Require: (a) that soldier's distance from post
+        # > 4 at some sample (left post toward the lure), (b) lure dies,
+        # (c) the SAME soldier back within 2.5 blocks of post.
         # Night is set HERE (not at combat aftermath): the lure needs
         # darkness to survive until the soldiers engage it.
+        tracked = min(sorted(live_adv),
+                      key=lambda u: next((math.dist((float(r["x"]), float(r["z"])),
+                                                    (adv_xyz[0], adv_xyz[2]))
+                                          for r in _villagers(probe)
+                                          if str(r.get("entity_uuid")) == u), 1e9))
+        detail["guard_tracked_soldier"] = tracked[:8]
+        tpost = next(((float(r["x"]), float(r["z"])) for r in _villagers(probe)
+                      if str(r.get("entity_uuid")) == tracked), (adv_xyz[0], adv_xyz[2]))
+        detail["guard_tracked_start"] = [round(tpost[0], 1), round(tpost[1], 1)]
         fixture("gamerule spawn_mobs true")
         fixture("time set 18000")
-        lure_xyz = (adv_xyz[0] + 3.0, adv_xyz[1], adv_xyz[2])
+        lure_xyz = (adv_xyz[0] + 7.0, adv_xyz[1], adv_xyz[2])
         fixture(f"summon minecraft:zombie {lure_xyz[0]:.1f} {lure_xyz[1]:.1f} {lure_xyz[2]:.1f}")
         settled("lure_summoned")
         lure_deadline = _time.monotonic() + 150.0
@@ -1371,6 +1376,8 @@ def _scenario(probe: ProbeSteps, detail: dict[str, Any], ctx: ProfileContext,
         lure_uuid: str | None = None
         lure_hp: list[float] = []
         lure_prox = False
+        left_post = False
+        left_post_max = 0.0
         while _time.monotonic() < lure_deadline:
             lz = _entities(probe, "minecraft:zombie")
             if lure_uuid is None and lz:
@@ -1392,44 +1399,43 @@ def _scenario(probe: ProbeSteps, detail: dict[str, Any], ctx: ProfileContext,
                     lure_hp.append(float(z["health"]))
                 zp = (float(z["x"]), float(z["y"]), float(z["z"]))
                 for r in _villagers(probe):
+                    if str(r.get("entity_uuid")) == tracked:
+                        dpost = math.dist((float(r["x"]), float(r["z"])), (adv_xyz[0], adv_xyz[2]))
+                        left_post_max = max(left_post_max, dpost)
+                        if dpost > 4.0:
+                            left_post = True
                     if str(r.get("entity_uuid")) in recruited:
                         if math.dist(zp, (float(r["x"]), float(r["y"]), float(r["z"]))) < 4.0:
                             lure_prox = True
                 detail["lure_hp_tail"] = lure_hp[-4:]
                 detail["lure_prox"] = lure_prox
+                detail["guard_tracked_left_post"] = left_post
+                detail["guard_tracked_max_dist"] = round(left_post_max, 2)
                 _tick(probe)
         if lure_uuid is None:
             _verdict(detail, "guard_returns_after_combat", "FAIL", "lure zombie never visible",
-                     "Guard here (all); summon zombie 5 blocks out")
+                     "Guard here (all); summon zombie 7 blocks out")
             raise RuntimeError("army-qa FAIL: guard_returns_after_combat (lure never visible)")
         back_ok = False
-        back_deadline = _time.monotonic() + 45.0
-        back_seen: dict[str, int] = {}
+        back_deadline = _time.monotonic() + 150.0
         while _time.monotonic() < back_deadline:
             _tick(probe)
-            ds = []
             for r in _villagers(probe):
-                u = str(r.get("entity_uuid"))
-                if u in recruited:
-                    back_seen[u] = back_seen.get(u, 0) + 1
-                    ds.append(math.dist((float(r["x"]), float(r["z"])), (adv_xyz[0], adv_xyz[2])))
-            if ds and sum(1 for d in ds if d < 8.0) >= 1:
-                back_ok = True
-                back_deadline = 0.0  # success: end window; verdict below
-        if not back_seen:
-            back_ok = False
-            detail["back_no_obs"] = "no recruited soldier observed during return window"
-        detail["back_seen_counts"] = back_seen
-        _verdict(detail, "guard_returns_after_combat", "PASS" if (lure_dead and back_ok) else "FAIL",
-                 f"lure_killed={lure_dead} back_to_post={back_ok} post={adv_xyz} seen={back_seen}",
-                 "Guard here (all); summon zombie 5 blocks out; wait kill; 120s return")
-        if not (lure_dead and back_ok):
+                if str(r.get("entity_uuid")) == tracked:
+                    if math.dist((float(r["x"]), float(r["z"])), (adv_xyz[0], adv_xyz[2])) < 2.5:
+                        back_ok = True
+                        back_deadline = 0.0
+                        break
+        detail["guard_tracked_back"] = back_ok
+        _verdict(detail, "guard_returns_after_combat", "PASS" if (lure_dead and left_post and back_ok) else "FAIL",
+                 f"tracked={tracked[:8]} left_post={left_post} max_dist={left_post_max:.1f} lure_killed={lure_dead} back={back_ok} post={adv_xyz}",
+                 "Guard here (all); summon zombie 7 blocks out; tracked soldier leaves post, lure dies, same soldier returns <2.5")
+        if not (lure_dead and left_post and back_ok):
             detail["continued_after_fail"] = True  # record S1 + continue for full evidence
             # raise RuntimeError("army-qa FAIL: guard_returns_after_combat")  # DEFERRED
     # Day is restored only after the lure resolves (night keeps the lure alive).
     fixture("time set 3000")
     # NB: `kill` targets players by name/UUID only, not arbitrary entities;
-    # use a UUID selector so the soldier entity itself dies.
     live_now = {str(r.get("entity_uuid")) for r in _villagers(probe)}
     doomed = next((u for u in recruited if u in live_now), None)
     if doomed is None:

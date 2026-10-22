@@ -1,7 +1,11 @@
 //! Village defense targets; friendly villagers and creepers are never attacked.
 use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 
-use crate::{boundary::EntityId, entities::EntityKind, tick::TickState};
+use crate::{
+    boundary::{ChunkPos, EntityId},
+    entities::EntityKind,
+    tick::TickState,
+};
 
 /// Reputation at or below which villagers treat a nearby player as hostile.
 const HOSTILE_REPUTATION: i32 = -100;
@@ -16,26 +20,9 @@ fn gossip_weight(kind: &str) -> i32 {
     }
 }
 
-pub(crate) fn targets(state: &TickState) -> Vec<(EntityId, [f64; 3])> {
-    let mut out = Vec::new();
-    for slot in state.entities.slots() {
-        let body = state.entities.body(slot);
-        if !body.alive {
-            continue;
-        }
-        let EntityKind::Mob { type_id } = body.kind else {
-            continue;
-        };
-        if state.registry.blueprint(type_id).is_some_and(|b| {
-            b.category == crate::blueprint::MobCategory::Monster && b.name != "minecraft:creeper"
-        }) {
-            out.push((body.id, state.entities.pos(slot)));
-        }
-    }
-    // Players a village turns on: a villager within 32 blocks whose gossip
-    // reputation toward them is hostile, or a golem they hit in the last
-    // 100 ticks. One pass over entities (never one pass per player); the
-    // result is set membership, so player order below stays `state.players`.
+pub(crate) fn targets(state: &mut TickState) -> Vec<(EntityId, [f64; 3])> {
+    // Keep the previous player order at publication, but obtain every candidate
+    // from indices that are maintained at spawn, removal and compaction.
     let mut eligible: HashMap<uuid::Uuid, (EntityId, [f64; 3])> = HashMap::default();
     let mut by_id: HashSet<EntityId> = HashSet::default();
     for (&player_id, player) in &state.players {
@@ -51,22 +38,80 @@ pub(crate) fn targets(state: &TickState) -> Vec<(EntityId, [f64; 3])> {
         );
         by_id.insert(player_id);
     }
+
+    {
+        let chunks = &mut state.villager_pois.defense_chunks;
+        chunks.clear();
+        for &(_, at) in eligible.values() {
+            let x = (at[0].floor() as i32).div_euclid(16);
+            let z = (at[2].floor() as i32).div_euclid(16);
+            for x in x - 2..=x + 2 {
+                for z in z - 2..=z + 2 {
+                    chunks.insert(ChunkPos { x, z });
+                }
+            }
+        }
+    }
+    {
+        let registry = &state.registry;
+        let slots = &mut state.villager_pois.defense_slots;
+        state.entities.mob_slots_matching_into(
+            |type_id| {
+                registry.blueprint(type_id).is_some_and(|blueprint| {
+                    (blueprint.category == crate::blueprint::MobCategory::Monster
+                        && blueprint.name != "minecraft:creeper")
+                        || blueprint.name == "minecraft:iron_golem"
+                })
+            },
+            slots,
+        );
+    }
+
+    let defense_slots = &state.villager_pois.defense_slots;
+    let mut out = Vec::new();
+    for &slot in defense_slots {
+        let body = state.entities.body(slot);
+        if !body.alive {
+            continue;
+        }
+        let EntityKind::Mob { type_id } = body.kind else {
+            continue;
+        };
+        if state.registry.blueprint(type_id).is_some_and(|blueprint| {
+            blueprint.category == crate::blueprint::MobCategory::Monster
+                && blueprint.name != "minecraft:creeper"
+        }) {
+            out.push((body.id, state.entities.pos(slot)));
+        }
+    }
+
     let mut hostile: HashSet<EntityId> = HashSet::default();
     if !eligible.is_empty() {
         let mut reputation: HashMap<uuid::Uuid, i32> = HashMap::default();
-        for slot in state.entities.slots() {
-            let body = state.entities.body(slot);
-            let row = state.entities.row(slot);
-            if !body.alive {
+        for chunk in &state.villager_pois.defense_chunks {
+            let Some(ids) = state.entities.villager_chunks().get(chunk) else {
                 continue;
-            }
-            if let Some(villager) = &row.villager
-                && villager.conversion_time.is_none()
-                && villager
-                    .gossips
-                    .iter()
-                    .any(|gossip| eligible.contains_key(&gossip.target))
-            {
+            };
+            for &id in ids {
+                let Some(slot) = state.entities.slot_of(id) else {
+                    continue;
+                };
+                let body = state.entities.body(slot);
+                let row = state.entities.row(slot);
+                if !body.alive {
+                    continue;
+                }
+                let Some(villager) = &row.villager else {
+                    continue;
+                };
+                if villager.conversion_time.is_some()
+                    || !villager
+                        .gossips
+                        .iter()
+                        .any(|gossip| eligible.contains_key(&gossip.target))
+                {
+                    continue;
+                }
                 reputation.clear();
                 for gossip in &villager.gossips {
                     if eligible.contains_key(&gossip.target) {
@@ -89,7 +134,12 @@ pub(crate) fn targets(state: &TickState) -> Vec<(EntityId, [f64; 3])> {
                     }
                 }
             }
-            if matches!(body.kind, EntityKind::Mob { type_id } if state.registry.blueprint(type_id).is_some_and(|b| b.name == "minecraft:iron_golem"))
+        }
+        for &slot in defense_slots {
+            let body = state.entities.body(slot);
+            let row = state.entities.row(slot);
+            if body.alive
+                && matches!(body.kind, EntityKind::Mob { type_id } if state.registry.blueprint(type_id).is_some_and(|b| b.name == "minecraft:iron_golem"))
                 && let Some((attacker, at)) = row.last_player_hit
                 && by_id.contains(&attacker)
                 && state.tick.saturating_sub(at) < 100

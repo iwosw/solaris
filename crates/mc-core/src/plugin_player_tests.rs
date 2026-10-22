@@ -291,7 +291,7 @@ async fn protected_zones_restore_and_enforce_owner_operator_and_dimension() {
         "minecraft:overworld",
         ScriptPosition::try_new(0.0, 0.0, 0.0).unwrap(),
         ScriptPosition::try_new(9.0, 100.0, 9.0).unwrap(),
-        Some(ScriptZoneProtection::try_actor_or_operator(&allowed).unwrap()),
+        Some(ScriptZoneProtection::try_new([&allowed], false).unwrap()),
     )
     .unwrap();
     let event = execute(
@@ -423,6 +423,116 @@ fn loader_ready_requires_live_session_and_is_discarded_on_leave() {
         },
     );
     assert!(!state.plugin_players.loader_ready.contains(&ConnectionId(1)));
+}
+
+#[tokio::test]
+async fn loader_ready_plugin_open_assigns_an_instance_and_emits_open_view() {
+    let (mut state, _) = fixture();
+    let one = NonZeroUsize::new(1).unwrap();
+    let (boundary, _endpoint) = mc_script::script_boundary_pair(one, one);
+    state.plugin_runtime = Some(crate::plugin::PluginRuntime::with_test_boundary(boundary));
+    note_loader_ready(&mut state, ConnectionId(1));
+    let request = mc_script::ScriptClientViewOpen::try_new(
+        "open",
+        ScriptPlayerId::new(1),
+        "shop:overview",
+        mc_script::ScriptClientViewModel::try_new(
+            0,
+            1,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            None,
+        )
+        .unwrap(),
+    )
+    .unwrap();
+
+    let event = execute(
+        &mut state,
+        admit("shop", ScriptCommand::OpenClientView { request }).await,
+    )
+    .expect("open produces an owner outcome");
+
+    assert!(matches!(
+        event.kind(),
+        ScriptEventKind::ClientViewOpened {
+            view_instance_id: Some(instance),
+            revision: Some(1),
+            failure: None,
+            ..
+        } if instance.starts_with("shop:overview/")
+    ));
+    let PlayerChange::PluginClientView { payload } = state.outbox[&ConnectionId(1)]
+        .iter()
+        .find(|change| matches!(change, PlayerChange::PluginClientView { .. }))
+        .expect("open view is queued for the negotiated session")
+    else {
+        unreachable!();
+    };
+    let message: serde_json::Value = serde_json::from_slice(payload).unwrap();
+    assert_eq!(message["message"], "open_view");
+    assert_eq!(message["view_id"], "shop:overview");
+    assert_eq!(message["revision"], 1);
+}
+
+#[test]
+fn native_settlements_overview_request_opens_the_settlement_dialog() {
+    let (mut state, entity) = fixture();
+    state.outbox.clear();
+    note_loader_ready(&mut state, ConnectionId(1));
+    let slot = state.entities.slot_of(entity).unwrap();
+    let position = state.entities.pos(slot);
+    state
+        .settlements
+        .create(
+            &mut state.settlement_sequence,
+            "oak".into(),
+            state
+                .connections
+                .uuid_of(ConnectionId(1))
+                .unwrap()
+                .to_string(),
+            [
+                position[0].floor() as i32,
+                position[1].floor() as i32,
+                position[2].floor() as i32,
+            ],
+            48,
+        )
+        .unwrap();
+
+    loader_view_request(
+        &mut state,
+        ConnectionId(1),
+        NATIVE_SETTLEMENTS_OWNER,
+        mc_script::ScriptClientViewKey::try_new(NATIVE_SETTLEMENTS_OVERVIEW).unwrap(),
+    );
+
+    assert!(
+        state.outbox[&ConnectionId(1)]
+            .iter()
+            .any(|change| matches!(change, PlayerChange::ShowDialog { .. }))
+    );
+}
+
+#[test]
+fn foreign_owner_cannot_open_the_native_settlements_overview() {
+    let (mut state, _) = fixture();
+    state.outbox.clear();
+    note_loader_ready(&mut state, ConnectionId(1));
+
+    loader_view_request(
+        &mut state,
+        ConnectionId(1),
+        "shop",
+        mc_script::ScriptClientViewKey::try_new(NATIVE_SETTLEMENTS_OVERVIEW).unwrap(),
+    );
+
+    assert!(state.outbox.get(&ConnectionId(1)).is_none_or(Vec::is_empty));
 }
 
 #[test]

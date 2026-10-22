@@ -18,7 +18,9 @@ pub(crate) fn target(command: &Command) -> Option<&Target> {
         | Command::ExperienceSet { target, .. }
         | Command::ExperienceQuery { target, .. }
         | Command::Advancement { target, .. }
-        | Command::Message { target, .. } => Some(target),
+        | Command::Message { target, .. }
+        | Command::TellRaw { target, .. }
+        | Command::Title { target, .. } => Some(target),
         Command::Enchant(command) => Some(&command.target),
         Command::World(crate::command_world::WorldCommand::SpawnPoint { target, .. }) => {
             Some(target)
@@ -39,7 +41,9 @@ fn target_mut(command: &mut Command) -> &mut Target {
         | Command::ExperienceSet { target, .. }
         | Command::ExperienceQuery { target, .. }
         | Command::Advancement { target, .. }
-        | Command::Message { target, .. } => target,
+        | Command::Message { target, .. }
+        | Command::TellRaw { target, .. }
+        | Command::Title { target, .. } => target,
         Command::Enchant(command) => &mut command.target,
         _ => unreachable!("target-bearing native command"),
     }
@@ -227,6 +231,13 @@ pub(crate) fn execute(
         );
         return Ok(());
     }
+    let title_action = match &request.command {
+        Command::Title { action, .. } => Some(action.clone()),
+        _ => None,
+    };
+    if let Some(action) = title_action {
+        return execute_title_global(state, request, changes, selected, action);
+    }
     for entity in selected {
         let (dimension, _) = locate(state, entity).expect("selected entity");
         *target_mut(&mut request.command) = Target::Entity(entity);
@@ -259,5 +270,117 @@ pub(crate) fn execute(
         }
         super::travel::sync_wire_ids(state);
     }
+    Ok(())
+}
+
+/// `/title` across dimensions: send each player's `TitleChange` in their own
+/// world (components resolve per player, as in `command_text::execute_title`),
+/// but emit the `multiple` feedback once with the TOTAL count instead of once
+/// per player the way the generic loop below would.
+#[allow(clippy::needless_pass_by_value)]
+fn execute_title_global(
+    state: &mut TickState,
+    request: Request,
+    changes: &mut BTreeMap<Dimension, ChangeSet>,
+    selected: Vec<EntityId>,
+    action: crate::command_text::TitleAction,
+) -> Result<(), String> {
+    use crate::boundary::{PlayerChange, TitleChange};
+    let total = selected.len();
+    for &entity in &selected {
+        let (dimension, _) = locate(state, entity).expect("selected entity");
+        let resolved = match &action {
+            crate::command_text::TitleAction::ShowTitle(component)
+            | crate::command_text::TitleAction::ShowSubtitle(component)
+            | crate::command_text::TitleAction::ShowActionBar(component) => {
+                let name = match world(state, dimension) {
+                    Some(world) => crate::command_text::resolve_component(world, entity, component)
+                        .map(Some)
+                        .unwrap_or_else(|message| {
+                            let executor_dimension =
+                                locate(state, request.executor).map(|(dimension, _)| dimension);
+                            let world = match executor_dimension {
+                                Some(dimension) if dimension == state.dimension => &mut *state,
+                                Some(dimension) => state
+                                    .other_dimensions
+                                    .get_mut(&dimension)
+                                    .expect("executor world"),
+                                None => &mut *state,
+                            };
+                            world.push_player(request.connection, PlayerChange::Chat { message });
+                            None
+                        }),
+                    None => None,
+                };
+                name.map(|tag| match &action {
+                    crate::command_text::TitleAction::ShowTitle(_) => TitleChange::Title(tag),
+                    crate::command_text::TitleAction::ShowSubtitle(_) => TitleChange::Subtitle(tag),
+                    _ => TitleChange::ActionBar(tag),
+                })
+            }
+            crate::command_text::TitleAction::Clear { reset_times } => Some(TitleChange::Clear {
+                reset_times: *reset_times,
+            }),
+            crate::command_text::TitleAction::Times {
+                fade_in,
+                stay,
+                fade_out,
+            } => Some(TitleChange::Times {
+                fade_in: *fade_in,
+                stay: *stay,
+                fade_out: *fade_out,
+            }),
+        };
+        if dimension == state.dimension {
+            if let Some(connection) = state.connections.entity_connection(entity) {
+                state.push_player(
+                    connection,
+                    PlayerChange::Title(resolved.expect("title change")),
+                );
+            }
+            commit(state, changes.entry(dimension).or_default());
+        } else {
+            let mut world = state
+                .other_dimensions
+                .remove(&dimension)
+                .expect("selected world");
+            super::runtime::swap_globals(state, &mut world);
+            if let Some(connection) = world.connections.entity_connection(entity) {
+                world.push_player(
+                    connection,
+                    PlayerChange::Title(resolved.expect("title change")),
+                );
+            }
+            let world_changes = changes.entry(dimension).or_default();
+            commit(&mut world, world_changes);
+            super::runtime::swap_globals(state, &mut world);
+            state.other_dimensions.insert(dimension, world);
+        }
+        super::travel::sync_wire_ids(state);
+    }
+    let executor_dimension = locate(state, request.executor).map(|(dimension, _)| dimension);
+    let label = if total == 1 {
+        let world = world(state, executor_dimension.unwrap_or(state.dimension)).unwrap_or(state);
+        crate::command_execution::entity_name(world, selected[0])
+    } else {
+        mc_nbt::Tag::Compound(vec![(
+            "text".into(),
+            mc_nbt::Tag::String(total.to_string()),
+        )])
+    };
+    let key = format!(
+        "commands.title.{}.{}",
+        action.feedback_kind(),
+        if total == 1 { "single" } else { "multiple" }
+    );
+    let world = match executor_dimension {
+        Some(dimension) if dimension == state.dimension => &mut *state,
+        Some(dimension) => state
+            .other_dimensions
+            .get_mut(&dimension)
+            .expect("executor world"),
+        None => &mut *state,
+    };
+    crate::command_execution::feedback(world, request.connection, &key, vec![label]);
     Ok(())
 }

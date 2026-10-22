@@ -554,6 +554,10 @@ pub(crate) struct PluginRuntime {
     sessions: Arc<Sessions>,
     roots: BTreeMap<String, PathBuf>,
     commands: Arc<[(String, u8)]>,
+    /// The one package whose manifest declared `death_graves`, when a deployment
+    /// did. The native death path reads it every death, so it is resolved once at
+    /// startup and never per tick.
+    pub(crate) death_graves: Option<String>,
     catalogs: crate::plugin_structures::Catalogs,
     pub(crate) stats: Arc<PluginStats>,
     pending_changes: Vec<(crate::boundary::ConnectionId, crate::boundary::PlayerChange)>,
@@ -567,6 +571,32 @@ pub(crate) struct PluginRuntime {
     pending_build_commands: usize,
     written_clock: Option<u64>,
     delivery_failed: bool,
+}
+
+/// The one package whose deployment declared native death-grave custody.
+///
+/// Two packages declaring it would be two owners of one death's drops, so the
+/// deployment is refused instead of picking one.
+fn death_graves_owner(
+    packages: &[mc_plugin_host::LoadedPackage],
+) -> Result<Option<String>, CoreError> {
+    let mut owner: Option<String> = None;
+    for package in packages {
+        if !package
+            .requested_capabilities()
+            .iter()
+            .any(|capability| capability == "death_graves")
+        {
+            continue;
+        }
+        if owner.is_some() {
+            return Err(CoreError::Plugin(
+                "more than one package declares the death_graves capability".into(),
+            ));
+        }
+        owner = Some(package.manifest().plugin_id().to_owned());
+    }
+    Ok(owner)
 }
 
 impl PluginRuntime {
@@ -586,6 +616,7 @@ impl PluginRuntime {
             .iter()
             .map(|p| (p.manifest().plugin_id().into(), p.root().to_owned()))
             .collect();
+        let death_graves = death_graves_owner(&packages)?;
         let sessions = Arc::new(Sessions::default());
         let queues = mc_plugin_host::host::HostQueues {
             defer_initial_timer_clock: true,
@@ -607,6 +638,7 @@ impl PluginRuntime {
             sessions,
             roots,
             commands,
+            death_graves,
             stats: Arc::new(PluginStats::default()),
             pending_changes: Vec::new(),
             pending_traces: Vec::new(),
@@ -633,6 +665,7 @@ impl PluginRuntime {
             sessions: Arc::new(Sessions::default()),
             roots: BTreeMap::new(),
             commands,
+            death_graves: None,
             catalogs: Default::default(),
             stats: Arc::new(PluginStats::default()),
             pending_changes: Vec::new(),
@@ -695,6 +728,20 @@ impl PluginRuntime {
                 && bundle
                     .permissions()
                     .contains(&mc_script::ClientPermission::PlaySounds)
+        })
+    }
+
+    pub(crate) fn client_view_allowed(&self, owner: &str) -> bool {
+        self.host.as_ref().is_none_or(|host| {
+            host.client_bundles().iter().any(|bundle| {
+                bundle.owner_plugin_id() == owner
+                    && bundle
+                        .content()
+                        .contains(&mc_script::ClientContentKind::Views)
+                    && bundle
+                        .permissions()
+                        .contains(&mc_script::ClientPermission::PresentViews)
+            })
         })
     }
 
@@ -1452,10 +1499,11 @@ fn prepare_world_block_set(
     })
 }
 
-fn apply_world_block_set(state: &mut TickState, plan: &PreparedWorldBlockSet) {
+fn apply_world_block_set(state: &mut TickState, plan: &PreparedWorldBlockSet, plugin: &str) {
     let target = crate::plugin_inventories::world_mut(state, plan.dimension.name())
         .expect("preflight dimension");
     let position = plan.position;
+    crate::block_log::note_plugin(target, position, plugin);
     target.stage_command_container_removal(position);
     target
         .world
@@ -1491,7 +1539,7 @@ fn execute_world_block_set(
         .boundary
         .has_precommit_hooks(mc_script::precommit::HookKind::Build)
     {
-        apply_world_block_set(state, &plan);
+        apply_world_block_set(state, &plan, admitted.plugin_id());
         return admitted.world_block_set_result(true, None).ok();
     }
     if runtime.pending_build_commands >= mc_script::precommit::MAX_PRECOMMIT_REQUESTS {
@@ -1556,7 +1604,7 @@ fn poll_world_block_sets(state: &mut TickState) {
                 Ok(current) if current == build.plan => {
                     match crate::build_precommit::consume_approval(state, &mut approval) {
                         Ok(()) => {
-                            apply_world_block_set(state, &build.plan);
+                            apply_world_block_set(state, &build.plan, owner);
                             None
                         }
                         Err(failure) => Some(hook_block_set_failure(failure)),
@@ -2244,6 +2292,46 @@ pub(crate) fn player_died(state: &mut TickState, entity: crate::boundary::Entity
             context,
             state.dimension.name(),
             game_mode(state, entity)?,
+        )
+        .ok()
+    })();
+    enqueue_result(state, event);
+}
+
+/// Publish one native grave to the package that declared `death_graves`.
+///
+/// The observation is addressed to that package and rides the durable event
+/// queue rather than the droppable observation queue: a shed notice would leave a
+/// protected-for-nobody grave behind.
+pub(crate) fn player_grave_created(
+    state: &mut TickState,
+    entity: crate::boundary::EntityId,
+    grave: &crate::plugin_graves::Buried,
+) {
+    let Some(owner) = state
+        .plugin_runtime
+        .as_ref()
+        .and_then(|runtime| runtime.death_graves.clone())
+    else {
+        return;
+    };
+    let event = (|| {
+        let connection = state.connections.entity_connection(entity)?;
+        let context = player_context(
+            state,
+            connection,
+            state.plugin_players.is_operator(connection),
+        )?;
+        mc_script::ScriptEvent::try_player_grave_created_with_context(
+            owner,
+            mc_script::ScriptPlayerId::new(connection.0),
+            context,
+            &grave.dimension,
+            grave.position.x,
+            grave.position.y,
+            grave.position.z,
+            grave.items,
+            grave.spilled,
         )
         .ok()
     })();

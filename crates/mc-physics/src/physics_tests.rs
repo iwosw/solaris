@@ -745,6 +745,44 @@ impl BlockSampler for DenseCollisionWorld {
     }
 }
 
+struct RandomCollisionWorld(u64);
+
+impl BlockSampler for RandomCollisionWorld {
+    fn material_at(&self, _x: i32, _y: i32, _z: i32) -> BlockMaterial {
+        BlockMaterial::Air
+    }
+
+    fn collision_boxes_at(&self, x: i32, y: i32, z: i32, emit: &mut dyn FnMut(BlockCollisionBox)) {
+        let bits = u64::from(x as u32).wrapping_mul(0x9E37_79B9)
+            ^ u64::from(y as u32).wrapping_mul(0x85EB_CA6B)
+            ^ u64::from(z as u32).wrapping_mul(0xC2B2_AE35)
+            ^ self.0;
+        if bits
+            .wrapping_mul(0xD6E8_FEB8_6659_FD93)
+            .rotate_left(17)
+            .is_multiple_of(5)
+        {
+            emit(BlockCollisionBox::FULL_BLOCK);
+        }
+    }
+}
+
+struct Lcg(u64);
+
+impl Lcg {
+    fn unit(&mut self) -> f64 {
+        self.0 = self
+            .0
+            .wrapping_mul(6_364_136_223_846_793_005)
+            .wrapping_add(1);
+        (self.0 >> 11) as f64 / (1_u64 << 53) as f64
+    }
+
+    fn between(&mut self, min: f64, max: f64) -> f64 {
+        min + (max - min) * self.unit()
+    }
+}
+
 fn unit_tick_config() -> PhysicsConfig {
     PhysicsConfig {
         tick_seconds: 1.0,
@@ -1135,6 +1173,81 @@ fn collision_candidate_collection_stops_at_its_cap() {
     assert_eq!(result.body.position, body.position);
     assert_eq!(result.body.velocity, Vec3::ZERO);
     assert!(world.emitted.get() <= 8_192 + 1_024);
+}
+
+#[test]
+fn collision_axis_sweep_matches_volume_scan_on_random_worlds_aabbs_and_motions() {
+    let mut rng = Lcg(0xDDA2_6074_3BAD_F00D);
+    for case in 0..2_048 {
+        let world = RandomCollisionWorld(rng.0);
+        let body = WorldAabb {
+            min_x: rng.between(-8.0, 8.0),
+            min_y: rng.between(56.0, 72.0),
+            min_z: rng.between(-8.0, 8.0),
+            max_x: 0.0,
+            max_y: 0.0,
+            max_z: 0.0,
+        };
+        let body = WorldAabb {
+            max_x: body.min_x + rng.between(0.05, 2.0),
+            max_y: body.min_y + rng.between(0.05, 3.0),
+            max_z: body.min_z + rng.between(0.05, 2.0),
+            ..body
+        };
+        let desired = Vec3::new(
+            rng.between(-4.0, 4.0),
+            rng.between(-4.0, 4.0),
+            rng.between(-4.0, 4.0),
+        );
+        let step_height = rng.between(0.0, 1.0);
+        let mut swept = SmallVec::new();
+        let mut volume = SmallVec::new();
+        assert_eq!(
+            collision_boxes_for_motion(&world, body, desired, step_height, &mut swept),
+            collision_boxes_for_motion_volume_scan(&world, body, desired, step_height, &mut volume),
+            "candidate admission differs for case {case}"
+        );
+        let sweep = resolve_movement(body, desired, &swept, case & 1 == 0, step_height);
+        let legacy = resolve_movement(body, desired, &volume, case & 1 == 0, step_height);
+        assert_eq!(
+            (
+                sweep.delta.x.to_bits(),
+                sweep.delta.y.to_bits(),
+                sweep.delta.z.to_bits(),
+                sweep.grounded,
+                sweep.stepped,
+                sweep.collided,
+            ),
+            (
+                legacy.delta.x.to_bits(),
+                legacy.delta.y.to_bits(),
+                legacy.delta.z.to_bits(),
+                legacy.grounded,
+                legacy.stepped,
+                legacy.collided,
+            ),
+            "movement differs for case {case}: body={body:?}, desired={desired:?}"
+        );
+        let sweep = resolve_until_first_impact(body, desired, &swept);
+        let legacy = resolve_until_first_impact(body, desired, &volume);
+        assert_eq!(
+            (
+                sweep.delta.x.to_bits(),
+                sweep.delta.y.to_bits(),
+                sweep.delta.z.to_bits(),
+                sweep.grounded,
+                sweep.collided,
+            ),
+            (
+                legacy.delta.x.to_bits(),
+                legacy.delta.y.to_bits(),
+                legacy.delta.z.to_bits(),
+                legacy.grounded,
+                legacy.collided,
+            ),
+            "first impact differs for case {case}: body={body:?}, desired={desired:?}"
+        );
+    }
 }
 
 #[test]

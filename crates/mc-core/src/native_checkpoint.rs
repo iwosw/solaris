@@ -345,7 +345,7 @@ pub(crate) fn hydrate_visited_entity(
             && words.len() == 4
         {
             let mut bytes = [0; 16];
-            for (bytes, word) in bytes.chunks_exact_mut(4).zip(words) {
+            for (bytes, word) in bytes.as_chunks_mut::<4>().0.iter_mut().zip(words) {
                 bytes.copy_from_slice(&word.to_be_bytes());
             }
             if bytes != entity.identity {
@@ -380,7 +380,7 @@ pub(crate) fn hydrate_visited_entity(
         let uuid = match field("UUID") {
             Some(Tag::IntArray(words)) if words.len() == 4 => {
                 let mut bytes = [0; 16];
-                for (bytes, word) in bytes.chunks_exact_mut(4).zip(words) {
+                for (bytes, word) in bytes.as_chunks_mut::<4>().0.iter_mut().zip(words) {
                     bytes.copy_from_slice(&word.to_be_bytes());
                 }
                 uuid::Uuid::from_bytes(bytes).to_string()
@@ -432,6 +432,11 @@ pub(crate) fn recover_with_reader(
         "scoreboard",
     )?)
     .map_err(CoreError::Storage)?;
+    let bossbars = crate::bossbar::BossBars::from_nbt(&decode_tag(
+        &checkpoint.globals["bossbars"],
+        "bossbars",
+    )?)
+    .map_err(CoreError::Storage)?;
     let mut dimensions = BTreeMap::new();
     let mut players = BTreeMap::new();
     for player in &checkpoint.players {
@@ -453,6 +458,7 @@ pub(crate) fn recover_with_reader(
             tick: manifest.tick,
             players: players.clone(),
             scoreboard: Some(scoreboard.clone()),
+            bossbars: Some(bossbars.to_bytes()),
             raids: image.raids.clone(),
             end_fight: image.end_fight.clone(),
             wandering_trader: image.wandering_trader,
@@ -490,6 +496,12 @@ pub(crate) fn recover_with_reader(
             replay.plugins.validate()?;
         }
         dimensions.insert(dimension, replay);
+    }
+    // Checkpointed block-log rows precede the WAL-tail deltas folded below.
+    for (dimension, rows) in crate::block_log::load(&reader, &registry.blocks, &registry.items)? {
+        if let Some(replay) = dimensions.get_mut(&dimension) {
+            replay.block_log.push(rows);
+        }
     }
     reader
         .visit_entities(|mut entity| {
@@ -579,6 +591,7 @@ pub(crate) fn recover_with_reader(
         player.warden_warning.freeze_at_tick(recovered_tick);
     }
     let scoreboard = root.scoreboard.clone();
+    let bossbars = root.bossbars.clone();
     let climate = root.climate;
     let difficulty = root.difficulty;
     let gamerules = root.gamerules.clone();
@@ -587,6 +600,7 @@ pub(crate) fn recover_with_reader(
     for replay in dimensions.values_mut() {
         replay.players = players.clone();
         replay.scoreboard = scoreboard.clone();
+        replay.bossbars = bossbars.clone();
         replay.climate = climate;
         replay.difficulty = difficulty;
         replay.gamerules = gamerules.clone();
@@ -838,6 +852,17 @@ pub(crate) fn encode_checkpoint(
                 .as_ref()
                 .expect("required scoreboard")
                 .to_nbt(),
+        )?,
+    );
+    globals.insert(
+        "bossbars".into(),
+        tag_record(
+            tick,
+            &crate::bossbar::BossBars::from_bytes(
+                root.bossbars.as_ref().expect("required bossbars"),
+            )
+            .map_err(CoreError::Storage)?
+            .to_nbt(),
         )?,
     );
     refresh_metadata(&mut globals, &manifest)?;

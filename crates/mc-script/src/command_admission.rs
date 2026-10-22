@@ -125,7 +125,7 @@ impl HostAdmissionLedger {
         let first =
             match self
                 .next_nonce
-                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |value| {
+                .try_update(Ordering::Relaxed, Ordering::Relaxed, |value| {
                     value.checked_add(count)
                 }) {
                 Ok(first) => first,

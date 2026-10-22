@@ -11,6 +11,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use arc_swap::ArcSwap;
 
+use crate::command_permissions::ScriptCommandPermissions;
 use crate::manifest::ValidatedScriptPluginManifest;
 use crate::{MAX_PLAYER_COMMAND_ROOTS, MAX_PLUGIN_PAYLOAD_CHANNELS, precommit};
 
@@ -35,11 +36,20 @@ pub enum ScriptRouteRegistrationError {
         requested: usize,
     },
     AuthorityPoisoned,
+    DuplicatePermissionProvider {
+        plugin_id: String,
+    },
 }
 
 #[derive(Debug, Clone)]
 struct PluginRouteAuthority {
     routes: Arc<ArcSwap<PluginRouteTable>>,
+    /// The published cross-plugin command-permission table.
+    ///
+    /// It is shared by every clone of this authority because command admission
+    /// reads it on the tick thread while the provider publishes from the host
+    /// thread.
+    permissions: Arc<ScriptCommandPermissions>,
     writer: Arc<StdMutex<()>>,
     disabled: Arc<AtomicBool>,
     /// The next live-registration generation this authority hands out.
@@ -51,10 +61,11 @@ struct PluginRouteAuthority {
     next_registration: Arc<AtomicU64>,
 }
 
-impl Default for PluginRouteAuthority {
-    fn default() -> Self {
+impl PluginRouteAuthority {
+    fn new() -> Self {
         Self {
             routes: Arc::new(ArcSwap::from_pointee(PluginRouteTable::default())),
+            permissions: Arc::default(),
             writer: Arc::default(),
             disabled: Arc::default(),
             next_registration: Arc::new(AtomicU64::new(1)),
@@ -104,6 +115,8 @@ impl precommit::SourceRegistration for PluginSourceFence {
 struct PluginCommandOwner {
     plugin_id: String,
     operator_only: bool,
+    /// The permission node a provider must grant before this root is admitted.
+    permission: Option<String>,
 }
 
 impl PluginRouteAuthority {
@@ -163,6 +176,16 @@ impl PluginRouteAuthority {
             return Err(ScriptRouteRegistrationError::AuthorityPoisoned);
         }
         let _writer = self.lock_writer()?;
+        if manifest.is_permission_provider()
+            && self
+                .permissions
+                .provider()
+                .is_some_and(|provider| provider != manifest.plugin_id())
+        {
+            return Err(ScriptRouteRegistrationError::DuplicatePermissionProvider {
+                plugin_id: manifest.plugin_id().to_owned(),
+            });
+        }
         let mut routes = (**self.routes.load()).clone();
         let channels = manifest.custom_payload_channels();
         let requested_roots = manifest
@@ -217,6 +240,7 @@ impl PluginRouteAuthority {
                 PluginCommandOwner {
                     plugin_id: manifest.plugin_id().to_owned(),
                     operator_only: false,
+                    permission: manifest.command_permissions().get(root).cloned(),
                 },
             );
         }
@@ -226,8 +250,12 @@ impl PluginRouteAuthority {
                 PluginCommandOwner {
                     plugin_id: manifest.plugin_id().to_owned(),
                     operator_only: true,
+                    permission: manifest.command_permissions().get(root).cloned(),
                 },
             );
+        }
+        if manifest.is_permission_provider() {
+            self.permissions.set_provider(Some(manifest.plugin_id()));
         }
         for channel in channels {
             routes
@@ -291,6 +319,9 @@ impl PluginRouteAuthority {
             .payload_channels
             .retain(|_, owner| owner.as_str() != plugin_id);
         routes.registrations.remove(plugin_id);
+        if self.permissions.provider().as_deref() == Some(plugin_id) {
+            self.permissions.set_provider(None);
+        }
         self.routes.store(Arc::new(routes));
     }
 
@@ -326,6 +357,15 @@ impl PluginRouteAuthority {
                 requested: requested_channels,
             });
         }
+        if let Some(second) = manifests
+            .iter()
+            .filter(|manifest| manifest.is_permission_provider())
+            .nth(1)
+        {
+            return Err(ScriptRouteRegistrationError::DuplicatePermissionProvider {
+                plugin_id: second.plugin_id().to_owned(),
+            });
+        }
         for manifest in manifests {
             for (root, operator_only) in manifest
                 .player_command_roots()
@@ -343,6 +383,7 @@ impl PluginRouteAuthority {
                     PluginCommandOwner {
                         plugin_id: manifest.plugin_id().to_owned(),
                         operator_only,
+                        permission: manifest.command_permissions().get(root).cloned(),
                     },
                 ) {
                     return Err(ScriptRouteRegistrationError::RootConflict {
@@ -381,6 +422,13 @@ impl PluginRouteAuthority {
         }
         let _writer = self.lock_writer()?;
         self.routes.store(Arc::new(replacement));
+        // A replacement is the deployment's whole authority: the provider slot
+        // follows the new manifest set instead of a package that is gone.
+        let provider = manifests
+            .iter()
+            .find(|manifest| manifest.is_permission_provider())
+            .map(|manifest| manifest.plugin_id());
+        self.permissions.set_provider(provider);
         Ok(())
     }
 
@@ -852,6 +900,15 @@ impl ScriptBoundary {
         self.plugin_routes.roots(false)
     }
 
+    /// The command-permission table this boundary shares with its host.
+    ///
+    /// Handed to the deployed permission provider so its publication is the same
+    /// authority command admission reads.
+    #[must_use]
+    pub fn command_permissions(&self) -> Arc<ScriptCommandPermissions> {
+        Arc::clone(&self.plugin_routes.permissions)
+    }
+
     /// Return a sorted snapshot of active operator-only plugin command roots.
     pub fn operator_command_roots(&self) -> Vec<String> {
         self.plugin_routes.roots(true)
@@ -875,6 +932,14 @@ impl ScriptBoundary {
             return Ok(crate::PreparedPlayerCommand::NotOwned);
         };
         if owner.operator_only && !context.operator() {
+            return Ok(crate::PreparedPlayerCommand::PermissionDenied);
+        }
+        // A declared node is a requirement only while a permission provider is
+        // deployed: without one nobody can answer, and refusing every gated root
+        // would silently disable a package the operator did deploy.
+        if let Some(node) = &owner.permission
+            && !self.plugin_routes.permissions.allows(context.uuid(), node)
+        {
             return Ok(crate::PreparedPlayerCommand::PermissionDenied);
         };
         let event = match ScriptEvent::try_player_command_with_context(
@@ -1011,6 +1076,12 @@ pub struct ScriptHostEndpoint {
 }
 
 impl ScriptHostEndpoint {
+    /// The command-permission table this host shares with its boundary.
+    #[must_use]
+    pub fn command_permissions(&self) -> Arc<ScriptCommandPermissions> {
+        Arc::clone(&self.plugin_routes.permissions)
+    }
+
     /// Poison the route authority the way a panic under its lock would.
     #[cfg(test)]
     pub(super) fn poison_plugin_routes_for_test(&self) {
@@ -1448,7 +1519,7 @@ pub fn script_boundary_pair(
         .min(MAX_SCRIPT_COMMAND_QUEUE_CAPACITY);
     let (event_tx, event_rx) = mpsc::channel(event_capacity);
     let (command_tx, command_rx) = mpsc::channel(command_capacity);
-    let plugin_routes = PluginRouteAuthority::default();
+    let plugin_routes = PluginRouteAuthority::new();
     let host_admissions = Arc::new(HostAdmissionLedger::default());
     let coalesced_server_tick = Arc::new(StdMutex::new(CoalescedServerTick::default()));
     let observations = Arc::new(StdMutex::new(ObservationQueues::default()));

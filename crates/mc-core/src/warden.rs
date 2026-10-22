@@ -368,7 +368,7 @@ pub(crate) fn read_anger(tag: Option<&Tag>) -> Result<Warden, crate::config::Cor
             return Err(fail("suspects.uuid: expected four UUID words"));
         }
         let mut bytes = [0u8; 16];
-        for (out, word) in bytes.chunks_exact_mut(4).zip(words) {
+        for (out, word) in bytes.as_chunks_mut::<4>().0.iter_mut().zip(words) {
             out.copy_from_slice(&word.to_be_bytes());
         }
         let Some(Tag::Int(anger)) = unique(fields, "anger").map_err(|err| fail(&err))? else {

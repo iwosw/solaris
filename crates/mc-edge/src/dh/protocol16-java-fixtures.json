@@ -1,0 +1,25 @@
+{
+  "provenance": {
+    "endpoint": "DH 3.3.3 / Minecraft 26.1.2 / protocol 16",
+    "core_revision": "b02c66d778beea11a931291815d652cd8abaa7ad",
+    "jar_url": "https://cdn.modrinth.com/data/uCdwusMi/versions/QHxoccsN/DistantHorizons-3.3.3-26.1.2-fabric-neoforge.jar",
+    "jar_sha512": "c008cca63283fababf354ddc88bf76318aeea760da83cd1a491d024c369dd79b8c76fa586b05d8f001908ae7155f1e05a350e41d0476d6336bf3f9ac8a96129a",
+    "method": "Independently authored local driver supplies hand-authored bodies to unchanged upstream MessageRegistry and message decoders, asserts full consumption, then serializes via upstream message encoders with ModInfo.PROTOCOL_VERSION and MessageRegistry.getMessageId. Rust independently checks both decode semantics and encoded equality.",
+    "scope": "Serializer oracle only, not a Minecraft loader/client or graphical gate. Trackable fixture instances use allocateInstance to bypass the live-world-only constructor guard; all wire fields are populated by the actual decoder. No upstream source is copied or distributed.",
+    "local_receipts": ".analysis/DHCompat/oracle/{DhOracle.java,javac.log,java.log}"
+  },
+  "server_chunk_client_surface_plan": 2,
+  "frames": {
+    "close": "001000010003627965",
+    "level_init": "0010000200136d696e6563726166743a6f766572776f726c64000373727600036c766c00000000000004d2",
+    "request_init": "0010000300146d696e6563726166743a7468655f6e6574686572",
+    "config": "0010000402000000800000000affffffec00000080000000020100000008010000004000000002000001f4",
+    "cancel_high_bit": "0010000580000001",
+    "exception": "001000060000000700000003000a746f6f20636f61727365",
+    "request_timestamp": "001000078000000100036c766cffffffefffffff060100000000000004d2",
+    "request_no_timestamp": "001000078000000100036c766cffffffefffffff0600",
+    "response": "0010000880000001010000000700000000",
+    "update": "0010000900036c766c0000000700000000",
+    "split": "0010000a000000070000000341424301"
+  }
+}

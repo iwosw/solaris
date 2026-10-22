@@ -265,7 +265,7 @@ fn statistics_damage_absorption_resistance_death_and_breakage() {
     player.fall(0.0, true, false);
     assert_eq!(player.statistics.get_custom(CustomStat::FallOneCm), 350);
     player.statistics.set_custom(CustomStat::TimeSinceDeath, 50);
-    player.die(&rules, true);
+    player.die(&rules, true, false);
     assert_eq!(player.statistics.get_custom(CustomStat::Deaths), 1);
     assert_eq!(player.statistics.get_custom(CustomStat::TimeSinceDeath), 0);
     player.inventory.slots[0] = mc_data::ItemStack::new(pick, 1);

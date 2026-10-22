@@ -1,0 +1,23 @@
+{
+  "id": "diagonal-speed",
+  "description": "MC-271065: vanilla client sprint-diagonal speed is sqrt(2) x straight; server must accept it",
+  "setup": {
+    "platform": "fill -30 63 -30 30 63 30 stone; fill -30 64 -30 30 70 30 air",
+    "player_tp": "tp {name} 0.5 64.0 0.5 0 0",
+    "items": [
+      "clear {name}",
+      "gamemode survival {name}",
+      "time set day",
+      "difficulty peaceful"
+    ]
+  },
+  "trajectories": [
+    "straight",
+    "diagonal",
+    "diagonal_fast10"
+  ],
+  "tolerance": {
+    "kind": "correction_parity",
+    "rule": "Solaris sends no corrections on any trajectory vanilla accepts without corrections; Solaris correction count on the +10% control must be >= vanilla's (not materially stricter: Solaris must not correct straight/diagonal when vanilla corrects neither)"
+  }
+}

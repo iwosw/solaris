@@ -2,6 +2,7 @@ use super::*;
 use crate::boundary::ChunkPos;
 use crate::journal::{Replay, replay_batches};
 use crate::tick::run_tick;
+use std::time::Instant;
 
 struct Empty(u32);
 impl mc_world::ChunkGenerator for Empty {
@@ -63,7 +64,14 @@ fn locked_session_stages_no_blast_damage_or_knockback() {
     state.require_plugin_login = true;
     state.locked_sessions.insert(ConnectionId(7));
     let health = state.players[&player].vitals.health;
-    crate::explosion::apply(&mut state, None, [0.5, 201.0, 0.5], 4.0, true, None);
+    crate::explosion::apply(
+        &mut state,
+        None,
+        [0.5, 201.0, 0.5],
+        4.0,
+        Some(crate::command_rules::MobGrief::Other),
+        None,
+    );
     assert!(
         state.merge_damage.is_empty(),
         "locked player stages no blast damage"
@@ -74,7 +82,14 @@ fn locked_session_stages_no_blast_damage_or_knockback() {
     assert_eq!(state.entities.vel(slot), [0.0; 3]);
     // Same blast hurts once unlocked: fence is the lock, not the blast.
     state.locked_sessions.remove(&ConnectionId(7));
-    crate::explosion::apply(&mut state, None, [0.5, 201.0, 0.5], 4.0, true, None);
+    crate::explosion::apply(
+        &mut state,
+        None,
+        [0.5, 201.0, 0.5],
+        4.0,
+        Some(crate::command_rules::MobGrief::Other),
+        None,
+    );
     assert!(!state.merge_damage.is_empty());
 }
 
@@ -214,6 +229,72 @@ fn finite_blast_stock_expires_once_per_tick_with_1024_husks() {
     assert!(output.changes.explosions.is_empty());
 }
 
+fn perf_husks(state: &mut TickState) {
+    let husk = state
+        .registry
+        .entity_types
+        .id_of(&mc_data::Identifier::parse("minecraft:husk").expect("husk id"))
+        .expect("husk type");
+    for n in 0..64 {
+        state.spawn_mob(
+            husk,
+            [f64::from(n % 8) - 3.5, 201.0, f64::from(n / 8) - 3.5],
+            20.0,
+        );
+    }
+}
+
+#[test]
+#[ignore = "manual release perf scenario"]
+fn perf_thousand_tnt_stack() {
+    let mut state = fixture();
+    perf_husks(&mut state);
+    for _ in 0..1_000 {
+        let id = prime_at(&mut state, [0.5, 203.0, 0.5], 1).expect("prime TNT");
+        let slot = state.entities.slot_of(id).expect("TNT slot");
+        state.entities.set_vel(slot, [0.0; 3]);
+    }
+
+    let started = Instant::now();
+    let (output, _, _) = run_tick(&mut state, &[]);
+    eprintln!(
+        "tnt-perf scenario=stack-1000 explosions={} elapsed_ms={:.3}",
+        output.changes.explosions.len(),
+        started.elapsed().as_secs_f64() * 1_000.0
+    );
+    assert_eq!(output.changes.explosions.len(), 1_000);
+}
+
+#[test]
+#[ignore = "manual release perf scenario"]
+fn perf_thousand_tnt_cannon() {
+    let mut state = fixture();
+    perf_husks(&mut state);
+    for n in 0..1_000 {
+        let id = prime_at(
+            &mut state,
+            [
+                f64::from(n % 100) * 0.25 - 12.0,
+                203.0 + f64::from((n / 100) % 10) * 0.25,
+                f64::from(n / 1_000) * 0.25,
+            ],
+            1,
+        )
+        .expect("prime TNT");
+        let slot = state.entities.slot_of(id).expect("TNT slot");
+        state.entities.set_vel(slot, [40.0, 4.0, 0.0]);
+    }
+
+    let started = Instant::now();
+    let (output, _, _) = run_tick(&mut state, &[]);
+    eprintln!(
+        "tnt-perf scenario=cannon-1000 explosions={} elapsed_ms={:.3}",
+        output.changes.explosions.len(),
+        started.elapsed().as_secs_f64() * 1_000.0
+    );
+    assert_eq!(output.changes.explosions.len(), 1_000);
+}
+
 #[test]
 fn explosion_chains_tnt_with_shortened_fuse_instead_of_loot() {
     let mut state = fixture();
@@ -225,7 +306,7 @@ fn explosion_chains_tnt_with_shortened_fuse_instead_of_loot() {
         Some(EntityId(123)),
         [0.5, 201.5, 0.5],
         4.0,
-        false,
+        None,
         None,
     );
     let primed: Vec<_> = state
@@ -401,7 +482,7 @@ fn tnt_drop_decay_rule_changes_loot_not_blast_footprint() {
             Some(EntityId(123)),
             [0.5, 201.0, 0.5],
             4.0,
-            false,
+            None,
             None,
         );
         let stone = state.registry.states.stone;

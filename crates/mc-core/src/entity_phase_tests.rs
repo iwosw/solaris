@@ -130,7 +130,7 @@ fn early_rest_avoids_wide_rows_but_advances_motion_clocks() {
     state.entities.body_mut(slot).attack_cooldown = 4;
     let pos = state.entities.pos(slot);
     assert!(can_early_rest(&mut state, slot));
-    assert!(run_entity_phase(&mut state).is_empty());
+    assert!(run_entity_phase(&mut state, true).is_empty());
     assert_eq!(state.entities.pos(slot), pos);
     assert_eq!(state.entities.vel(slot), [0.0; 3]);
     assert!(state.entities.ground(slot));
@@ -144,7 +144,7 @@ fn early_rest_avoids_wide_rows_but_advances_motion_clocks() {
     );
     let capacity = state.entity_phase_scratch.resting.capacity();
     assert!(capacity > 0);
-    let _ = run_entity_phase(&mut state);
+    let _ = run_entity_phase(&mut state, true);
     assert_eq!(state.entity_phase_scratch.resting.capacity(), capacity);
     assert_eq!(state.entities.body(slot).pickup_delay, 1);
     assert_eq!(state.entities.body(slot).attack_cooldown, 2);
@@ -158,7 +158,7 @@ fn early_rest_wakes_for_an_edit_in_the_neighboring_footprint_chunk() {
     state.world.set_block(16, 100, 8, state.registry.states.air);
     state.world.fold_overlay();
     assert!(!can_early_rest(&mut state, slot));
-    let _ = run_entity_phase(&mut state);
+    let _ = run_entity_phase(&mut state, true);
     assert!(
         state.entity_phase_scratch.writes.capacity() > 0,
         "the changed footprint ran its normal worker"
@@ -170,7 +170,7 @@ fn early_rest_retains_breeding_partners_and_suppressed_ai_in_the_snapshot() {
     let (mut state, slot) = resting_cow();
     state.entities.row_mut(slot).love = 100;
     assert!(!can_early_rest(&mut state, slot));
-    let _ = run_entity_phase(&mut state);
+    let _ = run_entity_phase(&mut state, true);
     assert!(state.entity_phase_scratch.writes.capacity() > 0);
     state.entities.row_mut(slot).love = 0;
     state.entities.row_mut(slot).controls.no_ai = true;
@@ -187,12 +187,12 @@ fn column_cache_does_not_keep_inactive_clocks_frozen_after_reactivation() {
     state
         .world
         .set_active_chunks(HashSet::default(), state.tick);
-    let _ = run_entity_phase(&mut state);
+    let _ = run_entity_phase(&mut state, true);
     assert_eq!(state.entities.body(slot).attack_cooldown, 4);
     state
         .world
         .set_active_chunks([ChunkPos { x: 0, z: 0 }].into_iter().collect(), state.tick);
-    let _ = run_entity_phase(&mut state);
+    let _ = run_entity_phase(&mut state, true);
     assert_eq!(state.entities.body(slot).attack_cooldown, 3);
 }
 
@@ -201,7 +201,7 @@ fn targetless_idle_ranged_and_swell_skip_worker_and_serial_special_rows() {
     for name in ["minecraft:skeleton", "minecraft:creeper"] {
         let (mut state, slot) = resting_mob(name);
         let pos = state.entities.pos(slot);
-        assert!(run_entity_phase(&mut state).is_empty(), "{name}");
+        assert!(run_entity_phase(&mut state, true).is_empty(), "{name}");
         assert_eq!(state.entities.pos(slot), pos, "{name}");
         assert_eq!(state.entity_phase_scratch.writes.capacity(), 0, "{name}");
         assert_eq!(state.entity_phase_scratch.specials.capacity(), 0, "{name}");
@@ -222,7 +222,7 @@ fn retained_swell_metadata_still_reaches_the_serial_special_pass() {
     assert!(!crate::hostile::swell_metadata_neutral(
         state.entities.row(slot)
     ));
-    let _ = run_entity_phase(&mut state);
+    let _ = run_entity_phase(&mut state, true);
     assert!(state.entity_phase_scratch.writes.capacity() > 0);
     assert!(state.entity_phase_scratch.specials.capacity() > 0);
     assert!(crate::hostile::swell_metadata_neutral(
@@ -244,7 +244,7 @@ fn synthetic_player_body_keeps_global_motion_admission_without_player_state() {
     state
         .world
         .set_active_chunks(HashSet::default(), state.tick);
-    let _ = run_entity_phase(&mut state);
+    let _ = run_entity_phase(&mut state, true);
     assert_eq!(state.entities.body(slot).pickup_delay, 2);
     assert!(state.entity_phase_scratch.players.capacity() > 0);
     assert!(state.entity_phase_scratch.writes.capacity() > 0);
@@ -355,7 +355,7 @@ fn dense_motion_admission_freezes_only_the_inactive_column() {
     assert!(state.entities.has_exact_chunk_membership());
     let expected = admission_oracle(&state, false);
     assert_eq!(active_entity_slots(&mut state, false), expected);
-    let _ = run_entity_phase(&mut state);
+    let _ = run_entity_phase(&mut state, true);
     assert_eq!(state.entities.body(active).pickup_delay, 2);
     assert_eq!(state.entities.body(inactive).pickup_delay, 3);
 }
@@ -387,7 +387,7 @@ fn old_cross_column_type_membership_retains_indexed_admission() {
         );
         state.serial_entity_slots = slots;
     }
-    let _ = run_entity_phase(&mut state);
+    let _ = run_entity_phase(&mut state, true);
     assert_eq!(state.entities.body(slot).pickup_delay, 2);
 }
 
@@ -939,7 +939,7 @@ fn idle_wander_decision_rest_matches_full_step_for_two_episodes() {
             ) {
                 rested_decisions += 1;
             }
-            let intents = run_entity_phase(&mut state);
+            let intents = run_entity_phase(&mut state, true);
             assert!(
                 intents
                     .iter()
@@ -1079,5 +1079,57 @@ fn targetless_chaser_decision_rest_keeps_all_target_classes_live() {
             !early_entity_rest(&view, slot, 1, state.entity_phase_revision, true, false),
             "a live player target wakes {species}"
         );
+    }
+}
+
+/// Vanilla `Entity.checkFallDamage` applies to mobs: a 20-block drop owes
+/// `ceil(20 - 3)` damage on landing, while `#fall_damage_immune` types (a
+/// chicken here) and flyers take none.
+#[test]
+fn mobs_take_fall_damage_on_landing_unless_immune() {
+    for (species, immune) in [("minecraft:skeleton", false), ("minecraft:chicken", true)] {
+        let (mut state, slot) = resting_mob(species);
+        let _ = run_tick(
+            &mut state,
+            &[PlayerInput::Join {
+                connection: ConnectionId(995),
+                uuid: uuid::Uuid::from_u128(995),
+                name: "fall-watcher".to_owned(),
+                permission_level: 0,
+            }],
+        );
+        let player = *state.players.keys().next().unwrap();
+        state.players.get_mut(&player).unwrap().game_mode = crate::commands::GameMode::Creative;
+        state
+            .entities
+            .set_pos(state.entities.slot_of(player).unwrap(), [8.5, 101.0, 12.5]);
+        let stone = state.world.block_at(8, 100, 8).unwrap();
+        for x in 0..32 {
+            for z in 0..16 {
+                state.world.set_block(x, 100, z, stone);
+            }
+        }
+        state.world.fold_overlay();
+        state.entity_phase_revision = state.world.revision_now();
+        state.entities.row_mut(slot).health = 100.0;
+        state.entities.set_pos(slot, [8.5, 121.0, 8.5]);
+        state.entities.set_ground(slot, false);
+        // Stop at the first landing: the wandering mob would otherwise leave
+        // the stone pad and take a second, longer fall.
+        for _ in 0..80 {
+            let _ = run_tick(&mut state, &[]);
+            if state.entities.ground(slot) && state.entities.pos(slot)[1] < 110.0 {
+                break;
+            }
+        }
+        let health = state.entities.row(slot).health;
+        if immune {
+            assert_eq!(health, 100.0, "{species} is fall_damage_immune");
+        } else {
+            assert!(
+                (82.0..=83.0).contains(&health),
+                "{species} fell 20 blocks and took 17-18 damage, health {health}"
+            );
+        }
     }
 }

@@ -54,7 +54,7 @@ pub fn uuids(fields: &Fields, name: &str) -> Result<BTreeSet<Uuid>, String> {
             return Err(format!("{name}[{index}]: expected IntArray[4]"));
         }
         let mut bytes = [0; 16];
-        for (bytes, word) in bytes.chunks_exact_mut(4).zip(words) {
+        for (bytes, word) in bytes.as_chunks_mut::<4>().0.iter_mut().zip(words) {
             bytes.copy_from_slice(&word.to_be_bytes());
         }
         if !result.insert(Uuid::from_bytes(bytes)) {
@@ -71,8 +71,10 @@ pub fn uuid_list(values: &BTreeSet<Uuid>) -> Tag {
             .map(|uuid| {
                 Tag::IntArray(
                     uuid.as_bytes()
-                        .chunks_exact(4)
-                        .map(|bytes| i32::from_be_bytes(bytes.try_into().expect("four bytes")))
+                        .as_chunks::<4>()
+                        .0
+                        .iter()
+                        .map(|bytes| i32::from_be_bytes(*bytes))
                         .collect(),
                 )
             })

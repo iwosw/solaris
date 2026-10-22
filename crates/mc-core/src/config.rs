@@ -36,6 +36,48 @@ pub struct CoreConfig {
     /// `true`: new native sessions start locked and fail closed until the
     /// auth plugin unlocks them. Owned by the AuthGate native gate.
     pub require_plugin_login: bool,
+    /// Consecutive non-descending airborne movement packets before the native
+    /// fly check corrects and disconnects a survival player. Zero disables it.
+    pub max_airtime_ticks: u32,
+    /// Vanilla `pause-when-empty-seconds`: stop advancing world simulation
+    /// after this many seconds without an online player. Network, console and
+    /// saves keep running, and the first join resumes ticking. Zero disables.
+    /// The minimal config keeps it disabled for embedded/test cores; the edge
+    /// server sets the vanilla default (60) from `[server]`.
+    pub pause_when_empty_seconds: u32,
+    /// Per-mob switches layered under the `mobGriefing` gamerule.
+    pub mob_griefing: MobGriefingRules,
+    /// `[block_log]`: attributed block/container history for `/co`.
+    pub block_log: crate::block_log::Settings,
+}
+
+/// Finer block-damage switches under vanilla `mobGriefing` (which stays the
+/// master gate). Vanilla 26.1.2 has no per-mob gamerules, so these are server
+/// configuration; every value defaults to true, matching vanilla.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MobGriefingRules {
+    /// Creeper blast removes blocks.
+    pub creeper_block_damage: bool,
+    /// Ghast fireball blast removes blocks.
+    pub ghast_block_damage: bool,
+    /// Wither spawn blast, skull blasts and the hurt-triggered block break.
+    pub wither_block_damage: bool,
+    /// Villager crop harvesting and replanting.
+    pub villager_farming: bool,
+    /// Sheared sheep eating grass into dirt while their wool regrows.
+    pub sheep_grazing: bool,
+}
+
+impl Default for MobGriefingRules {
+    fn default() -> Self {
+        Self {
+            creeper_block_damage: true,
+            ghast_block_damage: true,
+            wither_block_damage: true,
+            villager_farming: true,
+            sheep_grazing: true,
+        }
+    }
 }
 
 impl CoreConfig {
@@ -55,6 +97,10 @@ impl CoreConfig {
             vanilla_data_dir: None,
             plugin_directory: None,
             require_plugin_login: false,
+            max_airtime_ticks: 80,
+            pause_when_empty_seconds: 0,
+            mob_griefing: MobGriefingRules::default(),
+            block_log: crate::block_log::Settings::default(),
         }
     }
 }

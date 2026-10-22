@@ -142,13 +142,17 @@ fn command_text_bytes(command: &Command) -> usize {
             request.request.len().max(largest)
         }
         // A zone command carries a box rather than data: its id, its dimension and
-        // its protection uuid are all bounded by the server's own DTO (64, 128 and
-        // 36 bytes) and the record has no list, so the whole answer is a few hundred
-        // bytes by construction. The dimension is the longest string in it, and
-        // counting that one against this bound is honest about the record's size
-        // without refusing a zone the DTO admits.
+        // its protection uuids are all bounded by the server's own DTO (64, 128 and
+        // 36 bytes, at most 32 uuids), so the whole answer is a few KiB by
+        // construction. The dimension is the longest string in it, and counting
+        // that one against this bound is honest about the record's size without
+        // refusing a zone the DTO admits.
         Command::UpsertZone(zone) => zone.dimension.len(),
-        Command::UpsertProtectedZone(zone) => zone.dimension.len(),
+        Command::UpsertProtectedZone(zone) => zone
+            .allowed_actor_uuids
+            .iter()
+            .map(String::len)
+            .fold(zone.dimension.len(), usize::max),
         // A removal carries one id, the contract's 64-byte script id.
         Command::RemoveZone(remove) => remove.zone.len(),
         // A timer request carries its id and, for a schedule, a delay; the id is

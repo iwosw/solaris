@@ -109,8 +109,10 @@ where
 fn uuid_tag(uuid: uuid::Uuid) -> Tag {
     Tag::IntArray(
         uuid.as_bytes()
-            .chunks_exact(4)
-            .map(|bytes| i32::from_be_bytes(bytes.try_into().expect("uuid word")))
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|bytes| i32::from_be_bytes(*bytes))
             .collect(),
     )
 }
@@ -122,7 +124,7 @@ fn uuid_from_tag(tag: &Tag) -> Option<uuid::Uuid> {
         return None;
     }
     let mut bytes = [0; 16];
-    for (target, word) in bytes.chunks_exact_mut(4).zip(words) {
+    for (target, word) in bytes.as_chunks_mut::<4>().0.iter_mut().zip(words) {
         target.copy_from_slice(&word.to_be_bytes());
     }
     Some(uuid::Uuid::from_bytes(bytes))

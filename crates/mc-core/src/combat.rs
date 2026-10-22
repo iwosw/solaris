@@ -68,17 +68,35 @@ pub fn attack_strength(rules: &ItemRules<'_>, held: &ItemStack, ticks_since_rese
 }
 
 /// Vanilla `Player.attack` against a living target.
+///
+/// `held` is the live held stack (enchantments, weapon component, wear);
+/// `attribute_held` is the MC-28289 snapshot the server held as of the
+/// player's last tick update, used ONLY for the `attack_damage` /
+/// `attack_speed` attribute values. Pass the same stack for both when no
+/// same-tick swap is in play.
 #[must_use]
 pub fn melee_hit(rules: &ItemRules<'_>, held: &ItemStack, swing: Swing) -> MeleeHit {
+    melee_hit_with_attributes(rules, held, held, swing)
+}
+
+/// [`melee_hit`] with split attribute/live stacks (MC-28289).
+#[must_use]
+pub fn melee_hit_with_attributes(
+    rules: &ItemRules<'_>,
+    held: &ItemStack,
+    attribute_held: &ItemStack,
+    swing: Swing,
+) -> MeleeHit {
     let item = facts(rules, held);
+    let attribute_item = facts(rules, attribute_held);
     let base = (f64::from(BASE_ATTACK_DAMAGE)
-        + item
+        + attribute_item
             .and_then(|facts| facts.attack_damage_modifier)
             .map_or(0.0, attribute)
         + f64::from(swing.melee_bonus))
     .max(0.0) as f32;
     let strength = ((f64::from(swing.ticks_since_reset) + 0.5)
-        * attack_speed(rules, held)
+        * attack_speed(rules, attribute_held)
         * swing.attack_speed_multiplier
         / 20.0)
         .clamp(0.0, 1.0) as f32;

@@ -41,6 +41,12 @@ pub use client_view::{
 };
 use command_admission::HostAdmissionLedger;
 
+mod command_permissions;
+pub use command_permissions::{
+    MAX_COMMAND_PERMISSION_ENTRIES, MAX_COMMAND_PERMISSION_ENTRY_BYTES,
+    MAX_COMMAND_PERMISSION_NODE_BYTES, ScriptCommandPermissionError, ScriptCommandPermissions,
+};
+
 mod client_sound;
 pub use client_sound::{ScriptClientSound, ScriptClientSoundPlayback};
 
@@ -245,6 +251,7 @@ pub const MAX_PLUGIN_MANIFEST_BYTES: usize = 64 * 1024;
 /// Largest accepted `api = "MAJOR.MINOR.PATCH"` string.
 pub const MAX_API_VERSION_BYTES: usize = 16;
 pub const MAX_MANIFEST_PERMISSIONS: usize = 64;
+pub const MAX_MANIFEST_COMMAND_PERMISSIONS: usize = 256;
 pub const MAX_MANIFEST_FIELD_BYTES: usize = 128;
 
 /// Maximum byte length of a plugin storage key.
@@ -1044,29 +1051,62 @@ impl fmt::Display for ScriptDtoError {
 
 impl std::error::Error for ScriptDtoError {}
 
-/// Generic actor policy attached to a protected zone by its owning plugin.
+/// Maximum player uuids one protected zone's allow-list may name.
+pub const MAX_SCRIPT_ZONE_ACTORS: usize = 32;
+
+/// Generic actor policy attached to a protected zone by its owning plugin: the
+/// players whose actions the server admits inside the zone (owner and trusted
+/// members alike), plus whether everyone may use doors, trapdoors, fence gates,
+/// buttons and levers. Every other build, container, ignition, explosion,
+/// entity-interaction and damage action inside the zone is native-checked
+/// against this list; operators are always admitted.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ScriptZoneProtection {
-    allowed_actor_uuid: String,
+    allowed_actor_uuids: Vec<String>,
+    public_use: bool,
 }
 
 impl ScriptZoneProtection {
-    pub fn try_actor_or_operator(
-        allowed_actor_uuid: impl AsRef<str>,
-    ) -> Result<Self, ScriptDtoError> {
+    /// A non-empty allow-list of at most [`MAX_SCRIPT_ZONE_ACTORS`] distinct
+    /// player uuids, normalized and sorted.
+    pub fn try_new<I, S>(allowed_actor_uuids: I, public_use: bool) -> Result<Self, ScriptDtoError>
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        let mut actors = std::collections::BTreeSet::new();
+        for uuid in allowed_actor_uuids {
+            if actors.len() == MAX_SCRIPT_ZONE_ACTORS {
+                return Err(ScriptDtoError::TooManyEntries {
+                    field: "protection actor uuids",
+                    max: MAX_SCRIPT_ZONE_ACTORS,
+                });
+            }
+            actors.insert(normalize_player_uuid(uuid.as_ref())?);
+        }
+        if actors.is_empty() {
+            return Err(ScriptDtoError::EmptyValue {
+                field: "protection actor uuids",
+            });
+        }
         Ok(Self {
-            allowed_actor_uuid: normalize_player_uuid(allowed_actor_uuid.as_ref())?,
+            allowed_actor_uuids: actors.into_iter().collect(),
+            public_use,
         })
     }
 
-    pub fn allowed_actor_uuid(&self) -> &str {
-        &self.allowed_actor_uuid
+    pub fn allowed_actor_uuids(&self) -> &[String] {
+        &self.allowed_actor_uuids
+    }
+
+    pub fn public_use(&self) -> bool {
+        self.public_use
     }
 
     pub fn allows_actor(&self, actor_uuid: &str, operator: bool) -> bool {
         operator
             || normalize_player_uuid(actor_uuid)
-                .is_ok_and(|actor_uuid| actor_uuid == self.allowed_actor_uuid)
+                .is_ok_and(|actor_uuid| self.allowed_actor_uuids.binary_search(&actor_uuid).is_ok())
     }
 }
 
@@ -2029,6 +2069,42 @@ impl ScriptEvent {
         })
     }
 
+    /// Build the targeted player-grave observation after the death commit.
+    ///
+    /// The event is addressed to the one package that declared the
+    /// `death_graves` capability, so a deployment without one publishes nothing
+    /// of this kind.
+    #[allow(clippy::too_many_arguments)]
+    pub fn try_player_grave_created_with_context(
+        target_plugin_id: impl AsRef<str>,
+        player_id: ScriptPlayerId,
+        context: ScriptPlayerContext,
+        dimension: impl AsRef<str>,
+        x: i32,
+        y: i32,
+        z: i32,
+        items: u32,
+        spilled: u32,
+    ) -> Result<Self, ScriptDtoError> {
+        context.validate()?;
+        let event = Self {
+            target_plugin_id: Some(validate_target_plugin_id(target_plugin_id.as_ref())?),
+            kind: ScriptEventKind::PlayerGraveCreated {
+                player_id,
+                context,
+                dimension: validate_contract_resource_id(dimension.as_ref())?,
+                x,
+                y,
+                z,
+                items,
+                spilled,
+            },
+            origin_generation: None,
+        };
+        event.validate()?;
+        Ok(event)
+    }
+
     /// Build a bounded player command event with server-authoritative context.
     pub fn try_player_command_with_context(
         target_plugin_id: impl AsRef<str>,
@@ -2612,6 +2688,7 @@ impl ScriptEvent {
             ScriptEventKind::PlayerEntityKilled { .. } => "player.entity_killed",
             ScriptEventKind::PlayerEntityInteracted { .. } => "player.entity_interacted",
             ScriptEventKind::PlayerDied { .. } => "player.died",
+            ScriptEventKind::PlayerGraveCreated { .. } => "player.grave_created",
             ScriptEventKind::PlayerCommand { .. } => "player.command",
             ScriptEventKind::ServerTick { .. } => "server.tick",
             ScriptEventKind::PluginStorageGetResult { .. } => "plugin.storage.get_result",
@@ -2744,6 +2821,28 @@ impl ScriptEvent {
             } => {
                 context.validate()?;
                 validate_contract_resource_id(dimension)?;
+                Ok(())
+            }
+            ScriptEventKind::PlayerGraveCreated {
+                context,
+                dimension,
+                x,
+                y,
+                z,
+                items,
+                spilled,
+                ..
+            } => {
+                context.validate()?;
+                validate_contract_resource_id(dimension)?;
+                if f64::from(*x).abs() > SCRIPT_HORIZONTAL_COORDINATE_LIMIT
+                    || f64::from(*y).abs() > SCRIPT_VERTICAL_COORDINATE_LIMIT
+                    || f64::from(*z).abs() > SCRIPT_HORIZONTAL_COORDINATE_LIMIT
+                    || *items > MAX_OWNED_INVENTORY_SLOTS as u32
+                    || *spilled > MAX_OWNED_INVENTORY_SLOTS as u32
+                {
+                    return Err(ScriptDtoError::InvalidBounds);
+                }
                 Ok(())
             }
             ScriptEventKind::PlayerCommand {
@@ -3165,6 +3264,16 @@ pub enum ScriptEventKind {
         context: ScriptPlayerContext,
         dimension: String,
         game_mode: ScriptGameMode,
+    },
+    PlayerGraveCreated {
+        player_id: ScriptPlayerId,
+        context: ScriptPlayerContext,
+        dimension: String,
+        x: i32,
+        y: i32,
+        z: i32,
+        items: u32,
+        spilled: u32,
     },
     PlayerCommand {
         player_id: ScriptPlayerId,

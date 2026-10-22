@@ -33,7 +33,12 @@ fn globals(tick: u64) -> BTreeMap<String, NativeDomainRecord> {
             },
         );
     }
-    for key in ["scoreboard", "level_metadata", "conversion_extras"] {
+    for key in [
+        "scoreboard",
+        "bossbars",
+        "level_metadata",
+        "conversion_extras",
+    ] {
         records.insert(
             key.into(),
             NativeDomainRecord {

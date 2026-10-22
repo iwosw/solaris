@@ -14,7 +14,7 @@ fn manifest() -> ValidatedScriptPluginManifest {
 
 #[test]
 fn route_reads_do_not_wait_for_a_writer_and_retained_snapshots_stay_immutable() {
-    let authority = PluginRouteAuthority::default();
+    let authority = PluginRouteAuthority::new();
     authority.register(&manifest()).unwrap();
     let original = authority.snapshot();
     let generation = original.registrations["owner"].generation;

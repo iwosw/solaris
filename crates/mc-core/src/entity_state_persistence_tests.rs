@@ -1226,3 +1226,27 @@ fn parallel_checkpoint_entity_capture_matches_the_serial_slot_order_capture() {
                 .any(|(key, _)| key == "CanJoinRaid"))
     );
 }
+
+#[test]
+fn fall_distance_growth_is_silent_but_the_landing_reset_is_journaled() {
+    let mut state = fixture();
+    let id = state.spawn_mob(state.registry.cow_type_id, [8.5, 65.0, 8.5], 20.0);
+    let slot = state.entities.slot_of(id).unwrap();
+    let grounded = EntityStateImage::from_row(state.entities.body(slot), state.entities.row(slot));
+    state.entities.row_mut(slot).controls.fall_distance = 4.5;
+    assert!(
+        grounded.matches(state.entities.body(slot), state.entities.row(slot)),
+        "mid-air growth is transient"
+    );
+    let airborne = EntityStateImage::from_row(state.entities.body(slot), state.entities.row(slot));
+    state.entities.row_mut(slot).controls.fall_distance = 7.0;
+    assert!(
+        airborne.matches(state.entities.body(slot), state.entities.row(slot)),
+        "further growth stays silent"
+    );
+    state.entities.row_mut(slot).controls.fall_distance = 0.0;
+    assert!(
+        !airborne.matches(state.entities.body(slot), state.entities.row(slot)),
+        "landing resets a journaled non-zero distance"
+    );
+}

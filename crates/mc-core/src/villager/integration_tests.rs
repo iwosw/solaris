@@ -52,7 +52,7 @@ fn iron_golem_avoids_creepers_and_friendly_players_but_defends_villagers() {
     let zombie = state.spawn_mob(type_id(&state, "minecraft:zombie"), [1., 80., 0.], 20.);
     let creeper = state.spawn_mob(type_id(&state, "minecraft:creeper"), [1., 80., 1.], 20.);
     let villager = state.spawn_mob(type_id(&state, "minecraft:villager"), [0., 80., 0.], 20.);
-    let targets = defense::targets(&state);
+    let targets = defense::targets(&mut state);
     assert!(targets.iter().any(|(id, _)| *id == zombie));
     assert!(
         !targets
@@ -72,5 +72,9 @@ fn iron_golem_avoids_creepers_and_friendly_players_but_defends_villagers() {
             kind: "major_negative".into(),
             value: 20,
         });
-    assert!(defense::targets(&state).iter().any(|(id, _)| *id == player));
+    assert!(
+        defense::targets(&mut state)
+            .iter()
+            .any(|(id, _)| *id == player)
+    );
 }

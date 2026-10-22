@@ -600,7 +600,7 @@ pub(super) fn step(state: &mut TickState, slot: EntitySlot, intents: &mut Vec<In
             kind: IntentKind::Explode {
                 center: state.entities.pos(slot),
                 power,
-                mob_source: false,
+                mob_grief: None,
                 kill_credit: None,
             },
             footprint: Footprint::default(),

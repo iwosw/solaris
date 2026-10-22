@@ -50,12 +50,19 @@ mod rename_item;
 mod scoreboard;
 mod set_beacon;
 mod station_components;
+mod ticking;
+mod titles;
 pub use rename_item::ServerboundRenameItem;
 pub use scoreboard::{
     ClientboundResetScore, ClientboundSetDisplayObjective, ClientboundSetObjective,
     ClientboundSetPlayerTeam, ClientboundSetScore, TeamParameters,
 };
 pub use set_beacon::ServerboundSetBeacon;
+pub use ticking::{ClientboundTickingState, ClientboundTickingStep};
+pub use titles::{
+    ClientboundClearTitles, ClientboundSetActionBarText, ClientboundSetSubtitleText,
+    ClientboundSetTitleText, ClientboundSetTitlesAnimation,
+};
 mod vehicle_movement;
 pub use vehicle_movement::{ClientboundMoveVehicle, ServerboundMoveVehicle};
 
@@ -128,8 +135,8 @@ pub use inventory::{
     ServerboundSetCarriedItem, ServerboundSetCreativeModeSlot, StonecutterRecipeEntry,
 };
 pub use login_flow::{
-    ClientboundCustomPayload, ClientboundKeepAlive, ClientboundRespawn, LoginPlay, PlayDisconnect,
-    SetDefaultSpawnPosition, SynchronizePlayerPosition,
+    ClientboundCustomPayload, ClientboundKeepAlive, ClientboundRespawn, ClientboundTransfer,
+    LoginPlay, PlayDisconnect, SetDefaultSpawnPosition, SynchronizePlayerPosition,
 };
 pub use statistics::ClientboundAwardStats;
 
@@ -241,6 +248,30 @@ pub const DATA_COMPONENT_CUSTOM_NAME_ID: i32 = 6;
 /// `minecraft:data_component_type` registry report.
 pub const DATA_COMPONENT_ITEM_MODEL_ID: i32 = 10;
 pub const DATA_COMPONENT_ENCHANTMENTS_ID: i32 = 13;
+
+thread_local! {
+    static VANILLA_ITEM_MODELS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Encode with `f` for a client that cannot resolve non-vanilla item models (no
+/// Loader): item stacks then omit every `minecraft:item_model` outside the
+/// `minecraft` namespace and the client shows the carrier item. A vanilla client
+/// renders an unknown model id as the missing-model cube, never as the carrier.
+/// `hide = false` encodes normally.
+pub fn with_vanilla_item_models<R>(hide: bool, f: impl FnOnce() -> R) -> R {
+    let previous = VANILLA_ITEM_MODELS.replace(hide);
+    let result = f();
+    VANILLA_ITEM_MODELS.set(previous);
+    result
+}
+
+/// The item model an encoded stack carries under the active policy.
+fn wire_item_model(stack: &ItemStack) -> Option<&mc_data::Identifier> {
+    stack
+        .item_model
+        .as_deref()
+        .filter(|model| !VANILLA_ITEM_MODELS.get() || model.namespace() == "minecraft")
+}
 /// `minecraft:suspicious_stew_effects` in the local 26.1.2 component registry.
 pub const DATA_COMPONENT_SUSPICIOUS_STEW_EFFECTS_ID: i32 = 53;
 
@@ -600,7 +631,7 @@ impl ItemStackWireCodec for ItemStack {
         let overridden = |id| copied_components::contains(&copied, id);
         let component_count = i32::from(self.damage.is_some() && !overridden(3))
             + i32::from(self.custom_name.is_some() && !overridden(6))
-            + i32::from(self.item_model.is_some() && !overridden(10))
+            + i32::from(wire_item_model(self).is_some() && !overridden(10))
             + i32::from(!self.enchantments.is_empty() && !overridden(13))
             + i32::from(!self.stew_effects.is_empty() && !overridden(53))
             + i32::from(self.extended().max_damage.is_some() && !overridden(2))
@@ -637,7 +668,7 @@ impl ItemStackWireCodec for ItemStack {
             buf.write_varint(DATA_COMPONENT_CUSTOM_NAME_ID);
             write_literal_text_component(buf, custom_name)?;
         }
-        if let Some(item_model) = &self.item_model
+        if let Some(item_model) = wire_item_model(self)
             && !overridden(10)
         {
             buf.write_varint(DATA_COMPONENT_ITEM_MODEL_ID);

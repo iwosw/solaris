@@ -72,6 +72,17 @@ pub struct PackageManifest {
     /// Player command roots the package claims.
     #[serde(default)]
     pub player_commands: Vec<String>,
+    /// Permission node required per declared command root.
+    ///
+    /// Keys must be roots this package declares; a node is enforced by command
+    /// admission once the deployment also provides a permission authority.
+    #[serde(default)]
+    pub command_permissions: std::collections::BTreeMap<String, String>,
+    /// Whether this package answers command-permission admission.
+    ///
+    /// At most one package per deployment may claim it.
+    #[serde(default)]
+    pub permission_provider: bool,
     /// Pre-commit hooks this package implements, as it declares them.
     ///
     /// A declaration says which questions the package can answer. Directory-only
@@ -260,6 +271,12 @@ pub fn load_package(root: &Path, limits: &PluginLimits) -> Result<LoadedPackage,
     }
     for root_command in &parsed.player_commands {
         manifest = manifest.declare_player_command_root(root_command);
+    }
+    for (root, node) in &parsed.command_permissions {
+        manifest = manifest.declare_command_permission(root, node);
+    }
+    if parsed.permission_provider {
+        manifest = manifest.declare_permission_provider();
     }
     let manifest = manifest
         .validate()

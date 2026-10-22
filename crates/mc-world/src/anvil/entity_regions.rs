@@ -161,7 +161,7 @@ pub fn entity_chunk_from_nbt(
                 ));
             };
             let invalid = |reason| record_error(path, [x, z], entity_index, fields, reason);
-            validate_shared_fields(fields).map_err(&invalid)?;
+            validate_shared_fields(fields).map_err(invalid)?;
             let entity =
                 entity_from_fields(items, VanillaEntity::default(), fields).map_err(|err| {
                     use mc_data::item_nbt::ItemNbtError;

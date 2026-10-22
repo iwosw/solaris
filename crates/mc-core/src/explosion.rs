@@ -9,6 +9,8 @@
 
 use std::collections::BTreeSet;
 
+use rustc_hash::FxHashMap;
+
 use mc_physics::BlockMaterial;
 use mc_world::BlockStateId;
 
@@ -30,6 +32,31 @@ const FLUID: f32 = 100.0;
 const SOLID: f32 = 3.0;
 /// Eye height of a player (knockback direction).
 const PLAYER_EYE: f64 = 1.62;
+
+/// Tick-local exposure results. The ray grid depends only on the explosion
+/// centre and victim bounds while the merge world is unchanged.
+#[derive(Default)]
+pub(crate) struct ExposureCache {
+    tick: u64,
+    values: FxHashMap<ExposureKey, f32>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+struct ExposureKey {
+    center: [u64; 3],
+    min: [u64; 3],
+    max: [u64; 3],
+}
+
+impl ExposureKey {
+    fn new(min: [f64; 3], max: [f64; 3], center: [f64; 3]) -> Self {
+        Self {
+            center: center.map(f64::to_bits),
+            min: min.map(f64::to_bits),
+            max: max.map(f64::to_bits),
+        }
+    }
+}
 
 /// Blast resistance of a block state; `None` for air (rays pass freely).
 /// Vanilla values from `reports/block_explosion.json` when the registry
@@ -72,7 +99,7 @@ pub(crate) fn apply(
     source: Option<EntityId>,
     center: [f64; 3],
     power: f32,
-    mob_source: bool,
+    mob_grief: Option<crate::command_rules::MobGrief>,
     kill_credit: Option<(EntityId, u32)>,
 ) {
     let mut rng = Rng((state.world.seed() as u64)
@@ -80,16 +107,20 @@ pub(crate) fn apply(
         ^ (source.map_or(0, |id| id.0) as u64).wrapping_mul(0xBF58_476D_1CE4_E5B9));
     // Vanilla hurts entities before the blocks go (cover still counts).
     let knockback = hurt_entities(state, source, center, power, kill_credit);
-    let blocks = if !mob_source || crate::command_rules::boolean(state, "mob_griefing") {
+    let breaks_blocks =
+        mob_grief.is_none_or(|grief| crate::command_rules::mob_griefing(state, grief));
+    let mut blocks = if breaks_blocks {
         destroyed_blocks(state, center, power, &mut rng)
     } else {
         BTreeSet::new()
     };
+    // A protected zone's blocks survive every blast, whoever lit it.
+    blocks.retain(|&(x, y, z)| !crate::plugin_player::protects_cell(state, BlockPos { x, y, z }));
     let air = state.registry.states.air;
     let mut spawned: Vec<EntityId> = Vec::new();
     let decay = crate::command_rules::boolean(
         state,
-        if mob_source {
+        if mob_grief.is_some() {
             "mob_explosion_drop_decay"
         } else {
             "tnt_explosion_drop_decay"
@@ -119,6 +150,9 @@ pub(crate) fn apply(
                 state.world.set_block(x, y, z, air);
                 state.merge_block_writes.push((pos, air));
             }
+            // Priming removes TNT from the live world before the normal block
+            // phase. Later same-tick blasts must ray-cast that new occlusion.
+            state.explosion_exposure.values.clear();
             continue;
         }
         let rolled = if crate::command_rules::boolean(state, "block_drops") {
@@ -233,10 +267,17 @@ fn hurt_entities(
     let reach = f64::from(power) * 2.0;
     let mut hits = Vec::new();
     let mut knockback = Vec::new();
-    for slot in state.entities.slots() {
-        let body = state.entities.body(slot);
-        let row = state.entities.row(slot);
-        if Some(body.id) == source || !body.alive || row.tnt.is_some() || row.falling.is_some() {
+    for index in 0..state.entities.len() {
+        let slot = crate::entities::EntitySlot(index as u32);
+        let (body, has_tnt, has_falling) = {
+            let row = state.entities.row(slot);
+            (
+                *state.entities.body(slot),
+                row.tnt.is_some(),
+                row.falling.is_some(),
+            )
+        };
+        if Some(body.id) == source || !body.alive || has_tnt || has_falling {
             continue;
         }
         let is_player = match body.kind {
@@ -280,7 +321,7 @@ fn hurt_entities(
             pos[1] + body.height,
             pos[2] + body.half_width,
         ];
-        let impact = (1.0 - distance) * f64::from(seen_percent(state, min, max, center));
+        let impact = (1.0 - distance) * f64::from(cached_seen_percent(state, min, max, center));
         let damage = ((impact * impact + impact) / 2.0 * 7.0 * reach + 1.0).floor() as f32;
         hits.push((slot, state.difficulty.scale_mob_damage(damage)));
         if is_player {
@@ -344,4 +385,164 @@ pub(crate) fn seen_percent(
         fx += step[0];
     }
     clear as f32 / total as f32
+}
+
+fn cached_seen_percent(
+    state: &mut TickState,
+    min: [f64; 3],
+    max: [f64; 3],
+    center: [f64; 3],
+) -> f32 {
+    if state.explosion_exposure.tick != state.tick {
+        state.explosion_exposure.tick = state.tick;
+        state.explosion_exposure.values.clear();
+    }
+    let key = ExposureKey::new(min, max, center);
+    if let Some(&exposure) = state.explosion_exposure.values.get(&key) {
+        return exposure;
+    }
+    let exposure = seen_percent(state, min, max, center);
+    state.explosion_exposure.values.insert(key, exposure);
+    exposure
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use super::{cached_seen_percent, seen_percent};
+    use crate::registry::CoreRegistry;
+    use crate::tick::TickState;
+
+    fn state() -> TickState {
+        let registry = Arc::new(CoreRegistry::load(None).expect("registry"));
+        let world = crate::horde_bench::flat_world(&registry);
+        TickState::new(registry, world, 2, 512)
+    }
+
+    #[test]
+    fn exposure_cache_reuses_identical_bounds_only_within_one_tick() {
+        let mut state = state();
+        let min = [0.2, 64.0, 0.2];
+        let max = [0.8, 65.8, 0.8];
+        let center = [2.5, 65.0, 2.5];
+        let direct = seen_percent(&state, min, max, center);
+
+        assert_eq!(
+            cached_seen_percent(&mut state, min, max, center).to_bits(),
+            direct.to_bits()
+        );
+        assert_eq!(state.explosion_exposure.values.len(), 1);
+        assert_eq!(
+            cached_seen_percent(&mut state, min, max, center).to_bits(),
+            direct.to_bits()
+        );
+        assert_eq!(state.explosion_exposure.values.len(), 1);
+
+        state.tick += 1;
+        assert_eq!(
+            cached_seen_percent(&mut state, min, max, center).to_bits(),
+            direct.to_bits()
+        );
+        assert_eq!(state.explosion_exposure.values.len(), 1);
+    }
+
+    #[test]
+    fn same_tick_tnt_explosions_keep_separate_events_while_reusing_exposure() {
+        let mut state = state();
+        let husk = state
+            .registry
+            .entity_types
+            .id_of(&mc_data::Identifier::parse("minecraft:husk").expect("husk id"))
+            .expect("husk type");
+        state.spawn_mob(husk, [0.5, 64.0, 0.5], 20.0);
+        let center = [0.5, 64.0, 0.5];
+
+        super::apply(&mut state, None, center, 4.0, None, None);
+        super::apply(&mut state, None, center, 4.0, None, None);
+
+        assert_eq!(state.hostile.explosions.len(), 2);
+        assert!(
+            state
+                .hostile
+                .explosions
+                .iter()
+                .all(|event| event.center == center)
+        );
+        assert_eq!(state.explosion_exposure.values.len(), 1);
+    }
+
+    #[test]
+    fn tnt_occluder_invalidation_matches_uncached_second_blast_damage() {
+        let mut state = state();
+        // Blast rays only travel through resident chunks.
+        state.world.ensure_blocking(
+            &[(mc_world::ChunkPos { x: 0, z: 0 }, 0)]
+                .into_iter()
+                .collect(),
+        );
+        let husk = state
+            .registry
+            .entity_types
+            .id_of(&mc_data::Identifier::parse("minecraft:husk").expect("husk id"))
+            .expect("husk type");
+        let target = state.spawn_mob(husk, [2.5, 64.0, 0.5], 20.0);
+        let slot = state.entities.slot_of(target).expect("husk slot");
+        let body = *state.entities.body(slot);
+        let pos = state.entities.pos(slot);
+        let min = [pos[0] - body.half_width, pos[1], pos[2] - body.half_width];
+        let max = [
+            pos[0] + body.half_width,
+            pos[1] + body.height,
+            pos[2] + body.half_width,
+        ];
+        let center = [0.5, 64.0, 0.5];
+        let tnt = state
+            .registry
+            .blocks
+            .block(&mc_data::Identifier::parse("minecraft:tnt").expect("TNT id"))
+            .expect("TNT block")
+            .default
+            .0;
+        state.world.set_block(1, 64, 0, tnt);
+        state.world.fold_overlay();
+
+        let before = seen_percent(&state, min, max, center);
+        let _ = cached_seen_percent(&mut state, min, max, center);
+        assert_eq!(state.explosion_exposure.values.len(), 1);
+        super::apply(&mut state, None, center, 4.0, None, None);
+        assert_eq!(state.explosion_exposure.values.len(), 0);
+        assert_eq!(
+            state.world.block_at(1, 64, 0),
+            Some(state.registry.states.air)
+        );
+
+        let after = seen_percent(&state, min, max, center);
+        assert_ne!(
+            before.to_bits(),
+            after.to_bits(),
+            "TNT must occlude exposure"
+        );
+        let cached_after = cached_seen_percent(&mut state, min, max, center);
+        assert_eq!(cached_after.to_bits(), after.to_bits());
+        super::apply(&mut state, None, center, 4.0, None, None);
+        let reach = 8.0;
+        let distance = ((pos[0] - center[0]).powi(2)
+            + (pos[1] - center[1]).powi(2)
+            + (pos[2] - center[2]).powi(2))
+        .sqrt()
+            / reach;
+        let impact = (1.0 - distance) * f64::from(after);
+        let expected = ((impact * impact + impact) / 2.0 * 7.0 * reach + 1.0).floor() as f32;
+        let actual = state
+            .merge_damage
+            .last()
+            .expect("second blast damage")
+            .1
+            .amount;
+        assert_eq!(
+            actual.to_bits(),
+            state.difficulty.scale_mob_damage(expected).to_bits()
+        );
+    }
 }

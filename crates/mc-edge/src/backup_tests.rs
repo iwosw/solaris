@@ -427,3 +427,59 @@ fn restore_rejects_symlink_manifest_and_resolves_alias_overlap() {
     );
     assert!(!target.exists());
 }
+
+#[test]
+fn utc_stamp_formats_known_instants() {
+    assert_eq!(utc_stamp(0), "19700101T000000Z");
+    assert_eq!(utc_stamp(1_000_000_000), "20010909T014640Z");
+    assert_eq!(utc_stamp(1_709_164_799), "20240228T235959Z");
+    assert_eq!(utc_stamp(1_709_164_800), "20240229T000000Z");
+}
+
+fn live_config(world: PathBuf) -> mc_core::CoreConfig {
+    let mut config = mc_core::CoreConfig::new(world, 42);
+    config.vanilla_data_dir =
+        Some(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data/vanilla"));
+    config.view_distance = 1;
+    config.simulation_distance = 0;
+    config
+}
+
+#[test]
+fn hot_backup_of_a_running_core_is_a_verified_restorable_backup() {
+    let root = tempfile::tempdir().unwrap();
+    let core = mc_core::Core::open(live_config(root.path().join("live"))).unwrap();
+    let backups = root.path().join("backups");
+    let (path, copied) = run_hot_backup(&core, &backups).unwrap();
+    let name = path.file_name().unwrap().to_str().unwrap();
+    assert!(name.starts_with("backup-"), "{name}");
+    assert!(
+        name.ends_with(&format!("-tick{}", copied.wal_tick)),
+        "{name}"
+    );
+    let names: Vec<_> = std::fs::read_dir(&backups)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name())
+        .collect();
+    assert_eq!(
+        names,
+        [path.file_name().unwrap()],
+        "no partial directory remains"
+    );
+
+    let manifest = read_manifest(&path).unwrap();
+    assert_eq!(manifest.files, copied.files);
+    for (file, hash) in &manifest.files {
+        assert_eq!(&digest_file(&path.join(file)).unwrap(), hash);
+    }
+    let restored = root.path().join("restored");
+    run_restore(&path, &restored).unwrap();
+    // The live world keeps running while its copy is restored and opened.
+    let recovered = mc_core::Core::open(live_config(restored)).unwrap();
+    recovered.shutdown();
+
+    core.shutdown();
+    let error = run_hot_backup(&core, &backups).unwrap_err();
+    assert!(error.to_string().contains("core stopped"), "{error:#}");
+    assert_eq!(std::fs::read_dir(&backups).unwrap().count(), 1);
+}

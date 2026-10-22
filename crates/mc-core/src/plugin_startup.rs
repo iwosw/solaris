@@ -118,6 +118,25 @@ pub(crate) fn apply(
             });
         }
     }
+    for recipe in contribution.crafting_recipes() {
+        if registry
+            .recipes
+            .iter()
+            .any(|existing| existing.id == recipe.id)
+        {
+            return Err(CoreError::Registry(format!(
+                "plugin crafting recipe {} conflicts with an existing crafting recipe",
+                recipe.id
+            )));
+        }
+        registry.recipes.push(recipe.clone());
+        registry.plugin_crafting_recipes.push(recipe.clone());
+    }
+    registry.block_tools = crate::block_tools::BlockToolTable::admit(
+        &registry.blocks,
+        contribution.block_tools().cloned().collect(),
+    )
+    .map_err(CoreError::Registry)?;
     if let Some((_, rules)) = rules {
         apply_spawning(registry, rules)?;
         registry.plugin_rules = Some(rules.clone());
@@ -166,6 +185,11 @@ pub(crate) fn world_identity(registry: &CoreRegistry) -> Result<Vec<u8>, CoreErr
         rules: Option<&'a GameplayRules>,
         items: Vec<ItemIdentity<'a>>,
         work_recipes: Vec<&'a mc_data::recipes::work::WorkRecipe>,
+        /// Omitted when empty so worlds without these declarations keep their bytes.
+        #[serde(skip_serializing_if = "Vec::is_empty")]
+        crafting_recipes: Vec<String>,
+        #[serde(skip_serializing_if = "Vec::is_empty")]
+        block_tools: Vec<&'a mc_data::block_tools::BlockToolRule>,
         ore_profile: &'static str,
     }
 
@@ -201,6 +225,16 @@ pub(crate) fn world_identity(registry: &CoreRegistry) -> Result<Vec<u8>, CoreErr
         rules: registry.plugin_rules.as_ref(),
         items,
         work_recipes,
+        crafting_recipes: {
+            let mut recipes = registry
+                .plugin_crafting_recipes
+                .iter()
+                .map(|recipe| format!("{recipe:?}"))
+                .collect::<Vec<_>>();
+            recipes.sort_unstable();
+            recipes
+        },
+        block_tools: registry.block_tools.rules().iter().collect(),
         ore_profile: registry
             .plugin_ore_profile
             .map_or("vanilla", PluginWorldgenOreProfile::contract_name),

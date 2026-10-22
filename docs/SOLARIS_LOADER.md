@@ -46,11 +46,23 @@ component API `0.7.0`; the Luau `0.6.0` frontend is retired
 change the client wire protocol or artifact schema.
 Declared keyboard actions leave vanilla movement, menus, screenshots and
 fullscreen handling intact. They are suppressed in menus/overlays or without
-window focus; bindings reset on reconnect. Rebinding, chords and mouse/gamepad
-actions are not implemented. Sound bundles request `play_sounds` alongside
-`load_assets`; they support personal and world-positioned one-shots, volume,
-pitch and owner-local stop. Playback respects master volume and ends on
-disconnect. Loops and moving sound sources are not implemented.
+window focus; bindings reset on reconnect. Rebinding, chords and
+mouse/gamepad actions are not implemented.
+
+Schema-2 overlays may additionally declare
+`view_request_bindings: [{key, view}]`. Pressing a bound key sends the
+additive wire-3 `view_request` message on `solaris:loader/view_action`; the
+server accepts it only after this connection completed Loader negotiation and
+the declared owner has `views` plus `present_views`. The core-owned native
+settlements bundle is appended to an already-required plugin Loader manifest,
+never making Loader mandatory by itself. Its overview binds <kbd>C</kbd> to
+`solaris-settlements:overview`, which opens the same dialog as
+`/settlement menu`. The binding is fixed: it adds no Controls rebinding UI.
+
+Sound bundles request `play_sounds` alongside `load_assets`; they support
+personal and world-positioned one-shots, volume, pitch and owner-local stop.
+Playback respects master volume and ends on disconnect. Loops and moving sound
+sources are not implemented.
 From that source checkout:
 
 ```sh

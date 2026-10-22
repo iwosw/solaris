@@ -18,6 +18,12 @@ use crate::tick::{BlockEntityState, TickState, spawn_item_entity};
 pub(crate) struct ContainerState {
     /// Absolute simulation-tick deadlines, not per-tick persisted countdowns.
     cooldowns: BTreeMap<(i32, i32, i32), u64>,
+    /// Exact positions of loaded hopper block entities; never scan every
+    /// container to discover the hopper lane.
+    hoppers: BTreeSet<(i32, i32, i32)>,
+    /// Due hoppers that found neither an extractable source nor an insertable
+    /// destination. A local inventory or item-motion change wakes them.
+    sleeping: BTreeSet<(i32, i32, i32)>,
     dirty: BTreeSet<(i32, i32, i32)>,
     last_tick: u64,
 }
@@ -46,6 +52,38 @@ fn position(pos: (i32, i32, i32)) -> BlockPos {
         x: pos.0,
         y: pos.1,
         z: pos.2,
+    }
+}
+
+/// Wake hoppers whose own inventory or one adjacent inventory changed.
+pub(crate) fn inventory_changed(containers: &mut ContainerState, pos: BlockPos) {
+    for step in [
+        (0, 0, 0),
+        (1, 0, 0),
+        (-1, 0, 0),
+        (0, 1, 0),
+        (0, -1, 0),
+        (0, 0, 1),
+        (0, 0, -1),
+    ] {
+        if let Some(cell) = super::offset(pos, step) {
+            containers.sleeping.remove(&key(cell));
+        }
+    }
+}
+
+/// Item movement wakes only hopper bowls which the item can enter, retaining
+/// vanilla suction without making unrelated sleeping hoppers poll each tick.
+pub(crate) fn item_moved(containers: &mut ContainerState, pos: [f64; 3]) {
+    let x = pos[0].floor() as i32;
+    let y = pos[1].floor() as i32;
+    let z = pos[2].floor() as i32;
+    for hopper_y in [y, y - 1] {
+        for hopper_z in [z - 1, z] {
+            for hopper_x in [x - 1, x] {
+                containers.sleeping.remove(&(hopper_x, hopper_y, hopper_z));
+            }
+        }
     }
 }
 
@@ -79,17 +117,26 @@ fn automated(name: &str) -> bool {
 
 /// Called for cells discovered by the runtime/placement pass. Loaded custody
 /// always wins over empty defaults, including when a hopper was never opened.
-pub(super) fn register(state: &mut TickState, pos: BlockPos) {
+pub(crate) fn register(state: &mut TickState, pos: BlockPos) {
     let Some(name) = kind(state, pos) else { return };
     if name == "jukebox" {
         crate::jukebox::register(state, pos);
         return;
     }
     let Some(count) = size(name) else { return };
+    let hopper = name == "hopper";
     if state.block_entities.contains_key(&key(pos)) {
+        if hopper {
+            state.redstone_containers.hoppers.insert(key(pos));
+            state.redstone_containers.sleeping.remove(&key(pos));
+            state
+                .redstone_containers
+                .cooldowns
+                .entry(key(pos))
+                .or_insert(state.tick);
+        }
         return;
     }
-    let hopper = name == "hopper";
     let automation = automated(name);
     let furnace = matches!(name, "furnace" | "smoker" | "blast_furnace").then(Default::default);
     let loaded = state
@@ -108,6 +155,8 @@ pub(super) fn register(state: &mut TickState, pos: BlockPos) {
         state.redstone_containers.dirty.insert(key(pos));
     }
     if hopper {
+        state.redstone_containers.hoppers.insert(key(pos));
+        state.redstone_containers.sleeping.remove(&key(pos));
         state
             .redstone_containers
             .cooldowns
@@ -145,6 +194,10 @@ pub(crate) fn hydrate_chunk(
         if inventories.contains_key(&key(*pos))
             && (name != "hopper" || containers.cooldowns.contains_key(&key(*pos)))
         {
+            if name == "hopper" {
+                containers.hoppers.insert(key(*pos));
+                containers.sleeping.remove(&key(*pos));
+            }
             continue;
         }
         let Some(count) = size(name) else { continue };
@@ -156,17 +209,22 @@ pub(crate) fn hydrate_chunk(
             furnace: None,
         });
         if name == "hopper" {
+            containers.hoppers.insert(key(*pos));
+            containers.sleeping.remove(&key(*pos));
             containers.cooldowns.entry(key(*pos)).or_insert(cooldown);
         }
     }
     for (pos, hopper) in &chunk.hoppers {
-        inventories.hydrate(key(*pos), || BlockEntityState {
+        let pos = key(*pos);
+        inventories.hydrate(pos, || BlockEntityState {
             slots: hopper.slots.iter().map(slot_stack).collect(),
             furnace: None,
         });
+        containers.hoppers.insert(pos);
+        containers.sleeping.remove(&pos);
         containers
             .cooldowns
-            .entry(key(*pos))
+            .entry(pos)
             .or_insert(tick.saturating_add(hopper.transfer_cooldown.clamp(0, 8) as u64));
     }
 }
@@ -512,6 +570,7 @@ fn insertion_slot(
 }
 
 fn changed(state: &mut TickState, pos: BlockPos) {
+    inventory_changed(&mut state.redstone_containers, pos);
     state.world.mark_block_entity_dirty(pos);
     if kind(state, pos).is_some_and(automated) {
         state.redstone_containers.dirty.insert(key(pos));
@@ -880,19 +939,23 @@ pub(super) fn run(
     _writes: &mut Vec<(BlockPos, u32)>,
     _spawned: &mut Vec<EntityId>,
 ) {
-    let positions: Vec<_> = state
-        .block_entities
-        .keys()
-        .copied()
-        .filter(|pos| kind(state, position(*pos)) == Some("hopper"))
-        .collect();
+    let mut hoppers = std::mem::take(&mut state.redstone_containers.hoppers);
     let world = &state.world;
     let blocks = &state.registry.blocks;
     let elapsed = state
         .tick
         .saturating_sub(state.redstone_containers.last_tick);
     state.redstone_containers.last_tick = state.tick;
+    hoppers.retain(|pos| {
+        let block = world
+            .block_at(pos.0, pos.1, pos.2)
+            .and_then(|id| blocks.by_id(mc_world::BlockStateId(id)));
+        block.is_none_or(|block| block.block.id.path() == "hopper")
+    });
     state.redstone_containers.cooldowns.retain(|pos, until| {
+        if !hoppers.contains(pos) {
+            return false;
+        }
         let block = world
             .block_at(pos.0, pos.1, pos.2)
             .and_then(|id| blocks.by_id(mc_world::BlockStateId(id)));
@@ -901,13 +964,15 @@ pub(super) fn run(
             // delay. The next event/checkpoint freezes the shifted deadline.
             *until = until.saturating_add(elapsed);
         }
-        block.is_none_or(|block| block.block.id.path() == "hopper")
+        true
     });
-    for pos in positions {
-        if state.redstone_containers.remaining(pos, state.tick) > 0 {
+    for hopper in &hoppers {
+        if state.redstone_containers.sleeping.contains(hopper)
+            || state.redstone_containers.remaining(*hopper, state.tick) > 0
+        {
             continue;
         }
-        let pos = position(pos);
+        let pos = position(*hopper);
         if !state
             .world
             .is_active(pos.x.div_euclid(16), pos.z.div_euclid(16))
@@ -942,8 +1007,16 @@ pub(super) fn run(
             state
                 .redstone_containers
                 .set_cooldown(key(pos), 8, state.tick);
+        } else {
+            state.redstone_containers.sleeping.insert(*hopper);
         }
     }
+    hoppers.extend(std::mem::take(&mut state.redstone_containers.hoppers));
+    state
+        .redstone_containers
+        .sleeping
+        .retain(|pos| hoppers.contains(pos));
+    state.redstone_containers.hoppers = hoppers;
     // Menu edits use native inventory post-images; detect their changed slots
     // without serializing unchanged dispenser inventories every tick.
     for (pos, record) in &state.block_entities {

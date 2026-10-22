@@ -243,6 +243,9 @@ fn scoreboard_heap(board: &crate::scoreboard::Scoreboard) -> usize {
             .chain(slots)
             .sum::<usize>()
 }
+fn bossbars_heap(bytes: &Vec<u8>) -> usize {
+    bytes.capacity()
+}
 
 fn raids_heap(raids: &crate::raids::Raids) -> usize {
     let uuid_inline = std::mem::size_of::<uuid::Uuid>();
@@ -471,6 +474,7 @@ fn entry_heap(entry: &JournalEntry) -> usize {
                     .map_or(0, crate::settlements::SettlementRecord::heap_estimate)
         }
         E::Scoreboard { value } => scoreboard_heap(value),
+        E::Bossbars { value } => bossbars_heap(value),
         E::Dimension { entries, .. } => {
             entries.capacity() * std::mem::size_of::<JournalEntry>()
                 + entries.iter().map(entry_heap).sum::<usize>()
@@ -572,7 +576,30 @@ fn entry_heap(entry: &JournalEntry) -> usize {
                 + projectile.as_deref().map_or(0, projectile_heap)
         }
         E::EntityState { state, .. } => state_heap(state),
-        E::Ticket { owner, .. } => owner.capacity(),
+        E::Ticket { owner, .. } | E::TicketRemoved { owner, .. } => owner.capacity(),
+        E::BlockLog { value } => std::mem::size_of::<crate::block_log::Delta>()
+            + value.records.capacity() * std::mem::size_of::<crate::block_log::Record>()
+            + value.marks.capacity() * std::mem::size_of::<(u64, bool)>()
+            + value
+                .records
+                .iter()
+                .map(|record| match &record.change {
+                    crate::block_log::Change::Block { entity, .. } => {
+                        entity.as_ref().map_or(0, |entity| {
+                            entity.slots.as_ref().map_or(0, stacks_heap)
+                                + entity.nbt.as_ref().map_or(0, Vec::capacity)
+                        })
+                    }
+                    crate::block_log::Change::Container { slots } => {
+                        slots.capacity()
+                            * std::mem::size_of::<(u16, mc_data::ItemStack, mc_data::ItemStack)>()
+                            + slots
+                                .iter()
+                                .map(|(_, before, after)| item_heap(before) + item_heap(after))
+                                .sum::<usize>()
+                    }
+                })
+                .sum::<usize>(),
     }
 }
 

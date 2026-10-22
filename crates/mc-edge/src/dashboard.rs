@@ -1,8 +1,9 @@
 //! Read-only operator dashboard for the v2 edge server.
 //!
 //! A tiny tokio TCP HTTP/1.1 endpoint with a request-head cap,
-//! one-request-per-connection, `GET /stats`, `GET /profile`, and streaming
-//! `GET /load-metrics` routes (404 elsewhere). Payloads stay edge-local.
+//! one-request-per-connection, `GET /stats`, `GET /profile`, streaming
+//! `GET /load-metrics`, and Prometheus `GET /metrics` routes (404 elsewhere).
+//! Payloads stay edge-local.
 //!
 //! The existing `/stats` rolling 1200 samples remain independent of the
 //! preallocated 16384-sample `/load-metrics` ring. Stream `?after_tick=N`
@@ -275,6 +276,7 @@ pub struct DashboardState {
     load_changed: Notify,
     queue_source: OnceLock<Arc<ConnectionRegistry>>,
     plugin_source: OnceLock<Arc<mc_core::Core>>,
+    metrics_bearer_token: OnceLock<String>,
 }
 
 #[derive(Debug)]
@@ -323,6 +325,15 @@ impl DashboardState {
             load_changed: Notify::new(),
             queue_source: OnceLock::new(),
             plugin_source: OnceLock::new(),
+            metrics_bearer_token: OnceLock::new(),
+        }
+    }
+
+    /// Require this token for the Prometheus scrape endpoint. An absent token
+    /// intentionally preserves the dashboard's local, unauthenticated default.
+    pub fn set_metrics_bearer_token(&self, token: Option<String>) {
+        if let Some(token) = token.filter(|token| !token.is_empty()) {
+            let _ = self.metrics_bearer_token.set(token);
         }
     }
 
@@ -335,6 +346,22 @@ impl DashboardState {
     /// Read real component counters on demand, without a tick-path producer.
     pub fn set_plugin_source(&self, core: Arc<mc_core::Core>) {
         let _ = self.plugin_source.set(core);
+    }
+
+    fn metrics_authorized(&self, supplied: Option<&str>) -> bool {
+        let Some(expected) = self.metrics_bearer_token.get() else {
+            return true;
+        };
+        supplied.is_some_and(|supplied| {
+            let supplied = supplied.as_bytes();
+            let expected = expected.as_bytes();
+            supplied.len() == expected.len()
+                && supplied
+                    .iter()
+                    .zip(expected)
+                    .fold(0u8, |difference, (left, right)| difference | (left ^ right))
+                    == 0
+        })
     }
 
     fn plugin_snapshot(&self) -> Option<PluginStats> {
@@ -664,6 +691,38 @@ where
             };
             let _ = write_response(stream, "200 OK", "application/json", &body).await;
         }
+        "/tps" => {
+            let snapshot = state.snapshot();
+            let body = serde_json::json!({
+                "tps": snapshot.tps,
+                "mspt": snapshot.tick.p50_us as f64 / 1_000.0,
+                "mspt_p95": snapshot.tick.p95_us as f64 / 1_000.0,
+                "mspt_p99": snapshot.tick.p99_us as f64 / 1_000.0,
+                "tick": snapshot.simulation_tick,
+            });
+            let _ = write_response(
+                stream,
+                "200 OK",
+                "application/json",
+                body.to_string().as_bytes(),
+            )
+            .await;
+        }
+        "/metrics" => {
+            if !state.metrics_authorized(request.bearer_token.as_deref()) {
+                let _ =
+                    write_response(stream, "401 Unauthorized", "text/plain", b"unauthorized").await;
+                return;
+            }
+            let body = prometheus(state);
+            let _ = write_response(
+                stream,
+                "200 OK",
+                "text/plain; version=0.0.4; charset=utf-8",
+                body.as_bytes(),
+            )
+            .await;
+        }
         "/load-metrics" => {
             let Ok(query) = parse_load_query(request.query.as_deref()) else {
                 let _ = write_response(
@@ -733,10 +792,11 @@ struct Request {
     method: String,
     path: String,
     query: Option<String>,
+    bearer_token: Option<String>,
 }
 
-/// Parse a request head. Headers are ignored; the query is preserved for
-/// `/load-metrics` while other routes continue to ignore it.
+/// Parse a request head. The metrics endpoint reads only a standard Bearer
+/// authorization header; every other route remains unauthenticated.
 fn parse_head(head: &str) -> Option<Request> {
     let line = head.lines().next()?;
     let mut parts = line.split_whitespace();
@@ -747,10 +807,17 @@ fn parse_head(head: &str) -> Option<Request> {
         .map_or((target, None), |(path, query)| {
             (path, Some(query.to_owned()))
         });
+    let bearer_token = head.lines().skip(1).find_map(|line| {
+        let (name, value) = line.split_once(':')?;
+        name.eq_ignore_ascii_case("authorization")
+            .then(|| value.trim().strip_prefix("Bearer ").map(str::to_owned))
+            .flatten()
+    });
     Some(Request {
         method,
         path: path.to_owned(),
         query,
+        bearer_token,
     })
 }
 
@@ -802,6 +869,98 @@ fn parse_load_query(query: Option<&str>) -> Result<LoadMetricsQuery, ()> {
         wait: wait.unwrap_or(false),
         min_samples: min_samples.unwrap_or(1),
     })
+}
+
+fn prometheus_gauge(out: &mut String, name: &str, value: impl std::fmt::Display) {
+    out.push_str(name);
+    out.push(' ');
+    out.push_str(&value.to_string());
+    out.push('\n');
+}
+
+/// Render a deliberately small, stable Prometheus surface from the dashboard
+/// snapshot. The latency gauges are microseconds, matching `/stats`.
+fn prometheus(state: &DashboardState) -> String {
+    let snapshot = state.snapshot();
+    let mut out = String::new();
+    out.push_str("# TYPE solaris_tps gauge\n");
+    prometheus_gauge(&mut out, "solaris_tps", snapshot.tps);
+    out.push_str("# TYPE solaris_tick_duration_microseconds gauge\n");
+    for (quantile, value) in [
+        ("0.50", snapshot.tick.p50_us),
+        ("0.95", snapshot.tick.p95_us),
+        ("0.99", snapshot.tick.p99_us),
+    ] {
+        out.push_str("solaris_tick_duration_microseconds{quantile=\"");
+        out.push_str(quantile);
+        out.push_str("\"} ");
+        out.push_str(&value.to_string());
+        out.push('\n');
+    }
+    prometheus_gauge(&mut out, "solaris_players", snapshot.players.count);
+    prometheus_gauge(
+        &mut out,
+        "solaris_chunks_loaded",
+        snapshot.chunks.loaded_total,
+    );
+    prometheus_gauge(&mut out, "solaris_entities", snapshot.entities.total);
+    prometheus_gauge(
+        &mut out,
+        "solaris_network_bytes_written_total",
+        snapshot.network.bytes_written,
+    );
+    prometheus_gauge(
+        &mut out,
+        "solaris_network_reliable_drops_total",
+        snapshot.network.reliable_drops,
+    );
+    prometheus_gauge(
+        &mut out,
+        "solaris_pump_skipped_ticks_total",
+        snapshot.pump_skipped_ticks,
+    );
+    if let Some(bytes) = resident_memory_bytes() {
+        prometheus_gauge(&mut out, "solaris_process_resident_memory_bytes", bytes);
+    }
+    if let Some(sample) = state
+        .load_snapshot(None)
+        .and_then(|metrics| metrics.samples.last().copied())
+    {
+        for (phase, value) in [
+            ("input", sample.phase_us.input_us),
+            ("chunks", sample.phase_us.chunks_us),
+            ("entity", sample.phase_us.entity_us),
+            ("merge", sample.phase_us.merge_us),
+            ("block", sample.phase_us.block_us),
+            ("commit", sample.phase_us.commit_us),
+            ("snapshot", sample.phase_us.snapshot_us),
+            ("views", sample.phase_us.views_us),
+            ("publish", sample.phase_us.publish_us),
+            ("plugins", sample.phase_us.plugins_us),
+            ("coordination", sample.phase_us.coordination_us),
+            ("journal_build", sample.phase_us.journal_build_us),
+            ("journal_queue", sample.phase_us.journal_queue_us),
+        ] {
+            out.push_str("solaris_tick_phase_microseconds{phase=\"");
+            out.push_str(phase);
+            out.push_str("\"} ");
+            out.push_str(&value.to_string());
+            out.push('\n');
+        }
+    }
+    out
+}
+
+fn resident_memory_bytes() -> Option<u64> {
+    let status = std::fs::read_to_string("/proc/self/status").ok()?;
+    let kib = status
+        .lines()
+        .find_map(|line| line.strip_prefix("VmRSS:"))?
+        .split_whitespace()
+        .next()?
+        .parse::<u64>()
+        .ok()?;
+    kib.checked_mul(1024)
 }
 
 /// Read bytes until the CRLFCRLF head terminator, bounded by
@@ -1188,6 +1347,32 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn tps_route_serves_tps_and_mspt_json() {
+        let state = test_state();
+        state.record_pump_tick(PumpTick {
+            tick: 1,
+            core_us: 10_000,
+            ..Default::default()
+        });
+        let (mut client, mut server) = duplex(8192);
+        client
+            .write_all(b"GET /tps HTTP/1.1\r\nHost: x\r\n\r\n")
+            .await
+            .unwrap();
+        serve_connection(&mut server, &state).await;
+        drop(server);
+        let mut out = Vec::new();
+        client.read_to_end(&mut out).await.unwrap();
+        let text = String::from_utf8_lossy(&out).into_owned();
+        assert!(text.starts_with("HTTP/1.1 200 OK"), "{text}");
+        let body = text.split_once("\r\n\r\n").unwrap().1;
+        let json: serde_json::Value = serde_json::from_str(body).unwrap();
+        assert_eq!(json["tick"], 1);
+        assert!(json["tps"].is_number());
+        assert!(json["mspt"].is_number());
+    }
+
+    #[tokio::test]
     async fn unknown_route_is_404() {
         let state = test_state();
         let (mut client, mut server) = duplex(8192);
@@ -1219,5 +1404,60 @@ mod tests {
         assert!(text.starts_with("HTTP/1.1 200 OK"), "{text}");
         assert!(text.contains("\"profile_schema\":1"));
         assert!(text.contains("\"captured_unix_ms\""));
+    }
+    #[test]
+    fn prometheus_exposes_the_dashboard_operator_gauges() {
+        let state = test_state();
+        state.record_pump_tick(PumpTick {
+            tick: 1,
+            core_us: 10_000,
+            bytes_written: 44,
+            chunks: DashboardChunks { loaded_total: 3 },
+            entities: DashboardEntities { total: 7 },
+            players: Some(DashboardPlayers {
+                count: 2,
+                max: 20,
+                names: Vec::new(),
+            }),
+            ..Default::default()
+        });
+        let metrics = prometheus(&state);
+        for name in [
+            "solaris_tps",
+            "solaris_tick_duration_microseconds{quantile=\"0.50\"}",
+            "solaris_tick_duration_microseconds{quantile=\"0.95\"}",
+            "solaris_tick_duration_microseconds{quantile=\"0.99\"}",
+            "solaris_players 2",
+            "solaris_chunks_loaded 3",
+            "solaris_entities 7",
+            "solaris_network_bytes_written_total 44",
+        ] {
+            assert!(metrics.contains(name), "missing {name}: {metrics}");
+        }
+    }
+
+    #[tokio::test]
+    async fn metrics_route_honors_optional_bearer_token() {
+        let state = test_state();
+        state.set_metrics_bearer_token(Some("secret".into()));
+        for (request, status) in [
+            (
+                "GET /metrics HTTP/1.1\r\nHost: x\r\n\r\n",
+                "401 Unauthorized",
+            ),
+            (
+                "GET /metrics HTTP/1.1\r\nHost: x\r\nAuthorization: Bearer secret\r\n\r\n",
+                "200 OK",
+            ),
+        ] {
+            let (mut client, mut server) = duplex(8192);
+            client.write_all(request.as_bytes()).await.unwrap();
+            serve_connection(&mut server, &state).await;
+            drop(server);
+            let mut out = Vec::new();
+            client.read_to_end(&mut out).await.unwrap();
+            let text = String::from_utf8(out).unwrap();
+            assert!(text.starts_with(&format!("HTTP/1.1 {status}")), "{text}");
+        }
     }
 }

@@ -64,6 +64,7 @@ fn stalled_journal_receiver_applies_backpressure_and_drains_fifo() {
                 }
                 JournalWork::Checkpoint(_)
                 | JournalWork::SaveGenerated(_)
+                | JournalWork::Backup(_)
                 | JournalWork::Shutdown => panic!("journal FIFO order broken"),
             }
         } else {

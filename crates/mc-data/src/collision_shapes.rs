@@ -92,16 +92,20 @@ impl<'a> CollisionShape<'a> {
     }
 
     pub fn iter(self) -> impl ExactSizeIterator<Item = CollisionBox> + 'a {
-        self.bytes.chunks_exact(12).map(|bytes| CollisionBox {
-            coordinates: [
-                read_i16(bytes, 0),
-                read_i16(bytes, 2),
-                read_i16(bytes, 4),
-                read_i16(bytes, 6),
-                read_i16(bytes, 8),
-                read_i16(bytes, 10),
-            ],
-        })
+        self.bytes
+            .as_chunks::<12>()
+            .0
+            .iter()
+            .map(|bytes| CollisionBox {
+                coordinates: [
+                    read_i16(bytes, 0),
+                    read_i16(bytes, 2),
+                    read_i16(bytes, 4),
+                    read_i16(bytes, 6),
+                    read_i16(bytes, 8),
+                    read_i16(bytes, 10),
+                ],
+            })
     }
 
     #[must_use]

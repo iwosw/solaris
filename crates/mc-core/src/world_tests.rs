@@ -57,6 +57,11 @@ pub(crate) fn native_store(
     }
     let mut nbt = Vec::new();
     mc_nbt::write_named(&mut nbt, "", &mc_nbt::Tag::Compound(Vec::new())).unwrap();
+    globals.insert(
+        "bossbars".into(),
+        crate::native_checkpoint::tag_record(0, &crate::bossbar::BossBars::default().to_nbt())
+            .unwrap(),
+    );
     for key in ["scoreboard", "level_metadata", "conversion_extras"] {
         globals.insert(
             key.into(),

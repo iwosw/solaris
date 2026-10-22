@@ -1152,7 +1152,8 @@ fn burn(state: &mut TickState, night: bool, changes: &mut ChangeSet) {
 /// Sheared sheep graze (vanilla `EatBlockGoal`, about once per 1000 ticks):
 /// the grass block under one turns to dirt and its wool grows back.
 fn graze(state: &mut TickState, rng: &mut Rng, changes: &mut ChangeSet) {
-    let mob_griefing = crate::command_rules::boolean(state, "mob_griefing");
+    let mob_griefing =
+        crate::command_rules::mob_griefing(state, crate::command_rules::MobGrief::SheepGrazing);
     for index in 0..state.entities.len() as u32 {
         let slot = EntitySlot(index);
         // Graze/block-grief is live simulation: freeze resident-inactive.

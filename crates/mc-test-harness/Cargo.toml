@@ -31,6 +31,10 @@ path = "src/bin/registry_data_extract.rs"
 [[bin]]
 name = "player-scale-bots"
 path = "src/bin/player_scale_bots.rs"
+[[bin]]
+name = "quirk-probe"
+path = "src/bin/quirk_probe.rs"
+
 
 [dependencies]
 mc-data = { path = "../mc-data" }

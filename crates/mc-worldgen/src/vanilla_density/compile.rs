@@ -54,7 +54,47 @@ pub(super) fn load(seed: u64, root: &Path) -> Result<DensityRuntime, String> {
         .runtime
         .fields
         .insert("sloped_cheese".into(), cheese);
+    if let Some(surface) = get(&settings, "noise_router")?
+        .get("final_density")
+        .and_then(lod_surface_json)
+    {
+        let id = compiler.compile(&surface)?;
+        compiler.runtime.fields.insert("lod_surface".into(), id);
+    }
     Ok(compiler.runtime)
+}
+
+/// Far-terrain LOD surface: the argument of the final density's first
+/// `interpolated` wrapper (slide and blending included) with the cave branch
+/// (`range_choice` on the sloped cheese) replaced by the sloped cheese itself.
+/// `None` when the router does not have that shape.
+pub(super) fn lod_surface_json(final_density: &Value) -> Option<Value> {
+    fn interpolated(value: &Value) -> Option<&Value> {
+        let object = value.as_object()?;
+        if object.get("type")?.as_str()? == "minecraft:interpolated" {
+            return object.get("argument");
+        }
+        object.values().find_map(interpolated)
+    }
+    fn without_caves(value: &mut Value) -> bool {
+        const CHEESE: &str = "minecraft:overworld/sloped_cheese";
+        let Some(object) = value.as_object_mut() else {
+            return false;
+        };
+        if object.get("type").and_then(Value::as_str) == Some("minecraft:range_choice")
+            && object.get("input").and_then(Value::as_str) == Some(CHEESE)
+        {
+            *value = Value::String(CHEESE.into());
+            return true;
+        }
+        let mut replaced = false;
+        for child in object.values_mut() {
+            replaced |= without_caves(child);
+        }
+        replaced
+    }
+    let mut surface = interpolated(final_density)?.clone();
+    without_caves(&mut surface).then_some(surface)
 }
 
 struct Compiler {

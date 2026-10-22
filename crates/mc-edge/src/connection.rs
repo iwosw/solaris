@@ -206,6 +206,8 @@ pub struct Connection {
     buf: BytesMut,
     compression: Compression,
     budget: PrePlayBudget,
+    /// Encode item stacks for a client that cannot resolve plugin item models.
+    vanilla_item_models: bool,
 }
 
 impl Connection {
@@ -224,7 +226,14 @@ impl Connection {
             buf: BytesMut::with_capacity(4096),
             compression: Compression::Disabled,
             budget: PrePlayBudget::with_defaults(),
+            vanilla_item_models: false,
         }
+    }
+
+    /// Encode later item stacks for a client that cannot resolve plugin item
+    /// models (see `vanilla_items`).
+    pub fn show_vanilla_item_models(&mut self) {
+        self.vanilla_item_models = true;
     }
 
     /// Reads exactly one decrypted, budget-checked frame, applying the
@@ -281,7 +290,9 @@ impl Connection {
     /// Encodes, frames and writes one packet with the write-stall fence.
     pub async fn send_packet<P: Packet>(&mut self, p: &P) -> anyhow::Result<()> {
         let mut body = BytesMut::new();
-        p.encode(&mut body)?;
+        mc_protocol::packets::play::with_vanilla_item_models(self.vanilla_item_models, || {
+            p.encode(&mut body)
+        })?;
         let framed = encode_frame(P::ID, &body, self.compression)?;
         write_with_stall_timeout(self.writer.write_all(&framed), OUTBOUND_WRITE_STALL_TIMEOUT)
             .await?;

@@ -1885,3 +1885,12 @@ include!("tests/merchant.rs");
 include!("tests/serverbound_and_slots.rs");
 include!("tests/serverbound_encoder_atomicity.rs");
 include!("tests/set_passengers.rs");
+
+#[test]
+fn transfer_packet_round_trip_and_wire_id() {
+    assert_eq!(ClientboundTransfer::ID, 0x81);
+    round_trip(ClientboundTransfer {
+        host: "lobby.example.com".into(),
+        port: 25565,
+    });
+}

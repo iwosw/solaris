@@ -437,10 +437,7 @@ pub fn execute(
     let rules = registry.item_rules();
     let rep = reputation(state, customer);
     let hero = menu.merchant.and_then(|m| m.hero);
-    loop {
-        let Some(offer) = state.offers.get(selection) else {
-            break;
-        };
+    while let Some(offer) = state.offers.get(selection) {
         let Some(swapped) = offer.payment_order(&rules, &menu.grid, rep, hero) else {
             break;
         };

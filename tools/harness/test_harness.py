@@ -286,6 +286,81 @@ class ReceiptContractTests(unittest.TestCase):
         self.assertEqual(payload["commands"], [])
 
 
+class GravesCustodyTests(unittest.TestCase):
+    """The gate's own assertions must fail closed on duplication."""
+
+    @staticmethod
+    def receipt(**overrides):
+        receipt = {
+            "status": "PASS",
+            "source_unchanged": True,
+            "blocks": [{
+                "dimension": "minecraft:overworld", "x": -574, "y": 71, "z": 320,
+                "state": 1, "block": "minecraft:barrel",
+                "items": [{"item": "minecraft:dirt", "count": 7, "place": "container", "slot": 0}],
+            }],
+            "players": [{"uuid": "u", "items": []}],
+            "item_entities": [],
+        }
+        receipt.update(overrides)
+        return receipt
+
+    def test_custody_passes_with_exact_barrel_and_no_copies(self) -> None:
+        from .backends.graves import check_custody
+
+        checks: dict[str, object] = {}
+        check_custody(checks, self.receipt(), item="minecraft:dirt", count=7)
+        self.assertTrue(all(check["passed"] for check in checks.values()))
+
+    def test_inventory_copy_fails_closed(self) -> None:
+        from .backends.graves import check_custody
+
+        receipt = self.receipt(players=[{"uuid": "u", "items": [
+            {"item": "minecraft:dirt", "count": 7, "place": "inventory", "slot": 0}]}])
+        with self.assertRaisesRegex(RuntimeError, "player_inventory_holds_no_copy"):
+            check_custody({}, receipt, item="minecraft:dirt", count=7)
+
+    def test_dropped_copy_fails_closed(self) -> None:
+        from .backends.graves import check_custody
+
+        receipt = self.receipt(item_entities=[
+            {"type_id": 40, "position": [0.0, 0.0, 0.0], "item": "minecraft:dirt", "count": 7}])
+        with self.assertRaisesRegex(RuntimeError, "no_dropped_copy"):
+            check_custody({}, receipt, item="minecraft:dirt", count=7)
+
+    def test_wrong_barrel_count_fails_closed(self) -> None:
+        from .backends.graves import check_custody
+
+        receipt = self.receipt()
+        receipt["blocks"][0]["items"][0]["count"] = 6
+        with self.assertRaisesRegex(RuntimeError, "barrel_holds_exactly_given_stacks"):
+            check_custody({}, receipt, item="minecraft:dirt", count=7)
+
+    def test_non_barrel_cell_fails_closed(self) -> None:
+        from .backends.graves import check_custody
+
+        receipt = self.receipt()
+        receipt["blocks"][0]["block"] = "minecraft:air"
+        with self.assertRaisesRegex(RuntimeError, "grave_is_barrel"):
+            check_custody({}, receipt, item="minecraft:dirt", count=7)
+
+    def test_probe_failure_receipt_never_passes(self) -> None:
+        from .backends.graves import check_custody
+
+        receipt = self.receipt(status="FAIL", source_unchanged=None)
+        receipt["error"] = "journal tail"
+        with self.assertRaisesRegex(RuntimeError, "probe_pass"):
+            check_custody({}, receipt, item="minecraft:dirt", count=7)
+
+    def test_grave_coordinates_parse_from_the_plugin_request(self) -> None:
+        from .backends.graves import GRAVE_REQUEST
+
+        match = GRAVE_REQUEST.search(
+            "plugin.command_result: request=grave--574-71-320-cd88 outcome=\"committed\"")
+        self.assertIsNotNone(match)
+        self.assertEqual([int(match.group(i)) for i in (1, 2, 3)], [-574, 71, 320])
+
+
 class SharedClientProbeTests(unittest.TestCase):
     def test_inventory_missing_click_tools_fails_before_fixture_actions(self) -> None:
         from . import compatibility

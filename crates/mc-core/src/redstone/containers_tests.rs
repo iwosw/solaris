@@ -92,6 +92,7 @@ fn item(state: &TickState, name: &str, count: i32) -> ItemStack {
 
 fn set_slot(state: &mut TickState, pos: BlockPos, index: usize, stack: ItemStack) {
     state.block_entities.get_mut(&key(pos)).unwrap().slots[index] = stack;
+    inventory_changed(&mut state.redstone_containers, pos);
 }
 
 fn step(state: &mut TickState) {
@@ -179,6 +180,60 @@ fn disabled_hopper_keeps_custody_without_restarting_cooldown() {
         state.redstone_containers.remaining(key(HOPPER), state.tick),
         0
     );
+}
+
+#[test]
+fn blocked_hopper_sleeps_until_a_neighbour_inventory_changes() {
+    let mut state = state();
+    let chest = super::super::offset(HOPPER, (1, 0, 0)).unwrap();
+    place(&mut state, HOPPER, "hopper", &[("facing", "east")]);
+    place(&mut state, chest, "chest", &[]);
+    let stone = item(&state, "stone", 64);
+    state
+        .block_entities
+        .get_mut(&key(chest))
+        .unwrap()
+        .slots
+        .fill(stone.clone());
+    let hopper_stone = item(&state, "stone", 2);
+    set_slot(&mut state, HOPPER, 0, hopper_stone);
+
+    step(&mut state);
+
+    assert!(state.redstone_containers.sleeping.contains(&key(HOPPER)));
+    assert_eq!(total(&state), 27 * 64 + 2);
+
+    let chest_stone = item(&state, "stone", 63);
+    set_slot(&mut state, chest, 0, chest_stone);
+    assert!(!state.redstone_containers.sleeping.contains(&key(HOPPER)));
+    step(&mut state);
+
+    assert_eq!(state.block_entities[&key(chest)].slots[0].count, 64);
+    assert_eq!(state.block_entities[&key(HOPPER)].slots[0].count, 1);
+    assert_eq!(total(&state), 27 * 64 + 1);
+    assert_eq!(
+        state.redstone_containers.remaining(key(HOPPER), state.tick),
+        8
+    );
+}
+
+#[test]
+fn hopper_lane_tracks_loaded_hoppers_without_container_scanning() {
+    let mut state = state();
+    place(&mut state, HOPPER, "hopper", &[]);
+    assert_eq!(
+        state.redstone_containers.hoppers,
+        std::collections::BTreeSet::from([key(HOPPER)])
+    );
+
+    state
+        .world
+        .set_block(HOPPER.x, HOPPER.y, HOPPER.z, state.registry.states.air);
+    state.world.fold_overlay();
+    step(&mut state);
+
+    assert!(state.redstone_containers.hoppers.is_empty());
+    assert!(state.redstone_containers.cooldowns.is_empty());
 }
 
 #[test]
@@ -297,7 +352,8 @@ fn full_hopper_leaves_bowl_item_until_inventory_has_room() {
     assert!(!state.merge_consumed_items.contains(&slot));
     assert_eq!(state.entities.row(slot).item.as_ref().unwrap().count, 64);
     assert_eq!(total(&state), 384);
-    state.block_entities.get_mut(&key(HOPPER)).unwrap().slots[4].count = 63;
+    let nearly_full = item(&state, "dirt", 63);
+    set_slot(&mut state, HOPPER, 4, nearly_full);
     step(&mut state);
     assert_eq!(state.block_entities[&key(HOPPER)].slots[4].count, 64);
     assert_eq!(state.entities.row(slot).item.as_ref().unwrap().count, 63);

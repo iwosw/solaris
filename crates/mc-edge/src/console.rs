@@ -37,9 +37,53 @@ pub(crate) fn spawn(server: Arc<EdgeServer>) -> std::io::Result<tokio::task::Joi
     }))
 }
 
+/// Console-only `backup`: copies the running world into `[data] backup_dir`
+/// without pausing ticks. It runs detached, so the console stays usable and
+/// the outcome prints when the copy finishes.
+fn backup(server: &EdgeServer, command: &str) {
+    if command != "backup" {
+        print_line("Incorrect argument for command");
+        return;
+    }
+    let Some(directory) = server.cfg.data.backup_dir.clone() else {
+        print_line("Backups are disabled: set backup_dir under [data]");
+        return;
+    };
+    print_line("Backing up the world (the server keeps running)");
+    let core = Arc::clone(&server.hub);
+    tokio::spawn(async move {
+        let started = std::time::Instant::now();
+        let result =
+            tokio::task::spawn_blocking(move || crate::backup::run_hot_backup(&core, &directory))
+                .await;
+        match result {
+            Ok(Ok((path, backup))) => print_line(&format!(
+                "Backup {} complete: checkpoint tick {}, recoverable to tick {}, {} files, {} ms",
+                path.display(),
+                backup.checkpoint_tick,
+                backup.wal_tick,
+                backup.files.len(),
+                started.elapsed().as_millis()
+            )),
+            Ok(Err(error)) => print_line(&format!("Backup failed: {error:#}")),
+            Err(error) => print_line(&format!("Backup failed: {error}")),
+        }
+    });
+}
+
 pub(crate) async fn execute(server: &EdgeServer, line: &str) -> anyhow::Result<()> {
     let command = line.trim().trim_start_matches('/');
     if command.is_empty() {
+        return Ok(());
+    }
+    if command.split_whitespace().next() == Some("backup")
+        && !server
+            .hub
+            .plugin_commands()
+            .iter()
+            .any(|(name, _)| name == "backup")
+    {
+        backup(server, command);
         return Ok(());
     }
     if server.handle_admin_command(CONNECTION, command).await? {
@@ -118,6 +162,11 @@ pub(crate) fn output(changes: &[PlayerChange]) {
             PlayerChange::Chat { message, .. } => print_line(message),
             PlayerChange::StyledChat { content, .. } => print_line(&component_text(content)),
             PlayerChange::Disconnect { reason, .. } => print_line(reason),
+            PlayerChange::Title(
+                mc_core::boundary::TitleChange::Title(content)
+                | mc_core::boundary::TitleChange::Subtitle(content)
+                | mc_core::boundary::TitleChange::ActionBar(content),
+            ) => print_line(&component_text(content)),
             _ => {}
         }
     }

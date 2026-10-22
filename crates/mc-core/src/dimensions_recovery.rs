@@ -167,7 +167,7 @@ pub(crate) fn hydrate_entity(
     let projectile = if crate::projectiles::ProjectileKind::from_name(&record.id).is_some() {
         Some(
             crate::projectiles::persistence::from_entity(&record, &registry.items)
-                .map_err(&invalid)?,
+                .map_err(invalid)?,
         )
     } else {
         None
@@ -179,9 +179,9 @@ pub(crate) fn hydrate_entity(
             .any(|goal| goal.kind == crate::blueprint::GoalKind::Breed)
     });
     let mut appearance = appearance_from_vanilla_entity(&record);
-    crate::end_fight::native_appearance(&record, &mut appearance).map_err(&invalid)?;
+    crate::end_fight::native_appearance(&record, &mut appearance).map_err(invalid)?;
     if let Some(fight) = &mut base.end_fight {
-        crate::end_fight::hydrate_native_entity(fight, &record).map_err(&invalid)?;
+        crate::end_fight::hydrate_native_entity(fight, &record).map_err(invalid)?;
     }
     appearance.equipment =
         crate::entity_loot::equipment_from_fields(&registry.items, &record.extra_fields)?.into();

@@ -1486,7 +1486,7 @@ fn extract_centre_with_backend(
 fn extract_light_layer_scalar(grid: &[u8], section_count: usize) -> LightLayer {
     extract_light_layer(grid, section_count, |row, output| {
         let mut nonzero = 0_u16;
-        for (pair, output) in row.chunks_exact(2).zip(output) {
+        for (pair, output) in row.as_chunks::<2>().0.iter().zip(output) {
             let low = pair[0];
             let high = pair[1];
             debug_assert!(low <= 15 && high <= 15);

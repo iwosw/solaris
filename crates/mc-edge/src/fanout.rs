@@ -137,7 +137,8 @@ pub fn publish_with_registries<'a>(
                 });
             (
                 dimension,
-                TickPlanIndex::with_previous(projection, previous),
+                TickPlanIndex::with_previous(projection, previous)
+                    .with_reveals(projection, cache.anti_xray()),
             )
         })
         .collect();

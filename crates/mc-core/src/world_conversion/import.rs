@@ -2186,6 +2186,10 @@ pub(super) fn convert(
     );
     globals.insert("scoreboard".into(), bridge::tag_record(tick, &scoreboard)?);
     globals.insert(
+        "bossbars".into(),
+        bridge::tag_record(tick, &crate::bossbar::BossBars::default().to_nbt())?,
+    );
+    globals.insert(
         "level_metadata".into(),
         bridge::tag_record(tick, &crate::level_metadata::to_tag(&metadata))?,
     );

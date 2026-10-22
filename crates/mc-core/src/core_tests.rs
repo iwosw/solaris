@@ -430,3 +430,51 @@ fn scoreboard_survives_core_checkpoint_and_recovery_and_syncs_rejoining_viewer()
     restored.shutdown();
     std::fs::remove_dir_all(dir).expect("remove test world");
 }
+
+#[test]
+fn bossbars_survive_core_checkpoint_and_reopen() {
+    let (core, dir) = open_core(512);
+    join_and_drain(&core, ConnectionId(72), 2);
+    let mut rx = core.subscribe();
+    for command in [
+        "bossbar add solaris:probe \"Probe\"",
+        "bossbar set solaris:probe value 42",
+    ] {
+        core.submit(PlayerInput::Command {
+            connection: ConnectionId(72),
+            command: command.to_owned(),
+            permission_level: 4,
+        });
+    }
+    for _ in 0..20 {
+        rx.blocking_recv().expect("live core tick");
+        core.try_drain_outbox();
+    }
+    core.shutdown();
+    let config = test_config(dir.clone(), 512);
+    let stored_value = || {
+        let store = mc_world::native::NativeReadOnlyStore::open_with_cache(
+            &dir.join("native/state.redb"),
+            crate::native_checkpoint::native_identity(&config),
+            16 * 1024 * 1024,
+        )
+        .expect("clean shutdown leaves a readable native checkpoint");
+        let image = store
+            .checkpoint_reader()
+            .unwrap()
+            .read_checkpoint()
+            .unwrap();
+        let tag =
+            crate::native_checkpoint::decode_tag(&image.globals["bossbars"], "bossbars").unwrap();
+        crate::bossbar::BossBars::from_nbt(&tag).unwrap().bars["solaris:probe"].value
+    };
+    assert_eq!(stored_value(), 42);
+    let restored = Core::open(config.clone()).expect("recover bossbars");
+    restored.shutdown();
+    assert_eq!(
+        stored_value(),
+        42,
+        "bar survives a recover and re-checkpoint"
+    );
+    std::fs::remove_dir_all(dir).expect("remove test world");
+}

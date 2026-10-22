@@ -11,6 +11,17 @@ pub struct Controls {
     pub fall_distance: f64,
 }
 impl Controls {
+    /// Journal dirty comparison of a baseline (`self`) with the live row.
+    /// `fall_distance` is a transient mid-air accumulator (see `mob_fall`):
+    /// growth rides the next image emitted for another reason and
+    /// checkpoints, but never forces one. The reset to zero on landing is
+    /// journaled so replay cannot keep a stale non-zero distance.
+    pub(crate) fn journal_eq(&self, live: &Self) -> bool {
+        self.no_ai == live.no_ai
+            && self.invulnerable == live.invulnerable
+            && !(live.fall_distance == 0.0 && self.fall_distance != 0.0)
+    }
+
     pub(crate) fn from_fields(fields: &[(String, Tag)]) -> Result<Self, CoreError> {
         let mut state = Self::default();
         for name in ["NoAI", "Invulnerable", "FallDistance"] {

@@ -199,7 +199,10 @@ pub(super) fn work(
         || v.age < 0
         || v.sleeping
         || v.activity != Activity::Work
-        || !crate::command_rules::boolean(state, "mob_griefing")
+        || !crate::command_rules::mob_griefing(
+            state,
+            crate::command_rules::MobGrief::VillagerFarming,
+        )
     {
         v.harvest_progress.target = None;
         v.harvest_progress.best = None;

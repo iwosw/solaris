@@ -763,6 +763,17 @@ impl crate::tick::TickState {
             )))
         })
     }
+
+    /// Vanilla `getRawBrightness(pos, 0)`: sky and block light with no
+    /// day/weather sky darkening. Crops, stems and bamboo saplings gate on
+    /// this, so open-sky farms grow at night; spawning and saplings
+    /// (`getMaxLocalRawBrightness`) use the darkened [`Self::brightness`].
+    #[must_use]
+    pub(crate) fn raw_brightness(&self, x: i32, y: i32, z: i32) -> u8 {
+        self.world
+            .light_at(x, y, z)
+            .map_or(0, |(sky, block)| sky.max(block))
+    }
 }
 
 #[cfg(test)]

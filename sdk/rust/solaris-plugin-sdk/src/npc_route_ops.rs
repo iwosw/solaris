@@ -1,7 +1,7 @@
 //! Finite routes run by the native physical actor owner. Admission and command
 //! acceptance are not arrival; query the actual native status and receipt.
 
-use crate::{domain_operations, npc_routes, Command};
+use crate::{Command, domain_operations, npc_routes};
 
 #[must_use]
 pub fn admit_npc_route(
@@ -84,6 +84,9 @@ pub fn cancel_npc_route(
 }
 
 fn operation(request: &str, operation: npc_routes::NpcRouteOperation) -> Command {
-    Command::Operation(domain_operations::OperationRequest { expected_plugin_storage_versions: Vec::new(), request: request.to_owned(),
-    operation: domain_operations::DomainOperation::NpcRoute(operation), })
+    Command::Operation(domain_operations::OperationRequest {
+        expected_plugin_storage_versions: Vec::new(),
+        request: request.to_owned(),
+        operation: domain_operations::DomainOperation::NpcRoute(operation),
+    })
 }

@@ -140,7 +140,7 @@ fn settlement_is_native_player_command_with_typed_arguments_and_help() {
 #[test]
 fn settlement_completion_covers_subcommands_without_name_lookup() {
     let complete = |input: &str| {
-        suggestions(3, input, 0, &[], &[], &[], &[], &[])
+        suggestions(3, input, 0, &[], &[], &[], &[], &[], &[])
             .suggestions
             .into_iter()
             .map(|entry| entry.text)

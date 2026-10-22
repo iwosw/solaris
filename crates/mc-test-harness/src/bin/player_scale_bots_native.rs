@@ -353,7 +353,7 @@ pub(super) fn native_control_snapshot(world: &Path, spec: &Value) -> Result<Valu
     let mut globals = Map::new();
     for (name, record) in &image.globals {
         let payload = match name.as_str() {
-            "scoreboard" | "level_metadata" | "conversion_extras" => {
+            "scoreboard" | "level_metadata" | "conversion_extras" | "bossbars" => {
                 native_compound(&record.payload)
             }
             _ => serde_json::from_slice::<Value>(&record.payload).map_err(Into::into),

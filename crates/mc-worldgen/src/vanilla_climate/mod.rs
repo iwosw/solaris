@@ -58,6 +58,12 @@ impl Node {
             }
         }
     }
+    fn leaves(&self, out: &mut Vec<usize>) {
+        match self.leaf {
+            Some(id) => out.push(id),
+            None => self.children.iter().for_each(|child| child.leaves(out)),
+        }
+    }
 }
 fn sort(nodes: &mut [Node], dimension: usize, absolute: bool) {
     nodes.sort_by(|a, b| {
@@ -253,7 +259,23 @@ impl VanillaClimate {
     pub(crate) fn runtime(&self) -> Arc<DensityRuntime> {
         Arc::clone(&self.runtime)
     }
+    /// Router field ids, then each parameter row with its biome in the order
+    /// the search tree visits leaves: a scan keeping the first strictly
+    /// smaller distance picks the same biome as [`Self::sample`].
+    pub(crate) fn program_parts(&self) -> ([usize; 6], Vec<ParameterRow<'_>>) {
+        let mut order = Vec::with_capacity(self.parameters.len());
+        self.tree.leaves(&mut order);
+        let rows = order
+            .into_iter()
+            .map(|id| (self.parameters[id], self.biomes[id].as_str()))
+            .collect();
+        (self.fields, rows)
+    }
 }
+
+/// Quantized min/max per climate parameter (temperature, humidity,
+/// continentalness, erosion, depth, weirdness, offset) and the biome.
+pub(crate) type ParameterRow<'a> = ([[i64; 2]; 7], &'a str);
 
 pub struct ClimateSampler<'a> {
     climate: &'a VanillaClimate,

@@ -624,11 +624,11 @@ pub fn apply(state: &mut TickState, actor: EntityId, plan: &HarvestPlan) {
     }
 }
 
+/// Vanilla `Chicken.eggTime = random.nextInt(6000) + 6000`. The roll is mixed
+/// through SplitMix: a bare multiplicative hash of sequential ids is an
+/// arithmetic progression mod 6001 that clusters the first layings early.
 fn egg_interval(id: EntityId, tick: u64) -> u32 {
-    let seed = (id.0 as i64 as u64)
-        .wrapping_mul(0x9E37_79B9_7F4A_7C15)
-        .wrapping_add(tick.wrapping_mul(0xC2B2_AE3D_27D4_EB4F));
-    6000 + (seed % 6001) as u32
+    6000 + (crate::farming::hash(&[id.0 as i64 as u64, tick, 0xE66_1A71]) % 6000) as u32
 }
 
 /// Every living animal advances even when its AI decision cadence is thinned.

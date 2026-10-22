@@ -282,7 +282,7 @@ pub(crate) fn run(state: &mut TickState, intents: &mut Vec<Intent>) {
                     kind: IntentKind::Explode {
                         center,
                         power: record.explosion_power,
-                        mob_source: false,
+                        mob_grief: None,
                         kill_credit: None,
                     },
                     footprint: Footprint::default(),

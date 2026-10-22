@@ -1405,14 +1405,24 @@ impl EntityStore {
     }
 
     /// Merge selected type lists without changing the old full-scan apply order.
-    pub(crate) fn mob_slots_matching(&self, accepts: impl Fn(u32) -> bool) -> Vec<EntitySlot> {
-        let mut slots = Vec::new();
+    pub(crate) fn mob_slots_matching_into(
+        &self,
+        accepts: impl Fn(u32) -> bool,
+        slots: &mut Vec<EntitySlot>,
+    ) {
+        slots.clear();
         for (&type_id, members) in &self.mob_members {
             if accepts(type_id) {
                 slots.extend(members.iter().copied());
             }
         }
         slots.sort_unstable();
+    }
+
+    /// Merge selected type lists without changing the old full-scan apply order.
+    pub(crate) fn mob_slots_matching(&self, accepts: impl Fn(u32) -> bool) -> Vec<EntitySlot> {
+        let mut slots = Vec::new();
+        self.mob_slots_matching_into(accepts, &mut slots);
         slots
     }
 

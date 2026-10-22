@@ -333,6 +333,23 @@ impl ChunkWorld {
             .village_sites_in_region(min_chunk, max_chunk)
     }
 
+    /// The shared chunk generator (village sites, noise biomes) for `/locate`.
+    pub(crate) fn generator(&self) -> Arc<dyn ChunkGenerator> {
+        Arc::clone(&self.source.generator)
+    }
+
+    /// World height range for `/locate biome` vertical samples.
+    pub(crate) fn geometry(&self) -> mc_world::ChunkGeometry {
+        self.source.geometry
+    }
+
+    /// Unfolded authoritative block writes, for `/locate poi` scans.
+    pub(crate) fn overlay_entries(&self) -> impl Iterator<Item = ((i32, i32, i32), u32)> + '_ {
+        self.overlay
+            .iter()
+            .map(|(&(x, y, z), &state)| ((x, y, z), state))
+    }
+
     pub fn new(
         seed: i64,
         generator: Arc<dyn ChunkGenerator>,
@@ -390,6 +407,12 @@ impl ChunkWorld {
             Arc::clone(&registry.light),
             Arc::clone(&registry.wooden_doors),
         )
+    }
+
+    /// The read-only store + generator workers load from; far-terrain LOD
+    /// summaries read through the same source off the tick thread.
+    pub(crate) fn chunk_source(&self) -> Arc<ChunkSource> {
+        Arc::clone(&self.source)
     }
 
     fn from_source(
@@ -883,9 +906,12 @@ impl ChunkWorld {
             return;
         }
         counter.last_seen = tick;
-        counter.dirty = true;
         self.inhabited_current.push(pos);
         if !counter.image.active {
+            // Opening/closing an interval changes its stored value. Continuing
+            // live time is already covered by the checkpoint's manifest anchor;
+            // it must not force a full chunk re-encode every checkpoint.
+            counter.dirty = true;
             counter.image.value = counter.image.value.saturating_add(1);
             counter.image.tick = tick;
             counter.image.active = true;
@@ -901,7 +927,12 @@ impl ChunkWorld {
                 counter.image.value = counter.image.value_at(tick.saturating_sub(1));
                 counter.image.tick = tick;
                 counter.image.active = false;
+                counter.dirty |= self
+                    .chunks
+                    .get(&pos)
+                    .is_some_and(|chunk| chunk.inhabited_time() != counter.image.value);
                 self.inhabited_changes.push(counter.image);
+                self.eviction_check.insert(pos);
             }
         }
         std::mem::swap(&mut self.inhabited_active, &mut self.inhabited_current);
@@ -969,7 +1000,10 @@ impl ChunkWorld {
                 images
                     .get(&image.chunk)
                     .is_none_or(|base| image.value_at(replay.tick) != base.value_at(*tick))
-            });
+            }) || image.active;
+            // Recovery keeps an open interval, whose clean manifest value may be
+            // newer than the native chunk after clock-only checkpoints. Pin it
+            // dirty so closing it (or an absent chunk) persists the value.
             let pos = ChunkPos { x, z };
             let image = crate::journal::InhabitedTimeImage {
                 value: image.value_at(replay.tick),
@@ -1071,7 +1105,10 @@ impl ChunkWorld {
                 images.get(&image.chunk).is_none_or(|base| {
                     last_sim != base.last_sim_at(*tick) || image.remaining != base.remaining
                 })
-            });
+            }) || image.active;
+            // Recovery closes open debt intervals. A clean manifest anchor may
+            // be newer than the native chunk after clock-only checkpoints, so
+            // persist that closure before an inactive zero leaves the manifest.
             self.sim_debt.insert(
                 pos,
                 crate::debt::SimDebtRecord {
@@ -1130,7 +1167,7 @@ impl ChunkWorld {
                 || self
                     .inhabited_time
                     .get(&pos)
-                    .is_some_and(|counter| counter.dirty)
+                    .is_some_and(|counter| counter.dirty || counter.image.active)
             {
                 continue;
             }
@@ -1712,6 +1749,41 @@ impl ChunkWorld {
         false
     }
 
+    /// Committed-but-unflushed terrain for off-tick sampling: resident
+    /// dirty chunks (position, wire revision, chunk) plus non-resident
+    /// overlay writes. Eviction retains dirty chunks and fold retains
+    /// non-resident writes, so both survive here until the checkpoint ACK
+    /// clears them. Called by the tick owner at publication.
+    pub(crate) fn dirty_supplement_data(&self) -> crate::terrain::DirtySupplement {
+        let mut chunks = Vec::new();
+        for pos in &self.dirty {
+            if let Some(chunk) = self.chunks.get(pos) {
+                chunks.push((
+                    *pos,
+                    self.wire_revisions.get(pos).copied().unwrap_or(0),
+                    Arc::clone(chunk),
+                ));
+            }
+        }
+        chunks.sort_unstable_by_key(|(pos, _, _)| (pos.x, pos.z));
+        // No HashSet: the resident map itself answers membership, avoiding
+        // an O(resident) allocate+copy per publication. Sampling may
+        // allocate off-tick (bounded to 36 chunks).
+        let mut overlay: Vec<((i32, i32, i32), u32)> = self
+            .overlay
+            .iter()
+            .filter(|((x, _, z), _)| {
+                !self.chunks.contains_key(&ChunkPos {
+                    x: x.div_euclid(16),
+                    z: z.div_euclid(16),
+                })
+            })
+            .map(|(&(x, y, z), &state)| ((x, y, z), state))
+            .collect();
+        overlay.sort_unstable();
+        crate::terrain::DirtySupplement { chunks, overlay }
+    }
+
     /// Fresh per-step cache; missing columns and overlay writes remain exact.
     pub(crate) fn physics_reader(&self) -> PhysicsReader<'_> {
         PhysicsReader {
@@ -2215,14 +2287,14 @@ impl ChunkWorld {
             }
         }
         let materialize_time = capture_start.elapsed();
-        // Changed debt and live anchors ride the checkpoint. Clean inactive
-        // nonzero debt remains authoritative in the manifest/native image;
-        // merely owing work must not rewrite the same chunk on every save.
+        // Changed debt rides the chunk checkpoint. Clean live anchors and
+        // unchanged nonzero debt already ride the manifest; advancing live
+        // time must not rewrite every active chunk on every save.
         // Projection is durable-only and never changes the wire revision.
         let debt: Vec<ChunkPos> = self
             .sim_debt
             .iter()
-            .filter_map(|(pos, debt)| (debt.dirty || debt.active).then_some(*pos))
+            .filter_map(|(pos, debt)| debt.dirty.then_some(*pos))
             .collect();
         for pos in debt {
             if !self.chunks.contains_key(&pos) {

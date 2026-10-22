@@ -41,6 +41,47 @@ pub(in crate::tick) fn set_locale(
     state.connections.set_locale(*connection, locale.clone());
 }
 
+/// Vanilla's yellow `multiplayer.player.joined` / `multiplayer.player.left`
+/// announcement, delivered reliably to every joined connection and relayed
+/// across local dimensions.
+pub(crate) fn announce_player(
+    state: &mut TickState,
+    translate: &str,
+    name: &str,
+    skip: Option<ConnectionId>,
+) {
+    use mc_nbt::{ListTag, Tag, tag_type};
+    let content = Tag::Compound(vec![
+        ("translate".to_owned(), Tag::String(translate.to_owned())),
+        (
+            "with".to_owned(),
+            Tag::List(ListTag {
+                element_type: tag_type::STRING,
+                elements: vec![Tag::String(name.to_owned())],
+            }),
+        ),
+        ("color".to_owned(), Tag::String("yellow".to_owned())),
+    ]);
+    let recipients: Vec<ConnectionId> = state.connections.all_connections().collect();
+    for recipient in recipients {
+        if skip == Some(recipient) {
+            continue;
+        }
+        state.push_player(
+            recipient,
+            PlayerChange::StyledChat {
+                content: content.clone(),
+            },
+        );
+    }
+    if state.dimension_globals.active {
+        state
+            .dimension_globals
+            .broadcasts
+            .push(crate::dimensions::globals::Broadcast::Chat(content));
+    }
+}
+
 pub(in crate::tick) fn join(
     state: &mut TickState,
     (connection, uuid, name, permission_level): (&ConnectionId, &uuid::Uuid, &String, &u8),
@@ -204,6 +245,8 @@ pub(in crate::tick) fn join(
         },
     );
     crate::scoreboard::sync_join(state, *connection);
+    crate::tick_control::sync_join(state, *connection);
+    crate::bossbar::sync_join(state, *connection);
     crate::effects::sync_join(state, id);
     crate::advancements::sync_join(state, id);
     crate::dialog::probe::offer(state, *connection);
@@ -268,6 +311,7 @@ pub(in crate::tick) fn join(
         }
     }
     changes.entities_spawned.push(id);
+    announce_player(state, "multiplayer.player.joined", name, None);
 }
 
 pub(in crate::tick) fn leave(
@@ -295,6 +339,13 @@ pub(in crate::tick) fn leave(
         }
         state.open_containers.remove(&entity);
     }
+    // Vanilla announces a departure to everyone still connected; the leaver's
+    // own connection is closing, so it is the one recipient that is skipped.
+    let leaving_name = state
+        .connections
+        .entity_of(*connection)
+        .and_then(|entity| state.connections.name_of(entity))
+        .map(str::to_owned);
     // Capture the final player image BEFORE removing the live
     // player: Join restores only from `offline_players`, so a
     // disconnect/reconnect without this image resets inventory,
@@ -318,6 +369,9 @@ pub(in crate::tick) fn leave(
         }
         state.outbox.remove(connection);
         changes.entities_removed.push(entity);
+    }
+    if let Some(name) = leaving_name {
+        announce_player(state, "multiplayer.player.left", &name, Some(*connection));
     }
 }
 

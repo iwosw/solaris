@@ -525,6 +525,28 @@ pub fn solaris_required_recipes() -> Vec<Recipe> {
     recipes
 }
 
+/// Parse one vanilla-format crafting recipe authored by a plugin. Only
+/// `minecraft:crafting_shaped` and `minecraft:crafting_shapeless` are accepted;
+/// any other or unsupported shape is an error rather than a skipped recipe, so a
+/// plugin never believes a result is craftable when it is not.
+pub fn parse_plugin_crafting_recipe(id: Identifier, json: &str) -> Result<Recipe, String> {
+    let path = Path::new("plugin crafting recipe");
+    let value: serde_json::Value = serde_json::from_str(json).map_err(|error| error.to_string())?;
+    let kind = value
+        .get("type")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default();
+    if !matches!(
+        kind,
+        "minecraft:crafting_shaped" | "minecraft:crafting_shapeless"
+    ) {
+        return Err(format!("unsupported plugin crafting recipe type {kind:?}"));
+    }
+    parse_recipe_value(path, id, value)
+        .map_err(|error| error.to_string())?
+        .ok_or_else(|| "plugin crafting recipe is unsupported".to_owned())
+}
+
 fn load_one_recipe(root: &Path, path: &Path) -> Result<Option<Recipe>, RecipeDataError> {
     let id = id_from_file(root, path)?;
     let value: serde_json::Value = read_json_file(

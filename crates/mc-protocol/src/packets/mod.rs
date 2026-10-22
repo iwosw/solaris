@@ -36,8 +36,8 @@ pub enum Direction {
 /// The five top-level connection states a 26.1 connection moves through.
 ///
 /// `Transfer` is technically a sixth `next_state` value in the handshake
-/// packet (since 1.20.5), routed similarly to `Login`; we treat it as a
-/// `Login` for now and revisit if needed.
+/// packet (since 1.20.5); it still opens the Login state, but the edge
+/// refuses it unless the server accepts transfers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum State {
     Handshake,

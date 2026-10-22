@@ -83,7 +83,7 @@ pub(crate) fn run(
                 kind: IntentKind::Explode {
                     center: [pos[0], pos[1] + 1.5, pos[2]],
                     power: 7.0,
-                    mob_source: true,
+                    mob_grief: Some(crate::command_rules::MobGrief::Wither),
                     kill_credit: crate::statistics::living_type(state, id)
                         .map(|type_id| (id, type_id)),
                 },
@@ -139,7 +139,7 @@ pub(crate) fn run(
         .body(slot)
         .hurt_at
         .is_some_and(|tick| state.tick.saturating_sub(tick) == 20)
-        && crate::command_rules::boolean(state, "mob_griefing")
+        && crate::command_rules::mob_griefing(state, crate::command_rules::MobGrief::Wither)
     {
         let base = pos.map(|value| value.floor() as i32);
         for y in base[1]..=base[1] + 3 {

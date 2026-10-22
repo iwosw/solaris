@@ -197,6 +197,40 @@ impl ChunkSection {
             BlockStorage::Indirect(storage) => Some(&storage.palette),
         }
     }
+
+    /// Copy of this section with `cells` (`x`, `y`, `z`, state) replaced and
+    /// the palette trimmed to the states some cell still holds: the wire
+    /// palette must not name a state the replacement removed everywhere
+    /// (anti-xray hides ores this way). The original is untouched.
+    #[must_use]
+    pub fn with_cells_replaced(&self, cells: &[(u8, u8, u8, BlockStateId)]) -> Self {
+        let mut replaced = self.clone();
+        for &(x, y, z, state) in cells {
+            replaced.set(x, y, z, state);
+        }
+        let BlockStorage::Indirect(storage) = &replaced.storage else {
+            return replaced;
+        };
+        let mut kept = vec![usize::MAX; storage.palette.len()];
+        for cell in 0..SECTION_VOLUME {
+            kept[storage.indices.get(cell) as usize] = 0;
+        }
+        if kept.iter().all(|&slot| slot == 0) {
+            return replaced;
+        }
+        let mut palette = Vec::new();
+        for (old, slot) in kept.iter_mut().enumerate() {
+            if *slot == 0 {
+                *slot = palette.len();
+                palette.push(storage.palette[old]);
+            }
+        }
+        let mut indices = PackedBitArray::zeroed(bits_for_palette(palette.len()), SECTION_VOLUME);
+        for cell in 0..SECTION_VOLUME {
+            indices.set(cell, kept[storage.indices.get(cell) as usize] as u32);
+        }
+        Self::from_indirect(palette, indices, replaced.air)
+    }
 }
 
 /// Promote a previously single-valued section to indirect mode after

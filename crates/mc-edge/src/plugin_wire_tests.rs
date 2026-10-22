@@ -23,14 +23,17 @@ use mc_protocol::packets::configuration::{
     ConfigurationDisconnect, FinishConfiguration, ServerboundCustomPayload, ServerboundKnownPacks,
 };
 use mc_protocol::packets::handshake::{Handshake, NextState};
-use mc_protocol::packets::login::{LoginAcknowledged, LoginStart, LoginSuccess, SetCompression};
+use mc_protocol::packets::login::{
+    LoginAcknowledged, LoginDisconnect, LoginStart, LoginSuccess, SetCompression,
+};
 use mc_protocol::packets::play::{
     BlockChangedAck, BlockUpdate, ClientboundCommandSuggestions, ClientboundContainerSetContent,
     ClientboundContainerSetSlot, ClientboundKeepAlive, ClientboundOpenScreen,
     ClientboundSystemChat, ConfirmTeleportation, Direction, InteractionHand, ItemStack,
-    PlayDisconnect, PlayerActionKind, ServerboundChatCommand, ServerboundCommandSuggestion,
-    ServerboundContainerClose, ServerboundKeepAlive, ServerboundPlayerAction,
-    ServerboundSetCarriedItem, ServerboundUseItemOn, SynchronizePlayerPosition, pack_block_pos,
+    PlayDisconnect, PlayerActionKind, ServerboundChat, ServerboundChatCommand,
+    ServerboundCommandSuggestion, ServerboundContainerClose, ServerboundKeepAlive,
+    ServerboundPlayerAction, ServerboundSetCarriedItem, ServerboundUseItemOn,
+    SynchronizePlayerPosition, pack_block_pos,
 };
 use mc_protocol::packets::{CustomPayload, Packet};
 use tokio::net::{TcpListener, TcpStream};
@@ -95,7 +98,7 @@ enum WireEvent {
     Suggestions(ClientboundCommandSuggestions),
     Block(BlockUpdate),
     Ack(BlockChangedAck),
-    Disconnect,
+    Disconnect(String),
 }
 
 struct WireClient {
@@ -307,10 +310,19 @@ impl WireClient {
             } else if frame.id == FinishConfiguration::ID {
                 let _ = exact::<FinishConfiguration>(frame.body);
                 assert!(
-                    acknowledged || expected.bundles.is_empty(),
-                    "nonempty deployment must negotiate its genuine client bundles before finish"
+                    acknowledged
+                        || expected.bundles.is_empty()
+                        // Optional bundles are offered to a Loader client and are
+                        // not a condition for a vanilla client reaching Play.
+                        || expected.bundles.iter().all(|bundle| !bundle.required),
+                    "a required client bundle must be negotiated before finish"
                 );
-                assert_eq!(artifacts.len(), expected.bundles.len());
+                if acknowledged {
+                    // A negotiated deployment downloaded every genuine bundle.
+                    assert_eq!(artifacts.len(), expected.bundles.len());
+                } else {
+                    assert!(artifacts.is_empty(), "no bundle was downloaded");
+                }
                 connection
                     .send_packet(&AcknowledgeFinishConfiguration)
                     .await
@@ -377,8 +389,8 @@ impl WireClient {
                         BlockUpdate::ID => Some(WireEvent::Block(exact(frame.body))),
                         BlockChangedAck::ID => Some(WireEvent::Ack(exact(frame.body))),
                         PlayDisconnect::ID => {
-                            let _ = exact::<PlayDisconnect>(frame.body);
-                            Some(WireEvent::Disconnect)
+                            let reason = exact::<PlayDisconnect>(frame.body).reason_nbt;
+                            Some(WireEvent::Disconnect(format!("{reason:?}")))
                         }
                         _ => None,
                     };
@@ -387,7 +399,7 @@ impl WireClient {
                 .await;
                 match result {
                     Ok(Some(event)) => {
-                        let disconnected = matches!(event, WireEvent::Disconnect);
+                        let disconnected = matches!(event, WireEvent::Disconnect(_));
                         if sender.send(Ok(event)).await.is_err() || disconnected {
                             return;
                         }
@@ -453,6 +465,23 @@ impl WireClient {
         event
     }
 
+    /// Drop every event that is already queued or arrives within a short
+    /// quiet window (login hints, announcements), so the next assertion sees
+    /// the answer to the command it just sent.
+    async fn drain(&mut self) {
+        self.pending.clear();
+        loop {
+            match tokio::time::timeout(std::time::Duration::from_millis(250), self.events.recv())
+                .await
+            {
+                Ok(Some(Ok(_))) => {}
+                Ok(Some(Err(error))) => panic!("wire reader failed while draining: {error}"),
+                Ok(None) => break,
+                Err(_) => break,
+            }
+        }
+    }
+
     async fn matching(
         &mut self,
         description: &str,
@@ -467,10 +496,9 @@ impl WireClient {
                 if predicate(&event) {
                     return event;
                 }
-                assert!(
-                    !matches!(event, WireEvent::Disconnect),
-                    "unexpected wire disconnect waiting for {description}"
-                );
+                if let WireEvent::Disconnect(reason) = &event {
+                    panic!("unexpected wire disconnect waiting for {description}: {reason}");
+                }
                 self.pending.push_back(event);
             }
         })
@@ -503,7 +531,7 @@ impl WireClient {
                 != expected
             {
                 let event = self.next().await;
-                assert!(!matches!(event, WireEvent::Disconnect));
+                assert!(!matches!(event, WireEvent::Disconnect(_)));
                 self.pending.push_back(event);
             }
         })
@@ -917,17 +945,17 @@ async fn genuine_claim_gate() {
         .await;
     cleanup
         .matching("native graceful shutdown disconnect", |event| {
-            matches!(event, WireEvent::Disconnect)
+            matches!(event, WireEvent::Disconnect(_))
         })
         .await;
     leader
         .matching("leader shutdown disconnect", |event| {
-            matches!(event, WireEvent::Disconnect)
+            matches!(event, WireEvent::Disconnect(_))
         })
         .await;
     stranger
         .matching("stranger shutdown disconnect", |event| {
-            matches!(event, WireEvent::Disconnect)
+            matches!(event, WireEvent::Disconnect(_))
         })
         .await;
     tokio::time::timeout(DEADLINE, server_task)
@@ -1115,4 +1143,517 @@ fn native_settlement_list_from_player_session_reaches_tick() {
             drop(running);
             server_task.abort();
         });
+}
+
+// ---------------------------------------------------------------------------
+// E4/E5 moderation gate: vanilla whitelist refusal at login plus a cross-plugin
+// permission node refusing another package's command.
+//
+// Run: SOLARIS_DEFAULT_PLUGINS_ROOT=/path/to/solaris-default-plugins \
+//      cargo test -p mc-edge --lib -- --ignored real_moderation_and_permission_gate --nocapture
+// ---------------------------------------------------------------------------
+
+/// One Login-state attempt that never reaches Configuration.
+async fn login_refusal(address: SocketAddr, name: &str) -> String {
+    let mut connection =
+        Connection::new(TcpStream::connect(address).await.expect("real TCP connect"));
+    connection
+        .send_packet(&Handshake {
+            protocol_version: mc_protocol::PROTOCOL_VERSION,
+            server_address: address.ip().to_string(),
+            server_port: address.port(),
+            next_state: NextState::Login,
+        })
+        .await
+        .unwrap();
+    connection
+        .send_packet(&LoginStart {
+            name: name.to_owned(),
+            player_uuid: crate::crypto::offline_uuid(name),
+        })
+        .await
+        .unwrap();
+    // Admission refusals are answered before compression negotiation; an
+    // admitted login gets SetCompression first.
+    let first = tokio::time::timeout(
+        DEADLINE,
+        connection.read_frame_in(mc_protocol::State::Login),
+    )
+    .await
+    .expect("bounded login answer")
+    .expect("login answer is readable");
+    if first.id == LoginDisconnect::ID {
+        return exact::<LoginDisconnect>(first.body).reason_json;
+    }
+    assert_eq!(first.id, SetCompression::ID, "unexpected first login frame");
+    let compression = exact::<SetCompression>(first.body);
+    connection.set_compression(Compression::Threshold(
+        usize::try_from(compression.threshold).unwrap(),
+    ));
+    tokio::time::timeout(
+        DEADLINE,
+        connection.read_packet::<LoginDisconnect>(mc_protocol::State::Login),
+    )
+    .await
+    .expect("bounded login refusal")
+    .expect("whitelist refusal is a Login-state disconnect")
+    .reason_json
+}
+
+fn chat(message: &str) -> ServerboundChat {
+    ServerboundChat {
+        message: message.to_owned(),
+        timestamp_millis: 0,
+        salt: 0,
+        signature: None,
+        last_seen_offset: 0,
+        last_seen_acknowledged: [0; 3],
+        last_seen_checksum: 0,
+    }
+}
+
+#[test]
+#[ignore = "requires the genuine first-party packages (permission provider + gated roots) and real vanilla data"]
+fn real_moderation_and_permission_gate() {
+    tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .thread_stack_size(16 * 1024 * 1024)
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(genuine_moderation_gate());
+}
+
+async fn genuine_moderation_gate() {
+    let directory = TestDirectory::new();
+    let deployment = PathBuf::from(std::env::var_os("SOLARIS_DEFAULT_PLUGINS_ROOT").expect(
+        "SOLARIS_DEFAULT_PLUGINS_ROOT must point to packages-matched-sdk; no substitute deployment",
+    ))
+    .canonicalize()
+    .unwrap();
+    let permissions: toml::Value =
+        std::fs::read_to_string(deployment.join("solaris-permissions/plugin.toml"))
+            .unwrap()
+            .parse()
+            .unwrap();
+    assert_eq!(permissions["permission_provider"].as_bool(), Some(true));
+    let essentials: toml::Value =
+        std::fs::read_to_string(deployment.join("solaris-essentials/plugin.toml"))
+            .unwrap()
+            .parse()
+            .unwrap();
+    assert_eq!(
+        essentials["command_permissions"]["delwarp"].as_str(),
+        Some("solaris.essentials.manage")
+    );
+    assert_eq!(
+        essentials["command_permissions"]["home"].as_str(),
+        Some("solaris.essentials.use")
+    );
+
+    let mut cfg = EdgeConfig {
+        server_dir: directory.0.clone(),
+        ..EdgeConfig::default()
+    };
+    cfg.data.world_dir = directory.0.join("world");
+    cfg.data.seed = 81;
+    cfg.data.vanilla_data_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data/vanilla");
+    cfg.server.view_distance = 1;
+    cfg.server.simulation_distance = 1;
+    cfg.plugins.directory = Some(deployment);
+    let data = load_vanilla_data(&cfg).unwrap();
+    let tags = load_tags(&cfg, &data).unwrap();
+    let mut native_config = core_config(&cfg);
+    native_config.checkpoint_every_ticks = u64::MAX;
+    native_config.broadcast_cap = 512;
+    // The full shipping pack (nine components) starts slower than the shared
+    // wire deadline; this bound still fails closed on a wedged deployment.
+    const PACK_STARTUP_DEADLINE: Duration = Duration::from_secs(300);
+    let core = Arc::new(
+        tokio::time::timeout(
+            PACK_STARTUP_DEADLINE,
+            tokio::task::spawn_blocking(move || Core::open(native_config)),
+        )
+        .await
+        .expect("bounded genuine component startup")
+        .unwrap()
+        .expect("the deployment initializes"),
+    );
+    let _running = RunningCore(Arc::clone(&core));
+    let manifest =
+        mc_loader::LoaderManifest::from_script_bundles(core.plugin_client_bundles()).unwrap();
+    let server = EdgeServer::new(Arc::clone(&core), data, tags, cfg).unwrap();
+    server
+        .admin
+        .set_op(crate::crypto::offline_uuid(LEADER), LEADER, true)
+        .unwrap();
+    // Vanilla whitelist: both fixture accounts are listed, a third is not.
+    for name in [LEADER, STRANGER, "WireJoiner"] {
+        server
+            .admin
+            .whitelist_add(crate::crypto::offline_uuid(name), name)
+            .unwrap();
+    }
+    server.admin.set_whitelist(true).unwrap();
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server_task = tokio::spawn(serve(listener, server));
+
+    // The enforced list refuses an unlisted identity in Login, with vanilla's
+    // own client-side wording.
+    let refusal = login_refusal(address, "WireUnlisted").await;
+    assert!(
+        refusal.contains("multiplayer.disconnect.not_whitelisted"),
+        "vanilla whitelist refusal, got {refusal}"
+    );
+
+    let mut leader = WireClient::connect(address, LEADER, &manifest).await;
+    let mut stranger = WireClient::connect(address, STRANGER, &manifest).await;
+
+    // `delwarp` requires `solaris.essentials.manage`; the default group grants
+    // `solaris.essentials.use` only, so admission refuses before the guest and
+    // before the plugin's own operator check.
+    stranger
+        .command(
+            "delwarp nothere",
+            &["You do not have permission to use this plugin command."],
+        )
+        .await;
+    // `home` needs `solaris.essentials.use`, which the default row grants: the
+    // refusal above is the node, not plugin commands being disabled.
+    stranger.command("home", &["Location not found."]).await;
+    // The native operator level does not substitute for a granted node.
+    leader
+        .command(
+            "delwarp nothere",
+            &["You do not have permission to use this plugin command."],
+        )
+        .await;
+
+    // The provider answers through its published table: the operator assigns
+    // the admin group (node `*`), the plugin publishes, and admission now admits.
+    leader
+        .command(
+            &format!(
+                "perm user {} set admin",
+                crate::crypto::offline_uuid(LEADER)
+            ),
+            &["Group set to admin."],
+        )
+        .await;
+    leader.drain().await;
+    leader
+        .command("delwarp nothere", &["Location not found."])
+        .await;
+
+    // Join/leave are vanilla yellow translatable announcements.
+    let joiner = WireClient::connect(address, "WireJoiner", &manifest).await;
+    leader
+        .matching("join announcement", |event| {
+            matches!(event, WireEvent::Chat(text)
+                if text.contains("multiplayer.player.joined") && text.contains("WireJoiner"))
+        })
+        .await;
+    drop(joiner);
+    leader
+        .matching("leave announcement", |event| {
+            matches!(event, WireEvent::Chat(text)
+                if text.contains("multiplayer.player.left") && text.contains("WireJoiner"))
+        })
+        .await;
+
+    // Mute refuses ordinary chat only; warn is delivered privately.
+    leader
+        .command(&format!("mute {STRANGER} 10m spam"), &["expires in 600s"])
+        .await;
+    stranger.send(&chat("am I audible?")).await;
+    stranger
+        .matching(
+            "mute notice",
+            |event| matches!(event, WireEvent::Chat(text) if text.contains("You are muted.")),
+        )
+        .await;
+    leader
+        .command(&format!("warn {STRANGER} keep it civil"), &["completed"])
+        .await;
+    stranger
+        .matching("warning", |event| {
+            matches!(event, WireEvent::Chat(text)
+                if text.contains("[Warned]") && text.contains("keep it civil"))
+        })
+        .await;
+    leader
+        .command(&format!("unmute {STRANGER}"), &["completed"])
+        .await;
+
+    // A temporary ban writes the vanilla `expires` stamp and refuses at login
+    // with the expiration line once the target is offline.
+    leader
+        .command("ban WireTempBanned 10m grief", &["expires in 600s"])
+        .await;
+    let refusal = login_refusal(address, "WireTempBanned").await;
+    assert!(
+        refusal.contains("multiplayer.disconnect.banned.reason")
+            && refusal.contains("multiplayer.disconnect.banned.expiration"),
+        "temporary ban refusal carries the vanilla expiration, got {refusal}"
+    );
+
+    server_task.abort();
+}
+
+// ---------------------------------------------------------------------------
+// E4/G7/G9 live gate: vanilla whitelist refusal, temporary-ban expiration and
+// the per-address accept limits, all asserted on the real wire.
+//
+// Run: cargo nextest run -p mc-edge --lib -E 'test(real_moderation_limits_gate)' --run-ignored ignored-only
+// ---------------------------------------------------------------------------
+
+/// What a Login-state attempt actually observed.
+#[derive(Debug, PartialEq, Eq)]
+enum LoginOutcome {
+    Admitted,
+    /// The server answered LoginDisconnect with this JSON component.
+    Refused(String),
+    /// The listener closed the socket before it answered (an accept refusal).
+    Closed,
+}
+
+async fn login_outcome(address: SocketAddr, name: &str) -> LoginOutcome {
+    let Ok(stream) = TcpStream::connect(address).await else {
+        return LoginOutcome::Closed;
+    };
+    let mut connection = Connection::new(stream);
+    // An accept refusal closes the socket before the handshake is read, so a
+    // dead write is itself the refusal this helper reports.
+    if connection
+        .send_packet(&Handshake {
+            protocol_version: mc_protocol::PROTOCOL_VERSION,
+            server_address: address.ip().to_string(),
+            server_port: address.port(),
+            next_state: NextState::Login,
+        })
+        .await
+        .is_err()
+    {
+        return LoginOutcome::Closed;
+    }
+    if connection
+        .send_packet(&LoginStart {
+            name: name.to_owned(),
+            player_uuid: crate::crypto::offline_uuid(name),
+        })
+        .await
+        .is_err()
+    {
+        return LoginOutcome::Closed;
+    }
+    // Admission refusals (ban, whitelist, server-full) are answered before
+    // compression negotiation; an admitted login gets SetCompression first.
+    let Ok(Ok(first)) = tokio::time::timeout(
+        DEADLINE,
+        connection.read_frame_in(mc_protocol::State::Login),
+    )
+    .await
+    else {
+        return LoginOutcome::Closed;
+    };
+    if first.id == LoginDisconnect::ID {
+        return LoginOutcome::Refused(exact::<LoginDisconnect>(first.body).reason_json);
+    }
+    assert_eq!(first.id, SetCompression::ID, "unexpected first login frame");
+    let compression = exact::<SetCompression>(first.body);
+    connection.set_compression(Compression::Threshold(
+        usize::try_from(compression.threshold).unwrap(),
+    ));
+    let Ok(Ok(second)) = tokio::time::timeout(
+        DEADLINE,
+        connection.read_frame_in(mc_protocol::State::Login),
+    )
+    .await
+    else {
+        return LoginOutcome::Closed;
+    };
+    if second.id == LoginDisconnect::ID {
+        return LoginOutcome::Refused(exact::<LoginDisconnect>(second.body).reason_json);
+    }
+    assert_eq!(second.id, LoginSuccess::ID, "unexpected login frame");
+    LoginOutcome::Admitted
+}
+
+/// One plugin-free server over its own world directory.
+async fn start_minimal_server(
+    directory: &TestDirectory,
+    world: &str,
+    configure: impl FnOnce(&mut EdgeConfig),
+    configure_admin: impl FnOnce(&crate::admin::Admin),
+) -> (
+    Arc<Core>,
+    SocketAddr,
+    tokio::task::JoinHandle<anyhow::Result<()>>,
+) {
+    let mut cfg = EdgeConfig {
+        server_dir: directory.0.clone(),
+        ..EdgeConfig::default()
+    };
+    cfg.data.world_dir = directory.0.join(world);
+    cfg.data.seed = 81;
+    cfg.data.vanilla_data_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data/vanilla");
+    cfg.server.view_distance = 2;
+    cfg.server.simulation_distance = 2;
+    cfg.plugins.directory = None;
+    configure(&mut cfg);
+    let data = load_vanilla_data(&cfg).unwrap();
+    let tags = load_tags(&cfg, &data).unwrap();
+    let mut native_config = core_config(&cfg);
+    native_config.checkpoint_every_ticks = u64::MAX;
+    let core = Arc::new(
+        tokio::time::timeout(
+            DEADLINE,
+            tokio::task::spawn_blocking(move || Core::open(native_config)),
+        )
+        .await
+        .expect("bounded core startup")
+        .unwrap()
+        .expect("core opens"),
+    );
+    let server = EdgeServer::new(Arc::clone(&core), data, tags, cfg).unwrap();
+    // The very Admin its connections use: a second handle would only rewrite the
+    // files and leave the live lists stale.
+    configure_admin(&server.admin);
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let task = tokio::spawn(serve(listener, server));
+    (core, address, task)
+}
+
+#[test]
+#[ignore = "real TCP server gate; needs the native content cache"]
+fn real_moderation_limits_gate() {
+    tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .thread_stack_size(16 * 1024 * 1024)
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(genuine_moderation_limits());
+}
+
+async fn genuine_moderation_limits() {
+    let directory = TestDirectory::new();
+
+    // --- whitelist + temporary ban -------------------------------------
+    let (core, address, task) = start_minimal_server(
+        &directory,
+        "world-whitelist",
+        |_| {},
+        |admin| {
+            admin
+                .whitelist_add(crate::crypto::offline_uuid("WireAllowed"), "WireAllowed")
+                .unwrap();
+            admin.set_whitelist(true).unwrap();
+            admin
+                .ban_player_for(
+                    crate::crypto::offline_uuid("WireTempBanned"),
+                    "WireTempBanned",
+                    "Console",
+                    "grief",
+                    Some(std::time::Duration::from_secs(600)),
+                    true,
+                )
+                .unwrap();
+        },
+    )
+    .await;
+    assert_eq!(
+        login_outcome(address, "WireAllowed").await,
+        LoginOutcome::Admitted
+    );
+    match login_outcome(address, "WireDenied").await {
+        LoginOutcome::Refused(reason) => assert!(
+            reason.contains("multiplayer.disconnect.not_whitelisted"),
+            "vanilla whitelist refusal, got {reason}"
+        ),
+        other => panic!("unlisted player must be refused, got {other:?}"),
+    }
+    match login_outcome(address, "WireTempBanned").await {
+        LoginOutcome::Refused(reason) => assert!(
+            reason.contains("multiplayer.disconnect.banned.reason")
+                && reason.contains("grief")
+                && reason.contains("multiplayer.disconnect.banned.expiration"),
+            "temporary ban carries reason and expiration, got {reason}"
+        ),
+        other => panic!("temporary ban must refuse login, got {other:?}"),
+    }
+    core.shutdown();
+    task.abort();
+
+    // The list is the only reason WireDenied was refused: the persisted toggle is
+    // re-read by a fresh server over the same directory and login is admitted.
+    let (core, address, task) = start_minimal_server(
+        &directory,
+        "world-whitelist",
+        |_| {},
+        |admin| admin.set_whitelist(false).unwrap(),
+    )
+    .await;
+    assert_eq!(
+        login_outcome(address, "WireDenied").await,
+        LoginOutcome::Admitted
+    );
+    core.shutdown();
+    task.abort();
+
+    // --- connection throttle -------------------------------------------
+    let (core, address, task) = start_minimal_server(
+        &directory,
+        "world-throttle",
+        |cfg| cfg.network.connection_throttle_ms = 400,
+        |_| {},
+    )
+    .await;
+    assert_eq!(
+        login_outcome(address, "WireAllowed").await,
+        LoginOutcome::Admitted
+    );
+    assert_eq!(
+        login_outcome(address, "WireAllowed").await,
+        LoginOutcome::Closed,
+        "a second login inside the throttle window is refused before the handshake"
+    );
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    assert_eq!(
+        login_outcome(address, "WireAllowed").await,
+        LoginOutcome::Admitted,
+        "the throttle window passes"
+    );
+    core.shutdown();
+    task.abort();
+
+    // --- concurrent connections per address ----------------------------
+    let (core, address, task) = start_minimal_server(
+        &directory,
+        "world-cap",
+        |cfg| cfg.network.max_connections_per_ip = 1,
+        |_| {},
+    )
+    .await;
+    let held = TcpStream::connect(address).await.unwrap();
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    assert_eq!(
+        login_outcome(address, "WireAllowed").await,
+        LoginOutcome::Closed,
+        "the second concurrent connection is closed at accept"
+    );
+    drop(held);
+    let mut admitted = false;
+    for _ in 0..40 {
+        if login_outcome(address, "WireAllowed").await == LoginOutcome::Admitted {
+            admitted = true;
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    assert!(admitted, "the released slot admits the next login");
+    core.shutdown();
+    task.abort();
 }

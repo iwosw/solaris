@@ -16,7 +16,7 @@ import struct
 import threading
 import zlib
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 LEVEL_CHUNK_WITH_LIGHT = 0x2D
 LIGHT_UPDATE = 0x30
@@ -207,9 +207,13 @@ class WireLight:
 class LightWireProxy:
     """Unmodified forwarding listener; every server Play light packet feeds `WireLight`."""
 
-    def __init__(self, server_port: int, artifact: Path) -> None:
+    def __init__(self, server_port: int, artifact: Path,
+                 packet_observer: Callable[[str, int, bytes], None] | None = None,
+                 client_packet_observer: Callable[[str, int, bytes], None] | None = None) -> None:
         self.server_port = server_port
         self.path = artifact / "light-wire-trace.json"
+        self.packet_observer = packet_observer
+        self.client_packet_observer = client_packet_observer
         self.lock = threading.Lock()
         self.connections: list[WireLight] = []
         self.errors: list[str] = []
@@ -245,6 +249,7 @@ class LightWireProxy:
         try:
             with client, socket.create_connection(("127.0.0.1", self.server_port), timeout=10) as server:
                 buffer = bytearray()
+                client_buffer = bytearray() if self.client_packet_observer is not None else None
                 phase, compressed = "login", False
                 while True:
                     ready = select.select([client, server, self.wake], [], [])[0]
@@ -257,6 +262,9 @@ class LightWireProxy:
                         if not data:
                             return
                         if source is client:
+                            if client_buffer is not None:
+                                client_buffer.extend(data)
+                                self._frames(client_buffer, wire, phase, compressed, serverbound=True)
                             target.sendall(data)
                             continue
                         buffer.extend(data)
@@ -267,7 +275,8 @@ class LightWireProxy:
         except Exception as error:
             self.errors.append(f"{type(error).__name__}: {error}")
 
-    def _frames(self, buffer: bytearray, wire: WireLight, phase: str, compressed: bool) -> tuple[str, bool]:
+    def _frames(self, buffer: bytearray, wire: WireLight, phase: str, compressed: bool,
+                *, serverbound: bool = False) -> tuple[str, bool]:
         while True:
             try:
                 header = Reader(bytes(buffer[:5]))
@@ -287,7 +296,13 @@ class LightWireProxy:
             reader = Reader(body)
             packet_id = reader.varint()
             payload = body[reader.offset:]
+            if serverbound:
+                with self.lock:
+                    self.client_packet_observer(phase, packet_id, payload)
+                continue
             with self.lock:
+                if self.packet_observer is not None:
+                    self.packet_observer(phase, packet_id, payload)
                 if phase == "play" and packet_id == LEVEL_CHUNK_WITH_LIGHT:
                     wire.chunk_packet(payload)
                 elif phase == "play" and packet_id == LIGHT_UPDATE:

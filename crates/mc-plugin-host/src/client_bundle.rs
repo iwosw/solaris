@@ -54,6 +54,14 @@ struct DiskClientBundle {
     loaders: Vec<DiskClientLoader>,
     content: Vec<DiskClientContentKind>,
     permissions: Vec<DiskClientPermission>,
+    /// `false` offers the bundle only to clients that answer the Loader probe;
+    /// others join without it. Defaults to `true` (Loader required).
+    #[serde(default = "default_required")]
+    required: bool,
+}
+
+const fn default_required() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -215,19 +223,22 @@ pub fn materialize_client_bundles(
             &bundle.sha256,
         )?;
 
-        bundles.push(ClientBundle::new(
-            owner_plugin_id,
-            bundle.id,
-            bundle.version,
-            bundle.artifact,
-            bundle.sha256,
-            bundle.size_bytes,
-            artifact_path,
-            artifact_bytes,
-            loaders,
-            content,
-            permissions,
-        ));
+        bundles.push(
+            ClientBundle::new(
+                owner_plugin_id,
+                bundle.id,
+                bundle.version,
+                bundle.artifact,
+                bundle.sha256,
+                bundle.size_bytes,
+                artifact_path,
+                artifact_bytes,
+                loaders,
+                content,
+                permissions,
+            )
+            .with_required(bundle.required),
+        );
     }
     Ok(bundles)
 }

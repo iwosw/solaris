@@ -23,11 +23,13 @@ summarizes current boundaries.
 | [0012](0012-earth-worldplan-and-native-overlay.md) | Proposed for native v2; not ported | Earth WorldPlan/base/overlay proposal; v1 W0–W5 evidence is historical |
 | [0013](0013-core-model-v2.md) | Accepted; sole current core model | Data-parallel snapshot/intents/merge, native state, one tick WAL, off-tick plugins and remote tickets |
 | [0014](0014-v1-core-retirement.md) | Accepted; Phase 5 source retirement complete | Shared Loader/vanilla boundaries, v2-only harness/operator surface and clean v1 deletion |
+| [0015](0015-multiversion-protocol-translation.md) | Proposed; 26.3 deferred by measured diff | Per-session `mc-edge` protocol translation and profile evidence |
 
 ## Routing
 
 - Data loading/licensing and content cache: 0001.
 - Packet ids/layouts and vanilla protocol provenance: 0002.
+- Per-session protocol version translation: 0015.
 - Current state authority, tick/merge, threads, waiting, persistence, shutdown,
   snapshots, plugin intents, block work and tickets: 0013.
 - Current crate ownership, retirement and explicit port/delete decisions: 0013/0014.

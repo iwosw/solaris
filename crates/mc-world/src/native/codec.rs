@@ -30,7 +30,8 @@ pub(super) fn decode(bytes: &[u8]) -> Result<Tag, NativeError> {
     if bytes.len() > MAX_RECORD_BYTES {
         return Err(NativeError::Invalid("native record exceeds byte budget"));
     }
-    let mut cursor = bytes;
+    let plain = super::pack::unpack(bytes, MAX_RECORD_BYTES)?;
+    let mut cursor = plain.as_ref();
     let (_, tag) = mc_nbt::read_named(&mut cursor)?;
     if !cursor.is_empty() {
         return Err(NativeError::Invalid("trailing native NBT bytes"));
@@ -76,7 +77,7 @@ pub(super) fn metadata(
     blocks: &BlockRegistry,
     items: &ItemRegistry,
 ) -> Result<Vec<u8>, NativeError> {
-    encode(&metadata_root(chunk, blocks, items)?)
+    super::pack::pack(encode(&metadata_root(chunk, blocks, items)?)?)
 }
 
 pub(super) fn metadata_root(
@@ -101,7 +102,7 @@ pub(super) fn metadata_at_lsn(
     let fields = compound_mut(&mut root)?;
     fields.retain(|(key, _)| key != "SolarisJournalLsn");
     fields.push(("SolarisJournalLsn".into(), Tag::Long(lsn as i64)));
-    encode(&root)
+    super::pack::pack(encode(&root)?)
 }
 
 /// Full immutable base assembled without Anvil relative-delay tick encoding.
@@ -123,7 +124,7 @@ pub(super) fn baseline(
             ));
         }
     }
-    encode(&root)
+    super::pack::pack(encode(&root)?)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -358,7 +359,7 @@ fn visit_overlay<T: Copy>(
                 return Err(NativeError::Invalid("trailing sparse bytes"));
             }
             let mut previous = None;
-            for entry in entries.chunks_exact(4) {
+            for entry in entries.as_chunks::<4>().0 {
                 let index = usize::from(u16::from_be_bytes([entry[0], entry[1]]));
                 let state = usize::from(u16::from_be_bytes([entry[2], entry[3]]));
                 if index >= SECTION_VOLUME || previous.is_some_and(|last| index <= last) {
@@ -385,8 +386,8 @@ fn visit_overlay<T: Copy>(
                     return Err(NativeError::Invalid("invalid dense packed length"));
                 }
                 let mask = (1u64 << bits) - 1;
-                for (word_index, bytes) in cursor.chunks_exact(8).enumerate() {
-                    let mut word = u64::from_be_bytes(bytes.try_into().expect("word"));
+                for (word_index, bytes) in cursor.as_chunks::<8>().0.iter().enumerate() {
+                    let mut word = u64::from_be_bytes(*bytes);
                     let used = per_word.min(SECTION_VOLUME - word_index * per_word);
                     for offset in 0..used {
                         let state = *palette
@@ -418,9 +419,11 @@ fn read_palette<T: Copy>(
     *cursor = rest;
     let mut seen = std::collections::BTreeSet::new();
     entries
-        .chunks_exact(4)
+        .as_chunks::<4>()
+        .0
+        .iter()
         .map(|entry| {
-            let id = u32::from_be_bytes(entry.try_into().expect("native ID"));
+            let id = u32::from_be_bytes(*entry);
             if !seen.insert(id) {
                 return Err(NativeError::Invalid("duplicate native palette ID"));
             }

@@ -20,6 +20,9 @@
 //! StopCommand.java:11-18. Debug give is a retained Solaris fixture.
 //! EffectCommands.java:32-151.
 //! AdvancementCommands.java:33-229 (resource-key advancement and greedy criterion).
+//! LocateCommand.java:56-87, TickCommand.java:20-55,
+//! TellRawCommand.java:12-30, TitleCommand.java:26-102,
+//! BossBarCommands.java:65-176.
 //! Suggestion provider names: net/minecraft/commands/synchronization/
 //! SuggestionProviders.java:19-40. Unsupported vanilla branches (such as
 //! teleport facing and fill strict) are intentionally not advertised.
@@ -58,6 +61,7 @@ const ROOTS: &[(&str, u8)] = &[
     ("xp", 2),
     ("spawnpoint", 2),
     ("setworldspawn", 2),
+    ("forceload", 2),
     ("say", 2),
     ("seed", 2),
     ("enchant", 2),
@@ -65,14 +69,28 @@ const ROOTS: &[(&str, u8)] = &[
     ("advancement", 2),
     ("debug", 2),
     ("team", 2),
+    ("tps", 2),
+    ("mspt", 2),
     ("scoreboard", 2),
+    ("locate", 2),
+    ("tellraw", 2),
+    ("title", 2),
+    ("bossbar", 2),
+    ("tick", 3),
     ("kick", 3),
+    ("mute", 3),
+    ("unmute", 3),
+    ("warn", 3),
+    ("transfer", 3),
     ("ban", 3),
     ("ban-ip", 3),
     ("pardon", 3),
     ("pardon-ip", 3),
     ("op", 3),
     ("deop", 3),
+    ("whitelist", 3),
+    ("banlist", 3),
+    ("co", 3),
     ("stop", 4),
     ("save-all", 4),
 ];
@@ -524,6 +542,41 @@ fn identifier(path: &str) -> Identifier {
     Identifier::parse(format!("minecraft:{path}")).expect("static vanilla identifier")
 }
 
+/// Vanilla data-pack structure ids (plus every `#tag`) backing
+/// `locate structure` server suggestions: the client has no structure
+/// registry, so the tree advertises `ask_server` for it (LocateCommand
+/// suggests through the command context, not a synced registry).
+/// Filesystem layout is `data/minecraft/worldgen/structure/*.json` and
+/// `data/minecraft/tags/worldgen/structure/*.json`; entries load the same
+/// way startup suggestion lists do. Missing/unreadable sidecar data yields
+/// an empty list rather than failing startup.
+pub(crate) fn structure_suggestion_ids(vanilla_data_dir: &std::path::Path) -> Vec<String> {
+    use std::collections::BTreeSet;
+    let root = vanilla_data_dir.join("data").join("minecraft");
+    let mut ids = BTreeSet::new();
+    if let Ok(entries) = std::fs::read_dir(root.join("worldgen").join("structure")) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().is_some_and(|ext| ext == "json")
+                && let Some(stem) = path.file_stem().and_then(|stem| stem.to_str())
+            {
+                ids.insert(format!("minecraft:{stem}"));
+            }
+        }
+    }
+    if let Ok(entries) = std::fs::read_dir(root.join("tags").join("worldgen").join("structure")) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().is_some_and(|ext| ext == "json")
+                && let Some(stem) = path.file_stem().and_then(|stem| stem.to_str())
+            {
+                ids.insert(format!("#minecraft:{stem}"));
+            }
+        }
+    }
+    ids.into_iter().collect()
+}
+
 fn integer(min: Option<i32>, max: Option<i32>) -> Parser {
     Parser::Integer {
         min: min.filter(|&value| value != i32::MIN),
@@ -842,10 +895,24 @@ pub(crate) fn tree(op_level: u8, plugins: &[(String, u8)]) -> ClientboundCommand
         let pos = t.argument(root, "pos", Parser::BlockPos, true);
         t.argument(pos, "rotation", Parser::Rotation, true);
     }
+    if let Some(root) = t.root("forceload", false) {
+        let add = t.literal(root, "add", false);
+        let from = t.argument(add, "from", Parser::ColumnPos, true);
+        t.argument(from, "to", Parser::ColumnPos, true);
+        let remove = t.literal(root, "remove", false);
+        let from = t.argument(remove, "from", Parser::ColumnPos, true);
+        t.argument(from, "to", Parser::ColumnPos, true);
+        t.literal(remove, "all", true);
+        let query = t.literal(root, "query", true);
+        t.argument(query, "pos", Parser::ColumnPos, true);
+    }
     if let Some(root) = t.root("say", false) {
         t.argument(root, "message", Parser::Message, true);
     }
     let _ = t.root("seed", true);
+    // MetricsMgmt: argument-less server pace reports (handled in server.rs).
+    let _ = t.root("tps", true);
+    let _ = t.root("mspt", true);
     if let Some(root) = t.root("enchant", false) {
         let targets = t.argument(root, "targets", entities(false), false);
         let enchantment = t.argument(
@@ -903,15 +970,39 @@ pub(crate) fn tree(op_level: u8, plugins: &[(String, u8)]) -> ClientboundCommand
         let targets = t.argument(root, "targets", players(false), true);
         t.argument(targets, "reason", Parser::Message, true);
     }
-    for name in ["ban", "pardon", "op", "deop"] {
+    if let Some(root) = t.root("transfer", false) {
+        // Vanilla TransferCommand: /transfer <hostname> [port] [players].
+        let hostname = t.argument(
+            root,
+            "hostname",
+            Parser::String(CommandStringKind::QuotablePhrase),
+            true,
+        );
+        let port = t.argument(hostname, "port", integer(Some(1), Some(65_535)), true);
+        t.argument(port, "players", players(false), true);
+    }
+    for name in ["ban", "pardon", "op", "deop", "mute", "unmute", "warn"] {
         if let Some(root) = t.root(name, false) {
-            let targets = if name == "ban" {
-                t.argument(root, "targets", Parser::GameProfile, true)
-            } else {
-                t.suggested(root, "targets", Parser::GameProfile, true, "ask_server")
+            let targets = match name {
+                "ban" | "mute" | "warn" => t.argument(root, "targets", Parser::GameProfile, true),
+                _ => t.suggested(root, "targets", Parser::GameProfile, true, "ask_server"),
             };
-            if name == "ban" {
-                t.argument(targets, "reason", Parser::Message, true);
+            match name {
+                // Solaris extends vanilla `/ban` with an optional duration, so
+                // the reason starts one argument later when one is present.
+                "ban" | "mute" => {
+                    let duration = t.argument(
+                        targets,
+                        "duration",
+                        Parser::String(CommandStringKind::SingleWord),
+                        true,
+                    );
+                    t.argument(duration, "reason", Parser::Message, true);
+                }
+                "warn" => {
+                    t.argument(targets, "reason", Parser::Message, true);
+                }
+                _ => {}
             }
         }
     }
@@ -938,6 +1029,35 @@ pub(crate) fn tree(op_level: u8, plugins: &[(String, u8)]) -> ClientboundCommand
             }
         }
     }
+    if let Some(root) = t.root("whitelist", false) {
+        // WhitelistCommand.java: the on/off/list/reload literals run without
+        // arguments, add/remove take a resolved game profile.
+        t.literals(root, &["on", "off", "list", "reload"]);
+        for name in ["add", "remove"] {
+            let literal = t.literal(root, name, false);
+            t.argument(literal, "targets", Parser::GameProfile, true);
+        }
+    }
+    if let Some(root) = t.root("banlist", false) {
+        // BanListCommands.java: `/banlist players|ips`, never bare.
+        t.literals(root, &["players", "ips"]);
+    }
+    if let Some(root) = t.root("co", true) {
+        // Solaris block log (CoreProtect-style `u:` `t:` `r:` parameters).
+        t.literals(root, &["inspect", "i", "help"]);
+        for name in ["lookup", "l", "rollback", "rb", "restore", "rs"] {
+            let literal = t.literal(root, name, true);
+            t.argument(
+                literal,
+                "parameters",
+                Parser::String(CommandStringKind::GreedyPhrase),
+                true,
+            );
+        }
+    }
+    locate_tree(&mut t);
+    tick_tree(&mut t);
+    tellraw_title_bossbar_trees(&mut t);
     let _ = t.root("stop", true);
     if let Some(root) = t.root("save-all", true) {
         t.literal(root, "flush", true);
@@ -1180,6 +1300,139 @@ fn scoreboard_tree(t: &mut Tree, root: i32) {
     t.argument(source, "sourceObjective", Parser::Objective, true);
 }
 
+/// LocateCommand.java:56-87: `locate structure|biome|poi`, each with one
+/// resource-or-tag argument. The structure argument is a *key* (registry
+/// `minecraft:worldgen/structure`); biome and POI are resolved values
+/// (registries `minecraft:worldgen/biome`, `minecraft:point_of_interest_type`).
+/// Vanilla gives the structure argument server suggestions (the client has no
+/// structure registry); we advertise `ask_server` for it the same way.
+fn locate_tree(t: &mut Tree) {
+    let Some(root) = t.root("locate", false) else {
+        return;
+    };
+    let structure = t.literal(root, "structure", false);
+    t.suggested(
+        structure,
+        "structure",
+        Parser::ResourceOrTagKey {
+            registry: identifier("worldgen/structure"),
+        },
+        true,
+        "ask_server",
+    );
+    let biome = t.literal(root, "biome", false);
+    t.argument(
+        biome,
+        "biome",
+        Parser::ResourceOrTag {
+            registry: identifier("worldgen/biome"),
+        },
+        true,
+    );
+    let poi = t.literal(root, "poi", false);
+    t.argument(
+        poi,
+        "poi",
+        Parser::ResourceOrTag {
+            registry: identifier("point_of_interest_type"),
+        },
+        true,
+    );
+}
+
+/// TickCommand.java:20-55: query/rate (float 1..10000, suggests 20)/
+/// step (bare 1, stop, or time>=1 suggesting 1t/1s)/sprint (stop or time>=1
+/// suggesting 60s/1d/3d)/unfreeze/freeze. `tick` is LEVEL_ADMINS (op 3).
+fn tick_tree(t: &mut Tree) {
+    let Some(root) = t.root("tick", false) else {
+        return;
+    };
+    t.literal(root, "query", true);
+    let rate = t.literal(root, "rate", false);
+    t.suggested(
+        rate,
+        "rate",
+        Parser::Float {
+            min: Some(1.0f32.to_bits()),
+            max: Some(10000.0f32.to_bits()),
+        },
+        true,
+        "ask_server",
+    );
+    let step = t.literal(root, "step", true);
+    t.literal(step, "stop", true);
+    t.suggested(step, "time", Parser::Time { min: 1 }, true, "ask_server");
+    let sprint = t.literal(root, "sprint", false);
+    t.literal(sprint, "stop", true);
+    t.suggested(sprint, "time", Parser::Time { min: 1 }, true, "ask_server");
+    t.literal(root, "unfreeze", true);
+    t.literal(root, "freeze", true);
+}
+
+/// TellRawCommand.java:12-30, TitleCommand.java:26-102,
+/// BossBarCommands.java:65-176. All three are LEVEL_GAMEMASTERS (op 2).
+/// BossBar id suggestions use `ask_server` exactly where vanilla attaches
+/// `SUGGEST_BOSS_BAR`.
+fn tellraw_title_bossbar_trees(t: &mut Tree) {
+    if let Some(root) = t.root("tellraw", false) {
+        let targets = t.argument(root, "targets", players(false), false);
+        t.argument(targets, "message", Parser::Component, true);
+    }
+    if let Some(root) = t.root("title", false) {
+        let targets = t.argument(root, "targets", players(false), false);
+        t.literal(targets, "clear", true);
+        t.literal(targets, "reset", true);
+        for name in ["title", "subtitle", "actionbar"] {
+            let section = t.literal(targets, name, false);
+            t.argument(section, "title", Parser::Component, true);
+        }
+        let times = t.literal(targets, "times", false);
+        let fade_in = t.argument(times, "fadeIn", Parser::Time { min: 0 }, false);
+        let stay = t.argument(fade_in, "stay", Parser::Time { min: 0 }, false);
+        t.argument(stay, "fadeOut", Parser::Time { min: 0 }, true);
+    }
+    let Some(root) = t.root("bossbar", false) else {
+        return;
+    };
+    let add = t.literal(root, "add", false);
+    let id = t.argument(add, "id", Parser::ResourceLocation, false);
+    t.argument(id, "name", Parser::Component, true);
+    let remove = t.literal(root, "remove", false);
+    t.suggested(remove, "id", Parser::ResourceLocation, true, "ask_server");
+    t.literal(root, "list", true);
+    let set = t.literal(root, "set", false);
+    let id = t.suggested(set, "id", Parser::ResourceLocation, false, "ask_server");
+    let name = t.literal(id, "name", false);
+    t.argument(name, "name", Parser::Component, true);
+    let color = t.literal(id, "color", false);
+    t.literals(
+        color,
+        &["pink", "blue", "red", "green", "yellow", "purple", "white"],
+    );
+    let style = t.literal(id, "style", false);
+    t.literals(
+        style,
+        &[
+            "progress",
+            "notched_6",
+            "notched_10",
+            "notched_12",
+            "notched_20",
+        ],
+    );
+    let value = t.literal(id, "value", false);
+    t.argument(value, "value", integer(Some(0), None), true);
+    let max = t.literal(id, "max", false);
+    t.argument(max, "max", integer(Some(1), None), true);
+    let visible = t.literal(id, "visible", false);
+    t.argument(visible, "visible", Parser::Bool, true);
+    let players = t.literal(id, "players", true);
+    t.argument(players, "targets", entities(false), true);
+    let get = t.literal(root, "get", false);
+    let id = t.suggested(get, "id", Parser::ResourceLocation, false, "ask_server");
+    t.literals(id, &["value", "max", "visible", "players"]);
+}
+
 /// Cheap completion for roots, player selectors/names and registry arguments.
 /// Brigadier string ranges are UTF-16 code-unit offsets, including any slash.
 #[allow(clippy::too_many_arguments)]
@@ -1191,6 +1444,7 @@ pub(crate) fn suggestions(
     item_ids: &[String],
     block_ids: &[String],
     entity_ids: &[String],
+    structure_ids: &[String],
     plugins: &[(String, u8)],
 ) -> ClientboundCommandSuggestions {
     let start = command
@@ -1289,6 +1543,141 @@ pub(crate) fn suggestions(
             _ => {}
         }
     }
+    if root == "tick" {
+        match (second, argument_index) {
+            (_, 1) => {
+                for literal in ["query", "rate", "step", "sprint", "unfreeze", "freeze"] {
+                    add(literal);
+                }
+                return result;
+            }
+            (Some("rate"), 2) => {
+                add("20");
+                return result;
+            }
+            (Some("step"), 2) => {
+                // Vanilla merges the `stop` literal with the time argument's
+                // `1t`/`1s` suggestions (TickCommand.java:35-44); `add`
+                // filters by the typed prefix.
+                add("stop");
+                add("1t");
+                add("1s");
+                return result;
+            }
+            (Some("sprint"), 2) => {
+                // TickCommand.java:45-53: `stop` plus `60s`/`1d`/`3d`.
+                add("stop");
+                add("60s");
+                add("1d");
+                add("3d");
+                return result;
+            }
+            _ => return result,
+        }
+    }
+    if root == "bossbar" {
+        match (second, argument_index) {
+            (_, 1) => {
+                for literal in ["add", "remove", "list", "set", "get"] {
+                    add(literal);
+                }
+                return result;
+            }
+            (Some("set"), 3) => {
+                for literal in [
+                    "name", "color", "style", "value", "max", "visible", "players",
+                ] {
+                    add(literal);
+                }
+                return result;
+            }
+            (Some("set"), 4) => {
+                // Words are root,set,id,field: the field is the fourth word.
+                let field = preceding.split_whitespace().nth(3);
+                match field {
+                    Some("color") => {
+                        for color in ["pink", "blue", "red", "green", "yellow", "purple", "white"] {
+                            add(color);
+                        }
+                        return result;
+                    }
+                    Some("style") => {
+                        for style in [
+                            "progress",
+                            "notched_6",
+                            "notched_10",
+                            "notched_12",
+                            "notched_20",
+                        ] {
+                            add(style);
+                        }
+                        return result;
+                    }
+                    Some("visible") => {
+                        add("false");
+                        add("true");
+                        return result;
+                    }
+                    _ => {}
+                }
+            }
+            (Some("get"), 3) => {
+                for literal in ["value", "max", "visible", "players"] {
+                    add(literal);
+                }
+                return result;
+            }
+            _ => {}
+        }
+    }
+    if root == "locate" {
+        match (second, argument_index) {
+            (_, 1) => {
+                for literal in ["structure", "biome", "poi"] {
+                    add(literal);
+                }
+                return result;
+            }
+            (Some("structure"), 2) => {
+                for id in structure_ids {
+                    add(id);
+                }
+                return result;
+            }
+            _ => return result,
+        }
+    }
+    if root == "title" {
+        match (second, argument_index) {
+            (_, 1) => {
+                for selector in ["@a", "@p", "@r", "@s"] {
+                    add(selector);
+                }
+                for name in player_names {
+                    add(name);
+                }
+                return result;
+            }
+            (_, 2) => {
+                for literal in ["clear", "reset", "title", "subtitle", "actionbar", "times"] {
+                    add(literal);
+                }
+                return result;
+            }
+            _ => return result,
+        }
+    }
+    if root == "tellraw" {
+        if argument_index == 1 {
+            for selector in ["@a", "@p", "@r", "@s"] {
+                add(selector);
+            }
+            for name in player_names {
+                add(name);
+            }
+        }
+        return result;
+    }
     let registry = match (root, second, argument_index) {
         ("give" | "clear", _, 2) | ("debug", Some("give"), 2) => Some(item_ids),
         ("summon", _, 1) => Some(entity_ids),
@@ -1309,6 +1698,9 @@ pub(crate) fn suggestions(
             | "kill"
             | "kick"
             | "ban"
+            | "mute"
+            | "unmute"
+            | "warn"
             | "pardon"
             | "op"
             | "deop"
@@ -1393,6 +1785,40 @@ mod tests {
     }
 
     #[test]
+    fn forceload_tree_matches_vanilla_column_syntax_and_is_operator_gated() {
+        let packet = tree(2, &[]);
+        for path in [
+            &["forceload", "add", "from"][..],
+            &["forceload", "add", "from", "to"][..],
+            &["forceload", "remove", "from"][..],
+            &["forceload", "remove", "from", "to"][..],
+            &["forceload", "remove", "all"][..],
+            &["forceload", "query"][..],
+            &["forceload", "query", "pos"][..],
+        ] {
+            assert!(node(&packet, path).executable, "{path:?}");
+        }
+        assert!(!node(&packet, &["forceload"]).executable);
+        assert!(!node(&packet, &["forceload", "add"]).executable);
+        for path in [
+            &["forceload", "add", "from"][..],
+            &["forceload", "add", "from", "to"][..],
+            &["forceload", "remove", "from", "to"][..],
+            &["forceload", "query", "pos"][..],
+        ] {
+            assert_eq!(parser(&packet, path), Parser::ColumnPos, "{path:?}");
+        }
+        let roots = |level| {
+            let packet = tree(level, &[]);
+            packet.nodes[0].children.iter().any(|child| {
+                matches!(&packet.nodes[*child as usize].kind,
+                        CommandNodeKind::Literal(name) if name == "forceload")
+            })
+        };
+        assert!(!roots(1) && roots(2));
+    }
+
+    #[test]
     fn effect_tree_matches_vanilla_optional_arguments_and_resource_registry() {
         let packet = tree(2, &[]);
         assert!(node(&packet, &["effect", "clear"]).executable);
@@ -1445,7 +1871,7 @@ mod tests {
     fn effect_suggestions_cover_actions_targets_ids_infinite_and_visibility() {
         let names = ["Alice".to_owned()];
         let texts = |command: &str, level| {
-            suggestions(1, command, level, &names, &[], &[], &[], &[])
+            suggestions(1, command, level, &names, &[], &[], &[], &[], &[])
                 .suggestions
                 .into_iter()
                 .map(|entry| entry.text)
@@ -1483,7 +1909,7 @@ mod tests {
                     CommandNodeKind::Argument { name: argument, .. } => argument == name,
                     CommandNodeKind::Root => false,
                 })
-                .expect("advertised command path");
+                .unwrap_or_else(|| panic!("advertised command path {path:?} missing {name:?}"));
         }
         current
     }
@@ -1716,7 +2142,7 @@ mod tests {
     fn suggestions_filter_permissions_registries_and_use_utf16_ranges() {
         let names = vec!["Alice".to_owned(), "😀Bob".to_owned()];
         let items = vec!["minecraft:stone".to_owned(), "minecraft:stick".to_owned()];
-        let response = suggestions(7, "/s", 0, &names, &items, &[], &[], &[]);
+        let response = suggestions(7, "/s", 0, &names, &items, &[], &[], &[], &[]);
         assert_eq!((response.id, response.start, response.length), (7, 1, 1));
         assert_eq!(
             response
@@ -1726,25 +2152,25 @@ mod tests {
                 .collect::<Vec<_>>(),
             ["settlement"]
         );
-        let response = suggestions(8, "/give @s st", 2, &names, &items, &[], &[], &[]);
+        let response = suggestions(8, "/give @s st", 2, &names, &items, &[], &[], &[], &[]);
         assert_eq!((response.start, response.length), (9, 2));
         assert_eq!(response.suggestions.len(), 2);
-        let response = suggestions(9, "/msg 😀B", 0, &names, &items, &[], &[], &[]);
+        let response = suggestions(9, "/msg 😀B", 0, &names, &items, &[], &[], &[], &[]);
         assert_eq!((response.start, response.length), (5, 3));
         assert_eq!(response.suggestions[0].text, "😀Bob");
         assert!(
-            suggestions(10, "give @s ", 0, &names, &items, &[], &[], &[])
+            suggestions(10, "give @s ", 0, &names, &items, &[], &[], &[], &[])
                 .suggestions
                 .is_empty()
         );
-        let response = suggestions(11, "msg @", 0, &names, &items, &[], &[], &[]);
+        let response = suggestions(11, "msg @", 0, &names, &items, &[], &[], &[], &[]);
         assert!(
             !response
                 .suggestions
                 .iter()
                 .any(|entry| entry.text == "@e" || entry.text == "@n")
         );
-        let response = suggestions(12, "kill @", 2, &names, &items, &[], &[], &[]);
+        let response = suggestions(12, "kill @", 2, &names, &items, &[], &[], &[], &[]);
         assert!(response.suggestions.iter().any(|entry| entry.text == "@e"));
     }
 

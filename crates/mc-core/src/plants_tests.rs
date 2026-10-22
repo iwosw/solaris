@@ -25,7 +25,7 @@ fn columns_obey_height_and_support_and_cascade_once() {
     put(&mut state, 2, Y, 2, sand);
     plant(&mut state, 2, Y + 1, 2, "cactus", &[("age", "0")]);
     for dy in 1..3 {
-        let id = at(&state, 2, Y + dy, 2);
+        let id = block(&state, "cactus", &[("age", "15")]);
         let plan = plants::random_growth(&state, pos(2, dy, 2), id, 0).expect("cactus growth");
         apply(&mut state, plan);
     }
@@ -59,7 +59,7 @@ fn cane_needs_water_and_stops_at_three() {
     put(&mut state, 3, Y, 2, water);
     assert!(plants::can_stand(&state, id, pos(2, 1, 2)));
     for dy in 1..3 {
-        let id = at(&state, 2, Y + dy, 2);
+        let id = block(&state, "sugar_cane", &[("age", "15")]);
         let plan = plants::random_growth(&state, pos(2, dy, 2), id, 0).unwrap();
         apply(&mut state, plan);
     }
@@ -69,6 +69,47 @@ fn cane_needs_water_and_stops_at_three() {
     put(&mut state, 3, Y, 2, air);
     plants::neighbor_updates(&mut state, pos(3, 0, 2), &mut Vec::new(), &mut Vec::new());
     assert_eq!(at(&state, 2, Y + 3, 2), air);
+}
+
+#[test]
+fn cane_and_cactus_age_sixteen_random_ticks_before_extending() {
+    // Vanilla SugarCaneBlock/CactusBlock.randomTick: ages 0..15 advance the
+    // stalk's own `age`; only the 16th tick (age 15) adds the next segment.
+    for (name, support) in [("sugar_cane", "sand"), ("cactus", "sand")] {
+        let (mut state, _) = setup();
+        let sand = block(&state, support, &[]);
+        put(&mut state, 2, Y, 2, sand);
+        if name == "sugar_cane" {
+            let water = state.registry.states.water_levels[0];
+            put(&mut state, 3, Y, 2, water);
+        }
+        plant(&mut state, 2, Y + 1, 2, name, &[("age", "0")]);
+        for tick in 0..15 {
+            let id = at(&state, 2, Y + 1, 2);
+            let plan = plants::random_growth(&state, pos(2, 1, 2), id, 0).expect(name);
+            apply(&mut state, plan);
+            assert_eq!(
+                at(&state, 2, Y + 2, 2),
+                state.registry.states.air,
+                "{name} tick {tick}: ageing never extends"
+            );
+        }
+        assert_eq!(
+            at(&state, 2, Y + 1, 2),
+            block(&state, name, &[("age", "15")])
+        );
+        let id = at(&state, 2, Y + 1, 2);
+        let plan = plants::random_growth(&state, pos(2, 1, 2), id, 0).expect(name);
+        apply(&mut state, plan);
+        assert_eq!(
+            at(&state, 2, Y + 2, 2),
+            block(&state, name, &[("age", "0")])
+        );
+        assert_eq!(
+            at(&state, 2, Y + 1, 2),
+            block(&state, name, &[("age", "0")])
+        );
+    }
 }
 
 #[test]

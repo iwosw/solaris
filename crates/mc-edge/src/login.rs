@@ -13,7 +13,7 @@ use std::net::IpAddr;
 use mc_protocol::frame::Compression;
 use mc_protocol::packets::login::{
     EncryptionRequest, EncryptionResponse, GameProfileProperty, LoginAcknowledged, LoginDisconnect,
-    LoginStart, LoginSuccess, SetCompression,
+    LoginPluginRequest, LoginPluginResponse, LoginStart, LoginSuccess, SetCompression,
 };
 
 use crate::connection::Connection;
@@ -30,6 +30,9 @@ pub const DEFAULT_COMPRESSION_THRESHOLD: i32 = 256;
 pub struct LoginOpts {
     pub online_mode: bool,
     pub compression_threshold: i32,
+    /// Verified Velocity modern-forwarding secret; `Some` requires the proxy
+    /// plugin-message handshake instead of Mojang authentication.
+    pub velocity: Option<crate::proxy::VelocityForwarding>,
 }
 
 /// Outcome of a successful login, returned for the transition into
@@ -39,6 +42,8 @@ pub struct LoginOutcome {
     pub uuid: uuid::Uuid,
     pub name: String,
     pub properties: Vec<GameProfileProperty>,
+    /// Client address the proxy forwarded, when one authenticated the login.
+    pub remote_address: Option<IpAddr>,
 }
 
 /// Name validation failure.
@@ -124,7 +129,49 @@ pub(crate) async fn handle_login_admitted(
         return Ok(None);
     }
 
-    let (name, uuid, properties) = if opts.online_mode {
+    let (name, uuid, properties, remote_address) = if let Some(velocity) = opts.velocity.as_ref() {
+        if opts.online_mode {
+            anyhow::bail!("proxy forwarding and Mojang online mode are mutually exclusive");
+        }
+        // Velocity answers `velocity:player_info` with the signed profile.
+        // A vanilla client answers `successful = false`, so a direct
+        // connection cannot impersonate a proxied one.
+        const MESSAGE_ID: i32 = 0;
+        conn.send_packet(&LoginPluginRequest {
+            message_id: MESSAGE_ID,
+            channel: mc_protocol::codec::Identifier::parse(crate::proxy::CHANNEL)
+                .expect("static forwarding channel identifier"),
+            data: vec![velocity.request_version()],
+        })
+        .await?;
+        let response = conn
+            .read_packet::<LoginPluginResponse>(mc_protocol::State::Login)
+            .await?;
+        let forwarded = if response.message_id == MESSAGE_ID && response.successful {
+            velocity.verify_and_parse(&response.data).ok()
+        } else {
+            None
+        };
+        let Some(forwarded) = forwarded else {
+            write_login_disconnect(conn, "This server requires you to connect with Velocity.")
+                .await?;
+            return Ok(None);
+        };
+        if validate_login_name(&forwarded.name).is_err()
+            || !forwarded.name.eq_ignore_ascii_case(&requested_name)
+        {
+            write_login_disconnect(conn, "This server requires you to connect with Velocity.")
+                .await?;
+            return Ok(None);
+        }
+        let remote_address = forwarded.ip();
+        (
+            forwarded.name,
+            forwarded.uuid,
+            forwarded.properties,
+            remote_address,
+        )
+    } else if opts.online_mode {
         let Some(authentication) = online_authentication else {
             anyhow::bail!("online mode requires an authentication context");
         };
@@ -193,13 +240,13 @@ pub(crate) async fn handle_login_admitted(
             write_login_disconnect(conn, "Failed to verify username!").await?;
             return Ok(None);
         }
-        (name, uuid, properties)
+        (name, uuid, properties, None)
     } else {
         // Offline mode ignores the client UUID and derives the vanilla UUID.
         let uuid = offline_uuid(&requested_name);
-        (requested_name, uuid, Vec::new())
+        (requested_name, uuid, Vec::new(), None)
     };
-    if let Some(reason) = admission(uuid, peer_ip) {
+    if let Some(reason) = admission(uuid, remote_address.or(peer_ip)) {
         conn.send_packet(&LoginDisconnect {
             reason_json: reason.to_string(),
         })
@@ -229,6 +276,7 @@ pub(crate) async fn handle_login_admitted(
         uuid,
         name,
         properties,
+        remote_address,
     }))
 }
 

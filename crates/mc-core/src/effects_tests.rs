@@ -347,6 +347,17 @@ fn haste_fatigue_melee_and_safe_fall_modifiers() {
 }
 
 #[test]
+fn landing_move_counts_its_own_drop_toward_fall_damage() {
+    // Vanilla Entity.checkFallDamage accumulates `ya < 0` before the
+    // on-ground test, so a 3.5-block fall whose last 0.5 arrives on the landing
+    // packet is 3.5 > 3 safe blocks: ceil(0.5) = 1 damage, not 0.
+    let mut player = PlayerState::new(ConnectionId(1), GameMode::Survival);
+    player.fall(-3.0, false, false);
+    assert_eq!(player.fall(-0.5, true, false), 1.0);
+    assert_eq!(player.fall_distance, 0.0);
+}
+
+#[test]
 fn absorption_replenishes_on_consumption_and_expires_when_used() {
     let mut effects = ActiveEffects::default();
     effects.add(ActiveEffect::new(EffectId::Absorption, 200, 0));

@@ -187,6 +187,13 @@ pub enum IntentKind {
     Cultivate {
         wear: i32,
     },
+    /// A plugin-authored block tool replaces the target block: the footprint
+    /// rewrites it, `wear` is the damage the held tool takes on acceptance and
+    /// `give` is the item granted to the player (dropped if the inventory is full).
+    BlockTool {
+        wear: i32,
+        give: Option<u32>,
+    },
     /// Successful composter fill; the debit and level change commit together.
     ComposterFill {
         pos: BlockPos,
@@ -200,8 +207,10 @@ pub enum IntentKind {
     Explode {
         center: [f64; 3],
         power: f32,
-        /// Preserved even when the exploding mob leaves before merge.
-        mob_source: bool,
+        /// The mob behind the blast, preserved even when it leaves before
+        /// merge. `None` is a non-mob blast; `Some` selects the per-mob
+        /// `mobGriefing` switch that decides block damage.
+        mob_grief: Option<crate::command_rules::MobGrief>,
         kill_credit: Option<(EntityId, u32)>,
     },
     /// A bed/anchor blast: atomically remove its claimed block cells first,

@@ -62,48 +62,112 @@ const ENTITY_DATA_CUSTOM_NAME_VISIBLE_INDEX: u8 = 3;
 
 /// Cross-viewer framed chunk cache, owned by the pump. A chunk revision
 /// includes its authoritative baked light; neighbour light changes are
-/// reflected by the core in the affected chunk's own revision.
+/// reflected by the core in the affected chunk's own revision. With anti-xray
+/// enabled for a dimension, the frame also depends on the four side
+/// neighbours (ore enclosure is judged across chunk borders), so their
+/// revisions join the key.
 #[derive(Debug, Default)]
 pub struct ChunkPacketCache {
     entries: HashMap<(mc_core::dimensions::Dimension, (i32, i32)), CachedChunk>,
+    anti_xray: Option<Arc<crate::anti_xray::AntiXray>>,
+}
+
+/// What an encoded chunk frame was computed from.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+struct ChunkKey {
+    revision: u64,
+    /// `-x`, `+x`, `-z`, `+z` neighbour revisions (0 = absent); all 0 when the
+    /// frame does not depend on neighbours.
+    sides: [u64; 4],
 }
 
 #[derive(Debug)]
 struct CachedChunk {
-    revision: u64,
+    key: ChunkKey,
     /// Final framed (compressed) packet; viewers share it by refcount.
     frame: bytes::Bytes,
 }
 
 impl ChunkPacketCache {
-    /// Empty cache.
+    /// Empty cache without anti-xray.
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Empty cache whose chunks are anti-xray processed per `policy`.
+    pub fn with_anti_xray(policy: Option<Arc<crate::anti_xray::AntiXray>>) -> Self {
+        Self {
+            entries: HashMap::default(),
+            anti_xray: policy,
+        }
+    }
+
+    /// The anti-xray policy of this cache's chunks, if any dimension has one.
+    pub(crate) fn anti_xray(&self) -> Option<&crate::anti_xray::AntiXray> {
+        self.anti_xray.as_deref()
+    }
+
+    fn key(
+        &self,
+        dimension: mc_core::dimensions::Dimension,
+        chunks: &[SnapshotChunk],
+        chunk: &SnapshotChunk,
+    ) -> ChunkKey {
+        chunk_key(self.anti_xray(), dimension, chunks, chunk)
     }
 
     fn get(
         &self,
         dimension: mc_core::dimensions::Dimension,
         pos: (i32, i32),
-        revision: u64,
+        key: ChunkKey,
     ) -> Option<&bytes::Bytes> {
         let entry = self.entries.get(&(dimension, pos))?;
-        (entry.revision == revision).then_some(&entry.frame)
+        (entry.key == key).then_some(&entry.frame)
     }
 
-    /// Drop entries whose chunk is gone or has a newer revision.
+    /// Drop entries whose chunk is gone or whose content key moved on.
     pub fn retain_resident(&mut self, output: &TickOutput) {
+        let policy = self.anti_xray.as_deref();
         self.entries.retain(|(dimension, pos), entry| {
             output
                 .in_dimension(*dimension)
-                .and_then(|output| find_chunk(&output.snapshot.chunks, *pos))
-                .is_some_and(|chunk| chunk.revision == entry.revision)
+                .and_then(|output| {
+                    let chunks = &output.snapshot.chunks;
+                    find_chunk(chunks, *pos)
+                        .map(|chunk| chunk_key(policy, *dimension, chunks, chunk))
+                })
+                .is_some_and(|key| key == entry.key)
         });
     }
 }
 
+/// Content key of `chunk`'s frame: its own revision plus, when anti-xray
+/// applies to `dimension`, the revisions of its four side neighbours.
+fn chunk_key(
+    policy: Option<&crate::anti_xray::AntiXray>,
+    dimension: mc_core::dimensions::Dimension,
+    chunks: &[SnapshotChunk],
+    chunk: &SnapshotChunk,
+) -> ChunkKey {
+    let mut sides = [0; 4];
+    if policy.is_some_and(|policy| policy.enabled(dimension)) {
+        let (x, z) = (chunk.pos.x, chunk.pos.z);
+        for (side, pos) in sides
+            .iter_mut()
+            .zip([(x - 1, z), (x + 1, z), (x, z - 1), (x, z + 1)])
+        {
+            *side = find_chunk(chunks, pos).map_or(0, |resident| resident.revision);
+        }
+    }
+    ChunkKey {
+        revision: chunk.revision,
+        sides,
+    }
+}
+
 /// Resident chunk at `pos` (snapshot chunks are sorted by `(x, z)`).
-fn find_chunk(chunks: &[SnapshotChunk], pos: (i32, i32)) -> Option<&SnapshotChunk> {
+pub(crate) fn find_chunk(chunks: &[SnapshotChunk], pos: (i32, i32)) -> Option<&SnapshotChunk> {
     chunks
         .binary_search_by_key(&pos, |chunk| (chunk.pos.x, chunk.pos.z))
         .ok()
@@ -133,29 +197,32 @@ pub fn fill_chunk_packets(
     missing.dedup();
     type Encoded = (
         (mc_core::dimensions::Dimension, (i32, i32)),
-        u64,
+        ChunkKey,
         Option<bytes::Bytes>,
     );
+    let policy = cache.anti_xray.as_deref();
     let encoded: Vec<Encoded> = missing
         .into_par_iter()
         .map(|(dimension, pos)| {
             let Some(output) = output.in_dimension(dimension) else {
-                return ((dimension, pos), 0, None);
+                return ((dimension, pos), ChunkKey::default(), None);
             };
             let chunks = &output.snapshot.chunks;
-            let revision = find_chunk(chunks, pos).map_or(0, |chunk| chunk.revision);
+            let key = find_chunk(chunks, pos).map_or_else(ChunkKey::default, |chunk| {
+                chunk_key(policy, dimension, chunks, chunk)
+            });
             (
                 (dimension, pos),
-                revision,
-                encode_chunk(chunks, pos, registries),
+                key,
+                encode_chunk(chunks, pos, dimension, registries, policy),
             )
         })
         .collect();
     let mut failed_chunks = HashSet::default();
-    for (pos, revision, frame) in encoded {
+    for (pos, key, frame) in encoded {
         match frame {
             Some(frame) => {
-                cache.entries.insert(pos, CachedChunk { revision, frame });
+                cache.entries.insert(pos, CachedChunk { key, frame });
             }
             None => {
                 failed_chunks.insert(pos);
@@ -183,14 +250,22 @@ pub fn fill_chunk_packets(
 }
 
 /// Encode and frame (compress) one chunk packet, or `None` when the chunk
-/// is not resident or does not encode.
+/// is not resident or does not encode. `policy` hides enclosed ores.
 fn encode_chunk(
     chunks: &[SnapshotChunk],
     pos: (i32, i32),
+    dimension: mc_core::dimensions::Dimension,
     registries: &PlanRegistries<'_>,
+    policy: Option<&crate::anti_xray::AntiXray>,
 ) -> Option<bytes::Bytes> {
     let centre = find_chunk(chunks, pos)?;
-    let packet = crate::chunks::encode_chunk_packet(
+    let hidden = policy.map_or_else(Vec::new, |policy| {
+        policy.hide(
+            dimension,
+            &crate::anti_xray::Surroundings::of(chunks, centre),
+        )
+    });
+    let packet = crate::chunks::encode_chunk_packet_with_sections(
         centre.pos,
         &centre.chunk,
         crate::chunks::EncodeInputs {
@@ -199,6 +274,7 @@ fn encode_chunk(
             items: registries.items,
             block_entity_types: registries.block_entity_types,
         },
+        &hidden,
     )
     .ok()?;
     let mut body = Vec::new();
@@ -477,7 +553,8 @@ pub fn plan_viewer(
     let Some(output) = output.in_dimension(viewer.dimension) else {
         return Vec::new();
     };
-    let index = TickPlanIndex::with_previous(output, viewer.entity_interest.previous());
+    let index = TickPlanIndex::with_previous(output, viewer.entity_interest.previous())
+        .with_reveals(output, chunk_cache.anti_xray());
     plan_viewer_indexed(output, viewer, view_distance, chunk_cache, &index)
 }
 
@@ -665,6 +742,12 @@ fn plan_viewer_inner(
                     .insert(changes.blocks[change].position);
             }
         }
+        // Ores a block change next to them just exposed (anti-xray sent the
+        // rock stand-in): the change may sit in a neighbouring chunk, so the
+        // shared index is keyed by the ore's own chunk.
+        if let Some(revealed) = index.reveals.get(chunk) {
+            viewer.pending_blocks.extend(revealed.iter().copied());
+        }
     }
     for (pos, held) in &mut viewer.loaded_chunks {
         if !viewer.window.want.contains(pos) {
@@ -715,9 +798,14 @@ fn plan_viewer_inner(
             && !viewer.chunk_repairs.contains(&pos)
             && let Some(resident) = find_chunk(&snapshot.chunks, pos)
         {
-            viewer
-                .light_baseline
-                .update(pos, &resident.chunk, conn, &mut out, &mut credit);
+            viewer.light_baseline.update(
+                pos,
+                &resident.chunk,
+                resident.revision,
+                conn,
+                &mut out,
+                &mut credit,
+            );
         }
     }
     // Labels refer only to chunks held before this plan, never to an unseen
@@ -744,7 +832,11 @@ fn plan_viewer_inner(
                 continue;
             };
             let data = chunk_cache
-                .get(snapshot.dimension, pos, resident.revision)
+                .get(
+                    snapshot.dimension,
+                    pos,
+                    chunk_cache.key(snapshot.dimension, &snapshot.chunks, resident),
+                )
                 .cloned()
                 .unwrap_or_default();
             out.push(PlannedPacket {
@@ -758,7 +850,9 @@ fn plan_viewer_inner(
             credit -= 1;
             viewer.loaded_chunks.insert(pos, resident.revision);
             viewer.chunk_repairs.remove(&pos);
-            viewer.light_baseline.record(pos, &resident.chunk);
+            viewer
+                .light_baseline
+                .record(pos, &resident.chunk, resident.revision);
         }
     }
 
@@ -1783,7 +1877,7 @@ pub(crate) fn push_reliable<P: Packet>(
     packet: &P,
 ) {
     let mut body = Vec::new();
-    if packet.encode(&mut body).is_ok() {
+    if crate::vanilla_items::encode(connection, packet, &mut body).is_ok() {
         push_framed(out, connection, P::ID, &body, true);
     }
 }
@@ -1794,7 +1888,7 @@ pub(crate) fn push_best_effort<P: Packet>(
     packet: &P,
 ) {
     let mut body = Vec::new();
-    if packet.encode(&mut body).is_ok() {
+    if crate::vanilla_items::encode(connection, packet, &mut body).is_ok() {
         push_framed(out, connection, P::ID, &body, false);
     }
 }

@@ -36,8 +36,10 @@ pub(crate) fn deserialize<'de, D: serde::Deserializer<'de>>(
 pub(crate) fn uuid_tag(uuid: uuid::Uuid) -> Tag {
     Tag::IntArray(
         uuid.as_bytes()
-            .chunks_exact(4)
-            .map(|word| i32::from_be_bytes(word.try_into().expect("uuid word")))
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|word| i32::from_be_bytes(*word))
             .collect(),
     )
 }
@@ -53,7 +55,7 @@ fn uuid(tag: &Tag) -> Result<uuid::Uuid, CoreError> {
         ));
     }
     let mut bytes = [0; 16];
-    for (out, word) in bytes.chunks_exact_mut(4).zip(words) {
+    for (out, word) in bytes.as_chunks_mut::<4>().0.iter_mut().zip(words) {
         out.copy_from_slice(&word.to_be_bytes());
     }
     Ok(uuid::Uuid::from_bytes(bytes))

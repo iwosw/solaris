@@ -186,6 +186,30 @@ pub(crate) fn power_at(state: &TickState, pos: BlockPos) -> u8 {
         .max()
         .unwrap_or(0)
 }
+/// Vanilla quasi-connectivity: a component also reacts to power at the block above it
+/// (`hasNeighborSignal(pos.above())`, i.e. the above cell's neighbours except the one below),
+/// but only when a neighbour update reaches the component itself.
+pub(crate) fn quasi_connected(state: &TickState, pos: BlockPos) -> bool {
+    let Some(above) = offset(pos, (0, 1, 0)) else {
+        return false;
+    };
+    NEIGHBOURS
+        .into_iter()
+        .filter(|d| *d != (0, -1, 0))
+        .filter_map(|d| offset(above, d))
+        .any(|source| output(state, source, above) > 0)
+}
+/// Vanilla `PistonBaseBlock.getNeighborSignal`: power from every side except the piston's own
+/// face, plus quasi-connectivity through the block above.
+pub(crate) fn piston_powered(state: &TickState, pos: BlockPos, facing: &str) -> bool {
+    let face = facing_delta(facing);
+    NEIGHBOURS
+        .into_iter()
+        .filter(|d| Some(*d) != face)
+        .filter_map(|d| offset(pos, d))
+        .any(|source| output(state, source, pos) > 0)
+        || quasi_connected(state, pos)
+}
 struct Read<'a>(&'a TickState);
 impl BlockPlanningRead for Read<'_> {
     fn get_cached_block(&self, pos: BlockPos) -> Option<BlockStateId> {
@@ -623,7 +647,7 @@ fn tick_cell(
         }
         "piston" | "sticky_piston" => {
             // The planner validates the entire move before publishing any cell.
-            let powered = power_at(state, pos) > 0;
+            let powered = piston_powered(state, pos, prop(block, "facing").unwrap_or("north"));
             let read = Read(state);
             let mut plan = planning::Settle::new(&state.registry.blocks, &read);
             match piston::plan_move(&mut plan, pos, block, path == "sticky_piston", powered) {
@@ -637,7 +661,7 @@ fn tick_cell(
         "crafter" => crate::crafter::scheduled(state, pos, tick.priority, writes, spawned),
         _ if crate::shelf::is_shelf(path) => crate::shelf::scheduled(state, pos, writes),
         "dispenser" | "dropper" => {
-            let powered = power_at(state, pos) > 0;
+            let powered = power_at(state, pos) > 0 || quasi_connected(state, pos);
             let triggered = prop(block, "triggered") == Some("true");
             containers::register(state, pos);
             if tick.priority == 5 {

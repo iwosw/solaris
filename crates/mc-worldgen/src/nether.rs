@@ -130,6 +130,10 @@ fn splitmix64(mut value: u64) -> u64 {
 }
 
 impl ChunkGenerator for NetherGenerator {
+    fn noise_biome(&self, _world_x: i32, _y: i32, _world_z: i32) -> Option<Identifier> {
+        Some(self.biome.clone())
+    }
+
     fn generate(&self, pos: ChunkPos) -> Chunk {
         let mut chunk =
             Chunk::empty_with_geometry(pos, self.air, self.biome.clone(), self.geometry);
@@ -141,7 +145,6 @@ impl ChunkGenerator for NetherGenerator {
                 let _ = chunk.set_block(lx, NETHER_MIN_Y, lz, self.bedrock);
                 // Solid body: land columns are netherrack up to the field;
                 // lake columns (field at/below sea) hold lava up to sea level.
-                // Never bury lava under rock, never leave hollow air to the roof.
                 let lake = height <= NETHER_LAVA_LEVEL;
                 for y in 1..NETHER_CEILING_Y - NETHER_CEILING_BAND {
                     let state = if lake {

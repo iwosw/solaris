@@ -1,0 +1,19 @@
+// Command-permission publication: the one cross-package admission contract.
+//
+// Separate from `host` on purpose. A guest that never asks for this interface
+// imports exactly the `host` instance it was built against, so adding the
+// provider role did not renumber or retype any import an ordinary package
+// already had: previously encoded packages keep instantiating.
+interface command-permissions {
+    /// Replace the deployment's command-permission grants.
+    ///
+    /// Only the package the deployment designates as its permission provider is
+    /// handed a live instance; every other guest that imports this interface is
+    /// answered `false`. Each entry is `"<identity> <node>"`, where `identity` is
+    /// a dashed or compact lower-case UUID, or `*` for the default row that
+    /// applies to a player the table has no explicit row for, and a node of `*`
+    /// grants every node. The publication is all-or-nothing: an invalid or
+    /// over-bound list is refused and the previous table stays in force.
+    /// Synchronous, host-local, and refused during a pre-commit hook.
+    publish: func(entries: list<string>) -> bool;
+}

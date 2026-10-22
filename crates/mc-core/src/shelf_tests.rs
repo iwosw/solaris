@@ -115,8 +115,8 @@ fn shelf_checkpoint_native_chunk_restart_preserves_stacks_and_alignment() {
     run(&mut state);
     let update = state
         .outbox
-        .iter()
-        .flat_map(|(_, changes)| changes)
+        .values()
+        .flatten()
         .find_map(|change| match change {
             PlayerChange::BlockEntityData {
                 position,
@@ -368,8 +368,11 @@ fn powered_shelf_chains_use_the_last_three_six_or_nine_hotbar_slots() {
                 .iter()
                 .all(ItemStack::is_empty)
         );
-        for ((x, _), items) in cells.iter().zip(original[start..9].chunks_exact(3)) {
-            assert_eq!(state.block_entities[&(*x, 201, 8)].slots, items);
+        for ((x, _), items) in cells
+            .iter()
+            .zip(original[start..9].as_chunks::<3>().0.iter())
+        {
+            assert_eq!(state.block_entities[&(*x, 201, 8)].slots, *items);
         }
     }
 }

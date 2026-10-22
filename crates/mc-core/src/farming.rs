@@ -16,7 +16,7 @@
 use mc_data::ItemStack;
 use mc_world::{BlockRegistry, BlockStateId, Chunk, ChunkSection, SECTION_DIM};
 use rayon::prelude::*;
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::boundary::{BlockPos, ChunkPos, EntityId, Hand};
 use crate::config::CoreError;
@@ -481,10 +481,16 @@ fn sample(state: &mut TickState, speed: u32, min_parallel: usize) -> Vec<Change>
             work.push((chunk, ticking));
         }
     }
-    let overlay = !world.overlay_is_empty();
+    // Only chunks with pending overlay edits need the overlay-aware read;
+    // elsewhere it returns exactly the committed section cell.
+    let overlay_chunks: FxHashSet<(i32, i32)> = world
+        .overlay_entries()
+        .map(|((x, _, z), _)| (x.div_euclid(16), z.div_euclid(16)))
+        .collect();
     let (seed, tick) = (world.seed() as u64, state.tick);
     let hits_of = |&(chunk, ticking): &(&Chunk, u32)| {
         let mut hits = Vec::new();
+        let overlay = overlay_chunks.contains(&(chunk.pos.x, chunk.pos.z));
         sample_chunk(
             world, farming, overlay, seed, tick, speed, chunk, ticking, &mut hits,
         );
@@ -694,7 +700,7 @@ fn crop(state: &TickState, at: BlockPos, id: u32, roll: &mut Roll) -> Option<Out
     }
     let blocks = &state.registry.blocks;
     let (age, max) = age_of(blocks, id)?;
-    if state.brightness(at.x, at.y, at.z) < 9
+    if state.raw_brightness(at.x, at.y, at.z) < 9
         || age >= max
         || roll.below((25.0 / growth_speed(state, at, id)) as u32 + 1) != 0
         || (is_block(blocks, id, "beetroots") && roll.below(3) != 0)

@@ -180,6 +180,10 @@ fn splitmix64(mut value: u64) -> u64 {
 }
 
 impl ChunkGenerator for EndGenerator {
+    fn noise_biome(&self, _world_x: i32, _y: i32, _world_z: i32) -> Option<Identifier> {
+        Some(self.biome.clone())
+    }
+
     fn generate(&self, pos: ChunkPos) -> Chunk {
         let mut chunk =
             Chunk::empty_with_geometry(pos, self.air, self.biome.clone(), self.geometry);

@@ -43,13 +43,15 @@
 //! publishes the world snapshot. Only the pump's subscribe site would
 //! change if delivery is ever reshaped again.
 
-use std::collections::HashMap;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
-
 use mc_core::Core;
 use mc_core::boundary::{ChangeSet, ConnectionId, PlayerInput, TickOutput};
 use mc_data::VanillaData;
+use sha2::{Digest, Sha256};
+use std::collections::HashMap;
+use std::io::{Cursor, Write};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, LazyLock};
+use std::time::Instant;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{broadcast, mpsc};
 use tracing::{debug, warn};
@@ -59,6 +61,7 @@ use crate::dashboard::{
     DashboardChunks, DashboardEntities, DashboardState, DashboardWorld, LoadQueueCapabilities,
     LoadQueueGauge, LoadQueues, unix_ns,
 };
+use mc_protocol::packets::Packet;
 
 /// Per-connection outbound queue bound (reliable and world queues alike).
 pub use crate::fanout::OUTBOUND_QUEUE_BOUND;
@@ -69,6 +72,153 @@ const FIRST_CONNECTION_ID: u64 = 1;
 /// How many consecutive `submit() == false` sheds before the connection is
 /// dropped for backpressure (prevents one wedged client spinning forever).
 const MAX_SUBMIT_SHEDS: u32 = 64;
+
+/// Per-Play-packet-id token buckets. Paper's packet limiter is permissive for
+/// normal clients; these defaults retain that headroom while bounding one
+/// packet type independently of all other client traffic.
+#[derive(Debug)]
+struct PacketLimiter {
+    rate_per_second: f64,
+    burst: f64,
+    buckets: HashMap<i32, (f64, Instant)>,
+}
+
+impl PacketLimiter {
+    fn new(config: &crate::config::AntiCheatSection) -> Self {
+        Self {
+            rate_per_second: f64::from(config.packet_rate_per_second),
+            burst: f64::from(config.packet_burst),
+            buckets: HashMap::new(),
+        }
+    }
+
+    fn allow(&mut self, packet_id: i32) -> bool {
+        self.allow_at(packet_id, Instant::now())
+    }
+
+    fn allow_at(&mut self, packet_id: i32, now: Instant) -> bool {
+        if self.rate_per_second == 0.0 || self.burst == 0.0 {
+            return true;
+        }
+        let (tokens, updated) = self.buckets.entry(packet_id).or_insert((self.burst, now));
+        *tokens = (*tokens + now.duration_since(*updated).as_secs_f64() * self.rate_per_second)
+            .min(self.burst);
+        *updated = now;
+        if *tokens < 1.0 {
+            return false;
+        }
+        *tokens -= 1.0;
+        true
+    }
+}
+
+const NATIVE_SETTLEMENTS_OWNER: &str = "solaris-settlements";
+
+fn native_settlements_bundle() -> anyhow::Result<mc_script::ClientBundle> {
+    static BUNDLE: LazyLock<Result<mc_script::ClientBundle, String>> =
+        LazyLock::new(|| build_native_settlements_bundle().map_err(|error| error.to_string()));
+    BUNDLE
+        .as_ref()
+        .map(Clone::clone)
+        .map_err(anyhow::Error::msg)
+}
+
+fn build_native_settlements_bundle() -> anyhow::Result<mc_script::ClientBundle> {
+    let index = br#"{
+  "schema": 2,
+  "screens": [{
+    "id": "solaris-settlements:overview",
+    "overlay": true,
+    "title": "Settlements",
+    "widgets": [],
+    "view_request_bindings": [{
+      "key": "key.keyboard.c",
+      "view": "solaris-settlements:overview"
+    }]
+  }]
+}"#;
+    let mut archive = zip::ZipWriter::new(Cursor::new(Vec::new()));
+    archive.start_file(
+        "solaris-client.json",
+        zip::write::SimpleFileOptions::default(),
+    )?;
+    archive.write_all(index)?;
+    let bytes = archive.finish()?.into_inner();
+    let sha256 = format!("{:x}", Sha256::digest(&bytes));
+    Ok(mc_script::ClientBundle::new(
+        NATIVE_SETTLEMENTS_OWNER,
+        "native-settlements",
+        "1",
+        "native/settlements.zip",
+        sha256,
+        bytes.len() as u64,
+        "native/settlements.zip".into(),
+        Arc::from(bytes),
+        vec![
+            mc_script::ClientLoader::Fabric,
+            mc_script::ClientLoader::NeoForge,
+            mc_script::ClientLoader::Forge,
+        ],
+        vec![
+            mc_script::ClientContentKind::Views,
+            mc_script::ClientContentKind::ViewActions,
+        ],
+        vec![
+            mc_script::ClientPermission::PresentViews,
+            mc_script::ClientPermission::SendViewActions,
+        ],
+    )
+    .with_required(false))
+}
+
+enum LoaderViewIngress {
+    NotLoader,
+    Discard,
+    Request(PlayerInput),
+}
+
+fn loader_view_ingress(
+    manifest: &mc_loader::LoaderManifest,
+    connection: ConnectionId,
+    body: &[u8],
+) -> anyhow::Result<LoaderViewIngress> {
+    use mc_protocol::packets::CustomPayload;
+    use mc_protocol::packets::Packet;
+    use mc_protocol::packets::play::ServerboundCustomPayload;
+
+    let mut body = body;
+    let packet = ServerboundCustomPayload::decode(&mut body)?;
+    anyhow::ensure!(body.is_empty(), "trailing Loader Play custom payload bytes");
+    let CustomPayload::Unknown { channel, payload } = packet.payload else {
+        return Ok(LoaderViewIngress::NotLoader);
+    };
+    if channel != *mc_loader::loader_view_action_channel() {
+        return Ok(LoaderViewIngress::NotLoader);
+    }
+    let mc_loader::LoaderViewClientRequest::ViewRequest { request_kind } =
+        mc_loader::decode_loader_view_client_request(&payload)?
+    else {
+        return Ok(LoaderViewIngress::Discard);
+    };
+    let Some((owner, _)) = manifest
+        .declared_view_kinds()
+        .find(|(_, declared)| *declared == &request_kind)
+    else {
+        return Ok(LoaderViewIngress::Discard);
+    };
+    if !manifest.plugin_grants(
+        owner,
+        mc_loader::LoaderContentKind::Views,
+        mc_loader::LoaderPermission::PresentViews,
+    ) {
+        return Ok(LoaderViewIngress::Discard);
+    }
+    Ok(LoaderViewIngress::Request(PlayerInput::LoaderViewRequest {
+        connection,
+        owner: owner.to_owned(),
+        request_kind,
+    }))
+}
 
 /// The edge server: shared core, vanilla data, config, and live state.
 pub struct EdgeServer {
@@ -100,8 +250,17 @@ pub struct EdgeServer {
     suggestion_items: Vec<String>,
     suggestion_blocks: Vec<String>,
     suggestion_entities: Vec<String>,
+    suggestion_structures: Vec<String>,
     online_authentication: Option<crate::login::OnlineAuthentication>,
+    /// Velocity modern-forwarding secret, when `proxy.mode = "velocity"`.
+    velocity: Option<crate::proxy::VelocityForwarding>,
     loader_manifest: Option<mc_loader::LoaderManifest>,
+    /// Whether a bundle in `loader_manifest` is required (vanilla clients refused).
+    loader_required: bool,
+    /// `[lod]` tile service for native clients; `None` when disabled.
+    pub(crate) lod: Option<crate::lod::LodService>,
+    /// Optional Java Distant Horizons presentation; shares native LOD workers.
+    pub(crate) dh: Option<Arc<crate::dh::Service>>,
 }
 
 /// Owned chunk-encoding registries for the pump path.
@@ -127,6 +286,20 @@ type JoinedSpawn = (
     mc_core::dimensions::Dimension,
 );
 
+/// The Loader manifest: every plugin bundle plus the native settlements view
+/// bundle. The native bundle is optional, so a deployment whose plugin bundles are
+/// all optional (or absent) offers the manifest only to clients that answer the
+/// Loader probe and never makes the Loader mandatory for vanilla clients.
+pub(crate) fn loader_manifest(
+    plugin_bundles: &[mc_script::ClientBundle],
+) -> anyhow::Result<Option<mc_loader::LoaderManifest>> {
+    let mut bundles = plugin_bundles.to_vec();
+    bundles.push(native_settlements_bundle()?);
+    let manifest = mc_loader::LoaderManifest::from_script_bundles(&bundles)?;
+    manifest.encode()?;
+    Ok(Some(manifest))
+}
+
 impl EdgeServer {
     /// Build a server from its owned pieces plus fresh live state.
     /// Fails when the biome registry, block table, or light table cannot
@@ -139,13 +312,19 @@ impl EdgeServer {
         cfg: EdgeConfig,
     ) -> anyhow::Result<Self> {
         let dashboard = dashboard_state(&cfg);
-        let manifest =
-            mc_loader::LoaderManifest::from_script_bundles(&hub.registry().plugin_client_bundles)?;
-        manifest.validate_custom_items(hub.registry().plugin_items(), |id| {
-            hub.registry().is_native_item(id)
-        })?;
-        manifest.encode()?;
-        let loader_manifest = (!manifest.bundles.is_empty()).then_some(manifest);
+        let loader_manifest = loader_manifest(&hub.registry().plugin_client_bundles)?;
+        // Any required bundle forces Loader negotiation on every client; a
+        // manifest of only optional bundles is offered to Loader clients alone.
+        let loader_required = hub
+            .registry()
+            .plugin_client_bundles
+            .iter()
+            .any(mc_script::ClientBundle::required);
+        if let Some(manifest) = &loader_manifest {
+            manifest.validate_custom_items(hub.registry().plugin_items(), |id| {
+                hub.registry().is_native_item(id)
+            })?;
+        }
         if !hub.plugin_packages().is_empty() {
             dashboard.set_plugin_source(Arc::clone(&hub));
         }
@@ -173,6 +352,12 @@ impl EdgeServer {
             .online_mode
             .then(|| crate::login::OnlineAuthentication::with_mojang_verifier(false))
             .transpose()?;
+        let velocity = match cfg.proxy.mode {
+            crate::config::ProxyMode::None => None,
+            crate::config::ProxyMode::Velocity => {
+                Some(crate::proxy::VelocityForwarding::new(&cfg.proxy.secret)?)
+            }
+        };
         let suggestion_items = hub
             .registry()
             .items
@@ -187,14 +372,38 @@ impl EdgeServer {
             .registry("entity_type")
             .map(|registry| registry.entries.iter().map(ToString::to_string).collect())
             .unwrap_or_default();
+        let suggestion_structures =
+            crate::command_tree::structure_suggestion_ids(&cfg.data.vanilla_data_dir);
+        let lod = cfg
+            .lod
+            .enabled
+            .then(|| crate::lod::LodService::new(&cfg.lod, &wire.biomes));
+        let dh = cfg
+            .distant_horizons
+            .enabled
+            .then(|| {
+                let workers = lod
+                    .as_ref()
+                    .map(|lod| Arc::clone(&lod.workers))
+                    .unwrap_or_else(|| {
+                        Arc::new(tokio::sync::Semaphore::new(cfg.lod.workers.max(1)))
+                    });
+                crate::dh::Service::new(&hub, &cfg, workers).map(Arc::new)
+            })
+            .transpose()?;
         Ok(Self {
             admin,
             stop,
             suggestion_items,
             suggestion_blocks,
             suggestion_entities,
+            suggestion_structures,
             online_authentication,
+            velocity,
             loader_manifest,
+            loader_required,
+            lod,
+            dh,
             recipes,
             hub,
             data,
@@ -215,7 +424,7 @@ impl EdgeServer {
         packet: &P,
     ) -> anyhow::Result<()> {
         let mut body = Vec::new();
-        packet.encode(&mut body)?;
+        crate::vanilla_items::encode(id, packet, &mut body)?;
         let mut frame = bytes::BytesMut::new();
         mc_protocol::frame::append_frame(
             &mut frame,
@@ -292,6 +501,74 @@ impl EdgeServer {
         )
     }
 
+    /// Vanilla `/transfer <hostname> [port] [players]`: sends the clientbound
+    /// Transfer packet to each target. The client drops the current
+    /// connection itself and reconnects; the server keeps the session until
+    /// the socket closes.
+    fn transfer_command(&self, id: ConnectionId, args: &[&str]) -> anyhow::Result<()> {
+        let Some(hostname) = args.first().filter(|host| !host.is_empty()) else {
+            self.feedback(id, "Incomplete command")?;
+            return Ok(());
+        };
+        let (port, names) = match args.get(1) {
+            Some(token) if token.bytes().all(|byte| byte.is_ascii_digit()) => {
+                let Ok(port) = token.parse::<u16>() else {
+                    self.feedback(id, "Incorrect argument for command")?;
+                    return Ok(());
+                };
+                if port == 0 {
+                    self.feedback(id, "Incorrect argument for command")?;
+                    return Ok(());
+                }
+                (i32::from(port), &args[2..])
+            }
+            _ => (25_565, &args[1..]),
+        };
+        let mut targets = Vec::new();
+        for name in names {
+            match self.admin.find(name) {
+                Some((other, _, display, _)) => targets.push((other, display)),
+                None => {
+                    self.feedback(id, "No player was found")?;
+                    return Ok(());
+                }
+            }
+        }
+        if targets.is_empty() {
+            if id == mc_core::command_console::CONNECTION {
+                self.feedback(id, "Must specify at least one player to transfer")?;
+                return Ok(());
+            }
+            let display = self
+                .connections
+                .inner
+                .lock()
+                .names
+                .get(&id)
+                .cloned()
+                .unwrap_or_default();
+            targets.push((id, display));
+        }
+        for (other, _) in &targets {
+            self.send(
+                *other,
+                &mc_protocol::packets::play::ClientboundTransfer {
+                    host: (*hostname).to_owned(),
+                    port,
+                },
+            )?;
+        }
+        let message = if targets.len() == 1 {
+            format!("Transferring {} to {hostname}:{port}", targets[0].1)
+        } else {
+            format!(
+                "Transferring {} players to {hostname}:{port}",
+                targets.len()
+            )
+        };
+        self.feedback(id, &message)
+    }
+
     async fn handle_edge_frame(
         &self,
         id: ConnectionId,
@@ -355,6 +632,7 @@ impl EdgeServer {
             &self.suggestion_items,
             &self.suggestion_blocks,
             &self.suggestion_entities,
+            &self.suggestion_structures,
             self.hub.plugin_commands(),
         );
         self.send(id, &response)?;
@@ -398,6 +676,32 @@ impl EdgeServer {
         {
             return Ok(false);
         }
+        if matches!(root, "tps" | "mspt") {
+            if permission_level < 2 || words.next().is_some() {
+                self.feedback(id, "Unknown or incomplete command")?;
+                return Ok(true);
+            }
+            let metrics = self.dashboard.snapshot();
+            let mspt = metrics.tick.p50_us as f64 / 1_000.0;
+            let message = if root == "tps" {
+                format!(
+                    "TPS: {:.2}; MSPT: {:.2} (p95 {:.2}, p99 {:.2})",
+                    metrics.tps,
+                    mspt,
+                    metrics.tick.p95_us as f64 / 1_000.0,
+                    metrics.tick.p99_us as f64 / 1_000.0
+                )
+            } else {
+                format!(
+                    "MSPT: {:.2} median, {:.2} p95, {:.2} p99",
+                    mspt,
+                    metrics.tick.p95_us as f64 / 1_000.0,
+                    metrics.tick.p99_us as f64 / 1_000.0
+                )
+            };
+            self.feedback(id, &message)?;
+            return Ok(true);
+        }
         if root == "settlement" && words.clone().eq(["guide"]) {
             self.feedback(id, crate::command_tree::SETTLEMENT_GUIDE)?;
             return Ok(true);
@@ -440,6 +744,12 @@ impl EdgeServer {
                 | "ban-ip"
                 | "pardon-ip"
                 | "kick"
+                | "mute"
+                | "unmute"
+                | "warn"
+                | "transfer"
+                | "whitelist"
+                | "banlist"
                 | "stop"
                 | "save-all"
         ) {
@@ -449,8 +759,34 @@ impl EdgeServer {
             self.feedback(id, "Unknown or incomplete command")?;
             return Ok(true);
         }
+        if root == "whitelist" {
+            self.whitelist_command(id, &words.collect::<Vec<_>>())?;
+            return Ok(true);
+        }
+        if root == "banlist" {
+            self.banlist_command(id, &words.collect::<Vec<_>>())?;
+            return Ok(true);
+        }
+        if root == "transfer" {
+            self.transfer_command(id, &words.collect::<Vec<_>>())?;
+            return Ok(true);
+        }
         let target = words.next();
-        let reason = words.collect::<Vec<_>>().join(" ");
+        let arguments = words.collect::<Vec<_>>();
+        // `/ban` and `/mute` accept an optional duration as the first argument
+        // after the target; anything that does not parse as `1d`/`2h30m`/... is
+        // the start of the reason, so vanilla `/ban <player> <reason>` is intact.
+        let (duration, reason) = if matches!(root, "ban" | "mute") {
+            match arguments.split_first() {
+                Some((first, rest)) => match crate::admin::parse_duration(first) {
+                    Some(duration) => (Some(duration), rest.join(" ")),
+                    None => (None, arguments.join(" ")),
+                },
+                None => (None, String::new()),
+            }
+        } else {
+            (None, arguments.join(" "))
+        };
         if root == "stop" {
             if target.is_some() {
                 self.feedback(id, "Incorrect argument for command")?;
@@ -589,7 +925,7 @@ impl EdgeServer {
                         result
                     }
                     "ban" | "pardon" => {
-                        let result = self.admin.ban_player(
+                        let result = self.admin.ban_player_for(
                             uuid,
                             &name,
                             &source,
@@ -598,6 +934,7 @@ impl EdgeServer {
                             } else {
                                 &reason
                             },
+                            duration,
                             root == "ban",
                         );
                         if result.is_ok()
@@ -611,14 +948,154 @@ impl EdgeServer {
                         }
                         result
                     }
+                    "mute" | "unmute" => {
+                        let result = self.admin.mute_player(
+                            uuid,
+                            &name,
+                            &source,
+                            if reason.is_empty() {
+                                "Muted by an operator."
+                            } else {
+                                &reason
+                            },
+                            duration,
+                            root == "mute",
+                        );
+                        if result.is_ok()
+                            && root == "mute"
+                            && let Some((other, _, _, _)) = live
+                        {
+                            self.feedback(other, "You have been muted.")?;
+                        }
+                        result
+                    }
+                    "warn" => {
+                        let Some((other, _, _, _)) = live else {
+                            self.feedback(id, "No player was found")?;
+                            return Ok(true);
+                        };
+                        self.feedback(
+                            other,
+                            &format!(
+                                "[Warned] {}",
+                                if reason.is_empty() {
+                                    "Follow the server rules."
+                                } else {
+                                    &reason
+                                }
+                            ),
+                        )
+                    }
                     _ => unreachable!(),
                 }
             };
         match result {
-            Ok(()) => self.feedback(id, &format!("Command {root} completed for {target}"))?,
+            Ok(()) => {
+                let expiry = match duration {
+                    Some(duration) => format!(" (expires in {}s)", duration.as_secs()),
+                    None => String::new(),
+                };
+                self.feedback(
+                    id,
+                    &format!("Command {root} completed for {target}{expiry}"),
+                )?
+            }
             Err(error) => self.feedback(id, &format!("Command failed: {error}"))?,
         }
         Ok(true)
+    }
+
+    /// Vanilla `/whitelist on|off|add|remove|list|reload`.
+    ///
+    /// The list file stays a plain `whitelist.json` array; the enforcement
+    /// toggle persists in `whitelist.enabled` beside it.
+    fn whitelist_command(&self, id: ConnectionId, words: &[&str]) -> anyhow::Result<()> {
+        let (sub, rest): (Option<&str>, &[&str]) = match words.split_first() {
+            Some((sub, rest)) => (Some(*sub), rest),
+            None => (None, &[]),
+        };
+        match (sub, rest) {
+            (Some("on"), []) => {
+                self.admin.set_whitelist(true)?;
+                self.feedback(id, "Whitelist is now turned on")
+            }
+            (Some("off"), []) => {
+                self.admin.set_whitelist(false)?;
+                self.feedback(id, "Whitelist is now turned off")
+            }
+            (Some("list"), []) => {
+                let names = self.admin.whitelist_names();
+                if names.is_empty() {
+                    self.feedback(id, "There are no whitelisted players")
+                } else {
+                    self.feedback(
+                        id,
+                        &format!(
+                            "There are {} whitelisted player(s): {}",
+                            names.len(),
+                            names.join(", ")
+                        ),
+                    )
+                }
+            }
+            (Some("reload"), []) => {
+                self.admin.reload_whitelist()?;
+                self.feedback(id, "Reloaded the whitelist")
+            }
+            (Some("add"), [target]) => {
+                let profile = self
+                    .admin
+                    .find(target)
+                    .map(|(_, uuid, name, _)| (uuid, name))
+                    .or_else(|| self.admin.profile(target))
+                    .or_else(|| {
+                        (!self.cfg.auth.online_mode)
+                            .then(|| (crate::crypto::offline_uuid(target), (*target).to_owned()))
+                    });
+                let Some((uuid, name)) = profile else {
+                    return self.feedback(id, "No player was found");
+                };
+                if self.admin.whitelist_add(uuid, &name)? {
+                    self.feedback(id, &format!("Added {name} to the whitelist"))
+                } else {
+                    self.feedback(id, "That player is already whitelisted")
+                }
+            }
+            (Some("remove"), [target]) => {
+                if self.admin.whitelist_remove(target)? {
+                    self.feedback(id, &format!("Removed {target} from the whitelist"))
+                } else {
+                    self.feedback(id, "Nothing changed. The player is not whitelisted")
+                }
+            }
+            _ => self.feedback(id, "Incorrect argument for command"),
+        }
+    }
+
+    /// Vanilla `/banlist players|ips`; expired temporary bans are not listed,
+    /// exactly like vanilla's own list read.
+    fn banlist_command(&self, id: ConnectionId, words: &[&str]) -> anyhow::Result<()> {
+        let (players, ips) = self.admin.bans();
+        match words {
+            ["players"] => {
+                self.feedback(
+                    id,
+                    &format!("There are {} total banned players:", players.len()),
+                )?;
+                for line in players {
+                    self.feedback(id, &line)?;
+                }
+                Ok(())
+            }
+            ["ips"] => {
+                self.feedback(id, &format!("There are {} total banned IPs:", ips.len()))?;
+                for line in ips {
+                    self.feedback(id, &line)?;
+                }
+                Ok(())
+            }
+            _ => self.feedback(id, "Incorrect argument for command"),
+        }
     }
 }
 fn stream_peer_ip(peer: &str) -> Option<std::net::IpAddr> {
@@ -811,6 +1288,7 @@ impl ConnectionRegistry {
     /// waiters (their receivers fail closed), and the stashed disconnect
     /// reason.
     pub fn remove(&self, id: ConnectionId) {
+        crate::vanilla_items::unmark(id);
         let mut inner = self.inner.lock();
         inner.handles.remove(&id);
         if inner.names.remove(&id).is_some() {
@@ -968,10 +1446,30 @@ pub async fn serve_with_console(
     let mut pump = spawn_pump(Arc::clone(&server))?;
     let load_metrics = spawn_load_metrics(&server);
     let mut stop = server.stop.subscribe();
+    let addresses = std::sync::Arc::new(crate::conn_limit::AddressLimiter::new(
+        server.cfg.network.connection_throttle_ms,
+        server.cfg.network.max_connections_per_ip,
+    ));
     let mut tasks = tokio::task::JoinSet::new();
     let console = if console {
         Some(crate::console::spawn(Arc::clone(&server))?)
     } else {
+        None
+    };
+    let msmp = if server.cfg.msmp.enabled && msmp_allowed(&server.cfg) {
+        Some(tokio::spawn(crate::msmp::serve(
+            server.cfg.msmp.bind_address.clone(),
+            server.cfg.msmp.port,
+            server.cfg.msmp.bearer_token.clone(),
+            Arc::clone(&server),
+        )))
+    } else {
+        if server.cfg.msmp.enabled {
+            tracing::warn!(
+                addr = %server.cfg.msmp.bind_address,
+                "MSMP enabled with non-loopback bind but allow_remote=false; MSMP not started"
+            );
+        }
         None
     };
     loop {
@@ -997,16 +1495,33 @@ pub async fn serve_with_console(
                 }
                 pump.abort();
                 load_metrics.abort();
+                if let Some(msmp) = &msmp {
+                    msmp.abort();
+                }
                 return Ok(());
             }
             _ = tasks.join_next(), if !tasks.is_empty() => {}
             accepted = listener.accept() => {
                 let (stream, peer) = accepted?;
+                // Refused before the handshake: the throttle and the per-address
+                // cap answer like an absent listener instead of buffering work.
+                let address = Some(peer.ip());
+                if let Some(address) = address
+                    && !addresses.admit(address)
+                {
+                    debug!(%peer, "connection refused by the per-address limit");
+                    drop(stream);
+                    continue;
+                }
                 debug!(%peer, "accepted connection");
                 let server = Arc::clone(&server);
+                let addresses = Arc::clone(&addresses);
                 tasks.spawn(async move {
                     if let Err(error) = handle_connection(stream, server).await {
                         debug!(%error, "connection closed");
+                    }
+                    if let Some(address) = address {
+                        addresses.release(address);
                     }
                 });
             }
@@ -1029,6 +1544,26 @@ pub async fn serve_with_console(
 
 /// Per-connection pipeline. Status connections return after the ping;
 /// Play connections run until disconnect or overflow.
+/// After the core answered `Joined` for a connection, every exit path must
+/// retire that player. A socket that dies during the initial burst otherwise
+/// leaves an invisible core player behind (ordinary multiplayer: ghost player,
+/// slot leak, and the empty-server pause can never re-arm). The guard also
+/// covers the normal play-loop exit.
+struct JoinedConnectionCleanup {
+    server: Arc<EdgeServer>,
+    id: ConnectionId,
+}
+
+impl Drop for JoinedConnectionCleanup {
+    fn drop(&mut self) {
+        let _ = self.server.hub.submit(PlayerInput::Leave {
+            connection: self.id,
+        });
+        self.server.connections.remove(self.id);
+        self.server.admin.remove(self.id);
+    }
+}
+
 async fn handle_connection(stream: TcpStream, server: Arc<EdgeServer>) -> anyhow::Result<()> {
     let peer = stream
         .peer_addr()
@@ -1038,13 +1573,21 @@ async fn handle_connection(stream: TcpStream, server: Arc<EdgeServer>) -> anyhow
     let mut conn = crate::connection::Connection::new(stream);
     // --- Handshake: route to status or login. Every `?` below logs the
     // --- peer + stage + reason first: a silent TCP close is undebuggable.
-    let (next_state, _address) = match crate::handshake::read_handshake(&mut conn).await {
-        Ok(next) => next,
-        Err(error) => {
-            warn!(%peer, connection = id.0, stage = "handshake", %error, "connection closed");
-            return Err(error);
-        }
+    let Some(handshake) =
+        (match crate::handshake::read_handshake(&mut conn, server.cfg.server.accepts_transfers)
+            .await
+        {
+            Ok(next) => next,
+            Err(error) => {
+                warn!(%peer, connection = id.0, stage = "handshake", %error, "connection closed");
+                return Err(error);
+            }
+        })
+    else {
+        warn!(%peer, connection = id.0, stage = "handshake", "handshake refused (disconnect packet sent); connection closed");
+        return Ok(());
     };
+    let next_state = handshake.next;
     if next_state == crate::handshake::NextState::Status {
         let motd = server.cfg.server.motd.clone();
         let max = server.cfg.server.max_players;
@@ -1063,6 +1606,7 @@ async fn handle_connection(stream: TcpStream, server: Arc<EdgeServer>) -> anyhow
         &crate::login::LoginOpts {
             online_mode: server.cfg.auth.online_mode,
             compression_threshold: crate::login::DEFAULT_COMPRESSION_THRESHOLD,
+            velocity: server.velocity.clone(),
         },
         server.online_authentication.as_ref(),
         peer_ip,
@@ -1098,6 +1642,7 @@ async fn handle_connection(stream: TcpStream, server: Arc<EdgeServer>) -> anyhow
         &server.data,
         &server.tags,
         server.loader_manifest.as_ref(),
+        server.loader_required,
     )
     .await
     {
@@ -1164,6 +1709,19 @@ async fn handle_connection(stream: TcpStream, server: Arc<EdgeServer>) -> anyhow
             return Err(error);
         }
     };
+    // The core has this connection as a player from now on: every later
+    // return (including a dead socket mid-burst) must submit Leave.
+    let joined_cleanup = JoinedConnectionCleanup {
+        server: Arc::clone(&server),
+        id,
+    };
+
+    if config_outcome.loader_session.is_none() {
+        // A client without the Loader cannot resolve plugin item models: it sees
+        // the carrier item instead of the vanilla missing-model cube.
+        crate::vanilla_items::mark(id);
+        conn.show_vanilla_item_models();
+    }
 
     if config_outcome.loader_session.is_some() {
         // The input follows Join on the same reliable authority queue. It is
@@ -1174,7 +1732,6 @@ async fn handle_connection(stream: TcpStream, server: Arc<EdgeServer>) -> anyhow
             ready_sheds += 1;
             if ready_sheds >= MAX_SUBMIT_SHEDS {
                 warn!(%peer, connection = id.0, stage = "loader-ready-submit", name = %outcome.name, "hub queue full; connection closed");
-                server.connections.remove(id);
                 anyhow::bail!("authoritative Loader session admission queue is full");
             }
             tokio::task::yield_now().await;
@@ -1201,7 +1758,6 @@ async fn handle_connection(stream: TcpStream, server: Arc<EdgeServer>) -> anyhow
     .await
     {
         warn!(%peer, connection = id.0, stage = "join-burst", name = %outcome.name, %error, "connection closed");
-        server.connections.remove(id);
         return Err(error);
     }
 
@@ -1251,13 +1807,12 @@ async fn handle_connection(stream: TcpStream, server: Arc<EdgeServer>) -> anyhow
             // case disconnect loudly instead of sending a partial burst.
             if handles.reliable_tx.try_send(planned.data).is_err() {
                 warn!(%peer, connection = id.0, stage = "join-replay", name = %outcome.name, "stashed join burst overflows outbound queue; connection closed");
-                server.connections.remove(id);
                 return Ok(());
             }
         }
     }
     server.connections.set_name(id, outcome.name.clone());
-    if let Some(ip) = peer_ip {
+    if let Some(ip) = outcome.remote_address.or(peer_ip) {
         server
             .admin
             .register(id, outcome.uuid, outcome.name.clone(), ip);
@@ -1269,6 +1824,31 @@ async fn handle_connection(stream: TcpStream, server: Arc<EdgeServer>) -> anyhow
             serde_json::json!({"translate":"multiplayer.disconnect.server_shutdown"}),
         )?;
     }
+    // Far-terrain LOD: only the negotiated native client is told about it and
+    // may ask for tiles (`[lod]`).
+    let native_client = config_outcome
+        .loader_session
+        .as_ref()
+        .is_some_and(|session| session.platform() == mc_loader::LoaderPlatform::Native);
+    let mut lod =
+        (server.lod.is_some() && native_client).then(|| crate::lod::LodConnection::new(spawn));
+    if lod.is_some()
+        && let Some(handles) = server.connections.get(id)
+    {
+        for frame in crate::lod::hello_frames(&server)? {
+            let _ = handles.reliable_tx.try_send(frame);
+        }
+    }
+    let (dh_tx, dh_rx) = mpsc::channel(128);
+    let dh =
+        server.dh.as_ref().filter(|_| !native_client).map(|_| {
+            crate::dh::Connection::start(Arc::clone(&server), id, entity, dimension, dh_tx)
+        });
+    if dh.is_some()
+        && let Some(handles) = server.connections.get(id)
+    {
+        let _ = handles.reliable_tx.try_send(crate::dh::advertisement()?);
+    }
 
     // --- Play: reads and writes progress independently. A writer task owns
     // --- the write half (keepalive, then reliable before world); this task
@@ -1278,6 +1858,7 @@ async fn handle_connection(stream: TcpStream, server: Arc<EdgeServer>) -> anyhow
     let mut decode_state = crate::decode::DecodeState::default();
     let mut inputs = Vec::new();
     let mut sheds = 0u32;
+    let mut packet_limiter = PacketLimiter::new(&server.cfg.anti_cheat);
     let (mut reader, writer) = conn.into_play_halves();
     let mut writer_task = tokio::spawn(play_writer(
         writer,
@@ -1285,8 +1866,11 @@ async fn handle_connection(stream: TcpStream, server: Arc<EdgeServer>) -> anyhow
         Arc::clone(&server.net_counters),
         Arc::clone(&server.connections),
         id,
-        reliable_rx,
-        world_rx,
+        PlayReceivers {
+            reliable: reliable_rx,
+            world: world_rx,
+            dh: dh_rx,
+        },
     ));
     let exit_stage: &'static str = 'play_loop: loop {
         tokio::select! {
@@ -1310,6 +1894,11 @@ async fn handle_connection(stream: TcpStream, server: Arc<EdgeServer>) -> anyhow
                         break 'play_loop "read-frame";
                     }
                 };
+                if !packet_limiter.allow(frame.id) {
+                    warn!(%peer, connection = id.0, stage = "play-rate-limit", name = %outcome.name, packet = frame.id, "play packet rate limit exceeded");
+                    server.kick(id, serde_json::json!({"text":"Too many packets of this type"}))?;
+                    continue;
+                }
                 match server.handle_edge_frame(id, frame.id, &frame.body).await {
                     Ok(true) => continue,
                     Ok(false) => {}
@@ -1318,19 +1907,90 @@ async fn handle_connection(stream: TcpStream, server: Arc<EdgeServer>) -> anyhow
                         break 'play_loop "edge-command-error";
                     }
                 }
-                // `sheds` counts consecutive failed submits across frames (reset on success below).
-                // Err = malformed known packet: drop the connection.
-                if let Err(reason) = crate::decode::decode_play_frame(
-                    id,
-                    frame.id,
-                    &frame.body,
-                    &mut decode_state,
-                    &mut inputs,
-                ) {
+                if let Some(dh) = &dh
+                    && frame.id == mc_protocol::packets::play::ServerboundCustomPayload::ID
+                    && let Some(payload) = crate::dh::payload(&frame.body)
+                {
+                    dh.receive(payload);
+                    continue;
+                }
+                if let Some(lod) = &lod
+                    && frame.id == mc_protocol::packets::play::ServerboundCustomPayload::ID
+                    && let Some(payload) = crate::lod::request_payload(&frame.body)
+                {
+                    if let Err(error) = lod.request(&server, id, &payload) {
+                        warn!(%peer, connection = id.0, stage = "lod-request", name = %outcome.name, %error, "connection closed");
+                        break 'play_loop "lod-request-decode";
+                    }
+                    continue;
+                }
+                // A Loader view request is admitted only from the connection
+                // that completed Configuration negotiation. It bypasses the
+                // generic decoder so the same custom payload is never decoded
+                // twice, while other Loader action-channel messages remain
+                // intentionally inert until their native authorities land.
+                let handled_loader = if config_outcome.loader_session.is_some()
+                    && frame.id == mc_protocol::packets::play::ServerboundCustomPayload::ID
+                {
+                    match loader_view_ingress(
+                        server
+                            .loader_manifest
+                            .as_ref()
+                            .expect("negotiated Loader session retains its manifest"),
+                        id,
+                        &frame.body,
+                    ) {
+                        Ok(LoaderViewIngress::NotLoader) => false,
+                        Ok(LoaderViewIngress::Discard) => true,
+                        Ok(LoaderViewIngress::Request(input)) => {
+                            inputs.push(input);
+                            true
+                        }
+                        Err(error) => {
+                            warn!(%peer, connection = id.0, stage = "loader-view-decode", name = %outcome.name, %error, "connection closed");
+                            break 'play_loop "loader-view-decode";
+                        }
+                    }
+                } else {
+                    false
+                };
+                if !handled_loader
+                    && let Err(reason) = crate::decode::decode_play_frame(
+                        id,
+                        frame.id,
+                        &frame.body,
+                        &mut decode_state,
+                        &mut inputs,
+                    )
+                {
                     warn!(%peer, connection = id.0, stage = "play-decode", name = %outcome.name, frame = frame.id, reason = %reason, "connection closed");
                     break 'play_loop "decode-error";
                 }
+                if let Some(lod) = &mut lod {
+                    for input in &inputs {
+                        if let PlayerInput::Move { position, .. } = input {
+                            lod.moved(*position);
+                        }
+                    }
+                }
+                if inputs.iter().any(|input| matches!(input, PlayerInput::Respawn { .. }))
+                    && let Some(dh) = &dh
+                {
+                    dh.respawn();
+                }
                 for mut input in inputs.drain(..) {
+                    // A muted identity keeps every command right it had; only
+                    // ordinary chat is dropped, with one private notice.
+                    if matches!(input, PlayerInput::Chat { .. })
+                        && !server.hub.session_locked(id)
+                        && server
+                            .admin
+                            .uuid_of(id)
+                            .is_some_and(|uuid| server.admin.muted(uuid))
+                    {
+                        server.feedback(id, "You are muted.")?;
+                        continue;
+                    }
                     if let PlayerInput::Command { command, permission_level, .. } = &mut input {
                         // A locked session keeps no edge-cached permission: no
                         // username or op-list state may escalate it. The fence
@@ -1380,10 +2040,14 @@ async fn handle_connection(stream: TcpStream, server: Arc<EdgeServer>) -> anyhow
     writer_task.abort();
     warn!(%peer, connection = id.0, stage = "play", exit = exit_stage, name = %outcome.name, "connection closed");
 
-    server.hub.submit(PlayerInput::Leave { connection: id });
-    server.connections.remove(id);
-    server.admin.remove(id);
+    drop(joined_cleanup);
     Ok(())
+}
+
+struct PlayReceivers {
+    reliable: mpsc::Receiver<bytes::Bytes>,
+    world: mpsc::Receiver<bytes::Bytes>,
+    dh: mpsc::Receiver<crate::dh::Outbound>,
 }
 
 /// Play writer task: keepalive first, then reliable before world, so a
@@ -1397,9 +2061,13 @@ async fn play_writer(
     net_counters: Arc<NetCounters>,
     connections: Arc<ConnectionRegistry>,
     id: ConnectionId,
-    mut reliable_rx: mpsc::Receiver<bytes::Bytes>,
-    mut world_rx: mpsc::Receiver<bytes::Bytes>,
+    receivers: PlayReceivers,
 ) -> (&'static str, Option<String>) {
+    let PlayReceivers {
+        reliable: mut reliable_rx,
+        world: mut world_rx,
+        dh: mut dh_rx,
+    } = receivers;
     // Vanilla Play KeepAlive: the server pings every 15 s and the client
     // kicks after ~30 s of silence. Without this a parked-but-live
     // connection looks dead to vanilla even while the pump is healthy.
@@ -1429,6 +2097,17 @@ async fn play_writer(
             msg = world_rx.recv() => {
                 let Some(bytes) = msg else { return ("pump-closed", None) };
                 batch.extend_from_slice(&bytes);
+            }
+            msg = dh_rx.recv(), if !dh_rx.is_closed() || !dh_rx.is_empty() => {
+                if let Some(message) = msg {
+                    if !message.valid() { continue; }
+                    // Never batch DH ahead of queued ordinary gameplay.
+                    if writer.write_bytes(&message.bytes).await.is_err() {
+                        return ("dh-write-failed", None);
+                    }
+                    net_counters.bytes_written.fetch_add(message.bytes.len() as u64, Ordering::Relaxed);
+                }
+                continue;
             }
         }
         while batch.len() < WRITE_BATCH_BYTES {
@@ -1498,6 +2177,14 @@ fn spawn_pump(server: Arc<EdgeServer>) -> anyhow::Result<tokio::task::JoinHandle
     let pool = rayon::ThreadPoolBuilder::new()
         .thread_name(|i| format!("edge-fanout-{i}"))
         .build()?;
+    // Hide enclosed ores in encoded chunks per `[anti_xray]` (built from the
+    // core's exact light/opacity oracle, shared by every viewer via the cache).
+    let anti_xray = crate::anti_xray::AntiXray::new(
+        &server.wire.blocks,
+        &server.hub.registry().light,
+        &server.cfg.anti_xray,
+    )?
+    .map(Arc::new);
     Ok(tokio::spawn(async move {
         // Viewer world-view state keyed by connection: what each client
         // holds, reconciled against every newest snapshot.
@@ -1507,7 +2194,7 @@ fn spawn_pump(server: Arc<EdgeServer>) -> anyhow::Result<tokio::task::JoinHandle
         // the 32-tick broadcast window (1.6 s) and the pump would lag,
         // resync, and recompute forever without ever routing. The cache
         // makes re-plans O(1) per chunk; block changes evict their chunk.
-        let mut chunk_cache = crate::plan::ChunkPacketCache::new();
+        let mut chunk_cache = crate::plan::ChunkPacketCache::with_anti_xray(anti_xray);
         loop {
             let out = match rx.recv().await {
                 Ok(out) => out,
@@ -1893,6 +2580,21 @@ pub fn core_config(cfg: &EdgeConfig) -> mc_core::config::CoreConfig {
     core.vanilla_data_dir = Some(cfg.data.vanilla_data_dir.clone());
     core.plugin_directory = cfg.plugins.directory.clone();
     core.require_plugin_login = cfg.auth.require_plugin_login;
+    core.max_airtime_ticks = cfg.anti_cheat.max_airtime_ticks;
+    core.pause_when_empty_seconds =
+        u32::try_from(cfg.server.pause_when_empty_seconds.max(0)).unwrap_or(0);
+    core.mob_griefing = mc_core::config::MobGriefingRules {
+        creeper_block_damage: cfg.mob_griefing.creeper_block_damage,
+        ghast_block_damage: cfg.mob_griefing.ghast_block_damage,
+        wither_block_damage: cfg.mob_griefing.wither_block_damage,
+        villager_farming: cfg.mob_griefing.villager_farming,
+        sheep_grazing: cfg.mob_griefing.sheep_grazing,
+    };
+    core.block_log = mc_core::block_log::Settings {
+        enabled: cfg.block_log.enabled,
+        retention_secs: u64::from(cfg.block_log.retention_days) * 24 * 60 * 60,
+        max_records: cfg.block_log.max_records,
+    };
     core
 }
 
@@ -1932,14 +2634,16 @@ pub fn load_tags(
 
 /// Build the dashboard state with fixed world facts from config.
 fn dashboard_state(cfg: &EdgeConfig) -> Arc<DashboardState> {
-    Arc::new(DashboardState::new(DashboardWorld {
+    let dashboard = Arc::new(DashboardState::new(DashboardWorld {
         name: cfg.server.name.clone(),
         motd: cfg.server.motd.clone(),
         seed: cfg.data.seed,
         view_distance: cfg.server.view_distance,
         simulation_distance: cfg.server.simulation_distance,
         max_players: cfg.server.max_players,
-    }))
+    }));
+    dashboard.set_metrics_bearer_token(cfg.dashboard.metrics_bearer_token.clone());
+    dashboard
 }
 
 /// Whether the dashboard may bind its configured address: loopback always,
@@ -1951,6 +2655,17 @@ pub fn dashboard_allowed(cfg: &EdgeConfig) -> bool {
         .map(|s| s.ip().is_loopback())
         .unwrap_or_else(|_| cfg.dashboard.bind_address == "localhost");
     is_loopback || cfg.dashboard.allow_remote
+}
+
+/// Whether MSMP may bind its configured address: loopback always, remote only
+/// when explicitly allowed alongside its mandatory bearer token.
+pub fn msmp_allowed(cfg: &EdgeConfig) -> bool {
+    let addr = format!("{}:{}", cfg.msmp.bind_address, cfg.msmp.port);
+    let is_loopback = addr
+        .parse::<std::net::SocketAddr>()
+        .map(|address| address.ip().is_loopback())
+        .unwrap_or_else(|_| cfg.msmp.bind_address == "localhost");
+    is_loopback || cfg.msmp.allow_remote
 }
 
 #[cfg(test)]
@@ -2041,13 +2756,31 @@ mod tests {
     }
 
     #[test]
-    fn core_config_carries_distances() {
+    fn core_config_carries_distances_and_airtime_limit() {
         let mut cfg = EdgeConfig::default();
         cfg.server.view_distance = 4;
         cfg.server.simulation_distance = 3;
+        cfg.anti_cheat.max_airtime_ticks = 9;
         let core = core_config(&cfg);
         assert_eq!(core.view_distance, 4);
         assert_eq!(core.simulation_distance, 3);
+        assert_eq!(core.max_airtime_ticks, 9);
+    }
+
+    #[test]
+    fn core_config_carries_pause_and_mob_griefing_switches() {
+        let mut cfg = EdgeConfig::default();
+        assert_eq!(core_config(&cfg).pause_when_empty_seconds, 60);
+        cfg.server.pause_when_empty_seconds = 5;
+        cfg.mob_griefing.creeper_block_damage = false;
+        cfg.mob_griefing.villager_farming = false;
+        let core = core_config(&cfg);
+        assert_eq!(core.pause_when_empty_seconds, 5);
+        assert!(!core.mob_griefing.creeper_block_damage);
+        assert!(!core.mob_griefing.villager_farming);
+        assert!(core.mob_griefing.ghast_block_damage);
+        assert!(core.mob_griefing.wither_block_damage);
+        assert!(core.mob_griefing.sheep_grazing);
     }
 
     /// Two simultaneous joins both resolve; a late waiter sees the stash.
@@ -2236,6 +2969,86 @@ mod tests {
         );
         assert!(planned.iter().any(|p| p.id == ClientboundSetHealth::ID));
     }
+
+    #[test]
+    fn native_settlements_c_binding_decodes_to_its_declared_owner() {
+        use mc_protocol::packets::CustomPayload;
+        use mc_protocol::packets::Packet;
+        use mc_protocol::packets::play::ServerboundCustomPayload;
+
+        let manifest =
+            mc_loader::LoaderManifest::from_script_bundles(&[native_settlements_bundle().unwrap()])
+                .unwrap();
+        let packet = ServerboundCustomPayload {
+            payload: CustomPayload::Unknown {
+                channel: mc_loader::loader_view_action_channel().clone(),
+                payload: br#"{"protocol":3,"message":"view_request","request_kind":"solaris-settlements:overview"}"#.to_vec(),
+            },
+        };
+        let mut body = Vec::new();
+        packet.encode(&mut body).unwrap();
+
+        let LoaderViewIngress::Request(PlayerInput::LoaderViewRequest {
+            connection,
+            owner,
+            request_kind,
+        }) = loader_view_ingress(&manifest, ConnectionId(41), &body).unwrap()
+        else {
+            panic!("C binding must route a declared view request");
+        };
+        assert_eq!(connection, ConnectionId(41));
+        assert_eq!(owner, NATIVE_SETTLEMENTS_OWNER);
+        assert_eq!(request_kind.as_str(), "solaris-settlements:overview");
+    }
+
+    #[test]
+    fn native_settlements_bundle_is_optional_and_offered_to_loader_clients_only() {
+        let manifest = loader_manifest(&[])
+            .unwrap()
+            .expect("native bundle manifest");
+        assert_eq!(
+            manifest.bundles.len(),
+            1,
+            "only the native settlements bundle"
+        );
+        assert!(
+            !native_settlements_bundle().unwrap().required(),
+            "the native bundle never forces the Loader on a vanilla client"
+        );
+        assert!(
+            !manifest.bundles[0]
+                .loaders
+                .contains(&mc_loader::LoaderPlatform::Native),
+            "the native client must not parse Java Loader input bindings"
+        );
+    }
+    #[test]
+    fn packet_limiter_is_per_type_refills_and_can_be_disabled() {
+        let config = crate::config::AntiCheatSection {
+            packet_rate_per_second: 2,
+            packet_burst: 2,
+            max_airtime_ticks: 80,
+        };
+        let mut limiter = PacketLimiter::new(&config);
+        let now = Instant::now();
+        assert!(limiter.allow_at(5, now));
+        assert!(limiter.allow_at(5, now));
+        assert!(!limiter.allow_at(5, now));
+        assert!(
+            limiter.allow_at(6, now),
+            "packet ids have independent buckets"
+        );
+        assert!(limiter.allow_at(5, now + std::time::Duration::from_millis(500)));
+
+        let disabled = crate::config::AntiCheatSection {
+            packet_rate_per_second: 0,
+            packet_burst: 0,
+            max_airtime_ticks: 80,
+        };
+        let mut limiter = PacketLimiter::new(&disabled);
+        assert!(limiter.allow_at(5, now));
+        assert!(limiter.allow_at(5, now));
+    }
 }
 
 #[cfg(test)]
@@ -2257,3 +3070,11 @@ mod view_distance_tests;
 #[cfg(test)]
 #[path = "auth_edge_fence_tests.rs"]
 mod auth_edge_fence_tests;
+
+#[cfg(test)]
+#[path = "transfer_tests.rs"]
+mod transfer_tests;
+
+#[cfg(test)]
+#[path = "server_leave_tests.rs"]
+mod leave_tests;

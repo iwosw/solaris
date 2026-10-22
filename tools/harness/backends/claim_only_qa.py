@@ -219,7 +219,7 @@ def run(ctx: ProfileContext) -> dict[str, Any]:
                         f"second player chat={peer_chat}")
             probe.check("second_claim_refused", second_refused)
             # Owner orders a building.
-            order_ok = va._wait_owner_order(probe, detail, "storage")
+            order_ok = va._wait_owner_order(probe, detail, va.OWNER_ORDER_BLUEPRINTS)
             va._verdict(detail, "owner_orders_building", "PASS" if order_ok else "FAIL",
                         f"chat={detail.get('post_claim_order_chat')}")
             probe.check("owner_can_order", order_ok)

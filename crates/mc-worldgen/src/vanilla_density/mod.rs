@@ -11,6 +11,7 @@ use crate::vanilla_climate::noise::NormalNoise;
 mod blended;
 mod compile;
 mod evaluate;
+pub mod program;
 
 use blended::BlendedNoise;
 pub(crate) use evaluate::DensitySampler;
@@ -127,6 +128,7 @@ pub struct VanillaDensity {
     final_density: Id,
     sloped_cheese: Id,
     preliminary_surface: Id,
+    lod_surface: Option<Id>,
 }
 
 /// One bounded interpolation lattice shared by a chunk's lazy halo columns.
@@ -164,8 +166,43 @@ impl VanillaDensity {
             final_density: runtime.field("final_density")?,
             sloped_cheese: runtime.field("sloped_cheese")?,
             preliminary_surface: runtime.field("preliminary_surface_level")?,
+            lod_surface: runtime.field("lod_surface").ok(),
             runtime,
         })
+    }
+
+    /// Far-terrain LOD height: the topmost block where the cave-free
+    /// interpolated surface density (`lod_surface`) is positive, on the
+    /// column's lattice corner (`x`, `z` rounded down to the cell grid).
+    ///
+    /// One density evaluation per lattice level, top down, so it costs about
+    /// a cell column instead of a chunk. No caves, aquifers, surface rules or
+    /// structures. `None` when the router lacks the LOD surface shape.
+    pub fn lod_surface_height(&self, x: i32, z: i32) -> Option<i32> {
+        let field = self.lod_surface?;
+        let (width, height) = (self.runtime.cell_width, self.runtime.cell_height);
+        let (x, z) = (x.div_euclid(width) * width, z.div_euclid(width) * width);
+        let (min_y, max_y) = (self.min_y(), self.min_y() + self.height());
+        let mut sampler = self.runtime.sampler();
+        let mut upper = None;
+        let mut y = ((max_y - 1).div_euclid(height) + 1) * height;
+        while y >= min_y.div_euclid(height) * height {
+            let value = sampler.sample_terrain(field, x, y, z);
+            if value > 0.0 {
+                let Some(upper) = upper else {
+                    return Some(max_y - 1);
+                };
+                // The vanilla Y lerp between this corner and the one above.
+                let dy = (0..height)
+                    .rev()
+                    .find(|dy| value + f64::from(*dy) / f64::from(height) * (upper - value) > 0.0)
+                    .unwrap_or(0);
+                return Some((y + dy).min(max_y - 1));
+            }
+            upper = Some(value);
+            y -= height;
+        }
+        Some(min_y - 1)
     }
 
     pub fn min_y(&self) -> i32 {

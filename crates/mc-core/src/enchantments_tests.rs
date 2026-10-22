@@ -160,7 +160,7 @@ fn vanishing_curse_destroys_inventory_and_full_inventory_cursor_on_death() {
     player.inventory.slots.fill(ItemStack::new(stone, 64));
     player.inventory.slots[0] = cursed.clone();
     player.inventory_menu.carried = cursed.clone();
-    let effects = player.die(&rules, false);
+    let effects = player.die(&rules, false, false);
     assert!(player.inventory.slots.iter().all(ItemStack::is_empty));
     assert!(!effects.dropped.is_empty());
     assert!(
@@ -170,7 +170,7 @@ fn vanishing_curse_destroys_inventory_and_full_inventory_cursor_on_death() {
             .all(|stack| level(stack, "vanishing_curse") == 0)
     );
     player.inventory.slots[0] = cursed.clone();
-    assert!(player.die(&rules, true).dropped.is_empty());
+    assert!(player.die(&rules, true, false).dropped.is_empty());
     assert_eq!(player.inventory.slots[0], cursed);
 }
 

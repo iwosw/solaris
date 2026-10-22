@@ -159,6 +159,10 @@ pub enum ContributionRefusal {
     InvalidItem(String),
     #[error("work recipe declaration {0}")]
     InvalidWorkRecipe(String),
+    #[error("crafting recipe declaration {0}")]
+    InvalidCraftingRecipe(String),
+    #[error("block tool declaration {0}")]
+    InvalidBlockTool(String),
 }
 
 /// The distinct native startup domains one configure response contributes.
@@ -167,6 +171,8 @@ pub struct ValidatedStartupContribution {
     rules: Option<GameplayRules>,
     items: Vec<CustomItemDefinition>,
     work_recipes: Vec<mc_data::recipes::work::WorkRecipe>,
+    crafting_recipes: Vec<mc_data::recipes::Recipe>,
+    block_tools: Vec<mc_data::block_tools::BlockToolRule>,
 }
 
 impl ValidatedStartupContribution {
@@ -186,6 +192,19 @@ impl ValidatedStartupContribution {
     #[must_use]
     pub fn work_recipes(&self) -> &[mc_data::recipes::work::WorkRecipe] {
         &self.work_recipes
+    }
+
+    /// Crafting recipes whose results are this package's declared items.
+    #[must_use]
+    pub fn crafting_recipes(&self) -> &[mc_data::recipes::Recipe] {
+        &self.crafting_recipes
+    }
+
+    /// Block-tool rules whose items are this package's declared items. Block
+    /// names and properties are checked later, where the block registry exists.
+    #[must_use]
+    pub fn block_tools(&self) -> &[mc_data::block_tools::BlockToolRule] {
+        &self.block_tools
     }
 }
 
@@ -252,6 +271,8 @@ pub fn convert_startup_contribution(
         .with_custom_items(items, &REQUIRED_ITEMS)
         .map_err(|error| ContributionRefusal::InvalidItem(error.to_string()))?;
     let work_recipes = convert_work_recipes(plugin_id, contribution, &items)?;
+    let crafting_recipes = convert_crafting_recipes(contribution, &items)?;
+    let block_tools = convert_block_tools(plugin_id, contribution, &items)?;
     let items = items.into_custom_items();
     if rules.is_none() && items.is_empty() && work_recipes.is_empty() {
         return Err(ContributionRefusal::Invalid(GameplayRulesError::NoCategory));
@@ -260,7 +281,108 @@ pub fn convert_startup_contribution(
         rules,
         items,
         work_recipes,
+        crafting_recipes,
+        block_tools,
     })
+}
+
+/// Shaped/shapeless recipes a package authored for its own declared items. The
+/// recipe identity is its result item, so a package cannot shadow a vanilla
+/// recipe, and every ingredient must be a vanilla or owned item or a known tag.
+fn convert_crafting_recipes(
+    contribution: &StartupContribution,
+    facts: &ItemFactsTable,
+) -> Result<Vec<mc_data::recipes::Recipe>, ContributionRefusal> {
+    let invalid = ContributionRefusal::InvalidCraftingRecipe;
+    let definitions = contribution.crafting_recipes.as_deref().unwrap_or_default();
+    if definitions.len() > 32
+        || definitions
+            .iter()
+            .try_fold(0usize, |total, value| total.checked_add(value.len()))
+            .is_none_or(|total| total > 65_536)
+    {
+        return Err(invalid("catalog exceeds 32 recipes or 64 KiB".to_owned()));
+    }
+    let mut recipes: Vec<mc_data::recipes::Recipe> = Vec::with_capacity(definitions.len());
+    for definition in definitions {
+        let result = serde_json::from_str::<serde_json::Value>(definition)
+            .map_err(|error| invalid(error.to_string()))?
+            .pointer("/result/id")
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_owned)
+            .ok_or_else(|| invalid("recipe needs result.id".to_owned()))?;
+        let id = Identifier::parse(result).map_err(|error| invalid(error.to_string()))?;
+        if facts.custom(&id).is_none() {
+            return Err(invalid(format!("result {id} is not a declared item")));
+        }
+        if recipes.iter().any(|recipe| recipe.id == id) {
+            return Err(invalid(format!("duplicate recipe for {id}")));
+        }
+        let recipe =
+            mc_data::recipes::parse_plugin_crafting_recipe(id, definition).map_err(invalid)?;
+        let ingredients: Vec<&mc_data::recipes::Ingredient> = match &recipe.kind {
+            mc_data::recipes::RecipeKind::Shaped(shaped) => shaped.key.values().collect(),
+            mc_data::recipes::RecipeKind::Shapeless(shapeless) => {
+                shapeless.ingredients.iter().collect()
+            }
+            _ => Vec::new(),
+        };
+        let item_registry = Identifier::parse("minecraft:item").expect("static registry id");
+        for alternative in ingredients
+            .iter()
+            .flat_map(|ingredient| &ingredient.alternatives)
+        {
+            let known = match alternative {
+                mc_data::recipes::IngredientAlternative::Item(item) => {
+                    REQUIRED_ITEMS.id_of(item).is_some() || facts.custom(item).is_some()
+                }
+                mc_data::recipes::IngredientAlternative::Tag(tag) => REQUIRED_ITEM_TAGS
+                    .registries
+                    .get(&item_registry)
+                    .is_some_and(|registered| registered.contains_key(tag)),
+            };
+            if !known {
+                return Err(invalid(format!(
+                    "recipe {} has an unregistered ingredient",
+                    recipe.id
+                )));
+            }
+        }
+        recipes.push(recipe);
+    }
+    Ok(recipes)
+}
+
+/// Block-tool rules a package authored for its own declared items; a `give`
+/// must name a registered vanilla item.
+fn convert_block_tools(
+    plugin_id: &str,
+    contribution: &StartupContribution,
+    facts: &ItemFactsTable,
+) -> Result<Vec<mc_data::block_tools::BlockToolRule>, ContributionRefusal> {
+    let invalid = ContributionRefusal::InvalidBlockTool;
+    let definitions = contribution.block_tools.as_deref().unwrap_or_default();
+    let rules =
+        mc_data::block_tools::parse_block_tool_rules(plugin_id, definitions).map_err(invalid)?;
+    for rule in &rules {
+        if facts.custom(&rule.item).is_none() {
+            return Err(invalid(format!(
+                "tool {} is not a declared item",
+                rule.item
+            )));
+        }
+        if rule
+            .give
+            .as_ref()
+            .is_some_and(|give| REQUIRED_ITEMS.id_of(give).is_none())
+        {
+            return Err(invalid(format!(
+                "rule for {} grants an unregistered item",
+                rule.item
+            )));
+        }
+    }
+    Ok(rules)
 }
 
 /// Convert already-deserialized native work-recipe JSON through the exact
@@ -598,6 +720,22 @@ impl PackageContribution {
         }
     }
 
+    #[must_use]
+    pub fn crafting_recipes(&self) -> &[mc_data::recipes::Recipe] {
+        match &self.outcome {
+            ContributionOutcome::Configured(content) => content.crafting_recipes(),
+            ContributionOutcome::NoContribution | ContributionOutcome::Refused(_) => &[],
+        }
+    }
+
+    #[must_use]
+    pub fn block_tools(&self) -> &[mc_data::block_tools::BlockToolRule] {
+        match &self.outcome {
+            ContributionOutcome::Configured(content) => content.block_tools(),
+            ContributionOutcome::NoContribution | ContributionOutcome::Refused(_) => &[],
+        }
+    }
+
     /// The refusal, when the package declared a contribution the contract will not
     /// take.
     #[must_use]
@@ -662,6 +800,18 @@ impl DeploymentContribution {
                 .iter()
                 .map(move |recipe| (package.id(), recipe))
         })
+    }
+
+    pub fn crafting_recipes(&self) -> impl Iterator<Item = &mc_data::recipes::Recipe> {
+        self.packages
+            .iter()
+            .flat_map(|package| package.crafting_recipes())
+    }
+
+    pub fn block_tools(&self) -> impl Iterator<Item = &mc_data::block_tools::BlockToolRule> {
+        self.packages
+            .iter()
+            .flat_map(|package| package.block_tools())
     }
 
     /// Record what one package's `configure` answered.

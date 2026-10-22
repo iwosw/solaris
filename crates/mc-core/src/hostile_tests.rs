@@ -232,7 +232,7 @@ fn natural_skeleton_arrow_hit_and_tombstone_survive_checkpoint_wal_replay() {
             assert_eq!(elapsed, 21, "twenty tick bow draw before the first launch");
             let (_, chunks, _) = crate::core::checkpoint_data_for(&state, state.tick);
             let mut base = Replay::default();
-            for entity in chunks.iter().flat_map(|(_, chunk)| &chunk.entities) {
+            for entity in chunks.values().flat_map(|chunk| &chunk.entities) {
                 let payload = mc_nbt::Tag::Compound(
                     mc_data::entity_nbt::entity_to_fields(&state.registry.items, entity).unwrap(),
                 );
@@ -491,6 +491,66 @@ fn mob_griefing_false_preserves_creeper_blast_damage_but_not_block_damage() {
         Some(state.registry.states.stone)
     );
     assert!(health(&state, player) < 20.0);
+}
+
+/// The `[mob_griefing] creeper_block_damage = false` switch narrows the
+/// gamerule without touching blast damage to entities.
+#[test]
+fn creeper_block_damage_switch_stops_blocks_but_not_damage() {
+    let (mut state, player, centre) = setup(2.5);
+    state.mob_griefing.creeper_block_damage = false;
+    let creeper_type = type_id(&state, "minecraft:creeper");
+    let creeper = state.spawn_mob(creeper_type, centre, 20.0);
+    let mut blasts = Vec::new();
+    for _ in 0..FUSE_TICKS + 5 {
+        let (output, _, _) = run_tick(&mut state, &[]);
+        blasts.extend(output.changes.explosions.iter().cloned());
+    }
+    assert!(state.entities.slot_of(creeper).is_none());
+    assert_eq!(blasts.len(), 1);
+    assert_eq!(blasts[0].blocks, 0, "the switch removes no blocks");
+    assert_eq!(
+        state.world.block_at(centre[0] as i32, Y, centre[2] as i32),
+        Some(state.registry.states.stone),
+        "the platform survives"
+    );
+    assert!(health(&state, player) < 20.0, "the blast still hurts");
+}
+
+/// The ghast switch gates ghast blasts only; a creeper blast still breaks.
+#[test]
+fn ghast_block_damage_switch_gates_only_ghast_blasts() {
+    let (mut state, _player, centre) = setup(2.5);
+    state.mob_griefing.ghast_block_damage = false;
+    crate::explosion::apply(
+        &mut state,
+        None,
+        centre,
+        4.0,
+        Some(crate::command_rules::MobGrief::Ghast),
+        None,
+    );
+    assert_eq!(
+        state.world.block_at(centre[0] as i32, Y, centre[2] as i32),
+        Some(state.registry.states.stone),
+        "a disabled ghast blast leaves the platform"
+    );
+
+    crate::explosion::apply(
+        &mut state,
+        None,
+        centre,
+        4.0,
+        Some(crate::command_rules::MobGrief::Creeper),
+        None,
+    );
+    let air = state.registry.states.air;
+    let breaks = state
+        .merge_block_writes
+        .iter()
+        .filter(|(_, block)| *block == air)
+        .count();
+    assert!(breaks > 0, "another mob's blast still removes blocks");
 }
 
 /// The fuse burns down when the player gets clear (more than 7 blocks).

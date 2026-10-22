@@ -178,4 +178,30 @@ interface world-events {
         /// Where the player died.
         position: position,
     }
+
+    /// One death container the server created for a dying player. Published after
+    /// the owner committed the death, the drop and the container together, so the
+    /// grave holds those stacks in the world a later read would see.
+    ///
+    /// The host addresses this observation to the one package whose manifest
+    /// declared the `death_graves` capability; it is never broadcast to the
+    /// packages that subscribed to another name. The server keeps custody of the
+    /// contents: this record says where they are and how many stacks went in, not
+    /// what they are.
+    record player-grave-created {
+        /// The stable identity whose death produced the grave, from the event's
+        /// own immutable context.
+        player: player-id,
+        /// The connection the death was produced on.
+        session: session-id,
+        /// The dimension the grave block was placed in.
+        dimension: string,
+        /// The grave block's own coordinates.
+        at: block-position,
+        /// How many stacks the container took, 0..=27.
+        items: u32,
+        /// How many stacks did not fit and were dropped at the grave instead, so
+        /// the owner can see that the container alone does not hold everything.
+        spilled: u32,
+    }
 }

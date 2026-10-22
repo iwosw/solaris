@@ -842,11 +842,9 @@ impl<'a> Palette<'a> {
         } else {
             0
         };
-        let bytes = if bits == 0 {
-            0
-        } else {
-            entries.div_ceil(64 / bits) * 8
-        };
+        let bytes = 64usize
+            .checked_div(bits)
+            .map_or(0, |per_word| entries.div_ceil(per_word) * 8);
         ensure!(data.len() >= bytes, "truncated palette storage");
         let (words, rest) = data.split_at(bytes);
         *data = rest;

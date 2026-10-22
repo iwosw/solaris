@@ -928,3 +928,31 @@ fn obsolete_idle_poll_cannot_shorten_pressed_plate_tail() {
         "the tick21 pressed tail observes current bodies"
     );
 }
+
+#[test]
+fn pistons_are_quasi_connected_but_only_react_to_a_neighbour_update() {
+    let mut s = state();
+    let piston = place(&mut s, 4, 200, 4, "piston", &[("facing", "east")]);
+    let control = place(&mut s, 8, 200, 4, "piston", &[("facing", "east")]);
+    // The source touches the cell ABOVE the piston, not the piston: vanilla's
+    // quasi-connectivity powers it, yet nothing has updated it (BUD).
+    place(&mut s, 4, 202, 4, "redstone_block", &[]);
+    advance(&mut s, 6);
+    assert_eq!(value(&s, piston, "extended"), "false");
+    wake(&mut s, piston);
+    wake(&mut s, control);
+    advance(&mut s, 6);
+    assert_eq!(value(&s, piston, "extended"), "true");
+    assert_eq!(value(&s, control, "extended"), "false");
+}
+
+#[test]
+fn pistons_ignore_power_arriving_through_their_own_face() {
+    let mut s = state();
+    let piston = place(&mut s, 4, 200, 4, "piston", &[("facing", "east")]);
+    // PistonBaseBlock.getNeighborSignal skips the push direction.
+    place(&mut s, 5, 200, 4, "redstone_block", &[]);
+    wake(&mut s, piston);
+    advance(&mut s, 6);
+    assert_eq!(value(&s, piston, "extended"), "false");
+}

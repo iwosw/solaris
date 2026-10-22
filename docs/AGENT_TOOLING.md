@@ -73,6 +73,7 @@ never success.
 | `replay` | real-client | Core replay seed-81 gate (`docs/real-client-regression/manifests/core-replay-seed-81.json`, fresh world, default timeout 180 s). Not a general regression short-cut. |
 | `oracle` | oracle | Vanilla oracle backend: bare `oracle` is readiness inspection (`prepared`, blocked/degraded when artifacts are absent); `run oracle --run` executes comparisons. |
 | `oracle-check` | oracle | Oracle runner self-check backend |
+| `quirk-parity` | oracle | Real 26.1.2 vanilla oracle vs Solaris on player-relied quirks (quasi-connectivity, TNT duping, update order, 0-tick, attribute swap, diagonal speed) and farm rates; `python3 -m tools.harness run quirk-parity -- --family tnt-duping`. See [QUIRK_PARITY.md](QUIRK_PARITY.md). |
 | `catalog-load` | scale | Owner-catalog v2 open-loop protocol loads with full public fixtures and classified receipts. Explicit prebuilt `--server-bin`/`--bots-bin`; no implicit builds. See below. |
 | `constantinople` | fixture | Imported vanilla-city functional fixture: deterministic population, street walking, native save/reopen. Not a throughput or performance verdict. See below. |
 | `seed-review` | terrain | Seed owner-review backend (module invocation, default timeout 120 s). Captures evidence; it never grants owner `ACCEPT`. |
@@ -465,6 +466,10 @@ packages are copied intact into the isolated preparation directory. Keep
 `RUST_LOG=info` (or at least
 `plugin.runtime_ready=info,plugin.command_result=info`); missing state
 readback, host evidence, or ordinary tick/resource telemetry fails closed.
+`python3 -m tools.coreperf.capacity_ladder` (run inside `mem-run.sh -p`) is the fresh-world
+player-capacity ladder (N bots, steady/burst/recovery, per-window phases, thread CPU, network,
+checkpoint cost, optional perf capture): see [PLAYER_CAPACITY](performance/PLAYER_CAPACITY.md).
+
 The retired `plugin-settlements` control is gone: core reserves `/settlement`
 while the package manifest still declares it; native settlement coverage
 lives in `loader-v2-settlements-smoke` with no package deployed. The
@@ -492,7 +497,13 @@ python3 -m tools.harness run constantinople -- --plan DIR --world NATIVE_WORLD \
   --receipt OUT.json` counts native entity roots/passengers, villagers,
   stored chunks, settlements, and persisted memberships/households directly;
   the config's seed/generation identity must match, a journal tail newer than
-  the checkpoint is refused, and receipts lie outside the world.
+  the checkpoint is refused, and receipts lie outside the world. `solaris-v2
+  --config FILE world probe --source STOPPED_NATIVE --receipt OUT.json --block
+  X,Y,Z` (repeatable `--block`) reads one stopped world read-only under the same
+  identity/journal-tail rules and reports each requested cell's stored block
+  state and typed container slots plus every stored player inventory and every
+  stored item entity, so custody/duplication questions are answered from the
+  saved image instead of a live counter.
 - `preservation --source STOPPED_IMPORT_INPUT --world CANONICAL_ANVIL_EXPORT
   --output .../preservation.json` compares import input with the stopped
   native export across every dimension (entity/passenger and block-entity

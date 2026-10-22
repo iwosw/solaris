@@ -146,6 +146,7 @@ fn village_targets_match_linear_scan_on_random_layouts() {
     let golem = type_id(&state, "minecraft:iron_golem");
     let zombie = type_id(&state, "minecraft:zombie");
     let creeper = type_id(&state, "minecraft:creeper");
+    let cow = type_id(&state, "minecraft:cow");
     let kinds = [
         "major_negative",
         "minor_negative",
@@ -154,6 +155,11 @@ fn village_targets_match_linear_scan_on_random_layouts() {
         "trading",
         "unknown",
     ];
+    // Defense targeting must ignore a trading hall's unrelated livestock
+    // population while preserving its exact target result.
+    for index in 0..1_024 {
+        state.spawn_mob(cow, [f64::from(index), 64.0, 256.0], 10.0);
+    }
     for round in 0..8 {
         for (index, id) in players.iter().enumerate() {
             let slot = state.entities.slot_of(*id).unwrap();
@@ -204,10 +210,19 @@ fn village_targets_match_linear_scan_on_random_layouts() {
         }
         let expected = linear_targets(&state);
         assert_eq!(
-            crate::villager::defense::targets(&state),
+            crate::villager::defense::targets(&mut state),
             expected,
             "round {round}"
         );
+        if round == 7 {
+            let capacity = state.villager_pois.defense_slots.capacity();
+            assert_eq!(
+                crate::villager::defense::targets(&mut state),
+                expected,
+                "reused type-lane scratch changed targets"
+            );
+            assert_eq!(state.villager_pois.defense_slots.capacity(), capacity);
+        }
         assert!(
             expected.iter().any(|(id, _)| players.contains(id)),
             "round {round}: the layout must make at least one player hostile"

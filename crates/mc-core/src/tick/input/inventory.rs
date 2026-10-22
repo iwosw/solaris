@@ -162,6 +162,7 @@ pub(in crate::tick) fn container_click(
             .unwrap_or_default()
     };
     if effects.container_changed {
+        crate::block_log::note_container(state, entity, &open_cells, &container);
         store_container_slots(state, &open_cells, &container);
     }
     if let Some(pos) = state.open_containers.get(&entity)

@@ -15,6 +15,9 @@ pub(in crate::tick) fn attack(
     let Some(actor_slot) = state.entities.slot_of(entity) else {
         return;
     };
+    if !crate::plugin_player::allows_damage(state, entity, *target) {
+        return;
+    }
     if let Some(target_slot) = state.entities.slot_of(*target)
         && crate::physical_attacks::try_attack(state, actor_slot, target_slot)
             != crate::physical_attacks::AttackAdmission::NotCustom
@@ -40,6 +43,11 @@ pub(in crate::tick) fn attack(
     }
     // Melee pipeline: item-data hit from the held stack; armor
     // reduction + hurt apply at merge against the target's armor.
+    // MC-28289: attribute modifiers (attack_damage/attack_speed) resolve
+    // from the held stack as of the player's last tick update — a swap in
+    // the same tick as the attack still hits with the OLD item's
+    // attributes. Enchantments and the weapon component read live from the
+    // new item (vanilla reads those at attack time).
     let rules = state.registry.item_rules();
     let held = state
         .players
@@ -53,6 +61,11 @@ pub(in crate::tick) fn attack(
                 .unwrap_or(mc_data::ItemStack::EMPTY)
         })
         .unwrap_or(mc_data::ItemStack::EMPTY);
+    let attribute_held = state
+        .players
+        .get(&entity)
+        .and_then(|player| player.attribute_snapshot_held.clone())
+        .unwrap_or_else(|| held.clone());
     let since_reset = (state
         .tick
         .saturating_sub(*state.last_swing.get(&entity).unwrap_or(&0))) as u32;
@@ -71,9 +84,10 @@ pub(in crate::tick) fn attack(
         state.players[&entity].fall_distance,
         state.entities.row(actor_slot).appearance.pose == 1,
     );
-    let mut hit = crate::combat::melee_hit(
+    let mut hit = crate::combat::melee_hit_with_attributes(
         &rules,
         &held,
+        &attribute_held,
         crate::combat::Swing {
             ticks_since_reset: since_reset,
             falling,

@@ -1201,13 +1201,17 @@ pub(crate) fn impact(
                 ProjectileKind::Fireball | ProjectileKind::WitherSkull
             ) {
                 let seq = state.next_seq(id);
+                let mob_grief = record.mob_damage.then_some(match record.kind {
+                    ProjectileKind::WitherSkull => crate::command_rules::MobGrief::Wither,
+                    _ => crate::command_rules::MobGrief::Ghast,
+                });
                 intents.push(Intent {
                     actor: id,
                     seq,
                     kind: IntentKind::Explode {
                         center: position,
                         power: 1.0,
-                        mob_source: record.mob_damage,
+                        mob_grief,
                         kill_credit: owner.and_then(|owner| {
                             crate::statistics::living_type(state, owner)
                                 .map(|type_id| (owner, type_id))

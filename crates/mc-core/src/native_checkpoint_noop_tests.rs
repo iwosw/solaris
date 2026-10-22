@@ -201,7 +201,163 @@ fn native_noop_save_twice_keeps_chunks_and_size() {
     assert_eq!(second["rewritten_entities"], 0);
     assert_eq!(second["entity_payload_bytes"], 0);
     assert_eq!(
-        second["native_bytes_after"], second["native_bytes_before"],
+        second["logical_data_bytes_after"], second["logical_data_bytes_before"],
+        "a no-op save must not rewrite global or player state"
+    );
+    assert!(
+        second["native_bytes_after"].as_u64() <= second["native_bytes_before"].as_u64(),
         "redb must reuse free pages rather than grow on repeated no-op saves"
     );
+}
+
+#[test]
+fn native_active_clock_checkpoints_write_only_changed_chunks() {
+    let directory = tempfile::tempdir().unwrap();
+    let config = CoreConfig::new(directory.path().to_owned(), 42);
+    let mut state = recover(&config);
+    let positions = [
+        mc_world::ChunkPos { x: 0, z: 0 },
+        mc_world::ChunkPos { x: 8, z: 0 },
+    ];
+    state
+        .world
+        .ensure_blocking(&positions.map(|pos| (pos, 0)).into_iter().collect());
+    let mut manifest = read_manifest(&config).unwrap();
+    let mut writer =
+        JournalWriter::open_recovered(&config.world_dir, 1, manifest.tick, state.tick).unwrap();
+    for tick in 1..=4 {
+        state.tick = tick;
+        state
+            .world
+            .set_active_chunks(positions.into_iter().collect(), tick);
+        for pos in positions {
+            state.world.tick_inhabited_time(pos, tick);
+        }
+        state.world.finish_inhabited_tick(tick);
+        if tick == 3 {
+            let stone = state
+                .registry
+                .blocks
+                .block(&mc_data::Identifier::parse("minecraft:stone").unwrap())
+                .unwrap()
+                .default
+                .0;
+            state.world.set_block(1, 200, 1, stone);
+        }
+        let mut entries = Vec::new();
+        state.world.journal_inhabited_time(&mut entries);
+        state.world.journal_debt(&mut entries);
+        if tick == 3 {
+            entries.push(JournalEntry::Block {
+                pos: [1, 200, 1],
+                state: state.world.block_at(1, 200, 1).unwrap(),
+            });
+        }
+        writer.append(tick, tick, &entries).unwrap();
+        let io = save(&config, &mut state, &mut writer, &mut manifest, None);
+        let expected = match tick {
+            1 => 2, // Initial clock boundaries establish the native chunk image.
+            3 => 1, // A real edit writes that chunk exactly once.
+            _ => 0, // Live clock accrual is carried by the manifest, not chunks.
+        };
+        assert_eq!(io["captured_chunks"], expected, "capture at tick {tick}");
+        assert_eq!(io["rewritten_chunks"], expected, "writes at tick {tick}");
+        if expected == 0 {
+            assert_eq!(io["chunk_payload_bytes"], 0);
+        }
+    }
+    writer.flush().unwrap();
+    drop(writer);
+    prune_batches_through(&config.world_dir.join("journal"), manifest.tick);
+    drop(state);
+    let mut reopened = recover(&config);
+    reopened
+        .world
+        .ensure_blocking(&positions.map(|pos| (pos, 0)).into_iter().collect());
+    for pos in positions {
+        assert_eq!(reopened.world.inhabited_time(pos), 4);
+    }
+    let stone = reopened
+        .registry
+        .blocks
+        .block(&mc_data::Identifier::parse("minecraft:stone").unwrap())
+        .unwrap()
+        .default
+        .0;
+    assert_eq!(reopened.world.block_at(1, 200, 1), Some(stone));
+    // Closing a recovered active debt anchor must reach native storage before
+    // the manifest drops that now-inactive, zero-debt record.
+    let mut manifest = read_manifest(&config).unwrap();
+    let mut writer =
+        JournalWriter::open_recovered(&config.world_dir, 1, manifest.tick, reopened.tick).unwrap();
+    save(&config, &mut reopened, &mut writer, &mut manifest, None);
+    drop(writer);
+    drop(reopened);
+    let mut reopened = recover(&config);
+    reopened
+        .world
+        .ensure_blocking(&positions.map(|pos| (pos, 0)).into_iter().collect());
+    reopened
+        .world
+        .set_active_chunks(positions.into_iter().collect(), 5);
+    for pos in positions {
+        assert_eq!(
+            reopened.world.simulation_debt(pos),
+            0,
+            "reopen must not accrue already checkpointed live time"
+        );
+    }
+}
+
+#[test]
+fn inhabited_interval_closed_after_restart_reaches_native_storage() {
+    let directory = tempfile::tempdir().unwrap();
+    let config = CoreConfig::new(directory.path().to_owned(), 42);
+    let mut state = recover(&config);
+    let pos = mc_world::ChunkPos { x: 0, z: 0 };
+    state
+        .world
+        .ensure_blocking(&[(pos, 0)].into_iter().collect());
+    let mut manifest = read_manifest(&config).unwrap();
+    let mut writer =
+        JournalWriter::open_recovered(&config.world_dir, 1, manifest.tick, state.tick).unwrap();
+    for tick in 1..=3 {
+        state.tick = tick;
+        // No simulation-debt record: only the inhabited interval is in play.
+        state.world.tick_inhabited_time(pos, tick);
+        state.world.finish_inhabited_tick(tick);
+        let mut entries = Vec::new();
+        state.world.journal_inhabited_time(&mut entries);
+        writer.append(tick, tick, &entries).unwrap();
+        save(&config, &mut state, &mut writer, &mut manifest, None);
+    }
+    writer.flush().unwrap();
+    drop(writer);
+    prune_batches_through(&config.world_dir.join("journal"), manifest.tick);
+    drop(state);
+
+    // Clean restart: the interval is still open (value 3 lives in the manifest).
+    let mut reopened = recover(&config);
+    let mut manifest = read_manifest(&config).unwrap();
+    let mut writer =
+        JournalWriter::open_recovered(&config.world_dir, 1, manifest.tick, reopened.tick).unwrap();
+    // One tick without any player: the interval closes and must be persisted.
+    let tick = reopened.tick + 1;
+    reopened.tick = tick;
+    reopened.world.finish_inhabited_tick(tick);
+    let mut entries = Vec::new();
+    reopened.world.journal_inhabited_time(&mut entries);
+    reopened.world.journal_debt(&mut entries);
+    writer.append(tick, tick, &entries).unwrap();
+    save(&config, &mut reopened, &mut writer, &mut manifest, None);
+    writer.flush().unwrap();
+    drop(writer);
+    prune_batches_through(&config.world_dir.join("journal"), manifest.tick);
+    drop(reopened);
+
+    let mut again = recover(&config);
+    again
+        .world
+        .ensure_blocking(&[(pos, 0)].into_iter().collect());
+    assert_eq!(again.world.inhabited_time(pos), 3);
 }

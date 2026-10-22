@@ -23,6 +23,7 @@ pub enum ScriptCommandCapability {
     PlayerQueries,
     WorldTime,
     WorldBlocks,
+    DeathGraves,
     CustomPayloadChannel { channel: String },
 }
 
@@ -49,6 +50,7 @@ pub enum ScriptCommandCapabilityKind {
     PlayerQueries,
     WorldTime,
     WorldBlocks,
+    DeathGraves,
     CustomPayloadChannel,
 }
 
@@ -74,6 +76,7 @@ impl ScriptCommandCapabilityKind {
             Self::PlayerQueries => "player_queries",
             Self::WorldTime => "world_time",
             Self::WorldBlocks => "world_blocks",
+            Self::DeathGraves => "death_graves",
             Self::CustomPayloadChannel => "custom_payload",
         }
     }
@@ -99,6 +102,7 @@ impl ScriptCommandCapabilityKind {
             Self::PlayerQueries => "player query",
             Self::WorldTime => "world time",
             Self::WorldBlocks => "world block mutation",
+            Self::DeathGraves => "death grave custody",
             Self::CustomPayloadChannel => "custom payload channel",
         }
     }
@@ -231,6 +235,8 @@ pub struct ScriptPluginManifest {
     declared_command_capabilities: Vec<ScriptCommandCapability>,
     player_command_roots: Vec<String>,
     operator_command_roots: Vec<String>,
+    command_permissions: std::collections::BTreeMap<String, String>,
+    permission_provider: bool,
     declared_permissions: Vec<String>,
     preflight_error: Option<ScriptPluginManifestError>,
 }
@@ -273,6 +279,8 @@ impl ScriptPluginManifest {
             declared_command_capabilities: Vec::new(),
             player_command_roots: Vec::new(),
             operator_command_roots: Vec::new(),
+            command_permissions: std::collections::BTreeMap::new(),
+            permission_provider: false,
             declared_permissions: Vec::new(),
             preflight_error,
         }
@@ -308,6 +316,7 @@ impl ScriptPluginManifest {
             "entity_damage" => Ok(self.declare_entity_damage()),
             "world_time" => Ok(self.declare_world_time()),
             "world_blocks" => Ok(self.declare_world_blocks()),
+            "death_graves" => Ok(self.declare_death_graves()),
             channel if channel.starts_with("custom_payload:") => {
                 Ok(self.declare_custom_payload_channel(&channel["custom_payload:".len()..]))
             }
@@ -517,6 +526,19 @@ impl ScriptPluginManifest {
         self
     }
 
+    /// Declare native death-grave custody: on a player's death the server keeps
+    /// the drops in a container at the death spot and publishes
+    /// `player.grave_created` to this package.
+    ///
+    /// The declaration is a deployment surface, not a command grant: it changes
+    /// what the native death path does for every player, so an operator who
+    /// deploys the package authorizes that behavior by deploying it. One
+    /// deployment may declare it once.
+    pub fn declare_death_graves(mut self) -> Self {
+        self.push_capability(ScriptCommandCapability::DeathGraves);
+        self
+    }
+
     /// Declare exclusive ownership of one namespaced custom-payload channel.
     pub fn declare_custom_payload_channel(mut self, channel: impl AsRef<str>) -> Self {
         let channel = bounded_manifest_owned(
@@ -594,6 +616,46 @@ impl ScriptPluginManifest {
         self
     }
 
+    /// Require one permission node for one declared command root.
+    ///
+    /// The root itself is validated with the rest of the manifest: a node for a
+    /// root this package does not own would be a policy nobody can ever answer.
+    pub fn declare_command_permission(
+        mut self,
+        root: impl AsRef<str>,
+        node: impl AsRef<str>,
+    ) -> Self {
+        let root = root.as_ref().to_owned();
+        let node = node.as_ref().to_owned();
+        if self.preflight_error.is_some() {
+            return self;
+        }
+        if self.command_permissions.len() >= MAX_MANIFEST_COMMAND_PERMISSIONS {
+            self.preflight_error = Some(ScriptPluginManifestError::TooManyEntries {
+                field: "command permissions",
+                max: MAX_MANIFEST_COMMAND_PERMISSIONS,
+            });
+            return self;
+        }
+        if !valid_permission_node(&node) {
+            self.preflight_error = Some(ScriptPluginManifestError::InvalidField {
+                field: "command permission",
+            });
+            return self;
+        }
+        self.command_permissions.insert(root, node);
+        self
+    }
+
+    /// Declare this package as the deployment's command-permission provider.
+    ///
+    /// At most one package may do so; the host hands only the provider the
+    /// grant-publication import and command admission asks its table.
+    pub fn declare_permission_provider(mut self) -> Self {
+        self.permission_provider = true;
+        self
+    }
+
     fn push_capability(&mut self, capability: ScriptCommandCapability) {
         if self.preflight_error.is_some() {
             return;
@@ -646,6 +708,16 @@ impl ScriptPluginManifest {
 
     pub fn operator_command_roots(&self) -> &[String] {
         &self.operator_command_roots
+    }
+
+    /// Permission nodes this package requires per command root.
+    pub fn command_permissions(&self) -> &std::collections::BTreeMap<String, String> {
+        &self.command_permissions
+    }
+
+    /// Whether this package answers command-permission admission.
+    pub fn is_permission_provider(&self) -> bool {
+        self.permission_provider
     }
 
     pub fn declared_permissions(&self) -> &[String] {
@@ -707,6 +779,24 @@ impl ScriptPluginManifest {
             self.declared_permissions.len(),
             MAX_MANIFEST_PERMISSIONS,
         )?;
+        validate_manifest_count(
+            "command permissions",
+            self.command_permissions.len(),
+            MAX_MANIFEST_COMMAND_PERMISSIONS,
+        )?;
+        for (root, node) in &self.command_permissions {
+            validate_manifest_field(
+                "command permission root",
+                root,
+                MAX_PLAYER_COMMAND_ROOT_BYTES,
+                false,
+            )?;
+            if !valid_permission_node(node) {
+                return Err(ScriptPluginManifestError::InvalidField {
+                    field: "command permission",
+                });
+            }
+        }
         for subscription in &self.event_subscriptions {
             validate_manifest_field(
                 "event subscription",
@@ -876,7 +966,8 @@ impl ScriptPluginManifest {
                 | ScriptCommandCapability::PlayerTeleport
                 | ScriptCommandCapability::PlayerQueries
                 | ScriptCommandCapability::WorldTime
-                | ScriptCommandCapability::WorldBlocks => {
+                | ScriptCommandCapability::WorldBlocks
+                | ScriptCommandCapability::DeathGraves => {
                     if normalized_capabilities.contains(capability) {
                         return Err(ScriptPluginManifestError::DuplicateCapability {
                             capability: capability.clone(),
@@ -917,6 +1008,14 @@ impl ScriptPluginManifest {
             }
         }
 
+        for root in self.command_permissions.keys() {
+            if !player_command_roots.contains(root) && !operator_command_roots.contains(root) {
+                return Err(ScriptPluginManifestError::CommandPermissionUnknownRoot {
+                    root: root.clone(),
+                });
+            }
+        }
+
         Ok(ValidatedScriptPluginManifest {
             plugin_id: self.plugin_id.clone(),
             display_name: self.display_name.clone(),
@@ -928,6 +1027,8 @@ impl ScriptPluginManifest {
             declared_command_capabilities: normalized_capabilities,
             player_command_roots,
             operator_command_roots,
+            command_permissions: self.command_permissions.clone(),
+            permission_provider: self.permission_provider,
             declared_permissions: self.declared_permissions.clone(),
         })
     }
@@ -947,6 +1048,8 @@ pub struct ValidatedScriptPluginManifest {
     declared_command_capabilities: Vec<ScriptCommandCapability>,
     player_command_roots: Vec<String>,
     operator_command_roots: Vec<String>,
+    command_permissions: std::collections::BTreeMap<String, String>,
+    permission_provider: bool,
     declared_permissions: Vec<String>,
 }
 
@@ -989,6 +1092,16 @@ impl ValidatedScriptPluginManifest {
 
     pub fn operator_command_roots(&self) -> &[String] {
         &self.operator_command_roots
+    }
+
+    /// Permission nodes this package requires per command root.
+    pub fn command_permissions(&self) -> &std::collections::BTreeMap<String, String> {
+        &self.command_permissions
+    }
+
+    /// Whether this package answers command-permission admission.
+    pub fn is_permission_provider(&self) -> bool {
+        self.permission_provider
     }
 
     /// Return every custom-payload channel this manifest exclusively owns.
@@ -1069,6 +1182,10 @@ impl ValidatedScriptPluginManifest {
                 ScriptCommandCapability::WorldBlocks => {
                     capabilities = capabilities.allow_world_blocks();
                 }
+                // Native death custody is not a command grant: the server's own
+                // death path reads the declaration at startup and the package
+                // sends no privileged command because of it.
+                ScriptCommandCapability::DeathGraves => {}
                 ScriptCommandCapability::CustomPayloadChannel { channel } => {
                     capabilities = capabilities.allow_custom_payload_channel(channel);
                 }
@@ -1148,6 +1265,9 @@ pub enum ScriptPluginManifestError {
     ConflictingPlayerCommandRoot {
         root: String,
     },
+    CommandPermissionUnknownRoot {
+        root: String,
+    },
 }
 
 fn validate_manifest_field(
@@ -1194,6 +1314,17 @@ fn validate_manifest_count(
         return Err(ScriptPluginManifestError::TooManyEntries { field, max });
     }
     Ok(())
+}
+
+/// One command-permission node: the permission vocabulary the group catalog uses.
+fn valid_permission_node(node: &str) -> bool {
+    !node.is_empty()
+        && node.len() <= crate::MAX_COMMAND_PERMISSION_NODE_BYTES
+        && node.bytes().all(|byte| {
+            byte.is_ascii_lowercase()
+                || byte.is_ascii_digit()
+                || matches!(byte, b'.' | b'_' | b'-' | b'*' | b'@' | b':' | b'/')
+        })
 }
 
 fn is_valid_plugin_version(version: &str) -> bool {
@@ -1411,6 +1542,7 @@ pub(super) fn is_supported_event_name(event_name: &str) -> bool {
             | "player.entity_killed"
             | "player.entity_interacted"
             | "player.died"
+            | "player.grave_created"
             | "server.tick"
             | "plugin.storage.get_result"
             | "plugin.storage.cas_result"

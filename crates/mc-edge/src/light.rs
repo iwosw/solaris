@@ -43,19 +43,18 @@ pub(crate) struct LightBaseline {
 struct LightState {
     sent: Vec<SectionLight>,
     observed: Vec<SectionLight>,
+    /// Chunk revision whose light was last proven equal to `sent`. Core bumps
+    /// the revision on every light change, so the same revision needs no diff.
+    verified: Option<u64>,
 }
 
 impl LightBaseline {
-    pub(crate) fn changed(&self, pos: (i32, i32), chunk: &Chunk) -> bool {
-        self.sent
-            .get(&pos)
-            .is_some_and(|state| state.sent != chunk.section_lights)
-    }
-
-    pub(crate) fn record(&mut self, pos: (i32, i32), chunk: &Chunk) {
+    /// `revision` is the snapshot chunk's content revision for `chunk`.
+    pub(crate) fn record(&mut self, pos: (i32, i32), chunk: &Chunk, revision: u64) {
         let state = self.sent.entry(pos).or_default();
         state.sent.clone_from(&chunk.section_lights);
         state.observed.clone_from(&chunk.section_lights);
+        state.verified = Some(revision);
     }
 
     /// Compare against the last observed revision, not the last delivery:
@@ -83,11 +82,22 @@ impl LightBaseline {
         &mut self,
         pos: (i32, i32),
         chunk: &Chunk,
+        revision: u64,
         connection: ConnectionId,
         out: &mut Vec<PlannedPacket>,
         credit: &mut usize,
     ) {
-        if !self.changed(pos, chunk) || *credit == 0 {
+        if *credit == 0 {
+            return;
+        }
+        let Some(state) = self.sent.get_mut(&pos) else {
+            return;
+        };
+        if state.verified == Some(revision) {
+            return;
+        }
+        if state.sent == chunk.section_lights {
+            state.verified = Some(revision);
             return;
         }
         if try_push(out, credit, |out| {
@@ -101,7 +111,7 @@ impl LightBaseline {
                 },
             );
         }) {
-            self.record(pos, chunk);
+            self.record(pos, chunk, revision);
         }
     }
 }

@@ -11,8 +11,8 @@ const MAX_SERVER_ADDRESS_LEN: usize = 255;
 /// What the client is asking to do after the handshake.
 ///
 /// Vanilla numbers these 1/2/3 in the wire protocol. 1.20.5 added
-/// `Transfer`; we accept it but route it identically to `Login` until
-/// transfer support is wired in a later milestone.
+/// `Transfer`; the edge routes it through Login and refuses it unless the
+/// server accepts transfers (vanilla `accepts-transfers`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NextState {
     Status,

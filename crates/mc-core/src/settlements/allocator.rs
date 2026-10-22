@@ -90,6 +90,10 @@ pub(crate) struct PoiCache {
     pub(crate) threat_max_range: f64,
     pub(crate) items: FxHashMap<(i32, i32), Vec<EntitySlot>>,
     pub(crate) nearby_items: Vec<EntitySlot>,
+    /// Reused scratch for the exact resident chunks visible to defense sensors.
+    pub(crate) defense_chunks: FxHashSet<ChunkPos>,
+    /// Reused type-lane merge for village defense targeting.
+    pub(crate) defense_slots: Vec<EntitySlot>,
     pub(crate) merchants: Vec<EntityId>,
     pub(crate) golems: Vec<EntitySlot>,
     pub(crate) candidates: Vec<(f64, Poi)>,

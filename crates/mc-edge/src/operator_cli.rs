@@ -77,11 +77,105 @@ pub enum WorldCommand {
     /// Count stored entities, villagers, chunks and settlements of a stopped
     /// native world from its checkpoint, read-only and without starting it.
     Census(CensusPaths),
+    /// Read exact blocks, typed container contents, stored player inventories and
+    /// stored item entities of a stopped native world, read-only and without
+    /// starting it. The receipt must lie outside the source.
+    Probe(ProbePaths),
     /// Keep a stopped native world across a worldgen revision bump: rewrite its
     /// identity and generation records to the current revision. Existing chunks
     /// stay as generated; only not-yet-generated chunks use the new generator.
     /// Refuses when anything but the revision differs (seed comes from --config).
     UpgradeWorldgen,
+    /// Generate missing overworld chunks offline and store them, so joining
+    /// players load them instead of waiting for worldgen. Holds the world
+    /// lease; rerunning skips chunks already stored.
+    Pregenerate {
+        /// Radius in blocks around the center (both axes).
+        #[arg(long, value_parser = parse_block_radius)]
+        radius: u32,
+        /// Block center `x,z`; defaults to the world spawn.
+        #[arg(long, value_parser = parse_block_center, allow_hyphen_values = true)]
+        center: Option<[i32; 2]>,
+    },
+    /// Forget overworld chunks outside a keep radius that the generator
+    /// created and nobody changed, lived in or left entities in, then compact
+    /// the file. Anvil-imported chunks are never pruned. A pruned chunk
+    /// regenerates with the current generator when next visited. Holds the world lease.
+    Prune {
+        /// Chunks within this many blocks of the center are never pruned.
+        #[arg(long)]
+        keep_radius: u32,
+        /// Block center `x,z`; defaults to the world spawn.
+        #[arg(long, value_parser = parse_block_center, allow_hyphen_values = true)]
+        center: Option<[i32; 2]>,
+        /// Prune only chunks inhabited for at most this many ticks.
+        #[arg(long, default_value_t = 0, value_parser = clap::value_parser!(i64).range(0..))]
+        max_inhabited_ticks: i64,
+        /// Report what would be pruned and write nothing.
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// Rewrite chunk rows stored before compression and return free pages to
+    /// the file system, shrinking `native/state.redb`. Holds the world lease.
+    Compact,
+}
+
+/// Chunk pregeneration takes a block radius; zero would do nothing.
+fn parse_block_radius(text: &str) -> Result<u32, String> {
+    text.parse::<u32>()
+        .ok()
+        .filter(|radius| *radius > 0)
+        .ok_or_else(|| format!("radius must be a positive block count, got {text}"))
+}
+
+fn parse_block_center(text: &str) -> Result<[i32; 2], String> {
+    let (x, z) = text
+        .split_once(',')
+        .ok_or_else(|| format!("center must be `x,z` block coordinates, got {text}"))?;
+    let parse = |value: &str, axis: char| {
+        value
+            .trim()
+            .parse::<i32>()
+            .map_err(|_| format!("center {axis} must be an integer block coordinate, got {value}"))
+    };
+    Ok([parse(x, 'x')?, parse(z, 'z')?])
+}
+
+fn parse_probe_block(text: &str) -> Result<[i32; 3], String> {
+    let mut parts = text.split(',');
+    let mut next = |axis: char| -> Result<i32, String> {
+        parts
+            .next()
+            .ok_or_else(|| format!("block must be `x,y,z` coordinates, got {text}"))?
+            .trim()
+            .parse::<i32>()
+            .map_err(|_| format!("block {axis} must be an integer block coordinate, got {text}"))
+    };
+    let x = next('x')?;
+    let y = next('y')?;
+    let z = next('z')?;
+    if parts.next().is_some() {
+        return Err(format!("block must be `x,y,z` coordinates, got {text}"));
+    }
+    Ok([x, y, z])
+}
+
+#[derive(Debug, Args)]
+pub struct ProbePaths {
+    /// Existing stopped native world, never modified.
+    #[arg(long)]
+    source: PathBuf,
+    /// JSON receipt; must lie outside the source.
+    #[arg(long)]
+    receipt: PathBuf,
+    /// Block to read as `x,y,z` (overworld). Repeatable.
+    #[arg(
+        long = "block",
+        value_parser = parse_probe_block,
+        required = true,
+        allow_hyphen_values = true
+    )]
+    blocks: Vec<[i32; 3]>,
 }
 
 #[derive(Debug, Args)]
@@ -196,6 +290,14 @@ pub async fn run_offline(cli: &Cli, cfg: &mut crate::config::EdgeConfig) -> anyh
                         &paths.receipt,
                     )?;
                 }
+                WorldCommand::Probe(paths) => {
+                    mc_core::world_conversion::probe_native(
+                        &config,
+                        &paths.source,
+                        &paths.blocks,
+                        &paths.receipt,
+                    )?;
+                }
                 WorldCommand::UpgradeWorldgen => {
                     let report = mc_core::worldgen_upgrade::upgrade_worldgen_revision(&config)?;
                     if report.rewritten {
@@ -209,6 +311,94 @@ pub async fn run_offline(cli: &Cli, cfg: &mut crate::config::EdgeConfig) -> anyh
                             report.to_revision
                         );
                     }
+                }
+                WorldCommand::Pregenerate { radius, center } => {
+                    let request = mc_core::pregenerate::PregenerateRequest {
+                        radius: *radius,
+                        center: *center,
+                    };
+                    // Generation is synchronous and its worker pool blocks for
+                    // results, so it runs on the blocking pool, never on an
+                    // async worker.
+                    let report = tokio::task::spawn_blocking(move || {
+                        mc_core::pregenerate::pregenerate(&config, &request, &mut |progress| {
+                            let done = progress.already_stored + progress.generated;
+                            let percent = if progress.chunks == 0 {
+                                100.0
+                            } else {
+                                done as f64 * 100.0 / progress.chunks as f64
+                            };
+                            println!(
+                                "pregenerate: {done}/{} chunks ({percent:.1}%), {} generated, \
+                                 {} already stored, {:.1}s",
+                                progress.chunks,
+                                progress.generated,
+                                progress.already_stored,
+                                progress.elapsed_ms as f64 / 1000.0,
+                            );
+                        })
+                    })
+                    .await
+                    .map_err(|error| anyhow::anyhow!("pregenerate task failed: {error}"))??;
+                    println!(
+                        "pregenerate complete: chunks [{},{}]..[{},{}] around block ({},{}), \
+                         {} chunks, {} generated, {} already stored, {:.1}s",
+                        report.chunk_min[0],
+                        report.chunk_min[1],
+                        report.chunk_max[0],
+                        report.chunk_max[1],
+                        report.center[0],
+                        report.center[1],
+                        report.chunks,
+                        report.generated,
+                        report.already_stored,
+                        report.elapsed_ms as f64 / 1000.0,
+                    );
+                }
+                WorldCommand::Prune {
+                    keep_radius,
+                    center,
+                    max_inhabited_ticks,
+                    dry_run,
+                } => {
+                    let report = mc_core::world_maintenance::prune_world(
+                        &config,
+                        &mc_core::world_maintenance::PruneRequest {
+                            keep_radius: *keep_radius,
+                            center: *center,
+                            max_inhabited_ticks: *max_inhabited_ticks,
+                            dry_run: *dry_run,
+                        },
+                    )?;
+                    let chunks = report.chunks;
+                    println!(
+                        "prune{}: kept chunks [{},{}]..[{},{}] around block ({},{}); \
+                         {} stored, {} pruned, {} kept inside the radius, {} kept inhabited, \
+                         {} kept changed, {} kept not generator-made (imported or pre-provenance); \
+                         file {} -> {} bytes",
+                        if *dry_run { " (dry run)" } else { "" },
+                        report.keep_chunk_min[0],
+                        report.keep_chunk_min[1],
+                        report.keep_chunk_max[0],
+                        report.keep_chunk_max[1],
+                        report.center[0],
+                        report.center[1],
+                        chunks.examined,
+                        chunks.pruned,
+                        chunks.kept_inside_rectangle,
+                        chunks.kept_inhabited,
+                        chunks.kept_changed,
+                        chunks.kept_not_generated,
+                        report.bytes_before,
+                        report.bytes_after,
+                    );
+                }
+                WorldCommand::Compact => {
+                    let report = mc_core::world_maintenance::compact_world(&config)?;
+                    println!(
+                        "compact complete: {} rows repacked; file {} -> {} bytes",
+                        report.rewritten_rows, report.bytes_before, report.bytes_after,
+                    );
                 }
             }
         }

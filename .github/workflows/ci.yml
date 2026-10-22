@@ -22,7 +22,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.94
+      - uses: dtolnay/rust-toolchain@1.99
         with:
           components: rustfmt
       - run: python3 -m tools.harness run fmt
@@ -32,7 +32,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.94
+      - uses: dtolnay/rust-toolchain@1.99
         with:
           components: clippy
       - uses: Swatinem/rust-cache@v2
@@ -43,7 +43,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.94
+      - uses: dtolnay/rust-toolchain@1.99
       - uses: Swatinem/rust-cache@v2
       - run: python3 -m tools.harness run code-health
   test:
@@ -74,7 +74,7 @@ jobs:
           repository: ${{ github.repository_owner }}/solaris-loader
           ref: ${{ env.SOLARIS_LOADER_REVISION }}
           path: solaris-loader
-      - uses: dtolnay/rust-toolchain@1.94
+      - uses: dtolnay/rust-toolchain@1.99
         with:
           targets: wasm32-unknown-unknown
       - run: rustup target add wasm32-unknown-unknown
@@ -131,7 +131,7 @@ jobs:
     runs-on: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.94
+      - uses: dtolnay/rust-toolchain@1.99
         with:
           targets: wasm32-unknown-unknown
       - run: rustup target add wasm32-unknown-unknown
@@ -143,7 +143,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.94
+      - uses: dtolnay/rust-toolchain@1.99
       - uses: Swatinem/rust-cache@v2
       - run: python3 -m tools.harness run build --release
 
@@ -245,7 +245,7 @@ jobs:
             target: aarch64-unknown-linux-gnu
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.94
+      - uses: dtolnay/rust-toolchain@1.99
       - uses: Swatinem/rust-cache@v2
         with:
           key: release-${{ matrix.target }}

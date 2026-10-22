@@ -88,9 +88,9 @@ impl NoiseFactory {
 }
 #[derive(Debug, Clone)]
 pub(crate) struct NormalNoise {
-    first: PerlinNoise,
-    second: PerlinNoise,
-    value_factor: f64,
+    pub(crate) first: PerlinNoise,
+    pub(crate) second: PerlinNoise,
+    pub(crate) value_factor: f64,
 }
 impl NormalNoise {
     pub(crate) fn sample(&self, x: f64, y: f64, z: f64) -> f64 {
@@ -119,11 +119,11 @@ impl NormalNoise {
     }
 }
 #[derive(Debug, Clone)]
-struct PerlinNoise {
-    levels: Vec<Option<ImprovedNoise>>,
-    amplitudes: Vec<f64>,
-    input: f64,
-    value: f64,
+pub(crate) struct PerlinNoise {
+    pub(crate) levels: Vec<Option<ImprovedNoise>>,
+    pub(crate) amplitudes: Vec<f64>,
+    pub(crate) input: f64,
+    pub(crate) value: f64,
 }
 impl PerlinNoise {
     fn new(random: &mut Xoroshiro, first: i32, amplitudes: &[f64]) -> Self {
@@ -183,7 +183,7 @@ pub(crate) fn wrap(v: f64) -> f64 {
 }
 #[derive(Debug, Clone)]
 pub(crate) struct ImprovedNoise {
-    p: [u8; 256],
+    pub(crate) p: [u8; 256],
     pub(crate) xo: f64,
     pub(crate) yo: f64,
     pub(crate) zo: f64,

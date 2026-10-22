@@ -71,6 +71,10 @@ pub(crate) fn fixture_store(config: &CoreConfig) -> Result<Arc<NativeStore>, Cor
         "scoreboard".into(),
         tag_record(0, &crate::scoreboard::Scoreboard::default().to_nbt())?,
     );
+    globals.insert(
+        "bossbars".into(),
+        tag_record(0, &crate::bossbar::BossBars::default().to_nbt())?,
+    );
     for key in ["level_metadata", "conversion_extras"] {
         globals.insert(key.into(), tag_record(0, &Tag::Compound(Vec::new()))?);
     }
@@ -202,6 +206,9 @@ fn empty_runtime_world_publishes_initial_three_dimension_native_checkpoint() {
     let config = CoreConfig::new(directory.path().to_path_buf(), 42);
     let core = crate::Core::open(config.clone()).unwrap();
     core.shutdown();
+    core.shutdown();
+    assert!(core.lod_tile(0, 0, 0, true).is_err());
+    assert!(core.lod_program().is_none());
     let recovered = recover_offline(&config).unwrap();
     assert_eq!(recovered.manifest.dimensions.len(), 2);
     assert_eq!(recovered.dimensions.len(), 3);
@@ -469,8 +476,8 @@ fn roundtrip_native_entity(
 ) -> mc_data::entity_nbt::VanillaEntity {
     let (_, chunks, _) = crate::core::checkpoint_data_for(state, state.tick);
     let entity = chunks
-        .iter()
-        .flat_map(|(_, chunk)| &chunk.entities)
+        .values()
+        .flat_map(|chunk| &chunk.entities)
         .find(|entity| entity.wire_id == id.0)
         .unwrap()
         .clone();
@@ -500,8 +507,8 @@ fn native_projectile_projection_does_not_duplicate_or_resurrect_owned_fields() {
     let id = state.spawn_mob(kind, [0.5, 80.0, 0.5], 10.0);
     let (_, chunks, _) = crate::core::checkpoint_data_for(&state, state.tick);
     let entity = chunks
-        .iter()
-        .flat_map(|(_, chunk)| &chunk.entities)
+        .values()
+        .flat_map(|chunk| &chunk.entities)
         .find(|entity| entity.wire_id == id.0)
         .unwrap();
     let mut projectile =
@@ -1222,6 +1229,10 @@ fn pre_plugin_native_checkpoint_opens_with_empty_authority_and_upgrades_on_check
     globals.insert(
         "scoreboard".into(),
         tag_record(0, &crate::scoreboard::Scoreboard::default().to_nbt()).unwrap(),
+    );
+    globals.insert(
+        "bossbars".into(),
+        tag_record(0, &crate::bossbar::BossBars::default().to_nbt()).unwrap(),
     );
     for name in ["level_metadata", "conversion_extras"] {
         globals.insert(

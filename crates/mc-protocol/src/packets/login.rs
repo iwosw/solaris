@@ -21,11 +21,14 @@ use bytes::{Buf, BufMut};
 use uuid::Uuid;
 
 use super::Packet;
-use crate::codec::{ReadMc, WriteMc, read_bounded_vec};
+use crate::codec::{Identifier, ReadMc, WriteMc, read_bounded_vec};
 use crate::error::CodecError;
 
 /// Maximum length of a player name, in characters, per vanilla.
 pub const MAX_NAME_LEN: usize = 16;
+
+/// Vanilla's `ServerboundCustomQueryAnswerPacket` payload ceiling.
+pub const MAX_LOGIN_PLUGIN_RESPONSE_BYTES: usize = 1_048_576;
 
 /// Maximum RSA ciphertext size accepted in each encrypted login response field.
 const MAX_ENCRYPTED_RESPONSE_BYTES: usize = 128;
@@ -103,6 +106,62 @@ impl Packet for EncryptionResponse {
     }
 }
 
+/// Answer to [`LoginPluginRequest`] (`ServerboundCustomQueryAnswer`).
+///
+/// Vanilla writes the transaction id, a nullable payload flag and then the
+/// payload bytes; `successful == false` means the client (or proxy) did not
+/// understand the channel and carries no data.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LoginPluginResponse {
+    pub message_id: i32,
+    pub successful: bool,
+    pub data: Vec<u8>,
+}
+
+impl Packet for LoginPluginResponse {
+    // Vanilla 26.1.2 login SERVERBOUND_CUSTOM_QUERY_ANSWER registration index 2.
+    const ID: i32 = 0x02;
+
+    fn encode<B: BufMut>(&self, buf: &mut B) -> Result<(), CodecError> {
+        if self.data.len() > MAX_LOGIN_PLUGIN_RESPONSE_BYTES {
+            return Err(CodecError::ArrayTooLong {
+                len: self.data.len(),
+                max: MAX_LOGIN_PLUGIN_RESPONSE_BYTES,
+            });
+        }
+        buf.write_varint(self.message_id);
+        buf.write_bool(self.successful);
+        if self.successful {
+            buf.put_slice(&self.data);
+        }
+        Ok(())
+    }
+
+    fn decode<B: Buf>(buf: &mut B) -> Result<Self, CodecError> {
+        let message_id = buf.read_varint()?;
+        let successful = buf.read_bool()?;
+        let data = if successful {
+            let remaining = buf.remaining();
+            if remaining > MAX_LOGIN_PLUGIN_RESPONSE_BYTES {
+                return Err(CodecError::ArrayTooLong {
+                    len: remaining,
+                    max: MAX_LOGIN_PLUGIN_RESPONSE_BYTES,
+                });
+            }
+            let mut bytes = vec![0u8; remaining];
+            buf.copy_to_slice(&mut bytes);
+            bytes
+        } else {
+            Vec::new()
+        };
+        Ok(Self {
+            message_id,
+            successful,
+            data,
+        })
+    }
+}
+
 /// Sent by the client after [`LoginSuccess`] to acknowledge the
 /// transition into the Configuration state. The body is empty.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -158,6 +217,40 @@ impl Packet for EncryptionRequest {
             public_key,
             verify_token,
             should_authenticate,
+        })
+    }
+}
+
+/// Asks the client (or proxy) for channel data during Login
+/// (`ClientboundCustomQuery`). Used by Velocity modern forwarding.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LoginPluginRequest {
+    pub message_id: i32,
+    pub channel: Identifier,
+    pub data: Vec<u8>,
+}
+
+impl Packet for LoginPluginRequest {
+    // Vanilla 26.1.2 login CLIENTBOUND_CUSTOM_QUERY registration index 4.
+    const ID: i32 = 0x04;
+
+    fn encode<B: BufMut>(&self, buf: &mut B) -> Result<(), CodecError> {
+        buf.write_varint(self.message_id);
+        buf.write_identifier(&self.channel)?;
+        buf.put_slice(&self.data);
+        Ok(())
+    }
+
+    fn decode<B: Buf>(buf: &mut B) -> Result<Self, CodecError> {
+        let message_id = buf.read_varint()?;
+        let channel = buf.read_identifier()?;
+        let remaining = buf.remaining();
+        let mut data = vec![0u8; remaining];
+        buf.copy_to_slice(&mut data);
+        Ok(Self {
+            message_id,
+            channel,
+            data,
         })
     }
 }
@@ -585,5 +678,39 @@ mod tests {
     fn set_compression_round_trip() {
         round_trip(SetCompression { threshold: 256 });
         round_trip(SetCompression { threshold: -1 });
+    }
+
+    #[test]
+    fn login_plugin_packets_round_trip_with_vanilla_ids() {
+        assert_eq!(LoginPluginRequest::ID, 0x04);
+        assert_eq!(LoginPluginResponse::ID, 0x02);
+        round_trip(LoginPluginRequest {
+            message_id: 3,
+            channel: Identifier::parse("velocity:player_info").unwrap(),
+            data: vec![4],
+        });
+        round_trip(LoginPluginResponse {
+            message_id: 3,
+            successful: true,
+            data: vec![1, 2, 3, 4],
+        });
+    }
+
+    #[test]
+    fn login_plugin_response_without_payload_carries_no_data() {
+        round_trip(LoginPluginResponse {
+            message_id: 0,
+            successful: false,
+            data: Vec::new(),
+        });
+        // A refused answer never reads bytes past the flag.
+        let mut buf = Vec::new();
+        buf.write_varint(0);
+        buf.write_bool(false);
+        let mut cursor: &[u8] = &buf;
+        let decoded = LoginPluginResponse::decode(&mut cursor).unwrap();
+        assert!(!decoded.successful);
+        assert!(decoded.data.is_empty());
+        assert!(cursor.is_empty());
     }
 }

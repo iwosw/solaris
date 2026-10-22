@@ -241,12 +241,7 @@ pub fn run_backup(world_dir: &Path, out: &Path) -> Result<()> {
             .with_context(|| format!("backing up {name}"))?;
         manifest.files.insert(name, digest);
     }
-    let path = out.join(BACKUP_MANIFEST);
-    let mut file = File::options().write(true).create_new(true).open(&path)?;
-    file.write_all(&serde_json::to_vec_pretty(&manifest)?)?;
-    file.sync_all()?;
-    mc_world::atomic_file::sync_parent_dir(&path)?;
-    mc_world::atomic_file::sync_parent_dir(&out)?;
+    write_manifest(&out, &manifest)?;
     println!(
         "backup of {} into {} complete: {} files",
         world.display(),
@@ -254,6 +249,77 @@ pub fn run_backup(world_dir: &Path, out: &Path) -> Result<()> {
         manifest.files.len(),
     );
     Ok(())
+}
+
+/// Create the manifest last: a directory without it is never a valid backup.
+fn write_manifest(out: &Path, manifest: &BackupManifest) -> Result<()> {
+    let path = out.join(BACKUP_MANIFEST);
+    let mut file = File::options().write(true).create_new(true).open(&path)?;
+    file.write_all(&serde_json::to_vec_pretty(manifest)?)?;
+    file.sync_all()?;
+    mc_world::atomic_file::sync_parent_dir(&path)?;
+    mc_world::atomic_file::sync_parent_dir(out)?;
+    Ok(())
+}
+
+/// `YYYYMMDDTHHMMSSZ` for Unix seconds (proleptic Gregorian, civil-from-days).
+fn utc_stamp(unix_seconds: u64) -> String {
+    let days = (unix_seconds / 86_400) as i64 + 719_468;
+    let seconds = unix_seconds % 86_400;
+    let era = days.div_euclid(146_097);
+    let day_of_era = days.rem_euclid(146_097);
+    let year_of_era =
+        (day_of_era - day_of_era / 1460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
+    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
+    let month_index = (5 * day_of_year + 2) / 153;
+    let day = day_of_year - (153 * month_index + 2) / 5 + 1;
+    let month = if month_index < 10 {
+        month_index + 3
+    } else {
+        month_index - 9
+    };
+    let year = year_of_era + era * 400 + i64::from(month <= 2);
+    format!(
+        "{year:04}{month:02}{day:02}T{:02}{:02}{:02}Z",
+        seconds / 3600,
+        seconds % 3600 / 60,
+        seconds % 60
+    )
+}
+
+/// Hot backup of a running core into `backup_dir/backup-<UTC>-tick<N>/`, the
+/// same manifest format `run_restore` verifies. The copy is built in a hidden
+/// `.partial` directory and renamed only once the manifest is durable, so an
+/// interrupted or failed backup never looks like a valid one.
+pub fn run_hot_backup(
+    core: &mc_core::Core,
+    backup_dir: &Path,
+) -> Result<(PathBuf, mc_core::hot_backup::HotBackup)> {
+    std::fs::create_dir_all(backup_dir)
+        .with_context(|| format!("creating {}", backup_dir.display()))?;
+    let backup_dir = std::fs::canonicalize(backup_dir)?;
+    let stamp = utc_stamp(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_secs(),
+    );
+    let partial = backup_dir.join(format!(".backup-{stamp}.partial"));
+    std::fs::create_dir(&partial).with_context(|| format!("creating {}", partial.display()))?;
+    let result = (|| {
+        let backup = core.backup(&partial)?;
+        let mut manifest = BackupManifest::current();
+        manifest.files.clone_from(&backup.files);
+        write_manifest(&partial, &manifest)?;
+        let finished = backup_dir.join(format!("backup-{stamp}-tick{}", backup.wal_tick));
+        std::fs::rename(&partial, &finished)
+            .with_context(|| format!("publishing {}", finished.display()))?;
+        mc_world::atomic_file::sync_parent_dir(&finished)?;
+        Ok((finished, backup))
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_dir_all(&partial);
+    }
+    result
 }
 
 fn read_manifest(from: &Path) -> Result<BackupManifest> {

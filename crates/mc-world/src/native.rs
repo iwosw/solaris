@@ -2,18 +2,24 @@
 //! Owns durable bytes, never a second resident authority. Runtime checkpoint work
 //! executes off-thread through the native checkpoint transaction.
 
+mod block_log;
 mod checkpoint;
 mod checkpoint_validation;
 mod codec;
 mod dictionary;
+mod maintenance;
+mod pack;
 mod state;
 mod ticks;
 pub use checkpoint::{
     NativeCheckpoint, NativeCheckpointImage, NativeCheckpointIo, NativeCheckpointReader,
     NativeDomainRecord, NativeGenerationContract, NativePlayerSnapshot,
 };
+pub use maintenance::{NativePruneReport, NativePruneRequest};
 #[cfg(test)]
 mod checkpoint_tests;
+#[cfg(test)]
+mod pack_tests;
 use mc_data::items::ItemRegistry;
 use mc_data::loot::chest_26_1_2::ChestLootCatalog;
 pub use state::NativeEntitySnapshot;
@@ -38,6 +44,11 @@ const IMPORTED: TableDefinition<&[u8], &[u8]> = TableDefinition::new("imported_c
 const OVERLAYS: TableDefinition<&[u8], &[u8]> = TableDefinition::new("section_overlays");
 const METADATA: TableDefinition<&[u8], &[u8]> = TableDefinition::new("chunk_metadata");
 const APPLIED: TableDefinition<&[u8], u64> = TableDefinition::new("applied_lsn");
+/// Baselines the Solaris generator produced (pregeneration, LOD fill, lazy
+/// checkpoint bases). Anvil imports are not listed. Rows from builds before this
+/// table existed are unlisted too, so offline pruning never treats them as
+/// regenerable. Created on first use in an existing world; absent means empty.
+const GENERATED: TableDefinition<&[u8], ()> = TableDefinition::new("generated_baselines");
 /// Independent of the unchanged vanilla-like WORLDGEN_REVISION.
 pub const NATIVE_PROTOTYPE_SCHEMA: u32 = 3;
 const DB_CACHE_BYTES: usize = 16 * 1024 * 1024;
@@ -295,6 +306,7 @@ impl NativeStore {
             db(transaction.open_table(OVERLAYS))?;
             db(transaction.open_table(METADATA))?;
             db(transaction.open_table(APPLIED))?;
+            db(transaction.open_table(GENERATED))?;
             dictionary::initialize(&transaction)?;
             state::initialize(&transaction)?;
             checkpoint::initialize(&transaction)?;

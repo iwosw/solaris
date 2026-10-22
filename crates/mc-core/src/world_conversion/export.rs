@@ -305,7 +305,7 @@ pub(super) fn convert(
             && replay
                 .tickets
                 .keys()
-                .any(|owner| owner.starts_with("minecraft:forced:"))
+                .any(|owner| crate::forceload::is_forced_owner(owner))
         {
             return Err(fail(format!(
                 "{ticket_path}: active native forced tickets conflict with deferred saved data"

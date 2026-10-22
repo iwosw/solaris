@@ -343,6 +343,33 @@ def run_dialogs(ctx: ProfileContext) -> dict[str, Any]:
     from .backends import dialogs
 
     return dialogs.run(ctx)
+
+
+def run_admin_commands(ctx: ProfileContext) -> dict[str, Any]:
+    """Vanilla /tellraw, /title, /bossbar, /tick and /locate observed through the native client."""
+    from .backends import admin_commands
+
+    return admin_commands.run(ctx)
+
+
+def run_anti_xray(ctx: ProfileContext) -> dict[str, Any]:
+    """Anti-xray gate: enclosed ores are absent from the native client's world until exposed."""
+    from .backends import anti_xray
+
+    return anti_xray.run(ctx)
+
+
+def run_block_log(ctx: ProfileContext) -> dict[str, Any]:
+    """Block-log gate: grief, /co rollback, restart and /co restore on the native client."""
+    from .backends import block_log
+
+    return block_log.run(ctx)
+
+def run_chisel(ctx: ProfileContext) -> dict[str, Any]:
+    """Chisel addon gate: plugin block-tool conversions on the native client."""
+    from .backends import chisel
+
+    return chisel.run(ctx)
 def run_village_qa(ctx: ProfileContext) -> dict[str, Any]:
     """Issue #1 settlement acceptance on the native client (windowed for evidence)."""
     from .backends import village_qa
@@ -406,6 +433,26 @@ def run_native_logical(ctx: ProfileContext) -> dict[str, Any]:
     return native_logical.run(ctx)
 
 
+def run_pause_empty(ctx: ProfileContext) -> dict[str, Any]:
+    """Empty-server pause: frozen tick, console save, status and protocol join resume."""
+    from .backends import pause_empty
+
+    return pause_empty.run(ctx)
+
+def run_item_merge(ctx: ProfileContext) -> dict[str, Any]:
+    """Real item consolidation followed by hopper transfer observed from a chest."""
+    from .backends import item_merge
+
+    return item_merge.run(ctx)
+
+
+def run_graves(ctx: ProfileContext) -> dict[str, Any]:
+    """Death custody proven on the saved world: barrel contents, no inventory or drop copy."""
+    from .backends import graves
+
+    return graves.run(ctx)
+
+
 def run_native_scale(ctx: ProfileContext) -> dict[str, Any]:
     from .backends import native_scale
 
@@ -450,7 +497,6 @@ def run_loader_live(ctx: ProfileContext) -> dict[str, Any]:
     if result.get("passed") is not True:
         raise RuntimeError(f"loader-live scenario did not pass: {result}")
     return details
-
 
 def _flag_value(args: list[str], flag: str) -> str | None:
     for index, token in enumerate(args):
@@ -586,6 +632,18 @@ def run_catalog_load(ctx: ProfileContext) -> dict[str, Any]:
         details["mode"] = "prepared"
     return details
 
+
+def run_quirk_parity(ctx: ProfileContext) -> dict[str, Any]:
+    """Vanilla-26.1.2-oracle parity of player-relied quirks and farm rates."""
+    extra = ctx.extra_args[1:] if ctx.extra_args[:1] == ["--"] else ctx.extra_args
+    out = ctx.artifact_dir / "quirk-parity"
+    details = _run_command(
+        [sys.executable, "-m", "tools.harness.quirk_parity", "--out", str(out)] + extra,
+        ctx, "quirk-parity.log", env=_backend_env(ctx),
+    )
+    details["receipt"] = str(out / "receipt.json")
+    return details
+
 def run_constantinople(ctx: ProfileContext) -> dict[str, Any]:
     """Functional imported-city fixture; no throughput or performance verdict."""
     extra = ctx.extra_args[1:] if ctx.extra_args[:1] == ["--"] else ctx.extra_args
@@ -645,6 +703,13 @@ def run_harness_check(ctx: ProfileContext) -> dict[str, Any]:
     for backend in sorted(BACKENDS.glob("*.sh")):
         _run_command(["bash", "-n", str(backend)], ctx, f"syntax-{backend.stem}.log")
     return {}
+
+
+def run_dh_gate(ctx: ProfileContext) -> dict[str, Any]:
+    """Run the real Java/DH protocol-16 baseline with fail-closed prerequisites."""
+    from .backends import dh_gate
+
+    return dh_gate.run(ctx)
 
 
 Profile = Callable[[ProfileContext], dict[str, Any]]
@@ -745,6 +810,26 @@ PROFILES: dict[str, dict[str, Any]] = {
         "description": "Native server-driven dialog: show_dialog with text/slider/checkbox inputs, submit, exact payload at the server (--client native, windowed for screenshots)",
         "run": run_dialogs,
     },
+    "admin-commands": {
+        "scope": "real-client",
+        "description": "Vanilla admin commands as an operator player: /tellraw, /title, /bossbar, /tick freeze|step|sprint|rate|query and /locate biome|poi|structure read back from the client's chat and HUD nodes (native --client, windowed for screenshots)",
+        "run": run_admin_commands,
+    },
+    "anti-xray": {
+        "scope": "real-client",
+        "description": "Anti-xray gate: an enclosed diamond ore is absent from the client's world data until survival mining beside it reveals it (native --client, windowed for screenshots)",
+        "run": run_anti_xray,
+    },
+    "block-log": {
+        "scope": "real-client",
+        "description": "Block-log gate: grief (break/place/steal/break chest), /co lookup + rollback restores blocks and chest contents exactly, restart keeps history, /co restore re-applies (native --client, windowed for screenshots)",
+        "run": run_block_log,
+    },
+    "chisel": {
+        "scope": "real-client",
+        "description": "Chisel addon gate: plugin block-tool conversions of stone_bricks/stairs to slab/stairs with wear and slab grants (--client native, windowed for screenshots)",
+        "run": run_chisel,
+    },
     "core-client": {
         "scope": "real-client",
         "description": "Java compatibility gate; native is explicitly a cheap server/own-chat subset",
@@ -775,10 +860,30 @@ PROFILES: dict[str, dict[str, Any]] = {
         "description": "Headless native CPU/RSS canaries beside real Rust protocol bots; non-exclusive diagnostic only",
         "run": run_native_scale,
     },
+    "pause-empty": {
+        "scope": "functional-native",
+        "description": "Empty-server pause: pause log, frozen tick across console save, status while paused, offline protocol join resume, re-pause after leave",
+        "run": run_pause_empty,
+    },
+    "item-merge": {
+        "scope": "functional-native",
+        "description": "Live identical item merge, hopper pickup, and chest stack contents over the protocol wire",
+        "run": run_item_merge,
+    },
+    "graves": {
+        "scope": "functional-native",
+        "description": "Death custody on the saved world: real protocol death, clean stop, then world probe asserts the barrel holds exactly the given stacks and no inventory/drop copy exists (requires --plugins-dir with the graves package)",
+        "run": run_graves,
+    },
     "loader-live": {
         "scope": "real-client",
         "description": "Loader gate via loader.run; requires --platform fabric|neoforge|forge",
         "run": run_loader_live,
+    },
+    "dh-gate": {
+        "scope": "real-client",
+        "description": "Real Java DH baseline: MC 26.1.2 + DH 3.3.3 protocol 16, isolated Fabric/NeoForge client gate",
+        "run": run_dh_gate,
     },
     "regression": {
         "scope": "real-client",
@@ -804,6 +909,11 @@ PROFILES: dict[str, dict[str, Any]] = {
         "scope": "oracle",
         "description": "oracle runner self-check backend",
         "run": run_oracle_check,
+    },
+    "quirk-parity": {
+        "scope": "oracle",
+        "description": "Real 26.1.2 vanilla oracle vs Solaris: player-relied quirks (QC, TNT duping, update order) and farm rates; receipts under the run artifact dir",
+        "run": run_quirk_parity,
     },
     "catalog-load": {
         "scope": "scale",

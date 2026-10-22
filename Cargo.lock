@@ -1477,6 +1477,7 @@ dependencies = [
  "im",
  "mc-data",
  "mc-domain",
+ "mc-loader",
  "mc-nbt",
  "mc-physics",
  "mc-plugin-host",
@@ -1556,6 +1557,7 @@ dependencies = [
  "tracing-subscriber",
  "uuid",
  "zip",
+ "zstd",
 ]
 
 [[package]]
@@ -1697,6 +1699,7 @@ dependencies = [
  "thiserror 2.0.18",
  "uuid",
  "wide",
+ "zstd",
 ]
 
 [[package]]

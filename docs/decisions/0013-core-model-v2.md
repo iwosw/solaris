@@ -30,6 +30,52 @@ cadence varies, see Mob blueprints), remote physical tickets keep chosen areas
 simulated without players, radical hardware-level optimizations are allowed
 when measured and documented.
 
+## Optional Java distant terrain read boundary (2026-10-22)
+
+`mc-core::terrain` owns bounded immutable detail-6 sampling: one 4×4-chunk
+leaf plus a one-chunk halo (36 chunks maximum). It reads committed resident
+images and retained unflushed edits before durable native coverage, and uses
+the normal chunk source and missing-light bake only for genuinely absent coverage. Store errors remain
+errors; sampling neither admits simulation residency nor writes a second
+world store. The tick publishes shared immutable images; sampling and
+compression run off-tick, without making the tick wait on a reader.
+Like native `LodSource`, it borrows `ChunkSource` through a weak reference,
+upgraded only for a sampling call. Retaining a stopped `Core` handle must not
+keep the native database open or allow new samples after owner shutdown.
+
+Opaque world identity and content publication stamps belong to this source,
+not to a client, seed, filesystem mtime or encoder invocation. The UUID-v4
+identity persists in `level.dat/Data/SolarisTerrainEpoch`; a fresh world gets
+a fresh identity. Revision fences exclude partial tick publication and
+invalidate derived results after authoritative edits, not idle ticks.
+Content timestamps are strictly increasing and pinned per revision within
+the bounded in-process stamp cache; reopening or eviction conservatively
+restamps rather than claiming durable per-section modification times.
+
+`mc-edge::dh` owns optional Distant Horizons protocol 16, dimension/session
+epochs, cancellation, material privacy, resource-name presentation and the
+format-1/Zstd DTO. It shares the native LOD worker semaphore but not its
+heightmap protocol or seed/program export. Requests, bytes, cache and upload
+budgets are server-enforced. A separate writer queue drains after ordinary
+reliable and world packets; canceled or old-epoch fragments cannot commit a
+response. Graphical compatibility remains a separate real Java/DH gate.
+
+The independently authored protocol fixtures at
+`crates/mc-edge/src/dh/protocol16-java-fixtures.json` were exercised in both
+directions against the publisher-hash-pinned DH 3.3.3/26.1.2 jar's unchanged
+Java message serializers. This includes the upstream server override when
+chunk-only and surface-only plans conflict. Trackable test objects bypass
+the constructor's live-world requirement, not the real encode/decode logic;
+this is serializer evidence only, never a loader or graphical pass.
+The production Rust format-1/Zstd envelope encoder was also exercised against
+that jar's unchanged full-data DTO decoder and unit-test data source: 4096
+asymmetric columns preserve orientation, heights, relative Y, both light
+channels, generation/compression metadata, flags and timestamp. This does
+not exercise Minecraft registry resolution or rendering. Local receipts are
+`.analysis/DHCompat/oracle/result.json` and `dto-result.json`.
+No DH or plugin source/library is linked, copied or vendored into the Solaris
+server binary.
+
 ## Core stop diagnostics (2026-10-20)
 
 Every tick-owner stop records its cause at error level before dropping the
@@ -42,6 +88,38 @@ an error-level record containing the thread, payload and source location;
 failed joins are not discarded. Error diagnostics include the source chain.
 SIGKILL, process OOM kills and stack-overflow aborts cannot reliably execute
 Rust logging and still require the kernel/service-manager evidence.
+
+## Item farms and hopper lanes (2026-10-21)
+
+Ground items merge after motion every twentieth tick using vanilla
+`ItemEntity.mergeWithNeighbours` bounds: compatible item stacks/components,
+`.5` horizontal and zero vertical box inflation, and the receiving stack's
+actual component-aware maximum. The survivor keeps the maximum pickup delay
+and minimum despawn age; a fully absorbed row is removed through the ordinary
+same-tick entity tombstone path.
+
+The native container owner retains an exact loaded-hopper lane rather than
+filtering all block entities each tick. A due hopper that cannot transfer
+sleeps until its own or an adjacent inventory changes; item motion wakes only
+the bowls it can reach. Cooling remains an absolute eight-tick deadline, so
+neither transfer cadence nor custody/journal ordering changes.
+
+## Collision and explosion hot paths (2026-10-21)
+
+The physics broad phase starts with the body footprint and advances a
+deterministic three-axis DDA, adding only a leading cell slab when that face
+crosses a grid boundary. It retains the existing candidate and scan caps.
+The randomized collision regression compares normal and first-impact results
+against the former full swept-volume scan; removing the DDA restores that
+reference path.
+
+Explosion exposure is memoized only for one tick and only by exact explosion
+centre plus entity bounds. Priming TNT clears the cache because it immediately
+removes a live-world occluder. Each explosion still runs in its original merge
+order, calculates its own destruction rays, block effects and RNG stream, and
+emits its own event; the cache never combines explosions. The release perf
+fence is the ignored 1,000-TNT stack and fired-cannon scenarios in
+`tnt_tests.rs`, measured only in a frozen serialized window.
 
 ## G1-A event-driven allocator (2026-10-16)
 
@@ -527,6 +605,12 @@ Tick `t -> t+1`:
    Physics classifies fingerprint-matched empty vanilla collision shapes
    as passable (including vegetation and signs), retaining fluid material
    separately; authoritative clipped player moves send a position correction.
+   The edge applies a configurable per-Play-packet-id token bucket before
+   decode, while `tick/input/movement.rs` owns the authoritative configurable
+   airtime verdict: unsupported non-descending survival movement is corrected
+   to its last safe position and then disconnected after the configured age.
+   Flight permissions, active effects, fluid/climbable contact, vehicles,
+   knockback and slime contact remain native state checks, never edge mirrors.
    Sprint input flags/commands and accepted movement charge hunger, and pickup uses the
    vanilla inflated player box rather than a sphere around the feet.
    A use of a client-predicted placement in the same batch waits until the
@@ -602,7 +686,15 @@ Tick `t -> t+1`:
    chunk revisions of their 3x3 light neighbourhood, and shared by every
    viewer and outbound queue by refcount: viewers plan in parallel against
    the read-only cache, then misses are encoded once per chunk and inserted
-   by the pump alone (no lock). World packets are planned within each
+   by the pump alone (no lock). Anti-xray engine mode 1 (`[anti_xray]`,
+   `crates/mc-edge/src/anti_xray.rs`) runs at that encode: an ore whose six
+   neighbours are all opaque is encoded as the surrounding rock in section
+   copies (the snapshot chunk is never touched), once per chunk for every
+   viewer, and a hiding dimension's cache key adds the four side neighbours'
+   revisions because enclosure is judged across chunk borders. Reveal rides
+   the block-update path: once per publish the tick index lists the hideable
+   ores a block change just un-enclosed (keyed by the ore's own chunk), and
+   each viewer holding that chunk gets their real `BlockUpdate`. World packets are planned within each
    connection's credit, the free slots of its world queue read before the
    publish (only the pump sends there, so nothing planned is ever dropped):
    forgets, block updates, chunks, removals, spawns (nearest first), then
@@ -749,6 +841,17 @@ Tick `t -> t+1`:
   the writer and halts the journal thread like an append failure. An append
   failure drops the journal's receiver immediately, so the tick's next `send`
   fails without waiting for an in-flight commit.
+  **Hot backup** (console `backup`, `Core::backup`) is a third FIFO job on this
+  thread: after a forced checkpoint, the tick forwards the request through the
+  same work queue, the journal thread fsyncs the WAL directory and records the
+  highest durable tick (`through`), and the writer — idle between commits, so
+  `state.redb` is exactly the last committed checkpoint — copies it plus the
+  contiguous batches `(checkpoint, through]` (only this thread prunes, so none
+  vanish) with SHA-256s, in 8 MiB sync steps so WAL fsyncs never queue behind a
+  dirty-page burst. Ticks and appends continue; the next checkpoint and
+  generated saves wait for the copy. A copy error replies to the caller and
+  never halts the world. The edge writes the offline-compatible manifest last
+  and publishes by renaming a `.partial` directory.
 - **Plugin host:** one production Wasmtime component worker outside the tick,
   using `mc-plugin-host` and the existing bounded `mc-script` boundary. Guest
   callbacks never borrow native world state or execute on tick workers. The
@@ -986,6 +1089,12 @@ authority, not a value reconstructed from an absent chunk's last load time;
 owing an unchanged inactive amount does not itself dirty or rewrite a chunk.
 Changed debt projections remain pinned until a matching checkpoint ACK; stale
 ACKs cannot release newer clock changes or replay a consumed slice after restart.
+Advancing a clean active anchor does not project native chunk extras again:
+the atomic manifest already captures that clock. Activation, deactivation,
+debt consumption and newer WAL authority still project dirty chunk images.
+Recovery closes an active debt anchor and dirties that transition before a
+later manifest may omit its now-inactive zero; otherwise its older native
+`last_sim` could incorrectly recreate debt on the next restart.
 Native debt extras are an indivisible pair of nonnegative NBT longs. Both absent
 means a new chunk; a partial pair, wrong type, negative value or duplicate key
 refuses admission/startup with a storage error, even when a newer WAL image
@@ -1524,11 +1633,14 @@ of active intervals, with an absolute counter and boundary tick, in the existing
 tick batch. Unchanged active sets emit no inhabited-time records. Recovery advances
 each open interval through the last recovered WAL tick, so counters roll back to
 the same tick as players/world/plugin data (Q6); closed intervals do not accrue
-offline or catch-up ticks. Checkpoints atomically fold counters into the retained
-NBT `InhabitedTime` field and capture the remaining open intervals in every
-dimension's manifest. Native restart and Anvil export (including an uncheckpointed
-WAL tail) share that projection. Pending or captured-unacknowledged counters retain
-chunk custody across eviction and stale acknowledgements.
+offline or catch-up ticks. Checkpoints fold changed interval boundaries into
+the retained NBT `InhabitedTime` field and capture open intervals in every
+dimension's manifest. Continued accrual in an unchanged open interval updates
+only the manifest, not chunk dirtiness or the expensive chunk codec. Closing
+an interval marks its newer counter for projection before that interval leaves
+the manifest. Native restart and Anvil export (including an uncheckpointed
+WAL tail) share that projection. Pending, active or captured-unacknowledged
+counters retain chunk custody across eviction and stale acknowledgements.
 The chances follow the requested equipment scope ([zombies](https://minecraft.wiki/w/Zombie#Geared_zombies),
 [skeletons](https://minecraft.wiki/w/Skeleton), [drowned](https://minecraft.wiki/w/Drowned)):
 normal equipment retains 8.5% plus one percentage point per Looting level;
@@ -1757,10 +1869,12 @@ its own filters. A class is indexed only when at least 8 chasers use it this tic
 and its table has at least 32 entries; otherwise the grid is the old linear scan,
 so scenes without chasers pay one pass over rows and no build. Raiders' own
 64/16-block target uses the same grid; the goal paths inside `special_mobs::run`
-and `hostile.rs` still scan slices. `villager::defense::targets` replaced its
-per-player scan over all entities by one entity pass (gossip reputation summed
-per player uuid, same order and thresholds). The grid is derived, never persisted,
-has no client or authority role.
+and `hostile.rs` still scan slices. `villager::defense::targets` uses
+incrementally maintained dense type lanes for monsters and golems plus exact
+resident chunk memberships only within two chunks of an eligible player, rather
+than walking the complete entity population. Gossip is summed per eligible
+player UUID with the same thresholds; the derived target list has no client or
+authority role.
 Correctness fence: the result equals the linear first-minimum scan, ties broken by
 chain order (players, villagers, golems, zoglins) then table index; seeded
 random-layout tests (`target_grid_tests`, `villager/defense_tests`) compare against
@@ -1783,6 +1897,20 @@ A ticket names an owner, an area, a reason and a budget. Ticketed chunks are in
 the simulated set exactly like player-loaded chunks. Over-budget requests are
 refused explicitly. Tickets are part of the journaled state; restart restores
 them with no downtime catch-up.
+
+Vanilla level-31 tickets (`chunk_tickets.rs`, `forceload.rs`; 26.1.2
+`TicketType.FORCED`/`ENDER_PEARL`, `ChunkMap.FORCED_TICKET_LEVEL`) reuse this
+model. `/forceload` persists a radius-0 ticket `minecraft:forced:<x>:<z>` in the
+owning dimension; forced and pearl tickets both expand to a two-chunk loading
+ring and a one-chunk simulation ring (vanilla loads FULL at distance 2 and ticks
+blocks at distance 1; native simulation is one set, so entities in the ring also
+tick). Pearl tickets are derived each tick from live pearls whose owner is online
+in any dimension, time out 40 ticks after the pearl leaves a chunk, are capped at
+32 distinct chunks per owner and are never journaled or checkpointed. A pearl
+whose owner is offline is parked in the checkpointed entity table instead of
+being moved into the player file. The WAL records durable ticket changes only:
+a post-image when a ticket appears or moves and a `TicketRemoved` tombstone when
+it disappears, so `/forceload remove` cannot be resurrected by a stale image.
 
 ### Durability
 
@@ -1954,6 +2082,15 @@ them with no downtime catch-up.
   the tick owner's receipt, is the recovery authority. A crash before pruning
   merely leaves redundant batches that recovery ignores. These steps run on
   the native writer, so later WAL appends proceed during the commit.
+  Checkpoint chunk work is dirty-only: unchanged active inhabited/debt clocks
+  are manifest anchors, not reasons to recapture all resident chunks. A new
+  interval boundary or real content mutation still uses the revision-fenced
+  chunk path. This removes recurrent resident-scale encoding from checkpoint
+  commits; it does not remove WAL backpressure. The existing count/byte-bounded
+  handoff still waits if the independent WAL writer cannot keep up (including
+  disk fsync contention). No queue growth, dropped batches or persistence-order
+  bypass is permitted; residual wait requires a matching capacity-ladder
+  measurement before changing that boundary.
   In normal running, the next gate reads the tick published before the previous
   ACK. A shutdown checkpoint may gate against an older tick while a commit is
   in flight; the live writer's validated pre-open interval and contiguous
@@ -2077,12 +2214,34 @@ them with no downtime catch-up.
   and accepted-batch durability. Only the tick thread owns the tick
   broadcast sender, so its exit closes every subscriber (`Closed`), including
   subscriptions made afterwards; nobody waits forever on a halted core.
+- **Shutdown and edge readers.** LOD holds a weak reference to the chunk source
+  and upgrades it only for an active tile/program request; retaining a stopped
+  `Core` handle does not retain the native database. Requests after source
+  teardown fail closed.
 - **Reliable outbox handoff.** Each tick the tick thread takes its
   per-connection queues and sends them as one owned batch over an mpsc
   channel before waking subscribers; it never locks a shared store. The single
   edge drain coalesces batches in FIFO order per connection and never extends
   a queue already sealed by `Disconnect`. The queue key is the only address of
   a `PlayerChange`.
+- **Block log (vanilla-top50 G2, 2026-10-21).** Each dimension's tick owns a
+  bounded CoreProtect-style history (`crate::block_log`): the merge loop, fire,
+  plugin block sets and container write-backs note first-writer pre-images,
+  and the tick's journal pass seals them into numbered records. New records and
+  rollback marks are one `JournalEntry::BlockLog` delta in the same batch. The
+  native writer upserts queued deltas into the `block_log` table (keys
+  `[kind][dimension][seq]`; record values are NBT that names block states as
+  `{Name, Properties}` and items as vanilla item compounds, never runtime ids,
+  so rows outlive a game-version change) in its own durable transaction before
+  the checkpoint commit that may prune that WAL, and deletes rows below the
+  tick-captured retention floors. Rows are idempotent by key, so a failed write
+  stays queued and a failed commit after a successful write loses nothing;
+  recovery folds table rows, then the WAL tail. A row whose block or item no
+  longer exists is skipped; missing or retired properties resolve like vanilla
+  `NbtUtils.readBlockState`. This audit table is history,
+  not gameplay authority: `/co rollback|restore` re-enters as one tick-thread
+  command that fences each record on current block type or exact slots, stages
+  writes like `/fill` and journals ordinary post-images. Anvil export omits it.
 
 #### Offline Anvil conversion
 
@@ -3760,6 +3919,19 @@ without item-name special cases; preserved `!minecraft:damage_resistant`
 removal markers revoke that default immunity. Unsupported addition patches
 remain rejected.
 
+### Tick pacing and `/tick` (TickControl)
+
+`tick_control.rs` owns session-only pacing state: target rate, freeze, queued
+step ticks and sprint. The owner loop reads its period each tick (`1000/rate`
+ms; sprint skips the wait). A frozen tick still runs the WAL/journal/broadcast
+pipeline so the tick number keeps advancing, but `begin_tick` marks it
+non-simulating: non-player entity, random/scheduled block, spawn, weather,
+day-clock and pickup phases are gated, and `GameTime` (the `/time query
+gametime` source) counts only simulated ticks. Absolute tick deadlines are
+not paused (known limitation, documented in OPERATING.md). Rate/freeze/step
+changes broadcast `TickingState`/`TickingStep` and are resent on join; the
+native client does not yet act on ticking packets or the action bar.
+
 ## Migration — completed by ADR 0014
 
 The model was built beside v1, reusing model-independent protocol, data, NBT,
@@ -4033,3 +4205,78 @@ operational floor is 48 blocks below its certified floor (built mines were 12),
 always clamped to the settlement sphere; X/Z stay the certified footprint.
 
 Seed-87122 claim QA (2026-10-21): a storage ordered at the village anchor was sited 110 blocks away after 21 refusals, and its builder placed 4 blocks in ten minutes. Site search now scans square rings outward from the anchor (`construction_cursor` is the ring index; success resets it to 0), so the nearest free site wins; an owner order starts at the anchor and scans the whole sphere, the autonomous planner keeps 64 columns per pass. The slow builder stood in a crater, jumping at a two-block wall: a route search from a body hovering mid-jump started at the cell above it, so the wall top looked one block up and the same impossible route was replanned forever. `find_path_ctx` now starts a body that is not resting on a collision top from the floor it left (within a 1.3-block jump apex). Replay of the kept world: the builder escaped the crater and went from 4 to 83 placed blocks in 400 ticks.
+
+Seed-87122 autonomy QA (2026-10-21): the planner did admit Storage L1 (nearest ring site), but the saved builder woke inside a house whose door step was roofed by an oak crown and stood in the doorway for 7000 daytime ticks (route search closed after 11 nodes); `assign_builder` returned as soon as any Builder existed, so nobody replaced it. `release_trapped_builder` now re-probes an on-shift builder's route to storage each planning pass and detaches it when unreachable; the usual candidate selection then picks a resident that can reach storage. Replay of the kept world: s20 released, s19 took over and the storage finished within ~1000 ticks of day break.
+
+## A9 — native world size and offline pruning (2026-10-22)
+
+Measured, not estimated. The ADR's 145,842-chunk fixture (24,650,969,088 bytes,
+988 s commit) is about 169 KB per chunk. Row census of a fresh seed-424242 overworld
+pregenerated by `world pregenerate --radius 512` (4,225 chunks): one baseline row
+per chunk, 125,914 bytes of plain NBT each (light arrays, heightmaps, biomes,
+block-state palettes), 255 KB per chunk of file because redb rounds a 126 KB value
+up to a 256 KB block (1,077,940,224-byte file). Of the live-compat imported world
+copy (2,174 chunks, 1,208,487,936-byte file) the rows were 102.5 KB per baseline
+and 101.5 KB per chunk-metadata row: every checkpointed chunk rewrites a full second
+copy of its side state (the metadata row always differs from the baseline by the
+journal stamp). Section overlays were 33 rows and 2.5 KB in total, so palette and
+bit-packing of overlays is not where the bytes are (zstd-3 on them measured no
+better than the existing zlib: 2,545 vs 2,519 bytes) and is unchanged.
+
+Decision: baseline and metadata rows are stored as `0xF0 | u32 BE raw length |
+zstd-3 frame with content checksum` (`native/pack.rs`); `0xF0` is not an NBT tag
+type, so the plain form (first byte `0x0A`) stays a valid stored representation
+and old rows load unchanged. Rows under 256 bytes or that do not shrink stay plain.
+Output is deterministic, so the checkpoint's byte-equality retention still works.
+Decoding is bounded by the 16 MiB record budget and fails closed on a truncated
+frame, bad checksum, length mismatch or trailing bytes. Level 9 was about 11%
+smaller than level 3 (13.9 vs 15.5 MB on the 4,225 baselines) at several times
+the encode cost, so level 3 is kept. Entity, global and player rows are small and
+stay plain.
+
+Result (same chunks, same code, plain vs packed rows): fresh world file
+1,077,940,224 -> 23,334,912 bytes (255 KB -> 5.5 KB per chunk, 46x; rows 126 KB ->
+3.7 KB, 34x). Live-compat copy 1,208,487,936 -> 40,550,400 bytes (30x) with
+`world compact` (4,319 rows rewritten in 0.8 s, file compaction 0.4 s). Loading
+all 2,174 chunks through `resolve_base`: 277 us/chunk plain, 283 us/chunk packed
+(+2%; chunk assembly, not decompression, dominates). A per-chunk offline commit
+(`apply_offline_snapshot`, fsync-bound) measured 1.88 ms plain and 1.96 ms packed
+on NVMe with free pages available: the commit latency is unchanged at that scale;
+what shrinks is the volume written per chunk (a metadata row 101 KB -> 1 KB, a
+baseline 126 KB -> 3.7 KB), which is what bounded the 988 s commit and the backup
+size. The 145,842-chunk commit time itself was not re-measured.
+
+Not done, on purpose: skipping storage of untouched generated chunks and
+regenerating them from (seed, worldgen revision). It is not exact: the generator
+depends on the plugin-applied registry, `upgrade-worldgen` deliberately keeps
+stored chunks across a revision bump (regenerating them would move the old border
+terrain), and pregeneration exists to avoid generation at join time. Pruning below
+is the exact form of the same idea: forget only chunks that still equal generation.
+
+`world prune --keep-radius R [--center x,z] [--max-inhabited-ticks N] [--dry-run]`
+and `world compact` (`mc-core/world_maintenance.rs`, `mc-world/native/maintenance.rs`)
+run on a stopped world under the world lease. A chunk is pruned only if it is in the
+overworld, outside the keep rectangle, **listed in `generated_baselines`** (written by
+`fill_generated`, i.e. pregeneration/LOD fill, and by the checkpoint's lazy base
+insert, both generator output; `import_chunk`/`import_staged_chunk`, the Anvil
+import, never write it), has no overlay section, no persistent entity row (including
+tombstones of consumed generated slots), a metadata row equal to its baseline apart
+from the journal stamp and inhabited clock, and an effective inhabited clock at most
+N ticks. Rationale: Anvil imports share the `imported_chunks` table, and a build with
+`InhabitedTime = 0` equals its own baseline, so equality to the baseline alone would
+delete work the generator cannot recreate. The provenance table is created with new
+worlds and on first generated write in an older one; rows stored before it existed
+are unlisted and never pruned (fail closed, no migration guess). Baseline, metadata,
+watermark and provenance rows go in one transaction per 2,048 chunks; kept chunks
+are never touched. The numbers below (seed 424242, 4,225 chunks, `--keep-radius 256`:
+3,136 pruned, 1,089 kept, file 23,334,912 -> 6,189,056 bytes; a following
+`world pregenerate --radius 512` generated exactly the 3,136 missing chunks) were
+measured before provenance was recorded, when every baseline counted as regenerable;
+on a world pregenerated by this build the provenance rule is expected to select the same chunks (not re-run). The
+command opens/closes the core first, so a crash tail is folded in before judging.
+
+Known remainder: a checkpointed chunk still stores its whole side state a second
+time (about 1 KB packed). A field-level delta against the baseline would shrink it
+further but changes the retention comparison; not needed at the measured size. redb
+leaf pages are not densely filled after random-order rewrites (file 40.6 MB vs 9.5 MB
+of live row bytes on the compacted live copy).

@@ -271,7 +271,7 @@ impl Gateway {
             let frontier = self.frontier.as_ref().expect("enabled build frontier");
             let sequence = frontier
                 .issued
-                .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |value| {
+                .try_update(Ordering::SeqCst, Ordering::SeqCst, |value| {
                     value.checked_add(1)
                 })
                 .map_err(|_| BuildRefusal {

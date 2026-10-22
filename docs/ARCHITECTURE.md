@@ -9,7 +9,8 @@ production paths. This document is a navigation summary, not a second authority.
 
 ```text
 solaris-v2 (mc-edge binary)
-  mc-edge: configuration, CLI, authentication, sockets, console, dashboard,
+  mc-edge: configuration, CLI, authentication (Mojang or a trusted Velocity
+           proxy via modern forwarding), sockets, console, dashboard,
            per-viewer fanout and Loader negotiation
     mc-core: authoritative gameplay, native tick, snapshots, intents/merge,
              plugin admission, tick WAL and checkpoints
@@ -79,8 +80,9 @@ runs off-tick. Shutdown requests a final durable checkpoint.
 
 Anvil is explicit offline import/export, never a serving fallback or dual-write
 backend. Conversions retain source worlds, require a new destination and emit
-receipts. Native backup/restore requires a stopped, exclusively leased world;
-restore verifies the inventory and checksums. Corrupt or unsupported saved state
+receipts. Offline native backup/restore requires a stopped, exclusively leased
+world; the console `backup` copies a running world at a checkpoint plus its WAL
+(ADR 0013, native writer). Restore verifies the inventory and checksums. Corrupt or unsupported saved state
 fails closed. Earth WorldPlan remains proposed for this runtime (ADR 0012).
 
 ## Plugins and Loader

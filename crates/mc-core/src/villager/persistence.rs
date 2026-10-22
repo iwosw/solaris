@@ -143,8 +143,10 @@ fn tick_tag(value: u64, name: &'static str) -> Result<Tag> {
 fn uuid_tag(uuid: uuid::Uuid) -> Tag {
     Tag::IntArray(
         uuid.as_bytes()
-            .chunks_exact(4)
-            .map(|chunk| i32::from_be_bytes(chunk.try_into().expect("four UUID bytes")))
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|chunk| i32::from_be_bytes(*chunk))
             .collect(),
     )
 }
@@ -156,7 +158,7 @@ fn uuid_from_tag(tag: &Tag, name: &'static str) -> Result<uuid::Uuid> {
         return Err(VillagerNbtError::Invalid(name));
     }
     let mut bytes = [0; 16];
-    for (chunk, value) in bytes.chunks_exact_mut(4).zip(values) {
+    for (chunk, value) in bytes.as_chunks_mut::<4>().0.iter_mut().zip(values) {
         chunk.copy_from_slice(&value.to_be_bytes());
     }
     Ok(uuid::Uuid::from_bytes(bytes))

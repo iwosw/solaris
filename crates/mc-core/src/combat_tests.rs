@@ -202,3 +202,30 @@ fn knockback_pushes_away_from_the_attacker_and_lifts_grounded_targets() {
     let resisted = knockback_velocity([0.2, 0.0, 0.0], true, HIT_KNOCKBACK, 0.0, 1.0, 1.0);
     assert_eq!(resisted, [0.2, 0.0, 0.0]);
 }
+#[test]
+fn same_tick_swap_keeps_old_attributes_but_live_enchantments() {
+    // MC-28289 oracle numbers: full-strength iron sword (5.0 modifier) hits
+    // 6.0; a same-tick swap to a plain stick must still hit 6.0 (OLD
+    // attack_damage), while enchantments read live from the new item.
+    use super::melee_hit_with_attributes;
+    let data = Data::new();
+    let sword = ItemStack::new(SWORD, 1);
+    let stick = ItemStack::new(STICK, 1);
+    let full_sword = melee_hit(&data.rules(), &sword, swing(20));
+    assert_eq!(full_sword.damage, 6.0);
+    // Same-tick swap sword -> stick: attributes from the sword.
+    let swapped = melee_hit_with_attributes(&data.rules(), &stick, &sword, swing(20));
+    assert_eq!(swapped.damage, full_sword.damage);
+    assert_eq!(swapped.strength, full_sword.strength);
+    // Same-tick swap stick -> sword: attributes from the stick (1.0 base).
+    let swapped_back = melee_hit_with_attributes(&data.rules(), &sword, &stick, swing(20));
+    assert_eq!(swapped_back.damage, 1.0);
+    // Enchantments stay live: sharpness 5 on the NEW stick still applies.
+    let mut sharp_stick = ItemStack::new(STICK, 1);
+    sharp_stick.enchantments = vec![ItemEnchantment {
+        id: id("minecraft:sharpness"),
+        level: 5,
+    }];
+    let enchanted_swap = melee_hit_with_attributes(&data.rules(), &sharp_stick, &sword, swing(20));
+    assert_eq!(enchanted_swap.damage, 6.0 + 3.0);
+}

@@ -248,12 +248,27 @@ pub enum CommandNodeKind {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CommandArgumentParser {
     Bool,
-    Float { min: Option<u32>, max: Option<u32> },
-    Double { min: Option<u64>, max: Option<u64> },
-    Integer { min: Option<i32>, max: Option<i32> },
-    Long { min: Option<i64>, max: Option<i64> },
+    Float {
+        min: Option<u32>,
+        max: Option<u32>,
+    },
+    Double {
+        min: Option<u64>,
+        max: Option<u64>,
+    },
+    Integer {
+        min: Option<i32>,
+        max: Option<i32>,
+    },
+    Long {
+        min: Option<i64>,
+        max: Option<i64>,
+    },
     String(CommandStringKind),
-    Entity { single: bool, players_only: bool },
+    Entity {
+        single: bool,
+        players_only: bool,
+    },
     GameProfile,
     BlockPos,
     ColumnPos,
@@ -277,16 +292,32 @@ pub enum CommandArgumentParser {
     Angle,
     Rotation,
     ScoreboardSlot,
-    ScoreHolder { multiple: bool },
+    ScoreHolder {
+        multiple: bool,
+    },
     Swizzle,
     Team,
     ResourceLocation,
     EntityAnchor,
     Dimension,
     GameMode,
-    Time { min: i32 },
-    Resource { registry: Identifier },
-    ResourceKey { registry: Identifier },
+    Time {
+        min: i32,
+    },
+    /// `minecraft:resource_or_tag` (ArgumentTypeInfos id 44).
+    ResourceOrTag {
+        registry: Identifier,
+    },
+    /// `minecraft:resource_or_tag_key` (ArgumentTypeInfos id 45).
+    ResourceOrTagKey {
+        registry: Identifier,
+    },
+    Resource {
+        registry: Identifier,
+    },
+    ResourceKey {
+        registry: Identifier,
+    },
     Uuid,
 }
 
@@ -555,6 +586,8 @@ impl CommandArgumentParser {
             Self::Dimension => 41,
             Self::GameMode => 42,
             Self::Time { .. } => 43,
+            Self::ResourceOrTag { .. } => 44,
+            Self::ResourceOrTagKey { .. } => 45,
             Self::Resource { .. } => 46,
             Self::ResourceKey { .. } => 47,
             Self::Uuid => 56,
@@ -633,7 +666,10 @@ impl CommandArgumentParser {
             }
             Self::ScoreHolder { multiple } => buf.write_u8(u8::from(*multiple)),
             Self::Time { min } => buf.write_i32(*min),
-            Self::Resource { registry } | Self::ResourceKey { registry } => {
+            Self::ResourceOrTag { registry }
+            | Self::ResourceOrTagKey { registry }
+            | Self::Resource { registry }
+            | Self::ResourceKey { registry } => {
                 buf.write_identifier(registry)?;
             }
             _ => {}
@@ -722,6 +758,12 @@ impl CommandArgumentParser {
             42 => Self::GameMode,
             43 => Self::Time {
                 min: buf.read_i32()?,
+            },
+            44 => Self::ResourceOrTag {
+                registry: buf.read_identifier()?,
+            },
+            45 => Self::ResourceOrTagKey {
+                registry: buf.read_identifier()?,
             },
             46 => Self::Resource {
                 registry: buf.read_identifier()?,

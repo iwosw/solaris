@@ -95,6 +95,35 @@ def _frame(packet_id: int, payload: bytes, compressed: bool) -> bytes:
 
 
 class ProxyTests(unittest.TestCase):
+    def test_observer_receives_complete_decompressed_packets_in_all_phases(self) -> None:
+        proxy = light_wire.LightWireProxy.__new__(light_wire.LightWireProxy)
+        proxy.lock = threading.Lock()
+        observed = []
+        proxy.packet_observer = lambda phase, packet, body: observed.append((phase, packet, body))
+        wire = light_wire.WireLight()
+        payload = b"\x14distant_horizons:msg\x00\x10\x00\x04"
+        frames = bytearray(_frame(3, b"", True) + _frame(0x18, payload, True))
+        self.assertEqual(proxy._frames(frames, wire, "configuration", True), ("play", True))
+        self.assertEqual(observed, [("configuration", 3, b""), ("play", 0x18, payload)])
+        self.assertTrue(wire.played)
+        self.assertEqual(frames, bytearray())
+
+    def test_serverbound_observer_does_not_apply_clientbound_state_changes(self) -> None:
+        proxy = light_wire.LightWireProxy.__new__(light_wire.LightWireProxy)
+        proxy.lock = threading.Lock()
+        proxy.packet_observer = lambda *_: self.fail("serverbound packet reached clientbound observer")
+        observed = []
+        proxy.client_packet_observer = lambda phase, packet, body: observed.append((phase, packet, body))
+        wire = light_wire.WireLight()
+        frames = bytearray(_frame(3, b"", False))
+        self.assertEqual(proxy._frames(frames, wire, "login", False, serverbound=True), ("login", False))
+        self.assertFalse(wire.played)
+        payload = b"\x14distant_horizons:msg\x00\x10\x00\x07"
+        frames.extend(_frame(0x14, payload, True))
+        self.assertEqual(proxy._frames(frames, wire, "play", True, serverbound=True), ("play", True))
+        self.assertEqual(observed, [("login", 3, b""), ("play", 0x14, payload)])
+        self.assertEqual(wire.events, [])
+
     def test_proxy_follows_phases_and_compression_to_play_light_packets(self) -> None:
         server = socket.socket()
         server.bind(("127.0.0.1", 0))

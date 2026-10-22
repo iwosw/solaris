@@ -25,6 +25,7 @@ pub use mc_core::boundary;
 
 mod admin;
 pub mod advancements;
+pub mod anti_xray;
 pub mod backup;
 mod boss_bars;
 pub mod chunks;
@@ -38,20 +39,27 @@ pub mod content_import;
 pub mod crypto;
 pub mod dashboard;
 pub mod decode;
+mod dh;
 mod dimensions;
 pub mod fanout;
 pub mod handshake;
 mod light;
+mod lod;
 pub mod login;
+pub mod msmp;
 pub mod operator_cli;
 pub mod plan;
 pub mod play;
 mod plugin_loader;
+pub mod proxy;
 pub mod recipes;
 pub mod server;
 pub(crate) mod settlement_labels;
 pub mod startup_data;
 pub mod status;
+
+mod conn_limit;
+mod vanilla_items;
 
 #[cfg(test)]
 mod plugin_tests;

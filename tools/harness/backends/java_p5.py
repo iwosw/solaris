@@ -21,7 +21,7 @@ REQUIRED_TOOLS = frozenset({
     "minecraft_click_container_slot", "minecraft_quick_move_container_slot",
     "minecraft_click_screen_button", "minecraft_read_recipe_book", "minecraft_screenshot",
     "minecraft_list_entities", "minecraft_break_block", "minecraft_wait_for_health_below",
-    "minecraft_drop_selected_item",
+    "minecraft_drop_selected_item", "minecraft_attack_entity_once",
 })
 
 
@@ -385,6 +385,45 @@ def _town_build(steps: ProbeSteps, origin: tuple[int, int, int], allowed: bool, 
     capture(steps, label + "-break")
 
 
+def _town_protection(steps: ProbeSteps, origin: tuple[int, int, int], allowed: bool, label: str, slot: int) -> None:
+    """Chest, fire and animal damage inside the claim: only an allow-listed player may."""
+    chest = _point(origin, dx=2)
+    if allowed:
+        _open(steps, chest, "ChestMenu", 63)
+        steps.call("minecraft_close_screen")
+    else:
+        steps.call("minecraft_set_hotbar_slot", {"slot": 8})
+        _use(steps, chest)
+        _echo(steps, label + "_chest_roundtrip")
+        steps.call("minecraft_wait_ticks", {"ticks": 10})
+        steps.check(label + "_visitor_cannot_open_chest", steps.observe()["container"]["container_id"] == 0)
+    capture(steps, label + "-chest")
+    fire = _point(origin, dx=slot - 1, dz=-2)
+    steps.call("minecraft_select_hotbar_item", {"item_id": "minecraft:flint_and_steel", "count": 1, "timeout_seconds": steps.remaining()})
+    _use(steps, {**fire, "y": fire["y"] - 1})
+    _echo(steps, label + "_fire_roundtrip")
+    steps.call("minecraft_wait_ticks", {"ticks": 10})
+    _block(steps, fire, "minecraft:fire" if allowed else "minecraft:air")
+    capture(steps, label + "-fire")
+    rows = steps.call("minecraft_list_entities", {"radius": 12, "limit": 128})["entities"]
+    cows = [row for row in rows if row["entity_type"] == "minecraft:cow" and row.get("health") == 10]
+    steps.check(label + "_untouched_cow_present", bool(cows))
+    identity = {key: cows[0][key] for key in ("entity_id", "entity_uuid", "entity_type")}
+    steps.call("minecraft_select_hotbar_item", {"item_id": "minecraft:iron_sword", "count": 1, "timeout_seconds": steps.remaining()})
+    try:
+        # The tool retries until damage lands: a refused attack is bounded to a short wait.
+        steps.call("minecraft_attack_entity_once", {**identity, "timeout_seconds": min(steps.remaining(), 30 if allowed else 6)})
+    except Exception as error:  # the cow's health below is the evidence
+        steps.report.setdefault("attack_notes", {})[label] = str(error)
+    _echo(steps, label + "_attack_roundtrip")
+    steps.call("minecraft_wait_ticks", {"ticks": 10})
+    rows = steps.call("minecraft_list_entities", {"radius": 12, "limit": 128})["entities"]
+    after = next((row for row in rows if row["entity_uuid"] == identity["entity_uuid"]), None)
+    hurt = after is None or after.get("health", 10) < 10
+    steps.check(label + ("_member_hurts_cow" if allowed else "_visitor_cannot_hurt_cow"), hurt == allowed)
+    capture(steps, label + "-cow")
+
+
 def run_towns(client: Any, artifact: Path, timeout: float) -> dict[str, Any]:
     with ProbeSteps(client, artifact / "java-v2-p5-towns", timeout, "java-v2-p5-towns") as steps:
         try:
@@ -395,6 +434,10 @@ def run_towns(client: Any, artifact: Path, timeout: float) -> dict[str, Any]:
             steps.wait(lambda state: abs(state["player"]["x"] - center[0] - .5) < .2 and abs(state["player"]["z"] - center[2] - .5) < .2, "setup_inside_claim_chunk")
             origin = _prepare(steps)
             _set(steps, _point(origin, dx=-1), "minecraft:stone")
+            _set(steps, _point(origin, dx=2), "minecraft:chest")
+            for dx, dz in ((-1.0, .5), (-1.0, -.5), (-1.0, 1.5)):
+                steps.fixture(f"summon minecraft:cow {origin[0] + dx} {origin[1]} {origin[2] + dz} {{NoAI:1b}}")
+            _echo(steps, "claim_fixtures_ordered_receipt")
             for name in ("P5Leader", "P5Guest"):
                 steps.fixture("op " + name)
             _echo(steps, "temporary_fixture_operators_granted")
@@ -410,6 +453,10 @@ def run_towns(client: Any, artifact: Path, timeout: float) -> dict[str, Any]:
                 _inventory(steps, "minecraft:cobblestone", 8)
                 steps.fixture("give @s minecraft:iron_pickaxe 1")
                 _inventory(steps, "minecraft:iron_pickaxe", 1)
+                steps.fixture("give @s minecraft:flint_and_steel 1")
+                _inventory(steps, "minecraft:flint_and_steel", 1)
+                steps.fixture("give @s minecraft:iron_sword 1")
+                _inventory(steps, "minecraft:iron_sword", 1)
                 _deop(steps, name)
                 steps.report.setdefault("actor_uuids", {})[name] = steps.observe()["player"]["entity_uuid"]
                 if allowed:
@@ -417,6 +464,7 @@ def run_towns(client: Any, artifact: Path, timeout: float) -> dict[str, Any]:
                     _command(steps, "town claim", "Chunk claimed for p5qa.")
                 _command(steps, "town info p5qa", "p5qa: 1 members, 1 claims.")
                 _town_build(steps, origin, allowed, "p5-town-" + name.lower())
+                _town_protection(steps, origin, allowed, "p5-protect-" + name.lower(), int(not allowed))
             identity = steps.observe()["player"]["entity_uuid"]
             steps.call("minecraft_disconnect")
             address = steps.client.p4_restart_server(steps.remaining())
@@ -430,6 +478,12 @@ def run_towns(client: Any, artifact: Path, timeout: float) -> dict[str, Any]:
             steps.check("leader_uuid_persisted", steps.observe()["player"]["entity_uuid"] == steps.report["actor_uuids"]["P5Leader"])
             _command(steps, "town info", "p5qa: 1 members, 1 claims.")
             _town_build(steps, origin, True, "p5-town-leader-after-restart")
+            # The leader trusts the guest by UUID (the guest is offline); the same
+            # guest may now build, open the chest, light fire and hurt the cow.
+            _command(steps, "town trust " + steps.report["actor_uuids"]["P5Guest"], "Guest trusted in your claims.")
+            steps.client = steps.client.p5_switch_identity("P5Guest", steps.remaining())
+            _town_build(steps, origin, True, "p5-town-trusted-guest")
+            _town_protection(steps, origin, True, "p5-protect-trusted-guest", 2)
             steps.check("all_permission_and_inventory_checks", all(steps.report["assertions"].values()))
         except Exception:
             try:

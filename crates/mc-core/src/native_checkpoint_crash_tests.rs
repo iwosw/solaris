@@ -165,6 +165,7 @@ fn durable_checkpoint_prunes_covered_batches_and_crash_replays_only_tail() {
             &std::sync::atomic::AtomicBool::new(false),
             &std::sync::atomic::AtomicU64::new(manifest.tick),
             &mut manifest,
+            &mut Default::default(),
         );
         if let Some(done_rx) = done_rx {
             assert!(done_rx.recv().unwrap().is_some());
@@ -232,6 +233,33 @@ async fn queued_save_requests_keep_one_capture_in_flight_and_both_receive_durabl
         crate::journal_budget::JOURNAL_QUEUE_BYTES,
     ));
     let tick_budget = Arc::clone(&journal_budget);
+    let terrain_sources = |state: &crate::tick::TickState| {
+        [
+            Arc::new(crate::terrain::TerrainSource::new(
+                state.world.chunk_source(),
+                String::new(),
+            )),
+            Arc::new(crate::terrain::TerrainSource::new(
+                state
+                    .other_dimensions
+                    .get(&Dimension::Nether)
+                    .expect("nether")
+                    .world
+                    .chunk_source(),
+                String::new(),
+            )),
+            Arc::new(crate::terrain::TerrainSource::new(
+                state
+                    .other_dimensions
+                    .get(&Dimension::End)
+                    .expect("end")
+                    .world
+                    .chunk_source(),
+                String::new(),
+            )),
+        ]
+    };
+    let terrain = terrain_sources(&state);
     let tick = std::thread::spawn(move || {
         tick_loop(
             state,
@@ -249,6 +277,9 @@ async fn queued_save_requests_keep_one_capture_in_flight_and_both_receive_durabl
                 unlocked_sessions: Arc::new(parking_lot::RwLock::new(Default::default())),
                 shutdown_rx,
                 checkpoint_rx,
+                backup_rx: std::sync::mpsc::channel().1,
+                pause_when_empty_seconds: 0,
+                terrain,
             },
         );
     });

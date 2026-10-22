@@ -338,6 +338,60 @@ fn sheared_sheep_regrow_wool_by_grazing() {
     panic!("the sheep never grazed");
 }
 
+/// `[mob_griefing] sheep_grazing = false` keeps the grass block: wool still
+/// regrows because vanilla's rule only guards the block change.
+#[test]
+fn sheep_grazing_switch_keeps_grass_while_wool_regrows() {
+    let mut state = test_state(2);
+    state.mob_griefing.sheep_grazing = false;
+    let player = join(&mut state);
+    let registry = Arc::clone(&state.registry);
+    let sheep_type = registry
+        .entity_types
+        .id_of(&mc_data::Identifier::parse("minecraft:sheep").expect("id"))
+        .expect("sheep");
+    let grass = registry.states.grass_block;
+    let (x, y, z) = (-8..=8)
+        .flat_map(|dx| (-8..=8).map(move |dz| (dx, dz)))
+        .find_map(|(dx, dz)| {
+            let (x, z) = (player[0].floor() as i32 + dx, player[2].floor() as i32 + dz);
+            let mut y = mc_world::MAX_Y - 1;
+            while state.world.block_at(x, y, z) == Some(registry.states.air) {
+                y -= 1;
+            }
+            (state.world.block_at(x, y, z) == Some(grass)).then_some((x, y, z))
+        })
+        .expect("grass near spawn");
+    let sheep = state.spawn_mob(
+        sheep_type,
+        [f64::from(x) + 0.5, f64::from(y + 1), f64::from(z) + 0.5],
+        8.0,
+    );
+    let slot = state.entities.slot_of(sheep).expect("sheep");
+    crate::tick::set_wool(
+        Arc::make_mut(&mut state.entities.row_mut(slot).appearance),
+        0x10 | 12,
+    );
+    for _ in 0..8_000 {
+        let _ = run_tick(&mut state, &[]);
+        let slot = state.entities.slot_of(sheep).expect("sheep");
+        if crate::tick::wool_of(&state.entities.row(slot).appearance) == 12 {
+            let pos = state.entities.pos(slot);
+            assert_eq!(
+                state.world.block_at(
+                    pos[0].floor() as i32,
+                    pos[1].floor() as i32 - 1,
+                    pos[2].floor() as i32,
+                ),
+                Some(grass),
+                "the disabled switch leaves grass instead of dirt"
+            );
+            return;
+        }
+    }
+    panic!("the sheep never regrew wool");
+}
+
 #[test]
 fn vegetation_does_not_hide_a_creature_or_monster_spawn_floor() {
     let mut state = test_state(2);

@@ -4,10 +4,10 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use mc_data::{Identifier, ItemStack};
 use mc_script::{
-    AdmittedScriptCommand, ScriptAxisAlignedZone, ScriptCommand, ScriptEvent, ScriptInventoryClick,
-    ScriptInventoryEndpoint, ScriptInventoryMenu, ScriptInventoryResourceDelta,
-    ScriptOperationFailure, ScriptPlayerContext, ScriptPlayerId, ScriptPlayerInventoryFailure,
-    ScriptPluginTarget, ScriptPosition, ScriptZoneProtection,
+    AdmittedScriptCommand, ScriptAxisAlignedZone, ScriptClientViewFailure, ScriptCommand,
+    ScriptEvent, ScriptInventoryClick, ScriptInventoryEndpoint, ScriptInventoryMenu,
+    ScriptInventoryResourceDelta, ScriptOperationFailure, ScriptPlayerContext, ScriptPlayerId,
+    ScriptPlayerInventoryFailure, ScriptPluginTarget, ScriptPosition, ScriptZoneProtection,
 };
 use mc_world::BlockPos;
 use serde::{Deserialize, Serialize};
@@ -16,6 +16,8 @@ use crate::boundary::{ClickMode, ConnectionId, EntityId, PlayerChange, PlayerInp
 use crate::tick::TickState;
 
 const ZONES: &str = "player-zones";
+const NATIVE_SETTLEMENTS_OWNER: &str = "solaris-settlements";
+const NATIVE_SETTLEMENTS_OVERVIEW: &str = "solaris-settlements:overview";
 
 #[derive(Default)]
 pub(crate) struct PlayerAuthority {
@@ -23,6 +25,7 @@ pub(crate) struct PlayerAuthority {
     zones: BTreeMap<(String, String), Zone>,
     permissions: BTreeMap<ConnectionId, u8>,
     loader_ready: BTreeSet<ConnectionId>,
+    view_sequence: u64,
 }
 
 impl PlayerAuthority {
@@ -44,6 +47,37 @@ pub(crate) fn note_loader_ready(state: &mut TickState, connection: ConnectionId)
     }
 }
 
+/// Deliver one verified Loader key request to its declared owner. The core-owned
+/// settlements overview is the one native exception: it opens the existing
+/// server dialog instead of requiring a duplicate plugin presentation.
+pub(crate) fn loader_view_request(
+    state: &mut TickState,
+    connection: ConnectionId,
+    owner: &str,
+    request_kind: mc_script::ScriptClientViewKey,
+) {
+    if state.connections.entity_of(connection).is_none()
+        || !state.plugin_players.loader_ready.contains(&connection)
+    {
+        return;
+    }
+    if owner == NATIVE_SETTLEMENTS_OWNER && request_kind.as_str() == NATIVE_SETTLEMENTS_OVERVIEW {
+        crate::settlements::ui::open_menu(state, connection, None);
+        return;
+    }
+    let Some(runtime) = state.plugin_runtime.as_ref() else {
+        return;
+    };
+    if !runtime.client_view_allowed(owner) || runtime.boundary.plugin_target(owner).is_none() {
+        return;
+    }
+    if let Ok(event) =
+        ScriptEvent::loader_view_request(owner, ScriptPlayerId::new(connection.0), request_kind)
+    {
+        runtime.boundary.enqueue_observation(event);
+    }
+}
+
 struct OpenMenu {
     target: ScriptPluginTarget,
     definition: ScriptInventoryMenu,
@@ -62,7 +96,9 @@ struct ZoneRecord {
     dimension: String,
     minimum: [f64; 3],
     maximum: [f64; 3],
-    allowed_actor: Option<String>,
+    /// Allow-list of a protected zone; empty for an event-only zone.
+    allowed_actors: Vec<String>,
+    public_use: bool,
 }
 
 impl ZoneRecord {
@@ -73,9 +109,13 @@ impl ZoneRecord {
             dimension: zone.dimension().into(),
             minimum: [a.x(), a.y(), a.z()],
             maximum: [b.x(), b.y(), b.z()],
-            allowed_actor: zone
+            allowed_actors: zone
                 .protection()
-                .map(|policy| policy.allowed_actor_uuid().into()),
+                .map(|policy| policy.allowed_actor_uuids().to_vec())
+                .unwrap_or_default(),
+            public_use: zone
+                .protection()
+                .is_some_and(ScriptZoneProtection::public_use),
         }
     }
 
@@ -88,11 +128,14 @@ impl ZoneRecord {
             .ok_or_else(invalid)?;
         let maximum = ScriptPosition::try_new(self.maximum[0], self.maximum[1], self.maximum[2])
             .ok_or_else(invalid)?;
-        let protection = self
-            .allowed_actor
-            .map(ScriptZoneProtection::try_actor_or_operator)
-            .transpose()
-            .map_err(|_| invalid())?;
+        let protection = if self.allowed_actors.is_empty() {
+            None
+        } else {
+            Some(
+                ScriptZoneProtection::try_new(self.allowed_actors, self.public_use)
+                    .map_err(|_| invalid())?,
+            )
+        };
         ScriptAxisAlignedZone::try_new_with_protection(
             id,
             &self.dimension,
@@ -316,19 +359,88 @@ fn execute_local(state: &mut TickState, admitted: AdmittedScriptCommand) -> Opti
             }
             None
         }
-        ScriptCommand::OpenClientView { request } => {
-            tracing::error!(
-                plugin = admitted.plugin_id(),
-                command = "open-client-view",
-                "plugin command refused: native view authority unavailable"
-            );
+        ScriptCommand::OpenClientView { .. } => {
+            let (target, request) = admitted.into_open_client_view().ok()?;
+            let connection = ConnectionId(request.player_id().value());
+            let failure = if state.connections.entity_of(connection).is_none()
+                || !state.plugin_players.loader_ready.contains(&connection)
+            {
+                Some(ScriptClientViewFailure::PlayerUnavailable)
+            } else if !request
+                .owned_view_id()
+                .strip_prefix(target.plugin_id())
+                .is_some_and(|suffix| suffix.starts_with(':') && suffix.len() > 1)
+                || !state
+                    .plugin_runtime
+                    .as_ref()
+                    .is_some_and(|runtime| runtime.client_view_allowed(target.plugin_id()))
+            {
+                Some(ScriptClientViewFailure::Refused)
+            } else {
+                None
+            };
+            if let Some(failure) = failure {
+                return ScriptEvent::client_view_opened(
+                    target.plugin_id(),
+                    request.request_id(),
+                    request.player_id(),
+                    None,
+                    None,
+                    Some(failure),
+                )
+                .ok();
+            }
+            let Some(sequence) = state.plugin_players.view_sequence.checked_add(1) else {
+                return ScriptEvent::client_view_opened(
+                    target.plugin_id(),
+                    request.request_id(),
+                    request.player_id(),
+                    None,
+                    None,
+                    Some(ScriptClientViewFailure::TooLarge),
+                )
+                .ok();
+            };
+            let instance_id = format!("{}/{}", request.owned_view_id(), sequence);
+            if mc_script::ScriptClientViewKey::try_new(&instance_id).is_err() {
+                return ScriptEvent::client_view_opened(
+                    target.plugin_id(),
+                    request.request_id(),
+                    request.player_id(),
+                    None,
+                    None,
+                    Some(ScriptClientViewFailure::TooLarge),
+                )
+                .ok();
+            }
+            let payload =
+                mc_loader::encode_loader_view_message(&mc_loader::LoaderViewWireMessage::Open {
+                    view_instance_id: &instance_id,
+                    revision: 1,
+                    view_id: request.owned_view_id(),
+                    title: request.owned_view_id(),
+                    model: request.model(),
+                });
+            let Ok(payload) = payload else {
+                return ScriptEvent::client_view_opened(
+                    target.plugin_id(),
+                    request.request_id(),
+                    request.player_id(),
+                    None,
+                    None,
+                    Some(ScriptClientViewFailure::TooLarge),
+                )
+                .ok();
+            };
+            state.plugin_players.view_sequence = sequence;
+            state.push_player(connection, PlayerChange::PluginClientView { payload });
             ScriptEvent::client_view_opened(
-                admitted.plugin_id(),
+                target.plugin_id(),
                 request.request_id(),
                 request.player_id(),
+                Some(instance_id),
+                Some(1),
                 None,
-                None,
-                Some(mc_script::ScriptClientViewFailure::Refused),
             )
             .ok()
         }
@@ -728,6 +840,105 @@ pub(crate) fn allows_plugin_bounds(
 
 /// Native break/place/use admission must call this for the actual affected cell.
 pub(crate) fn allows_block(state: &TickState, actor: EntityId, position: BlockPos) -> bool {
+    admits_cell(state, actor, position, false)
+}
+
+/// Hand use of a door-like block by an actor the cell's zones do not list, which
+/// every protected zone around the cell nevertheless admits through `public_use`.
+pub(crate) fn public_use_override(state: &TickState, actor: EntityId, position: BlockPos) -> bool {
+    is_public_use_block(state, position)
+        && !admits_cell(state, actor, position, false)
+        && admits_cell(state, actor, position, true)
+}
+
+/// Doors, trapdoors, fence gates, buttons and levers: the blocks a zone's
+/// `public_use` flag opens to everyone. Iron doors and trapdoors react only to
+/// redstone, so they are not hand-use blocks.
+pub(crate) fn is_public_use_block(state: &TickState, position: BlockPos) -> bool {
+    let Some(id) = state.world.block_at(position.x, position.y, position.z) else {
+        return false;
+    };
+    state
+        .registry
+        .blocks
+        .by_id(mc_world::BlockStateId(id))
+        .is_some_and(|block| {
+            let path = block.block.id.path();
+            path == "lever"
+                || path.ends_with("_button")
+                || path.ends_with("_fence_gate")
+                || (path.ends_with("_door") && path != "iron_door")
+                || (path.ends_with("_trapdoor") && path != "iron_trapdoor")
+        })
+}
+
+/// Whether `actor` may act on `target` where it stands (interaction, leashing,
+/// breeding, riding, item frames, containers carried by entities).
+pub(crate) fn allows_entity(state: &TickState, actor: EntityId, target: EntityId) -> bool {
+    let Some(slot) = state.entities.slot_of(target) else {
+        return true;
+    };
+    allows_block(state, actor, entity_cell(state, slot))
+}
+
+/// Whether `actor` may hurt `target`: PvP and every passive entity inside a
+/// protected zone are shielded from non-members; hostile mobs are not, so a
+/// visitor can still defend themself.
+pub(crate) fn allows_damage(state: &TickState, actor: EntityId, target: EntityId) -> bool {
+    let Some(slot) = state.entities.slot_of(target) else {
+        return true;
+    };
+    allows_block(state, actor, entity_cell(state, slot))
+        || crate::natural_spawn::category_of(state, slot) == crate::blueprint::MobCategory::Monster
+}
+
+/// Whether a protected zone shields `target` from this damage source: only a
+/// player's melee, sweep, mace and projectile damage is subject to the allow-list.
+pub(crate) fn shields_damage(
+    state: &TickState,
+    target: crate::entities::EntitySlot,
+    source: Option<crate::intent::DamageSource>,
+) -> bool {
+    use crate::intent::DamageSource;
+    let attacker = match source {
+        Some(
+            DamageSource::Melee { attacker, .. }
+            | DamageSource::Mace { attacker, .. }
+            | DamageSource::Sweep { attacker, .. },
+        ) => attacker,
+        Some(DamageSource::Projectile { owner, .. }) => owner,
+        Some(DamageSource::Explosion { .. }) | None => return false,
+    };
+    if (target.0 as usize) >= state.entities.len() {
+        return false;
+    }
+    !allows_damage(state, attacker, state.entities.body(target).id)
+}
+
+fn entity_cell(state: &TickState, slot: crate::entities::EntitySlot) -> BlockPos {
+    let at = state.entities.pos(slot);
+    BlockPos {
+        x: at[0].floor() as i32,
+        y: at[1].floor() as i32,
+        z: at[2].floor() as i32,
+    }
+}
+
+/// Whether a protected zone claims this cell against environmental change:
+/// explosions and fire never destroy or spread into it, whoever caused them.
+pub(crate) fn protects_cell(state: &TickState, position: BlockPos) -> bool {
+    let point = [
+        f64::from(position.x),
+        f64::from(position.y),
+        f64::from(position.z),
+    ];
+    state.plugin_players.zones.values().any(|zone| {
+        zone.definition.protection().is_some()
+            && contains(&zone.definition, state.dimension.name(), point)
+    })
+}
+
+fn admits_cell(state: &TickState, actor: EntityId, position: BlockPos, public_use: bool) -> bool {
     if !state
         .plugin_players
         .zones
@@ -743,18 +954,17 @@ pub(crate) fn allows_block(state: &TickState, actor: EntityId, position: BlockPo
         return false;
     };
     let uuid = uuid.to_string();
+    let operator = state.plugin_players.is_operator(connection);
+    let point = [
+        f64::from(position.x),
+        f64::from(position.y),
+        f64::from(position.z),
+    ];
     state.plugin_players.zones.values().all(|zone| {
-        !contains(
-            &zone.definition,
-            state.dimension.name(),
-            [
-                f64::from(position.x),
-                f64::from(position.y),
-                f64::from(position.z),
-            ],
-        ) || zone.definition.protection().is_none_or(|policy| {
-            policy.allows_actor(&uuid, state.plugin_players.is_operator(connection))
-        })
+        !contains(&zone.definition, state.dimension.name(), point)
+            || zone.definition.protection().is_none_or(|policy| {
+                policy.allows_actor(&uuid, operator) || (public_use && policy.public_use())
+            })
     })
 }
 
@@ -827,3 +1037,7 @@ pub(crate) fn tick(state: &mut TickState) -> Vec<ScriptEvent> {
 #[cfg(test)]
 #[path = "plugin_player_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "plugin_zone_protection_tests.rs"]
+mod zone_protection_tests;

@@ -100,6 +100,9 @@ class LoaderV2Tests(unittest.TestCase):
                 "settlement info p5qa",
                 "settlement info p5qa",
             ])
+            steps.call.assert_any_call(
+                "minecraft_press_inputs", {"keys": ["key.keyboard.c"], "ticks": 1}
+            )
             self.assertNotIn("settlements_bundle_cache", result)
 
     def test_cli_forwards_typed_loader_options(self) -> None:

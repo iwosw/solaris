@@ -144,6 +144,7 @@ pub struct ClientBundle {
     loaders: Vec<ClientLoader>,
     content: Vec<ClientContentKind>,
     permissions: Vec<ClientPermission>,
+    required: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -335,6 +336,7 @@ impl ClientBundle {
             loaders,
             content,
             permissions,
+            required: true,
         }
     }
     #[must_use]
@@ -395,6 +397,20 @@ impl ClientBundle {
     #[must_use]
     pub fn permissions(&self) -> &[ClientPermission] {
         &self.permissions
+    }
+
+    /// Whether a client without the Loader must be refused (the default). An
+    /// optional bundle is only offered to clients that answer the Loader probe.
+    #[must_use]
+    pub const fn required(&self) -> bool {
+        self.required
+    }
+
+    /// Mark the bundle optional (`false`) or required (`true`).
+    #[must_use]
+    pub const fn with_required(mut self, required: bool) -> Self {
+        self.required = required;
+        self
     }
 
     #[must_use]

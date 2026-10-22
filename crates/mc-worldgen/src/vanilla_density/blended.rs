@@ -3,14 +3,14 @@ use crate::vanilla_climate::noise::{ImprovedNoise, NoiseFactory};
 /// The legacy octave initialization used by 26.1.2 `BlendedNoise`, even with
 /// the overworld's modern xoroshiro positional random source.
 pub(super) struct BlendedNoise {
-    min: [ImprovedNoise; 16],
-    max: [ImprovedNoise; 16],
-    main: [ImprovedNoise; 8],
-    xz: f64,
-    y: f64,
-    xz_factor: f64,
-    y_factor: f64,
-    smear: f64,
+    pub(super) min: [ImprovedNoise; 16],
+    pub(super) max: [ImprovedNoise; 16],
+    pub(super) main: [ImprovedNoise; 8],
+    pub(super) xz: f64,
+    pub(super) y: f64,
+    pub(super) xz_factor: f64,
+    pub(super) y_factor: f64,
+    pub(super) smear: f64,
 }
 
 impl BlendedNoise {

@@ -11,6 +11,7 @@ use std::sync::Arc;
 
 pub use crate::entity_views::EntityViews;
 use mc_data::item_stack::ItemStack;
+use mc_script::ScriptClientViewKey;
 pub use mc_world::chunk::{BlockPos, Chunk, ChunkPos};
 use uuid::Uuid;
 
@@ -39,6 +40,14 @@ pub enum PlayerInput {
     },
     /// Trusted edge notification after the connection accepted a Loader bind.
     PluginClientReady { connection: ConnectionId },
+    /// Trusted edge admission of a Loader key request from this negotiated
+    /// connection, resolved against the verified artifact index.
+    LoaderViewRequest {
+        connection: ConnectionId,
+        owner: String,
+        request_kind: ScriptClientViewKey,
+    },
+
     /// Trusted edge snapshot of this live connection's actual permission level.
     PermissionLevel { connection: ConnectionId, level: u8 },
     /// Trusted edge admission of this live connection's negotiated client view
@@ -297,6 +306,7 @@ impl PlayerInput {
             Self::ConsoleCommand(_) => crate::command_console::CONNECTION,
             Self::Join { connection, .. }
             | Self::PluginClientReady { connection }
+            | Self::LoaderViewRequest { connection, .. }
             | Self::PermissionLevel { connection, .. }
             | Self::SetViewDistance { connection, .. }
             | Self::SetLocale { connection, .. }
@@ -671,6 +681,44 @@ pub struct PlayerAttribute {
     pub modifiers: Vec<mc_data::item_components::ItemAttributeModifier>,
 }
 
+/// One `/title` packet for a connection (`ClientboundSetTitleText` & friends).
+#[derive(Debug, Clone, PartialEq)]
+pub enum TitleChange {
+    Title(mc_nbt::Tag),
+    Subtitle(mc_nbt::Tag),
+    ActionBar(mc_nbt::Tag),
+    Times {
+        fade_in: i32,
+        stay: i32,
+        fade_out: i32,
+    },
+    Clear {
+        reset_times: bool,
+    },
+}
+
+/// One `ClientboundBossEvent` operation for a custom boss bar.
+/// `color`/`overlay` are vanilla `BossBarColor`/`BossBarOverlay` ordinals;
+/// `flags` bit 0 darken sky, bit 1 play boss music, bit 2 create world fog.
+#[derive(Debug, Clone, PartialEq)]
+pub enum BossBarChange {
+    Add {
+        name: mc_nbt::Tag,
+        progress: f32,
+        color: i32,
+        overlay: i32,
+        flags: u8,
+    },
+    Remove,
+    Progress(f32),
+    Name(mc_nbt::Tag),
+    Style {
+        color: i32,
+        overlay: i32,
+    },
+    Properties(u8),
+}
+
 /// Reliable results for the connection identified by the enclosing outbox queue key.
 #[derive(Debug, Clone, PartialEq)]
 pub enum PlayerChange {
@@ -846,6 +894,10 @@ pub enum PlayerChange {
         plugin_id: String,
         sound: mc_script::ScriptClientSound,
     },
+    /// Encoded wire-3 Loader view message for this negotiated connection.
+    PluginClientView {
+        payload: Vec<u8>,
+    },
     Experience {
         progress: f32,
         level: i32,
@@ -867,6 +919,22 @@ pub enum PlayerChange {
     /// World difficulty (0 peaceful .. 3 hard); the join burst says easy.
     DifficultyChanged {
         difficulty: u8,
+    },
+    /// `/title` overlay state (title, subtitle, action bar, times, clear/reset).
+    Title(TitleChange),
+    /// Server tick-rate manager state (`/tick rate|freeze|unfreeze`).
+    TickingState {
+        rate: f32,
+        frozen: bool,
+    },
+    /// Frozen-tick budget (`/tick step`): remaining ticks to run.
+    TickingStep {
+        steps: i32,
+    },
+    /// Custom boss bar (`/bossbar`) update for this connection.
+    BossBar {
+        id: Uuid,
+        change: BossBarChange,
     },
     Health {
         health: f32,

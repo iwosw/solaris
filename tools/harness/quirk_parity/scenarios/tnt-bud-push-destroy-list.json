@@ -1,0 +1,210 @@
+{
+ "id": "tnt-bud-push-destroy-list",
+ "family": "tnt-duping",
+ "description": "BUD TNT (powered by the block under it while tnt_explodes=false, never updated) pushed by a piston whose line ends in a DESTROY-reaction block (carpet / coral fan). 26.1.2 oracle result: the destroy list is removed with flags 18 (no neighbour update) BEFORE the moving blocks replace the TNT's cell, so the TNT is only moved, NOT primed - this is the negative control for the duper family (tnt-duper-found-bud holds the cells that do duplicate). Cell 5 (two TNT) is the one case where vanilla primes the pushed TNT.",
+ "boxes": [
+  [
+   0,
+   60,
+   0,
+   15,
+   72,
+   15
+  ],
+  [
+   16,
+   60,
+   0,
+   31,
+   72,
+   15
+  ],
+  [
+   32,
+   60,
+   0,
+   47,
+   72,
+   15
+  ],
+  [
+   48,
+   60,
+   0,
+   63,
+   72,
+   15
+  ],
+  [
+   64,
+   60,
+   0,
+   79,
+   72,
+   15
+  ],
+  [
+   80,
+   60,
+   0,
+   95,
+   72,
+   15
+  ],
+  [
+   96,
+   60,
+   0,
+   111,
+   72,
+   15
+  ]
+ ],
+ "setup": [
+  "gamerule tnt_explodes false",
+  "fill 0 63 0 15 63 15 minecraft:stone",
+  "setblock 4 64 4 minecraft:piston[facing=east]",
+  "setblock 5 63 4 minecraft:redstone_block",
+  "setblock 5 64 4 minecraft:tnt",
+  "setblock 6 64 4 minecraft:white_carpet",
+  "fill 16 63 0 31 63 15 minecraft:stone",
+  "setblock 20 64 4 minecraft:piston[facing=east]",
+  "setblock 21 63 4 minecraft:redstone_block",
+  "setblock 21 64 4 minecraft:tnt",
+  "setblock 22 64 4 minecraft:dead_tube_coral_fan",
+  "fill 32 63 0 47 63 15 minecraft:stone",
+  "setblock 36 64 4 minecraft:piston[facing=east]",
+  "setblock 37 64 4 minecraft:tnt",
+  "setblock 38 64 4 minecraft:white_carpet",
+  "fill 48 63 0 63 63 15 minecraft:stone",
+  "setblock 52 64 4 minecraft:sticky_piston[facing=east]",
+  "setblock 53 63 4 minecraft:redstone_block",
+  "setblock 53 64 4 minecraft:tnt",
+  "setblock 54 64 4 minecraft:white_carpet",
+  "fill 64 63 0 79 63 15 minecraft:stone",
+  "setblock 75 64 4 minecraft:piston[facing=west]",
+  "setblock 74 63 4 minecraft:redstone_block",
+  "setblock 74 64 4 minecraft:tnt",
+  "setblock 73 64 4 minecraft:white_carpet",
+  "fill 80 63 0 95 63 15 minecraft:stone",
+  "setblock 83 64 4 minecraft:piston[facing=east]",
+  "setblock 84 64 4 minecraft:tnt",
+  "setblock 85 63 4 minecraft:redstone_block",
+  "setblock 85 64 4 minecraft:tnt",
+  "setblock 86 64 4 minecraft:dead_tube_coral_fan",
+  "fill 96 63 0 111 63 15 minecraft:stone",
+  "setblock 99 64 4 minecraft:piston[facing=east]",
+  "setblock 100 64 4 minecraft:slime_block",
+  "setblock 101 64 4 minecraft:tnt",
+  "setblock 101 63 4 minecraft:redstone_block",
+  "setblock 102 64 4 minecraft:white_carpet"
+ ],
+ "phases": [
+  {
+   "name": "armed",
+   "commands": [
+    "gamerule tnt_explodes true"
+   ],
+   "ticks": 2
+  },
+  {
+   "name": "fired",
+   "commands": [
+    "setblock 4 64 3 minecraft:redstone_block",
+    "setblock 20 64 3 minecraft:redstone_block",
+    "setblock 36 64 3 minecraft:redstone_block",
+    "setblock 52 64 3 minecraft:redstone_block",
+    "setblock 75 64 3 minecraft:redstone_block",
+    "setblock 83 64 3 minecraft:redstone_block",
+    "setblock 99 64 3 minecraft:redstone_block"
+   ],
+   "ticks": 6
+  }
+ ],
+ "compare": {
+  "blocks": "exact",
+  "entities": "counts",
+  "phases": [
+   "armed",
+   "fired"
+  ],
+  "entity_types": [
+   "minecraft:tnt",
+   "minecraft:item"
+  ]
+ },
+ "vanilla_expect": [
+  {
+   "phase": "armed",
+   "check": "count",
+   "cell": 0,
+   "key": "minecraft:tnt",
+   "min": 0,
+   "max": 0
+  },
+  {
+   "phase": "armed",
+   "check": "block",
+   "cell": 0,
+   "pos": [
+    5,
+    64,
+    4
+   ],
+   "equals": "minecraft:tnt[unstable=false]"
+  },
+  {
+   "phase": "fired",
+   "check": "count",
+   "cell": 0,
+   "key": "minecraft:tnt",
+   "min": 0,
+   "max": 0
+  },
+  {
+   "phase": "fired",
+   "check": "block",
+   "cell": 0,
+   "pos": [
+    6,
+    64,
+    4
+   ],
+   "equals": "minecraft:tnt[unstable=false]"
+  },
+  {
+   "phase": "fired",
+   "check": "count",
+   "cell": 2,
+   "key": "minecraft:tnt",
+   "min": 0,
+   "max": 0
+  },
+  {
+   "phase": "fired",
+   "check": "count",
+   "cell": 3,
+   "key": "minecraft:tnt",
+   "min": 0,
+   "max": 0
+  },
+  {
+   "phase": "fired",
+   "check": "count",
+   "cell": 5,
+   "key": "minecraft:tnt",
+   "min": 1,
+   "max": 1
+  }
+ ],
+ "cells": [
+  "carpet-end",
+  "coral-fan-end",
+  "control-unpowered-tnt",
+  "sticky-carpet-end",
+  "west-carpet-end",
+  "two-tnt-fan-end",
+  "slime-tnt-carpet-end"
+ ],
+ "known_divergence": "Solaris and vanilla agree on the TNT outcome (moved, not primed; entity counts equal) but differ in fluid details of the destroy-list cells: vanilla leaves water[level=1] at the removed carpet/fan neighbour in 'armed' (cells 1,5) and a non-waterlogged dead_tube_coral_fan in 'fired', Solaris has no flowing water there and a waterlogged fan (flow/waterlogging tick order around the piston push). Repro: --scenario tnt-bud-push-destroy-list."
+}

@@ -243,8 +243,12 @@ pub enum Command {
         levels: bool,
     },
     WorldBorder(crate::command_border::BorderCommand),
+    BossBar(crate::command_bossbar::BossBarCommand),
     Settlement(crate::settlements::commands::SettlementCommand),
     World(crate::command_world::WorldCommand),
+    /// `/co`: block-log inspect, lookup, rollback and restore.
+    BlockLog(crate::block_log::BlockLogCommand),
+    ForceLoad(crate::forceload::ForceLoadCommand),
     Enchant(crate::command_enchant::EnchantCommand),
     Scoreboard(crate::scoreboard::ScoreboardCommand),
     Say(String),
@@ -257,7 +261,17 @@ pub enum Command {
         message: String,
         selectors: bool,
     },
+    TellRaw {
+        target: Target,
+        message: mc_nbt::Tag,
+    },
+    Title {
+        target: Target,
+        action: crate::command_text::TitleAction,
+    },
     Seed,
+    Tick(crate::command_tick::TickCommand),
+    Locate(crate::command_locate::LocateCommand),
     /// Solaris test fixture: put `count` of `item` into hotbar slot.
     DebugGive {
         item: crate::command_items::ItemArgument,
@@ -322,9 +336,12 @@ pub fn parse(command: &str, operator: bool) -> Result<Command, CommandError> {
         "xp" | "experience" => parse_experience(args),
         "summon" => parse_summon(args),
         "worldborder" => crate::command_border::parse(args).map(Command::WorldBorder),
+        "forceload" => crate::forceload::parse(args).map(Command::ForceLoad),
+        "co" => crate::block_log::parse(args).map(Command::BlockLog),
         "setblock" | "fill" | "spawnpoint" | "setworldspawn" => {
             crate::command_world::parse(name, args).map(Command::World)
         }
+        "bossbar" => crate::command_bossbar::parse(args, command).map(Command::BossBar),
         "enchant" => crate::command_enchant::parse(args).map(Command::Enchant),
         "team" | "scoreboard" => {
             crate::scoreboard::ScoreboardCommand::parse(name, args).map(Command::Scoreboard)
@@ -352,7 +369,17 @@ pub fn parse(command: &str, operator: bool) -> Result<Command, CommandError> {
                 selectors: operator,
             })
         }
+        "tellraw" if args.len() >= 2 => {
+            let (target, message) = crate::command_text::parse_tellraw(args, command)?;
+            Ok(Command::TellRaw { target, message })
+        }
+        "title" if args.len() >= 2 => {
+            let (target, action) = crate::command_text::parse_title(args, command)?;
+            Ok(Command::Title { target, action })
+        }
         "seed" if args.is_empty() => Ok(Command::Seed),
+        "tick" => crate::command_tick::parse(args).map(Command::Tick),
+        "locate" => crate::command_locate::parse(args).map(Command::Locate),
         "debug" => parse_debug(args),
         _ => Err(CommandError::Unknown),
     }

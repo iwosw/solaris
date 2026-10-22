@@ -392,7 +392,8 @@ async fn native_denied_placement_repairs_inventory_without_build_hooks() {
                         "dimension": "minecraft:overworld",
                         "minimum": [denied_cell.x, denied_cell.y, denied_cell.z],
                         "maximum": [denied_cell.x, denied_cell.y, denied_cell.z],
-                        "allowed_actor": uuid::Uuid::new_v4().to_string()
+                        "allowed_actors": [uuid::Uuid::new_v4().simple().to_string()],
+                        "public_use": false
                     }
                 }),
             );
@@ -1246,7 +1247,8 @@ async fn child_dimension_preview_uses_and_restores_global_protection_and_kv_auth
                     "dimension": "minecraft:the_end",
                     "minimum": [8.0, 200.0, 8.0],
                     "maximum": [8.0, 203.0, 8.0],
-                    "allowed_actor": owner.to_string()
+                    "allowed_actors": [owner.simple().to_string()],
+                    "public_use": false
                 }
             }),
         );

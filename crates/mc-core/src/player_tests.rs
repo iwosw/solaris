@@ -236,7 +236,7 @@ fn death_drops_every_stack_exactly_once() {
     let menu = p.open.as_mut().unwrap();
     menu.grid[4] = ItemStack::new(STONE, 2);
     menu.carried = ItemStack::new(APPLE, 1);
-    let died = p.die(&rules, false);
+    let died = p.die(&rules, false, false);
     assert!(p.open.is_none());
     assert!(p.inventory.slots.iter().all(ItemStack::is_empty));
     assert_eq!(total(&p, &died, STONE), 12);
@@ -254,7 +254,7 @@ fn keep_inventory_preserves_carried_stacks_and_experience_through_respawn() {
     let experience = p.vitals.experience;
     p.open_menu(&rules, MenuKind::CraftingTable, "Crafting".into(), &[]);
     p.open.as_mut().unwrap().carried = ItemStack::new(APPLE, 1);
-    let died = p.die(&rules, true);
+    let died = p.die(&rules, true, false);
     assert!(p.open.is_none());
     assert!(died.dropped.is_empty());
     assert_eq!(p.inventory.slots[5], ItemStack::new(STONE, 10));
@@ -276,7 +276,7 @@ fn vanishing_curse_is_destroyed_only_when_inventory_is_not_kept() {
             level: 1,
         });
         p.inventory.slots[0] = stack.clone();
-        let effects = p.die(&rules, keep_inventory);
+        let effects = p.die(&rules, keep_inventory, false);
         assert!(effects.dropped.is_empty());
         assert_eq!(
             p.inventory.slots[0],

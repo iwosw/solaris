@@ -310,9 +310,16 @@ pub fn vanilla_blueprints(
                     .and_then(|food| items.id_of(&food))
             })
             .collect();
+        // Entities without independently sourced facts (iron golem, zombie villager)
+        // still own the vanilla `entities/<name>` table when the catalog ships one.
         let loot_table = entity_types
             .facts_of(&id)
-            .and_then(|facts| facts.loot_table.clone());
+            .and_then(|facts| facts.loot_table.clone())
+            .or_else(|| {
+                mc_data::Identifier::parse(format!("minecraft:entities/{}", id.path()))
+                    .ok()
+                    .filter(|table| entity_loot.has_root(table))
+            });
         if let Some(type_id) = entity_types.id_of(&id) {
             out.push((
                 type_id,

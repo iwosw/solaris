@@ -193,14 +193,34 @@ pub fn vertical_plant_growth_edits(
     if pos.y - bottom_y + 1 >= max_height {
         return None;
     }
-
+    // Vanilla `SugarCaneBlock`/`CactusBlock.randomTick`: every random tick
+    // ages the stalk by one and only age 15 extends it (and resets to 0), so
+    // a stalk grows once per ~16 random ticks. Reduced registries without an
+    // `age` property keep the single-tick growth.
+    let age = block_state_property(current, "age").and_then(|age| age.parse::<u8>().ok());
+    if let Some(age) = age
+        && age < 15
+    {
+        let aged = sibling_state_with_property(blocks, current, "age", &(age + 1).to_string())?;
+        return Some(vec![PlantBlockEdit {
+            pos,
+            new_state: aged,
+        }]);
+    }
     if plant_path == "cactus" && !cactus_growth_target_clear(world, above, air) {
         return None;
     }
-    Some(vec![PlantBlockEdit {
+    let mut edits = vec![PlantBlockEdit {
         pos: above,
         new_state: plant_state,
-    }])
+    }];
+    if age.is_some() {
+        edits.push(PlantBlockEdit {
+            pos,
+            new_state: sibling_state_with_property(blocks, current, "age", "0")?,
+        });
+    }
+    Some(edits)
 }
 
 pub fn bamboo_sapling_growth_edits(

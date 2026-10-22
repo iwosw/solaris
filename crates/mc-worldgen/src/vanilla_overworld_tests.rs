@@ -199,3 +199,101 @@ fn vanilla_halo_surface_heights_match_independent_queries() {
         }
     }
 }
+
+/// The far-terrain LOD surface is the generated density surface without caves:
+/// on lattice columns it is never below the full surface (caves only remove
+/// blocks) and equals it wherever no cave reaches the top.
+#[test]
+fn lod_surface_is_the_density_surface_without_caves() {
+    let Some(root) = content_cache() else { return };
+    let density = crate::vanilla_density::VanillaDensity::new(81, &root).unwrap();
+    let (mut equal, mut total) = (0u32, 0u32);
+    let (mut lod_time, mut full_time) = (std::time::Duration::ZERO, std::time::Duration::ZERO);
+    for z in (-4096..4096).step_by(512) {
+        for x in (-4096..4096).step_by(512) {
+            let started = std::time::Instant::now();
+            let lod = density
+                .lod_surface_height(x, z)
+                .expect("vanilla router has a LOD surface");
+            lod_time += started.elapsed();
+            let started = std::time::Instant::now();
+            let full = density.surface_height(x, z);
+            full_time += started.elapsed();
+            assert!(lod >= full, "({x},{z}): lod {lod} below generated {full}");
+            equal += u32::from(lod == full);
+            total += 1;
+        }
+    }
+    eprintln!(
+        "lod surface: {equal}/{total} columns equal; per column lod {:?}, full {:?}",
+        lod_time / total,
+        full_time / total,
+    );
+    // Cave carves (entrance min-branch, noodles, spaghetti) legitimately
+    // lower the generated surface: seed 81 measures 226/256 equal on this
+    // grid. The hard invariant is `lod >= full` above; the ratio only
+    // tripwires a broken LOD field (wrong branch, missing slide), which would
+    // mismatch nearly every column.
+    assert!(equal * 20 >= total * 17, "{equal}/{total} equal");
+}
+
+/// The far-terrain program carries no seed and stays small. With
+/// `SOLARIS_LOD_PROGRAM_FIXTURE=<path>` it also writes the program and the
+/// server's `lod_column` answers for a column grid (zlib: `u32` program
+/// length, program, `u32` count, then `i32 x, i32 z, i32 height, u16` biome
+/// length and name), the native client's parity fixture.
+#[test]
+fn lod_program_exports_without_the_seed() {
+    let Some(root) = content_cache() else { return };
+    let blocks = Arc::new(
+        BlockRegistry::from_report(&mc_data::blocks::solaris_required_blocks_report()).unwrap(),
+    );
+    let seed = 81i64;
+    let mut terrain = TerrainGenerator::new(seed, blocks);
+    terrain.load_vanilla_worldgen(&root).unwrap();
+    let program = terrain.lod_program().unwrap().expect("vanilla LOD program");
+    assert_eq!(&program[..4], b"SLOD");
+    assert_eq!(
+        u16::from_le_bytes([program[4], program[5]]),
+        crate::vanilla_density::program::PROGRAM_VERSION
+    );
+    let seed_bytes = [seed.to_le_bytes(), seed.to_be_bytes()];
+    // The encoder never writes the seed: the header is world geometry and
+    // table counts, the body is noise tables, code and biome rows. A raw
+    // 8-byte window scan false-positives once the octave table holds more
+    // than 81 entries (octave index 81 followed by an amplitude low word
+    // reads as `81i64` across the field boundary), so the tripwire covers
+    // the fixed-size header where a seed field would live.
+    assert!(program.len() >= 26);
+    for needle in seed_bytes {
+        assert!(
+            !program[..26].windows(8).any(|window| window == needle),
+            "the level seed must not appear in the program header"
+        );
+    }
+    assert!(program.len() < 512 * 1024, "{} bytes", program.len());
+    let Some(path) = std::env::var_os("SOLARIS_LOD_PROGRAM_FIXTURE") else {
+        return;
+    };
+    let mut fixture = Vec::new();
+    fixture.extend((program.len() as u32).to_le_bytes());
+    fixture.extend(&program);
+    let columns: Vec<(i32, i32)> = (-6..6)
+        .flat_map(|z| (-6..6).map(move |x| (x * 1373 + 7, z * 1291 - 3)))
+        .chain([(0, 0), (-1, -1), (8191, -8192), (2, 6)])
+        .collect();
+    fixture.extend((columns.len() as u32).to_le_bytes());
+    for (x, z) in columns {
+        let (height, biome) = terrain.lod_column(x, z);
+        let name = biome.to_string();
+        for value in [x, z, height] {
+            fixture.extend(value.to_le_bytes());
+        }
+        fixture.extend((name.len() as u16).to_le_bytes());
+        fixture.extend(name.as_bytes());
+    }
+    let mut encoder = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::best());
+    std::io::Write::write_all(&mut encoder, &fixture).unwrap();
+    std::fs::write(&path, encoder.finish().unwrap()).unwrap();
+    eprintln!("program {} bytes, fixture written", program.len());
+}

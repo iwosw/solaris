@@ -132,6 +132,26 @@ class VillageAutonomyQaTests(unittest.TestCase):
         }), patch.object(qa.time, "monotonic", side_effect=[0.0, 0.0, 3.0]):
             self.assertFalse(qa._wait_owner_order(probe, detail, "storage", 2.0))
 
+    def test_owner_order_falls_back_to_blueprint_the_stock_can_fund(self) -> None:
+        probe = Mock()
+        detail = {}
+        observations = [
+            {"recent_chat": ["not enough: shared recipe ingredients"]},
+            {"recent_chat": ["Started wall construction."]},
+            {"ui_nodes": [{"id": "dialog/body/0", "label":
+                          "wall · level 1 · 0%\nBlocks: 0/130 · Building\nSite: 12, 70, 24"}]},
+        ]
+        with patch.object(qa, "_send", side_effect=observations) as send, patch.object(
+            qa.time, "monotonic", side_effect=[0.0, 0.0],
+        ):
+            self.assertTrue(qa._wait_owner_order(probe, detail, ("storage", "wall"), 5.0))
+        self.assertEqual(
+            [call.args[1] for call in send.call_args_list[:2]],
+            ["settlement build storage", "settlement build wall"],
+        )
+        self.assertEqual(detail["owner_order_project"]["blueprint"], "wall")
+        probe.call.assert_not_called()
+
     def test_owner_order_acceptance_requires_live_matching_project(self) -> None:
         probe = Mock()
         for project in ({}, {"ui_nodes": [{"id": "dialog/body/0", "label":

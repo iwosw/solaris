@@ -35,7 +35,12 @@ fn fixture() -> (EdgeServer, std::path::PathBuf) {
         suggestion_items: vec!["minecraft:stone".into()],
         suggestion_blocks: vec!["minecraft:stone".into()],
         suggestion_entities: vec!["minecraft:pig".into()],
+        suggestion_structures: vec![],
         online_authentication: None,
+        velocity: None,
+        loader_required: false,
+        lod: None,
+        dh: None,
     };
     (server, dir)
 }
@@ -240,6 +245,118 @@ async fn stop_drains_shutdown_disconnect_and_checkpoints() {
     .unwrap();
     assert!(stopped.tick >= captured_tick);
     assert!(!dir.join("world/CHECKPOINT-MANIFEST.json").exists());
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+fn feedback_text(frame: &mc_protocol::frame::RawFrame) -> String {
+    assert_eq!(frame.id, ClientboundSystemChat::ID);
+    let response = ClientboundSystemChat::decode(&mut &frame.body[..]).unwrap();
+    let content = mc_nbt::read_network(&mut response.content_nbt.as_slice()).unwrap();
+    let mc_nbt::Tag::Compound(fields) = content else {
+        panic!("system chat is not a compound");
+    };
+    fields
+        .into_iter()
+        .find_map(|(name, value)| match (name.as_str(), value) {
+            ("text", mc_nbt::Tag::String(text)) => Some(text),
+            _ => None,
+        })
+        .expect("system chat carries plain text")
+}
+
+#[tokio::test]
+async fn whitelist_and_banlist_commands_report_and_enforce_vanilla_state() {
+    let (server, dir) = fixture();
+    let (operator, mut operator_rx) = register(&server, "Operator", true);
+    let (alex, mut alex_rx) = register(&server, "Alex", false);
+    assert!(
+        server
+            .handle_admin_command(operator, "whitelist on")
+            .await
+            .unwrap()
+    );
+    assert_eq!(
+        feedback_text(&receive(&mut operator_rx).await),
+        "Whitelist is now turned on"
+    );
+    assert!(
+        server
+            .handle_admin_command(operator, "whitelist add Alex")
+            .await
+            .unwrap()
+    );
+    assert_eq!(
+        feedback_text(&receive(&mut operator_rx).await),
+        "Added Alex to the whitelist"
+    );
+    assert!(
+        server
+            .handle_admin_command(operator, "whitelist list")
+            .await
+            .unwrap()
+    );
+    assert_eq!(
+        feedback_text(&receive(&mut operator_rx).await),
+        "There are 1 whitelisted player(s): Alex"
+    );
+    assert_eq!(
+        server
+            .admin
+            .admission(crate::crypto::offline_uuid("Stranger"), None, false)
+            .unwrap()["translate"],
+        "multiplayer.disconnect.not_whitelisted"
+    );
+    assert!(
+        server
+            .admin
+            .admission(crate::crypto::offline_uuid("Alex"), None, false)
+            .is_none()
+    );
+    // Level 3 is required: an ordinary player cannot change the list.
+    assert!(
+        server
+            .handle_admin_command(alex, "whitelist off")
+            .await
+            .unwrap()
+    );
+    assert_eq!(
+        feedback_text(&receive(&mut alex_rx).await),
+        "Unknown or incomplete command"
+    );
+    server
+        .admin
+        .ban_player(uuid::Uuid::new_v4(), "Banned", "Console", "test", true)
+        .unwrap();
+    server
+        .admin
+        .ban_ip("10.0.0.1", "Console", "test", true)
+        .unwrap();
+    assert!(
+        server
+            .handle_admin_command(operator, "banlist players")
+            .await
+            .unwrap()
+    );
+    assert_eq!(
+        feedback_text(&receive(&mut operator_rx).await),
+        "There are 1 total banned players:"
+    );
+    assert_eq!(
+        feedback_text(&receive(&mut operator_rx).await),
+        server.admin.bans().0[0]
+    );
+    assert!(
+        server
+            .handle_admin_command(operator, "banlist ips")
+            .await
+            .unwrap()
+    );
+    assert_eq!(
+        feedback_text(&receive(&mut operator_rx).await),
+        "There are 1 total banned IPs:"
+    );
+    assert_eq!(feedback_text(&receive(&mut operator_rx).await), "10.0.0.1");
+    server.hub.shutdown();
     std::fs::remove_dir_all(dir).unwrap();
 }
 

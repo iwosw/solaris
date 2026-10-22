@@ -881,10 +881,10 @@ fn room_for_slot(
                         return 0;
                     }
                 }
-                name if name.ends_with("shulker_box") => {
-                    if crate::shulker::is_item(&target.registry.items, source) {
-                        return 0;
-                    }
+                name if name.ends_with("shulker_box")
+                    && crate::shulker::is_item(&target.registry.items, source) =>
+                {
+                    return 0;
                 }
                 _ => {}
             }
@@ -1034,11 +1034,16 @@ fn apply(
                         *stack = image.slots[&index].clone();
                         index += 1;
                     }
-                    target.world.mark_block_entity_dirty(mc_world::BlockPos {
+                    let position = mc_world::BlockPos {
                         x: cell.x,
                         y: cell.y,
                         z: cell.z,
-                    });
+                    };
+                    crate::redstone::containers::inventory_changed(
+                        &mut target.redstone_containers,
+                        position,
+                    );
+                    target.world.mark_block_entity_dirty(position);
                 }
             }
             Endpoint::NpcCarry { handle } | Endpoint::NpcEquipment { handle } => {

@@ -1,7 +1,7 @@
-"""Minimal graphical native settlement-command smoke against an explicit v2 deployment.
+"""Graphical C-key proof of native settlement overview through a Loader client.
 
-Uses only the native `/settlement` command surface (create/list/info); no
-settlements package is deployed.
+No settlements package is deployed. The core's Configuration bundle owns the
+binding and must open the normal server-driven settlement dialog.
 """
 from __future__ import annotations
 
@@ -20,6 +20,15 @@ def run(client: Any, runtime: Any, artifact_dir: Path, server_log: Path) -> dict
             steps.wait(lambda state: state.get("in_play") and state.get("player", {}).get("on_ground"), "grounded")
             _command(steps, "settlement create p5qa", "Founded p5qa ")
             steps.report["create_capture"] = capture_ui(client, artifact_dir, "p5-settlement-created")
+            steps.call("minecraft_press_inputs", {"keys": ["key.keyboard.c"], "ticks": 1})
+            overview = steps.wait(
+                lambda state: state.get("screen", {}).get("class")
+                == "net.minecraft.client.gui.screens.dialog.MultiButtonDialogScreen"
+                and (state.get("screen", {}).get("title") or "").startswith("Settlement"),
+                "c_key_settlement_overview",
+            )
+            steps.report["c_overview_screen"] = overview["screen"]
+            steps.report["c_overview_capture"] = capture_ui(client, artifact_dir, "p5-settlement-c-overview")
             _command(steps, "settlement list", "p5qa")
             steps.report["list_capture"] = capture_ui(client, artifact_dir, "p5-settlement-list")
             _command(steps, "settlement info p5qa", "p5qa | ")
@@ -27,7 +36,7 @@ def run(client: Any, runtime: Any, artifact_dir: Path, server_log: Path) -> dict
             # Bounded adversarial check: an identical read must get a fresh reply,
             # not satisfy itself from the prior command's retained chat line.
             _command(steps, "settlement info p5qa", "p5qa | ")
-            steps.report["visual_review"] = "required: inspect create/list/info captures and visible chat"
+            steps.report["visual_review"] = "required: inspect C-key dialog and settlement chat captures"
         except Exception:
             try:
                 steps.report["failure_capture"] = capture_ui(client, artifact_dir, "p5-settlement-failure")

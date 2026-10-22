@@ -34,7 +34,7 @@ use crate::bindings::exports::solaris::plugin::events::Event;
 use crate::bindings::solaris::plugin::types::Position;
 use crate::bindings::solaris::plugin::world_events::{
     BlockPosition, PlayerBlockBroken, PlayerBlockPlaced, PlayerDied, PlayerEntityInteracted,
-    PlayerEntityKilled, PlayerItemCrafted, PlayerItemPickedUp,
+    PlayerEntityKilled, PlayerGraveCreated, PlayerItemCrafted, PlayerItemPickedUp,
 };
 
 /// The contract's event for one committed gameplay observation, or `None` when
@@ -170,6 +170,30 @@ pub(crate) fn map_event(kind: &ScriptEventKind) -> Option<Event> {
                 y: context.y(),
                 z: context.z(),
             },
+        })),
+        // The grave's own cell, not the death pose: a safe placement can move the
+        // container beside the player, and a consumer that has to protect or
+        // report the grave wants the block the server actually took custody in.
+        ScriptEventKind::PlayerGraveCreated {
+            player_id,
+            context,
+            dimension,
+            x,
+            y,
+            z,
+            items,
+            spilled,
+        } => Some(Event::PlayerGraveCreated(PlayerGraveCreated {
+            player: context.uuid().to_owned(),
+            session: session_of(*player_id),
+            dimension: dimension.clone(),
+            at: BlockPosition {
+                x: *x,
+                y: *y,
+                z: *z,
+            },
+            items: *items,
+            spilled: *spilled,
         })),
         _ => None,
     }

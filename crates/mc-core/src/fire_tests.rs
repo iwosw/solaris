@@ -450,6 +450,41 @@ fn scheduled_legacy_age_spreads_to_one_fuel_and_extinguishes_at_fifteen() {
 }
 
 #[test]
+fn fire_never_spreads_into_a_protected_zone_but_still_ages() {
+    let mut state = state(None);
+    let _ = join(&mut state);
+    let fuel = BlockPos { x: 5, ..POS };
+    set(&mut state, fuel, "minecraft:oak_planks");
+    state.plugins.set_domain(
+        "towns",
+        "player-zones",
+        serde_json::json!({
+            "claim": {
+                "dimension": "minecraft:overworld",
+                "minimum": [5.0, 0.0, 4.0],
+                "maximum": [5.0, 300.0, 4.0],
+                "allowed_actors": [uuid::Uuid::new_v4().simple().to_string()],
+                "public_use": false
+            }
+        }),
+    );
+    crate::plugin_player::restore(&mut state).unwrap();
+    assert!(ignite_block(&mut state, POS));
+    let tick = (1..100)
+        .find(|tick| {
+            state.tick = *tick;
+            seed(&state, POS).is_multiple_of(3)
+        })
+        .unwrap();
+    state.tick = tick;
+    let mut writes = Vec::new();
+    scheduled_tick(&mut state, POS, &mut writes, &mut Vec::new());
+    assert_eq!(age(&state, POS), Some(1), "the fire outside still ages");
+    assert_eq!(age(&state, fuel), None, "the claimed planks never caught");
+    assert_eq!(writes.len(), 1);
+}
+
+#[test]
 fn support_water_and_exposed_rain_extinguish_but_roof_and_eternal_support_survive() {
     let mut state = state(None);
     let _ = join(&mut state);

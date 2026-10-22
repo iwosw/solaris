@@ -1066,6 +1066,13 @@ struct SweepHit {
     blocked_z: bool,
 }
 
+/// Gather collision candidates from the cells an expanded body actually enters.
+///
+/// The old broad-phase visited the complete rectangular bounding volume.  A
+/// diagonal move through that volume has a much smaller swept surface: start
+/// with the body footprint, then add only each leading cell slab as its face
+/// crosses a grid boundary.  The axis order is fixed for deterministic
+/// candidate emission when faces cross together.
 fn collision_boxes_for_motion<S: BlockSampler>(
     sampler: &S,
     body: WorldAabb,
@@ -1075,60 +1082,241 @@ fn collision_boxes_for_motion<S: BlockSampler>(
 ) -> Option<()> {
     // Fill in place: returning this inline buffer copies over 1.5 KiB per scan.
     boxes.clear();
-    let min_x = floor_i32(body.min_x + desired.x.min(0.0));
-    let max_x = ceil_i32(body.max_x + desired.x.max(0.0)) - 1;
-    let min_z = floor_i32(body.min_z + desired.z.min(0.0));
-    let max_z = ceil_i32(body.max_z + desired.z.max(0.0)) - 1;
-    let scan_min_y = body.min_y + desired.y.min(-step_height);
-    let scan_max_y = body.max_y + desired.y.max(step_height);
     let max_local_y = f64::from(sampler.max_collision_box_y()) / 16.0;
     if max_local_y <= 0.0 {
         return None;
     }
-    let min_y = floor_i32(scan_min_y - max_local_y) + 1;
-    let max_y = ceil_i32(scan_max_y) - 1;
-    let scan_cells = inclusive_range_len(min_x, max_x)
-        .checked_mul(inclusive_range_len(min_y, max_y))?
-        .checked_mul(inclusive_range_len(min_z, max_z))?;
-    if scan_cells > MAX_COLLISION_SCAN_CELLS {
+
+    let mut ranges = [
+        CellRange::new(floor_i32(body.min_x), ceil_i32(body.max_x) - 1),
+        CellRange::new(
+            floor_i32(body.min_y - step_height - max_local_y) + 1,
+            ceil_i32(body.max_y + step_height) - 1,
+        ),
+        CellRange::new(floor_i32(body.min_z), ceil_i32(body.max_z) - 1),
+    ];
+    let target = [
+        CellRange::new(
+            floor_i32(body.min_x + desired.x.min(0.0)),
+            ceil_i32(body.max_x + desired.x.max(0.0)) - 1,
+        ),
+        CellRange::new(
+            floor_i32(body.min_y + desired.y.min(-step_height) - max_local_y) + 1,
+            ceil_i32(body.max_y + desired.y.max(step_height)) - 1,
+        ),
+        CellRange::new(
+            floor_i32(body.min_z + desired.z.min(0.0)),
+            ceil_i32(body.max_z + desired.z.max(0.0)) - 1,
+        ),
+    ];
+    let lower = [
+        body.min_x,
+        body.min_y - step_height - max_local_y,
+        body.min_z,
+    ];
+    let upper = [body.max_x, body.max_y + step_height, body.max_z];
+    let displacement = [desired.x, desired.y, desired.z];
+    // Reject an oversized swept volume before sampling anything: the
+    // per-cell walk below only enforces the cap once a cell is visited.
+    let swept = inclusive_range_len(target[0].min, target[0].max)
+        .checked_mul(inclusive_range_len(target[1].min, target[1].max))?
+        .checked_mul(inclusive_range_len(target[2].min, target[2].max))?;
+    if swept > MAX_COLLISION_SCAN_CELLS {
         return None;
     }
+    let mut scanned = 0;
+    scan_collision_range(sampler, ranges, boxes, &mut scanned)?;
 
-    for x in min_x..=max_x {
-        for y in min_y..=max_y {
-            for z in min_z..=max_z {
-                let mut overflowed = false;
-                sampler.collision_boxes_at(x, y, z, &mut |collision_box| {
-                    if boxes.len() >= MAX_COLLISION_CANDIDATES {
-                        overflowed = true;
-                        return;
-                    }
-                    let [
-                        box_min_x,
-                        box_min_y,
-                        box_min_z,
-                        box_max_x,
-                        box_max_y,
-                        box_max_z,
-                    ] = collision_box.as_blocks();
-                    boxes.push(WorldAabb {
-                        min_x: f64::from(x) + box_min_x,
-                        min_y: f64::from(y) + box_min_y,
-                        min_z: f64::from(z) + box_min_z,
-                        max_x: f64::from(x) + box_max_x,
-                        max_y: f64::from(y) + box_max_y,
-                        max_z: f64::from(z) + box_max_z,
-                    });
-                });
-                if overflowed {
-                    boxes.clear();
-                    return None;
-                }
+    let mut next: [f64; 3] = std::array::from_fn(|axis| {
+        next_axis_crossing(
+            displacement[axis],
+            lower[axis],
+            upper[axis],
+            ranges[axis],
+            target[axis],
+        )
+    });
+    loop {
+        let time = next.into_iter().fold(f64::INFINITY, f64::min);
+        if time > 1.0 {
+            break;
+        }
+        for axis in 0..3 {
+            if next[axis] != time {
+                continue;
+            }
+            if displacement[axis] > 0.0 {
+                ranges[axis].max += 1;
+            } else {
+                ranges[axis].min -= 1;
+            }
+            let leading = if displacement[axis] > 0.0 {
+                ranges[axis].max
+            } else {
+                ranges[axis].min
+            };
+            scan_collision_slab(sampler, ranges, axis, leading, boxes, &mut scanned)?;
+            next[axis] += displacement[axis].abs().recip();
+            if ranges[axis] == target[axis] {
+                next[axis] = f64::INFINITY;
             }
         }
     }
+    (ranges == target).then_some(())
+}
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct CellRange {
+    min: i32,
+    max: i32,
+}
+
+impl CellRange {
+    const fn new(min: i32, max: i32) -> Self {
+        Self { min, max }
+    }
+}
+
+fn next_axis_crossing(
+    displacement: f64,
+    lower: f64,
+    upper: f64,
+    current: CellRange,
+    target: CellRange,
+) -> f64 {
+    if displacement > 0.0 && current.max < target.max {
+        (upper.ceil() - upper) / displacement
+    } else if displacement < 0.0 && current.min > target.min {
+        (lower - lower.floor()) / -displacement
+    } else {
+        f64::INFINITY
+    }
+}
+
+fn scan_collision_range<S: BlockSampler>(
+    sampler: &S,
+    ranges: [CellRange; 3],
+    boxes: &mut SmallVec<[WorldAabb; COLLISION_CANDIDATES_INLINE]>,
+    scanned: &mut usize,
+) -> Option<()> {
+    for x in ranges[0].min..=ranges[0].max {
+        for y in ranges[1].min..=ranges[1].max {
+            for z in ranges[2].min..=ranges[2].max {
+                scan_collision_cell(sampler, x, y, z, boxes, scanned)?;
+            }
+        }
+    }
     Some(())
+}
+
+fn scan_collision_slab<S: BlockSampler>(
+    sampler: &S,
+    ranges: [CellRange; 3],
+    axis: usize,
+    leading: i32,
+    boxes: &mut SmallVec<[WorldAabb; COLLISION_CANDIDATES_INLINE]>,
+    scanned: &mut usize,
+) -> Option<()> {
+    match axis {
+        0 => {
+            for y in ranges[1].min..=ranges[1].max {
+                for z in ranges[2].min..=ranges[2].max {
+                    scan_collision_cell(sampler, leading, y, z, boxes, scanned)?;
+                }
+            }
+        }
+        1 => {
+            for x in ranges[0].min..=ranges[0].max {
+                for z in ranges[2].min..=ranges[2].max {
+                    scan_collision_cell(sampler, x, leading, z, boxes, scanned)?;
+                }
+            }
+        }
+        2 => {
+            for x in ranges[0].min..=ranges[0].max {
+                for y in ranges[1].min..=ranges[1].max {
+                    scan_collision_cell(sampler, x, y, leading, boxes, scanned)?;
+                }
+            }
+        }
+        _ => unreachable!("three collision axes"),
+    }
+    Some(())
+}
+
+fn scan_collision_cell<S: BlockSampler>(
+    sampler: &S,
+    x: i32,
+    y: i32,
+    z: i32,
+    boxes: &mut SmallVec<[WorldAabb; COLLISION_CANDIDATES_INLINE]>,
+    scanned: &mut usize,
+) -> Option<()> {
+    *scanned = scanned.checked_add(1)?;
+    if *scanned > MAX_COLLISION_SCAN_CELLS {
+        return None;
+    }
+    let mut overflowed = false;
+    sampler.collision_boxes_at(x, y, z, &mut |collision_box| {
+        if boxes.len() >= MAX_COLLISION_CANDIDATES {
+            overflowed = true;
+            return;
+        }
+        let [
+            box_min_x,
+            box_min_y,
+            box_min_z,
+            box_max_x,
+            box_max_y,
+            box_max_z,
+        ] = collision_box.as_blocks();
+        boxes.push(WorldAabb {
+            min_x: f64::from(x) + box_min_x,
+            min_y: f64::from(y) + box_min_y,
+            min_z: f64::from(z) + box_min_z,
+            max_x: f64::from(x) + box_max_x,
+            max_y: f64::from(y) + box_max_y,
+            max_z: f64::from(z) + box_max_z,
+        });
+    });
+    (!overflowed).then_some(())
+}
+
+#[cfg(test)]
+fn collision_boxes_for_motion_volume_scan<S: BlockSampler>(
+    sampler: &S,
+    body: WorldAabb,
+    desired: Vec3,
+    step_height: f64,
+    boxes: &mut SmallVec<[WorldAabb; COLLISION_CANDIDATES_INLINE]>,
+) -> Option<()> {
+    boxes.clear();
+    let max_local_y = f64::from(sampler.max_collision_box_y()) / 16.0;
+    if max_local_y <= 0.0 {
+        return None;
+    }
+    let ranges = [
+        CellRange::new(
+            floor_i32(body.min_x + desired.x.min(0.0)),
+            ceil_i32(body.max_x + desired.x.max(0.0)) - 1,
+        ),
+        CellRange::new(
+            floor_i32(body.min_y + desired.y.min(-step_height) - max_local_y) + 1,
+            ceil_i32(body.max_y + desired.y.max(step_height)) - 1,
+        ),
+        CellRange::new(
+            floor_i32(body.min_z + desired.z.min(0.0)),
+            ceil_i32(body.max_z + desired.z.max(0.0)) - 1,
+        ),
+    ];
+    let cells = inclusive_range_len(ranges[0].min, ranges[0].max)
+        .checked_mul(inclusive_range_len(ranges[1].min, ranges[1].max))?
+        .checked_mul(inclusive_range_len(ranges[2].min, ranges[2].max))?;
+    if cells > MAX_COLLISION_SCAN_CELLS {
+        return None;
+    }
+    let mut scanned = 0;
+    scan_collision_range(sampler, ranges, boxes, &mut scanned)
 }
 
 fn inclusive_range_len(min: i32, max: i32) -> usize {

@@ -430,11 +430,9 @@ impl Trade {
                 // session before it announces the leave, so this line is also the
                 // point after which the same player can connect again - which is
                 // what a driver that has to reconnect waits for.
-                Event::PlayerLeft(left) => {
-                    if self.first_session == Some(left.session) {
-                        self.first_left = true;
-                        log(LogLevel::Debug, &format!("P3_TRADE_LEFT {}", left.session));
-                    }
+                Event::PlayerLeft(left) if self.first_session == Some(left.session) => {
+                    self.first_left = true;
+                    log(LogLevel::Debug, &format!("P3_TRADE_LEFT {}", left.session));
                 }
                 _ => {}
             }
