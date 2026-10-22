@@ -1131,11 +1131,35 @@ fn checkpoint_round_trip_through_real_core() {
             command: "debug give minecraft:apple 2 1".to_owned(),
             permission_level: 4,
         });
-        // Stay alive until the parent kills us: the parent observes WAL
-        // durability from outside. Draining keeps the broadcast alive.
-        loop {
-            let _ = rx.blocking_recv();
+        // Each committed tick is the event: check this child's own WAL for a
+        // complete batch carrying the apple stack (count 2), then report the
+        // durable boundary and block until the parent's SIGKILL.
+        let journal_dir = dir.join("journal");
+        for _ in 0..1000 {
+            rx.blocking_recv().expect("tick");
+            let boundary = read_complete_batches_after(&journal_dir, 0)
+                .unwrap()
+                .iter()
+                .filter(|(_, _, entries)| {
+                    entries.iter().any(|entry| {
+                        matches!(entry, crate::journal::JournalEntry::Player { inventory, .. }
+                            if inventory.iter().any(|stack| !stack.is_empty() && stack.count == 2))
+                    })
+                })
+                .map(|(_, hi, _)| *hi)
+                .max();
+            if let Some(tick) = boundary {
+                use std::io::{Read, Write};
+                println!("CRASH_BOUNDARY_READY {tick}");
+                std::io::stdout().flush().unwrap();
+                let mut byte = [0];
+                std::io::stdin()
+                    .read_exact(&mut byte)
+                    .expect("parent must SIGKILL at boundary");
+                panic!("parent sent input instead of SIGKILL");
+            }
         }
+        panic!("apple stack never became durable within 1000 ticks");
     }
     // Parent mode: spawn the child, watch the WAL for the mutation tick,
     // SIGKILL at that observed durability point, reopen, assert recovery.
@@ -1148,41 +1172,32 @@ fn checkpoint_round_trip_through_real_core() {
     std::fs::create_dir_all(&dir).expect("dir");
     let child_bin = std::env::current_exe().expect("test binary");
     let mut child = std::process::Command::new(child_bin)
-        .arg("checkpoint_round_trip_through_real_core")
+        .args(["checkpoint_round_trip_through_real_core", "--nocapture"])
         .env("MC_CORE_CRASH_CHILD", "1")
         .env("MC_CORE_CRASH_DIR", &dir)
+        .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .spawn()
         .expect("spawn crash child");
-    // Durability boundary: a complete WAL batch at/after the tick whose
-    // player post-image carries the apple stack (count 2). Bounded
-    // event-poll of the journal dir (no wall-clock sleep in production;
-    // tests poll the filesystem the child fsyncs — the producer wakes us
-    // via durable files, not timers).
+    // The child reports the exact durable WAL boundary; a closed pipe means it
+    // died first (its stderr carries the panic).
     let journal_dir = dir.join("journal");
-    let mut boundary_tick = 0u64;
-    // Bounded by the child's life, not an iteration count: a fast runner can
-    // spin through any fixed count before the child's first fsync.
-    while boundary_tick == 0 {
-        if let Some(status) = child.try_wait().expect("poll crash child") {
-            panic!("crash child exited before the mutation was durable: {status:?}");
-        }
-        let batches = read_complete_batches_after(&journal_dir, 0).unwrap();
-        for (lo, hi, entries) in &batches {
-            let _ = lo;
-            for entry in entries {
-                if let crate::journal::JournalEntry::Player { inventory, .. } = entry
-                    && inventory
-                        .iter()
-                        .any(|stack| !stack.is_empty() && stack.count == 2)
-                {
-                    boundary_tick = boundary_tick.max(*hi);
-                }
+    let boundary_tick: u64 = {
+        use std::io::BufRead;
+        let mut output = std::io::BufReader::new(child.stdout.take().expect("child stdout"));
+        loop {
+            let mut line = String::new();
+            assert_ne!(
+                output.read_line(&mut line).expect("read child"),
+                0,
+                "crash child exited before the mutation was durable"
+            );
+            if let Some(tick) = line.trim().strip_prefix("CRASH_BOUNDARY_READY ") {
+                break tick.parse().expect("boundary tick");
             }
         }
-        std::thread::yield_now();
-    }
+    };
     assert!(boundary_tick > 0, "mutation tick durable in WAL");
     // KILL at the observed durability point (`Child::kill` = SIGKILL on
     // unix; real process death, not `mem::forget`).
