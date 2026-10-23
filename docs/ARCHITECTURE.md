@@ -78,6 +78,12 @@ acknowledged effect is not an fsync promise: an unflushed crash tail can roll
 back consistently. Checkpoint work freezes owned records/immutable chunks and
 runs off-tick. Shutdown requests a final durable checkpoint.
 
+Chunk admission removes unused palette entries while counting non-air cells,
+then packs only the live palette (or uses allocation-free single-state storage).
+Native baseline encoding also drops palette history from an immutable copy;
+published snapshots are unchanged. This retains the existing NBT/native schema,
+zstd level and WAL/checkpoint ordering, not a new storage format or migration.
+
 Item custody transitions close/refund window-zero cursor and crafting inputs
 before opening another menu. Block-container clicks refuse and close a menu
 whose loaded storage no longer matches its slot count (including an unavailable

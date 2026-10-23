@@ -233,6 +233,54 @@ fn admitted_disk_indices_compact_without_changing_cells() {
 }
 
 #[test]
+fn admission_discards_dead_states_and_collapses_single_live_state() {
+    for live_states in [1usize, 2, 3, 5, 9] {
+        let palette: Vec<_> = (0..32).map(BlockStateId).collect();
+        let mut indices = PackedBitArray::zeroed(5, SECTION_VOLUME);
+        for cell in 0..SECTION_VOLUME {
+            indices.set(cell, (31 - cell % live_states) as u32);
+        }
+        let section = ChunkSection::from_indirect(palette, indices, AIR);
+        assert_eq!(section.non_air_count(), SECTION_VOLUME as u16);
+        assert_eq!(section.palette().map_or(1, <[_]>::len), live_states);
+        assert_eq!(
+            section.indices().map_or(0, PackedBitArray::bits_per_entry),
+            if live_states == 1 {
+                0
+            } else {
+                bits_for_palette(live_states)
+            }
+        );
+        for cell in 0..SECTION_VOLUME {
+            assert_eq!(
+                section.get(
+                    (cell % 16) as u8,
+                    (cell / 256) as u8,
+                    (cell / 16 % 16) as u8
+                ),
+                BlockStateId((31 - cell % live_states) as u32)
+            );
+        }
+        let snapshot = section.clone();
+        let mut edited = section;
+        edited.set(0, 0, 0, AIR);
+        assert_eq!(snapshot.get(0, 0, 0), BlockStateId(31));
+        assert_eq!(edited.non_air_count(), SECTION_VOLUME as u16 - 1);
+    }
+}
+
+#[test]
+fn admission_dead_air_palette_entry_does_not_change_air_count() {
+    let section = ChunkSection::from_indirect(
+        vec![STONE, AIR, BlockStateId(2)],
+        PackedBitArray::zeroed(4, SECTION_VOLUME),
+        AIR,
+    );
+    assert!(section.palette().is_none());
+    assert_eq!(section.non_air_count(), SECTION_VOLUME as u16);
+}
+
+#[test]
 fn coordinate_corners_are_addressable() {
     let mut s = ChunkSection::filled(AIR, AIR);
     s.set(0, 0, 0, BlockStateId(10));

@@ -512,3 +512,45 @@ fn inspected_origins_match_dictionary_states_and_validate_the_whole_record() {
     out_of_palette[21] = 3;
     assert!(inspect_state(&compress(DENSE, &out_of_palette).unwrap(), 0).is_err());
 }
+
+#[test]
+fn native_baseline_discards_palette_history_without_mutating_capture() {
+    let blocks = BlockRegistry::from_report(&solaris_required_blocks_report()).unwrap();
+    let items = solaris_required_items();
+    let air = state(&blocks, "minecraft:air");
+    let stone = state(&blocks, "minecraft:stone");
+    let mut chunk = Chunk::empty(
+        ChunkPos { x: -2, z: 7 },
+        air,
+        Identifier::parse("minecraft:plains").unwrap(),
+    );
+    for name in ["minecraft:stone", "minecraft:dirt", "minecraft:water"] {
+        chunk.sections[0].set(0, 0, 0, state(&blocks, name));
+    }
+    chunk.sections[0].set(0, 0, 0, air);
+    let snapshot = chunk.clone();
+    let mut canonical = chunk.clone();
+    canonical.sections[0] = ChunkSection::filled(air, air);
+    assert_eq!(
+        baseline(&chunk, &blocks, &items).unwrap(),
+        baseline(&canonical, &blocks, &items).unwrap()
+    );
+    assert_eq!(snapshot.sections[0].palette().unwrap().len(), 4);
+    assert_eq!(chunk.sections[0].palette().unwrap().len(), 4);
+    let encoded = baseline(&chunk, &blocks, &items).unwrap();
+    let root = decode(&encoded).unwrap();
+    let restored = crate::anvil::chunk_nbt::chunk_from_nbt_with_items_at_position_at_tick(
+        &root,
+        chunk.pos,
+        &blocks,
+        Some(&items),
+        &mc_data::loot::chest_26_1_2::ChestLootCatalog::new(),
+        chunk.geometry(),
+        0,
+    )
+    .unwrap();
+    equal(&restored.sections[0], &chunk.sections[0]);
+    assert!(restored.sections[0].palette().is_none());
+    chunk.sections[0].set(1, 0, 0, stone);
+    assert_eq!(snapshot.sections[0].get(1, 0, 0), air);
+}

@@ -118,9 +118,13 @@ pub(super) fn baseline(
         if let Ok(index) = usize::try_from(index)
             && let Some(blocks_section) = chunk.sections.get(index)
         {
+            // Native baselines need only live states, not the history of palette
+            // growth during generation. Reuse the copy-on-write compaction path;
+            // the captured chunk and its snapshots remain untouched.
+            let compact = blocks_section.with_cells_replaced(&[]);
             compound_mut(section)?.push((
                 "block_states".into(),
-                encode_block_section(blocks_section, blocks)?,
+                encode_block_section(&compact, blocks)?,
             ));
         }
     }

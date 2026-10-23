@@ -137,12 +137,12 @@ impl ChunkSection {
     /// Build a section directly from a palette + index array. The
     /// codec uses this when loading vanilla `.mca` files. Caller must
     /// supply a `PackedBitArray` of length `SECTION_VOLUME` whose
-    /// every entry is < `palette.len()`. Indices are compacted to the
-    /// palette's required width on admission; one-entry palettes use
-    /// allocation-free Single storage. `non_air_count` scans the indices.
+    /// every entry is < `palette.len()`. Unused palette entries are removed
+    /// during the non-air scan; indices use the live palette's required width.
+    /// A single live state uses allocation-free Single storage.
     #[must_use]
     pub fn from_indirect(
-        palette: Vec<BlockStateId>,
+        mut palette: Vec<BlockStateId>,
         mut indices: PackedBitArray,
         air: BlockStateId,
     ) -> Self {
@@ -151,17 +151,43 @@ impl ChunkSection {
         if palette.len() == 1 {
             return Self::filled(palette[0], air);
         }
-        let bits = bits_for_palette(palette.len());
-        if indices.bits_per_entry() != bits {
-            let words = indices.words_at_bits(bits).collect();
-            indices = PackedBitArray::from_words(bits, SECTION_VOLUME, words);
+        let mut remap = vec![usize::MAX; palette.len()];
+        let mut non_air_count = 0;
+        for cell in 0..SECTION_VOLUME {
+            let index = indices.get(cell) as usize;
+            remap[index] = 0;
+            non_air_count += u16::from(palette[index] != air);
         }
-        let non_air_count = (0..SECTION_VOLUME)
-            .filter(|&i| {
-                let p = indices.get(i) as usize;
-                palette[p] != air
-            })
-            .count() as u16;
+        let live = remap.iter().filter(|&&slot| slot == 0).count();
+        if live == 1 {
+            let index = remap
+                .iter()
+                .position(|&slot| slot == 0)
+                .expect("live state");
+            return Self::filled(palette[index], air);
+        }
+        if live != palette.len() {
+            let mut next = 0;
+            for (old, slot) in remap.iter_mut().enumerate() {
+                if *slot == 0 {
+                    *slot = next;
+                    palette[next] = palette[old];
+                    next += 1;
+                }
+            }
+            palette.truncate(live);
+            let mut compact = PackedBitArray::zeroed(bits_for_palette(live), SECTION_VOLUME);
+            for cell in 0..SECTION_VOLUME {
+                compact.set(cell, remap[indices.get(cell) as usize] as u32);
+            }
+            indices = compact;
+        } else {
+            let bits = bits_for_palette(palette.len());
+            if indices.bits_per_entry() != bits {
+                let words = indices.words_at_bits(bits).collect();
+                indices = PackedBitArray::from_words(bits, SECTION_VOLUME, words);
+            }
+        }
         Self {
             storage: BlockStorage::Indirect(Arc::new(IndirectStorage { palette, indices })),
             non_air_count,
