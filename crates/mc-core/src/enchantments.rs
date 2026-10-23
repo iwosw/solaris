@@ -11,7 +11,7 @@ pub(crate) fn level(stack: &ItemStack, name: &str) -> u32 {
         .unwrap_or(0)
 }
 
-/// The player's already-retained XpSeed supplies deterministic, restart-safe draws.
+/// Deterministic persisted gameplay draws, separate from the enchanting offer seed.
 pub(crate) fn random(seed: &mut i32) -> f64 {
     *seed = crate::inventory::enchanting::next_seed(*seed);
     f64::from((*seed as u32) >> 8) / 16_777_216.0

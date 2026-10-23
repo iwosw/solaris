@@ -30,6 +30,21 @@ cadence varies, see Mob blueprints), remote physical tickets keep chosen areas
 simulated without players, radical hardware-level optimizations are allowed
 when measured and documented.
 
+## Item and station custody (2026-10-23)
+
+The native player retains independent gameplay RNG and enchanting-offer seed
+fields. Only an accepted enchantment changes the offer seed; both fields are
+included in reservation plans, WAL post-images and checkpoints. Vanilla `XpSeed`
+is the offer seed; `SolarisGameplaySeed` carries native random-draw continuity.
+
+Furnace used-recipe counts are authoritative inventory-adjacent state, not a UI
+cache. Live state and journal images share an immutable count map; a completed
+cook or XP withdrawal replaces that image. Chunk checkpoint projection and
+hydration retain the same counts. Accepted container destruction emits banked
+XP once before removing custody. Furnace recipe-book placement uses the ordinary
+shared-container inventory transaction and reserved-item floors, never an edge
+inventory or a separate ingredient store.
+
 ## Mining and piston protection admission (2026-10-23)
 
 Survival digging is native tick-owned, transient player state: Start selects

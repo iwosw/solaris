@@ -6,6 +6,7 @@
 //! inventory packets.
 
 mod armor_dye;
+pub mod cloning;
 pub mod work;
 pub use armor_dye::armor_dye_crafting_result;
 use std::collections::BTreeMap;
@@ -347,8 +348,8 @@ pub fn repair_item_crafting_result(
     {
         return None;
     }
-    let first_damage = first.damage?;
-    let second_damage = second.damage?;
+    let first_damage = first.damage.unwrap_or(0);
+    let second_damage = second.damage.unwrap_or(0);
     let max_damage = i32::try_from(item_facts.facts_for_stack(first, items)?.max_damage?).ok()?;
     if max_damage <= 0 {
         return None;
@@ -357,7 +358,25 @@ pub fn repair_item_crafting_result(
         + max_damage.saturating_sub(second_damage)
         + max_damage / 20;
     let mut repaired = first.clone();
-    repaired.enchantments.clear();
+    repaired.enchantments.retain(crate::stations::is_curse);
+    for curse in second
+        .enchantments
+        .iter()
+        .filter(|entry| crate::stations::is_curse(entry))
+    {
+        if let Some(existing) = repaired
+            .enchantments
+            .iter_mut()
+            .find(|entry| entry.id == curse.id)
+        {
+            existing.level = existing.level.max(curse.level);
+        } else {
+            repaired.enchantments.push(curse.clone());
+        }
+    }
+    repaired
+        .enchantments
+        .sort_unstable_by(|a, b| a.id.cmp(&b.id));
     repaired.damage = Some((max_damage - remaining).max(0));
     Some(repaired)
 }
@@ -372,6 +391,7 @@ pub fn crafting_result_from_input(
 ) -> crate::ItemStack {
     if let Some(result) = armor_dye_crafting_result(items, input)
         .or_else(|| repair_item_crafting_result(items, item_facts, input))
+        .or_else(|| cloning::result(items, item_facts, tags, input))
     {
         return result;
     }

@@ -14,6 +14,8 @@ mod craft_stations;
 #[cfg(test)]
 mod craft_stations_tests;
 mod crafting;
+#[cfg(test)]
+mod crafting_tests;
 pub mod enchanting;
 pub mod furnace;
 #[cfg(test)]

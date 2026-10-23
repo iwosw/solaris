@@ -1129,6 +1129,7 @@ fn advancements_survive_native_checkpoint_wal_and_lossless_anvil_interchange() {
         respawn_pitch: record.respawn_pitch,
         active_effects: record.active_effects.clone(),
         enchantment_seed: record.enchantment_seed,
+        enchantment_offer_seed: record.enchantment_offer_seed,
         warden_warning: record.warden_warning,
         current_impulse_impact_pos: record.current_impulse_impact_pos,
         fall_flying: record.fall_flying,

@@ -156,6 +156,7 @@ pub enum JournalEntry {
         active_effects: crate::effects::ActiveEffects,
         #[serde(default)]
         enchantment_seed: i32,
+        enchantment_offer_seed: i32,
         #[serde(default)]
         warden_warning: crate::shrieker::Warning,
         #[serde(default, deserialize_with = "crate::mace::deserialize_impact")]
@@ -902,6 +903,7 @@ pub struct FurnaceImage {
     pub lit_total: i32,
     pub cook_progress: i32,
     pub cook_total: i32,
+    pub recipes_used: Arc<BTreeMap<String, i32>>,
 }
 
 /// Replayed full player record.
@@ -940,6 +942,7 @@ pub struct ReplayPlayer {
     pub respawn_pitch: f32,
     pub active_effects: crate::effects::ActiveEffects,
     pub enchantment_seed: i32,
+    pub enchantment_offer_seed: i32,
     pub warden_warning: crate::shrieker::Warning,
     pub current_impulse_impact_pos: Option<[f64; 3]>,
     pub fall_flying: bool,
@@ -988,6 +991,7 @@ impl ReplayPlayer {
             respawn_pitch: _,
             active_effects: _,
             enchantment_seed: _,
+            enchantment_offer_seed: _,
             warden_warning: _,
             current_impulse_impact_pos: _,
             fall_flying: _,
@@ -1024,6 +1028,7 @@ impl ReplayPlayer {
             && self.respawn_pitch == other.respawn_pitch
             && self.active_effects == other.active_effects
             && self.enchantment_seed == other.enchantment_seed
+            && self.enchantment_offer_seed == other.enchantment_offer_seed
             && self.warden_warning == other.warden_warning
             && self.current_impulse_impact_pos == other.current_impulse_impact_pos
             && self.fall_flying == other.fall_flying
@@ -1224,7 +1229,14 @@ pub(crate) fn player_to_tag(
     ));
     fields.extend(active_effects_to_fields(&record.active_effects));
     fields.extend(crate::portals::fields(record.portal));
-    fields.push(("XpSeed".into(), mc_nbt::Tag::Int(record.enchantment_seed)));
+    fields.push((
+        "XpSeed".into(),
+        mc_nbt::Tag::Int(record.enchantment_offer_seed),
+    ));
+    fields.push((
+        "SolarisGameplaySeed".into(),
+        mc_nbt::Tag::Int(record.enchantment_seed),
+    ));
     let mut warning = record.warden_warning;
     warning.advance_tick(record.tick);
     fields.push(("warden_spawn_tracker".into(), warning.nbt()));
@@ -1658,13 +1670,16 @@ pub(crate) fn player_from_tag(
         respawn_yaw: spawn_angle("yaw", 180.0)?,
         respawn_pitch: spawn_angle("pitch", 90.0)?,
         active_effects: active_effects_from_fields(entries),
-        enchantment_seed: entries
-            .iter()
-            .find_map(|(key, value)| match (key.as_str(), value) {
-                ("XpSeed", mc_nbt::Tag::Int(seed)) => Some(*seed),
-                _ => None,
-            })
-            .unwrap_or(0),
+        enchantment_seed: match find("SolarisGameplaySeed") {
+            None => 0,
+            Some(mc_nbt::Tag::Int(seed)) => *seed,
+            Some(_) => return Err(failure("SolarisGameplaySeed", "expected integer".into())),
+        },
+        enchantment_offer_seed: match find("XpSeed") {
+            None => 0,
+            Some(mc_nbt::Tag::Int(seed)) => *seed,
+            Some(_) => return Err(failure("XpSeed", "expected integer".into())),
+        },
         current_impulse_impact_pos: crate::mace::read_impact(entries)
             .map_err(|error| failure("current_explosion_impact_pos", error.into()))?,
         fall_flying: match find("FallFlying") {
@@ -1738,6 +1753,7 @@ fn player_owned_field(key: &str) -> bool {
             | "PortalCooldown"
             | "solaris:PortalTime"
             | "XpSeed"
+            | "SolarisGameplaySeed"
             | "warden_spawn_tracker"
             | "SolarisWardenWarning"
             | "current_explosion_impact_pos"
@@ -2580,6 +2596,7 @@ pub(crate) fn apply_batch_images(
                     respawn_pitch,
                     active_effects,
                     enchantment_seed,
+                    enchantment_offer_seed,
                     warden_warning,
                     current_impulse_impact_pos,
                     fall_flying,
@@ -2629,6 +2646,7 @@ pub(crate) fn apply_batch_images(
                             respawn_pitch: *respawn_pitch,
                             active_effects: active_effects.clone(),
                             enchantment_seed: *enchantment_seed,
+                            enchantment_offer_seed: *enchantment_offer_seed,
                             warden_warning: *warden_warning,
                             current_impulse_impact_pos: *current_impulse_impact_pos,
                             fall_flying: *fall_flying,

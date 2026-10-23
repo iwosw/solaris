@@ -419,6 +419,27 @@ impl crate::player::PlayerState {
                 ActiveEffect::new(EffectId::Resistance, 6000, 0),
                 ActiveEffect::new(EffectId::FireResistance, 6000, 0),
             ],
+            "minecraft:pufferfish" => vec![
+                ActiveEffect::new(EffectId::Hunger, 1200, 2),
+                ActiveEffect::new(EffectId::Poison, 1200, 1),
+                ActiveEffect::new(EffectId::Nausea, 300, 0),
+            ],
+            "minecraft:spider_eye" => vec![ActiveEffect::new(EffectId::Poison, 100, 0)],
+            "minecraft:rotten_flesh"
+                if crate::enchantments::random(&mut self.enchantment_seed) < 0.8 =>
+            {
+                vec![ActiveEffect::new(EffectId::Hunger, 600, 0)]
+            }
+            "minecraft:chicken"
+                if crate::enchantments::random(&mut self.enchantment_seed) < 0.3 =>
+            {
+                vec![ActiveEffect::new(EffectId::Hunger, 600, 0)]
+            }
+            "minecraft:poisonous_potato"
+                if crate::enchantments::random(&mut self.enchantment_seed) < 0.6 =>
+            {
+                vec![ActiveEffect::new(EffectId::Poison, 100, 0)]
+            }
             "minecraft:potion" => stack
                 .extended()
                 .potion

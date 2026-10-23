@@ -517,7 +517,7 @@ fn native_recipe_placement_admits_multiple_excess_resources_atomically() {
         ..base
     };
     let (accepted, _) = transition(&mut state, entity, None, |player, _| {
-        player.place_recipe(&rules, 0, 0, false)
+        player.place_recipe(&rules, 0, 0, false, &mut [])
     });
     assert!(accepted);
     assert_eq!(state.players[&entity].inventory.slots[9].count, 1);
@@ -533,7 +533,7 @@ fn native_recipe_placement_admits_multiple_excess_resources_atomically() {
     );
     let before = state.players[&entity].clone();
     let (accepted, effects) = transition(&mut state, entity, None, |player, _| {
-        player.place_recipe(&rules, 0, 0, false)
+        player.place_recipe(&rules, 0, 0, false, &mut [])
     });
     assert!(!accepted);
     assert_eq!(state.players[&entity], before);
@@ -852,7 +852,7 @@ fn enchanting_button_with_unrelated_holds_commits_native_xp_seed_and_lapis() {
     menu.grid[1] = lapis;
     player.initialize_station(&registry.enchantments, &registry.item_rules(), 15);
     let window = player.open.as_ref().unwrap().window;
-    let before_seed = player.enchantment_seed;
+    let before_seed = player.enchantment_offer_seed;
     let (accepted, effects) = transition(&mut state, entity, None, |player, _| {
         player.station_button(
             &registry.enchantments,
@@ -865,7 +865,7 @@ fn enchanting_button_with_unrelated_holds_commits_native_xp_seed_and_lapis() {
     assert!(accepted);
     assert!(!effects.changes.is_empty());
     assert_eq!(state.players[&entity].vitals.experience.level, 29);
-    assert_ne!(state.players[&entity].enchantment_seed, before_seed);
+    assert_ne!(state.players[&entity].enchantment_offer_seed, before_seed);
     let menu = state.players[&entity].open.as_ref().unwrap();
     assert_eq!(menu.grid[1].count, 2);
     assert!(!menu.grid[0].enchantments.is_empty());

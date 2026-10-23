@@ -245,7 +245,7 @@ fn canonical(state: &TickState) -> BTreeMap<&'static str, u64> {
                 p.vitals,
                 p.game_mode,
                 p.active_effects,
-                p.enchantment_seed,
+                (p.enchantment_seed, p.enchantment_offer_seed),
                 p.fall_distance,
                 p.sprinting,
                 p.advancement_progress

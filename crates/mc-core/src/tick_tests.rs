@@ -7038,7 +7038,7 @@ fn workstation_wire_inputs_own_inputs_and_commit_station_outputs() {
                     mode: ClickMode::QuickMove,
                 }],
             );
-            let seed = state.players[&entity].enchantment_seed;
+            let seed = state.players[&entity].enchantment_offer_seed;
             run_tick(
                 &mut state,
                 &[PlayerInput::ContainerButton {
@@ -7047,7 +7047,7 @@ fn workstation_wire_inputs_own_inputs_and_commit_station_outputs() {
                     button: 0,
                 }],
             );
-            assert_ne!(state.players[&entity].enchantment_seed, seed);
+            assert_ne!(state.players[&entity].enchantment_offer_seed, seed);
             assert!(
                 !state.players[&entity].open.as_ref().unwrap().grid[0]
                     .enchantments

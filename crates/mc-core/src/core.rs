@@ -576,7 +576,7 @@ fn load_dimension_state(
                         lit_total: image.lit_total,
                         cook_progress: image.cook_progress,
                         cook_total: image.cook_total,
-                        recipes_used: std::collections::BTreeMap::new(),
+                        recipes_used: Arc::clone(&image.recipes_used),
                     }
                 }),
             });
@@ -2946,6 +2946,7 @@ fn player_record(
         current_impulse_impact_pos: player.current_impulse_impact_pos,
         fall_flying: player.fall_flying,
         enchantment_seed: player.enchantment_seed,
+        enchantment_offer_seed: player.enchantment_offer_seed,
         warden_warning: player.warden_warning,
         burn_ticks: state.entities.body(slot).burn_ticks,
         portal: state.entities.row(slot).entity_life.portal,
@@ -3189,6 +3190,7 @@ fn player_journal_entry(
         current_impulse_impact_pos: record.current_impulse_impact_pos,
         fall_flying: record.fall_flying,
         enchantment_seed: record.enchantment_seed,
+        enchantment_offer_seed: record.enchantment_offer_seed,
         warden_warning: record.warden_warning,
         burn_ticks: record.burn_ticks,
         portal: record.portal,

@@ -112,6 +112,7 @@ fn world(inventory: Vec<mc_data::ItemStack>, dropped: Option<mc_data::ItemStack>
         respawn_pitch: 0.0,
         active_effects: Default::default(),
         enchantment_seed: 0,
+        enchantment_offer_seed: 0,
         warden_warning: Default::default(),
         current_impulse_impact_pos: None,
         fall_flying: false,

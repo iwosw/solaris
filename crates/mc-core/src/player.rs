@@ -39,8 +39,10 @@ pub struct PlayerState {
     pub open: Option<Menu>,
     pub vitals: Vitals,
     pub active_effects: crate::effects::ActiveEffects,
-    /// Vanilla `XpSeed`, shared across all enchanting tables and persisted.
+    /// Retained deterministic gameplay RNG (equipment and consumption draws).
     pub enchantment_seed: i32,
+    /// Vanilla XpSeed: changes only after an enchanting transaction.
+    pub enchantment_offer_seed: i32,
     pub warden_warning: crate::shrieker::Warning,
     pub game_mode: GameMode,
     /// Blocks fallen since the player last stood on ground (vanilla
@@ -152,6 +154,7 @@ impl PlayerState {
             vitals: Vitals::default(),
             active_effects: crate::effects::ActiveEffects::default(),
             enchantment_seed: crate::inventory::enchanting::next_seed(connection.0 as i32),
+            enchantment_offer_seed: crate::inventory::enchanting::next_seed(connection.0 as i32),
             warden_warning: Default::default(),
             game_mode,
             fall_distance: 0.0,
@@ -494,6 +497,7 @@ impl PlayerState {
         window: u8,
         recipe: u32,
         make_all: bool,
+        container: &mut [ItemStack],
     ) -> PlayerEffects {
         if self.spectator() || window != self.current_window() {
             return PlayerEffects::default();
@@ -506,8 +510,8 @@ impl PlayerState {
             return PlayerEffects::default();
         }
         let menu = self.open.as_mut().unwrap_or(&mut self.inventory_menu);
-        let outcome = menu.place_recipe(rules, &mut self.inventory, recipe, make_all);
-        click_effects(menu, &self.inventory, &[], outcome)
+        let outcome = menu.place_recipe(rules, &mut self.inventory, recipe, make_all, container);
+        click_effects(menu, &self.inventory, container, outcome)
     }
 
     /// Vanilla `doCloseContainer`: closes the current menu whatever window

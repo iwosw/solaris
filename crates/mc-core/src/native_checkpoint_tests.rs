@@ -935,6 +935,7 @@ fn statistics_native_checkpoint_restart_and_wal_postimage_restore() {
         respawn_pitch: player.respawn_pitch,
         active_effects: player.active_effects.clone(),
         enchantment_seed: player.enchantment_seed,
+        enchantment_offer_seed: player.enchantment_offer_seed,
         warden_warning: player.warden_warning,
         current_impulse_impact_pos: player.current_impulse_impact_pos,
         fall_flying: player.fall_flying,

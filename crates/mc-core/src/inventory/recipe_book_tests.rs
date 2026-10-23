@@ -9,7 +9,7 @@ const SHAPED_2X2: u32 = 3;
 fn place(s: &mut Session, recipe: u32, make_all: bool) {
     let rules = s.data.rules();
     s.menu
-        .place_recipe(&rules, &mut s.inventory, recipe, make_all);
+        .place_recipe(&rules, &mut s.inventory, recipe, make_all, &mut []);
 }
 
 #[test]
@@ -86,4 +86,69 @@ fn placing_never_merges_stacks_of_different_components() {
     place(&mut s, PLANKS_RECIPE, true);
     assert_eq!(s.menu.grid[0], stack(LOG, 1));
     assert_eq!(s.inventory.slots[1], modeled);
+}
+
+#[test]
+fn cooking_books_match_station_kind_and_keep_non_input_custody() {
+    use mc_data::recipes::CookingKind;
+    let registry = crate::registry::CoreRegistry::load(None).unwrap();
+    for (kind, recipe_name, ingredient) in [
+        (
+            CookingKind::Furnace,
+            "iron_ingot_from_smelting_raw_iron",
+            "raw_iron",
+        ),
+        (
+            CookingKind::BlastFurnace,
+            "iron_ingot_from_blasting_raw_iron",
+            "raw_iron",
+        ),
+        (CookingKind::Smoker, "cooked_beef_from_smoking", "beef"),
+    ] {
+        let item = |name: &str, count| {
+            ItemStack::new(
+                registry
+                    .items
+                    .id_of(&mc_data::Identifier::parse(format!("minecraft:{name}")).unwrap())
+                    .unwrap(),
+                count,
+            )
+        };
+        let recipe = registry
+            .recipes
+            .iter()
+            .position(|r| r.id.path() == recipe_name)
+            .unwrap() as u32;
+        let mut menu = super::Menu::new(1, MenuKind::Furnace(kind));
+        let mut inventory = super::PlayerInventory::default();
+        inventory.slots[0] = item(ingredient, 5);
+        let mut container = [ItemStack::EMPTY, item("coal", 3), item("iron_ingot", 2)];
+        let retained = [container[1].clone(), container[2].clone()];
+        menu.place_recipe(
+            &registry.item_rules(),
+            &mut inventory,
+            recipe,
+            false,
+            &mut container,
+        );
+        assert_eq!(container[0], item(ingredient, 1));
+        menu.place_recipe(
+            &registry.item_rules(),
+            &mut inventory,
+            recipe,
+            false,
+            &mut container,
+        );
+        assert_eq!(container[0], item(ingredient, 2));
+        menu.place_recipe(
+            &registry.item_rules(),
+            &mut inventory,
+            recipe,
+            true,
+            &mut container,
+        );
+        assert_eq!(container[0], item(ingredient, 5));
+        assert_eq!(&container[1..], &retained);
+        assert!(inventory.slots[0].is_empty());
+    }
 }

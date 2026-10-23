@@ -216,7 +216,16 @@ pub(in crate::tick) fn container_click(
     // connection id and a bumped state-id so a stale click can
     // never silently take an already-taken item). The actor is
     // excluded: it already got its diff above.
-    if !open_cells.is_empty() && container_slots(state, &open_cells) == container {
+    sync_container_viewers(state, entity, &open_cells, &container);
+}
+
+fn sync_container_viewers(
+    state: &mut TickState,
+    entity: EntityId,
+    open_cells: &[(i32, i32, i32)],
+    container: &[mc_data::ItemStack],
+) {
+    if !open_cells.is_empty() && container_slots(state, open_cells) == container {
         let viewers: Vec<(EntityId, ConnectionId)> = state
             .open_containers
             .iter()
@@ -385,31 +394,83 @@ pub(in crate::tick) fn place_recipe(
     }
     let registry = Arc::clone(&state.registry);
     let rules = registry.item_rules();
-    let native = |player: &mut crate::player::PlayerState, _: &mut [mc_data::ItemStack]| {
-        player.place_recipe(&rules, *window, *recipe, *make_all)
+    let open_cells = state
+        .open_containers
+        .get(&entity)
+        .map(|pos| container_cells(state, *pos))
+        .unwrap_or_default();
+    let mut container = container_slots(state, &open_cells);
+    if state
+        .players
+        .get(&entity)
+        .and_then(|p| p.open.as_ref())
+        .is_some_and(|menu| menu.kind.container_size() != container.len())
+        || open_cells
+            .iter()
+            .any(|&(x, y, z)| state.world.block_at(x, y, z).is_none())
+    {
+        container_close(state, connection, changes);
+        state.push_player(
+            *connection,
+            crate::boundary::PlayerChange::MenuClosed { window: *window },
+        );
+        return;
+    }
+    let native = |player: &mut crate::player::PlayerState, container: &mut [mc_data::ItemStack]| {
+        player.place_recipe(&rules, *window, *recipe, *make_all, container)
     };
-    let effects = if crate::plugin_inventories::has_reservations_for_player(state, entity) {
+    let guarded = crate::plugin_inventories::has_reservations_for_player(state, entity)
+        || open_cells.iter().any(|&(x, y, z)| {
+            crate::plugin_inventories::has_reservations_for_block(state, BlockPos { x, y, z })
+        });
+    let effects = if guarded {
         let Some(player) = state.players.get(&entity) else {
             return;
         };
-        let plan = player.plan_inventory_transition(&[], native);
-        if crate::plugin_inventories::below_player_floors(state, entity, plan.player_slots()) {
-            inventory_transition_refused(state, entity)
+        let plan = player.plan_inventory_transition(&container, native);
+        let below_container = state.open_containers.get(&entity).is_some_and(|pos| {
+            crate::plugin_inventories::below_floors(
+                state,
+                &mc_script::ScriptInventoryEndpoint::Container {
+                    dimension: state.dimension.name().into(),
+                    position: mc_script::ScriptBlockPosition::new(pos.0, pos.1, pos.2),
+                },
+                plan.container_slots(),
+            )
+        });
+        if below_container
+            || crate::plugin_inventories::below_player_floors(state, entity, plan.player_slots())
+        {
+            player.inventory_transition_refused(&container)
         } else {
             state
                 .players
                 .get_mut(&entity)
                 .expect("planned player")
-                .apply_inventory_transition(plan, &mut [])
+                .apply_inventory_transition(plan, &mut container)
         }
     } else {
         state
             .players
             .get_mut(&entity)
-            .map(|player| native(player, &mut []))
+            .map(|player| native(player, &mut container))
             .unwrap_or_default()
     };
+    if effects.container_changed {
+        crate::block_log::note_container(state, entity, &open_cells, &container);
+        store_container_slots(state, &open_cells, &container);
+        if let Some(pos) = state.open_containers.get(&entity)
+            && let Some(progress) = state
+                .block_entities
+                .get_mut(pos)
+                .and_then(|record| record.furnace.as_mut())
+            && let Some((before, after)) = &effects.furnace_input_change
+        {
+            progress.input_replaced(before, after);
+        }
+    }
     apply_player_effects(state, *connection, entity, effects, changes);
+    sync_container_viewers(state, entity, &open_cells, &container);
 }
 
 pub(in crate::tick) fn swap_hands(

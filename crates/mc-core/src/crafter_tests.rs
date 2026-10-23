@@ -620,3 +620,46 @@ fn crafter_consumes_free_inputs_but_never_the_reserved_floor() {
         &state, POS
     ));
 }
+
+#[test]
+fn banner_copy_ejects_output_and_original_without_destroying_source() {
+    let (mut state, _) = fixture(None);
+    install(&mut state, "north_up");
+    let mut source = stack(&state, "white_banner", 1);
+    source
+        .extended_mut()
+        .banner_patterns
+        .push(mc_data::item_stack::BannerPattern {
+            pattern: mc_data::Identifier::parse("minecraft:stripe_bottom").unwrap(),
+            color: 14,
+        });
+    let blank = stack(&state, "white_banner", 1);
+    state.block_entities.get_mut(&KEY).unwrap().slots[0] = source.clone();
+    state.block_entities.get_mut(&KEY).unwrap().slots[1] = blank;
+    pulse(&mut state);
+    let mut drops = Vec::new();
+    scheduled(&mut state, POS, 8, &mut Vec::new(), &mut drops);
+    assert!(
+        state.block_entities[&KEY]
+            .slots
+            .iter()
+            .all(ItemStack::is_empty)
+    );
+    assert_eq!(drops.len(), 2);
+    for entity in drops {
+        let slot = state.entities.slot_of(entity).unwrap();
+        assert!(matches!(
+            &state.entities.body(slot).kind,
+            crate::entities::EntityKind::Item { .. }
+        ));
+        assert_eq!(
+            state
+                .entities
+                .row(slot)
+                .item
+                .as_ref()
+                .and_then(|item| item.stack.as_ref()),
+            Some(&source)
+        );
+    }
+}

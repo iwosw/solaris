@@ -118,6 +118,14 @@ not fabricated targets. Anvil map files and allocation counters are decoded into
 native rows on import and regenerated from the recovered native state on export;
 unknown map-envelope fields and retained banner metadata remain preserved.
 
+Enchanting-table offers retain their own persisted `XpSeed`; equipment and
+consumable probability draws use a separate persisted gameplay seed. Copy recipes
+retain the original book/banner as a crafting remainder (returned in player
+grids, ejected by crafters). Furnace recipe placement mutates the same shared
+input custody as clicks, with reservation fences and viewer revisions. Furnace
+recipe-count XP banks share immutable images with the tick WAL, survive native
+chunk checkpoints, and settle once into orbs when the container is destroyed.
+
 Anvil is explicit offline import/export, never a serving fallback or dual-write
 backend. Conversions retain source worlds, require a new destination and emit
 receipts. Offline native backup/restore requires a stopped, exclusively leased

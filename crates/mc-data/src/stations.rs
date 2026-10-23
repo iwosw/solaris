@@ -480,7 +480,7 @@ pub fn smithing_input_allowed(
     })
 }
 
-fn is_curse(enchantment: &ItemEnchantment) -> bool {
+pub(crate) fn is_curse(enchantment: &ItemEnchantment) -> bool {
     catalogue()
         .enchantment_tags
         .get("minecraft:curse")

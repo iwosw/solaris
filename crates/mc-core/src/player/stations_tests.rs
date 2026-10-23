@@ -40,12 +40,12 @@ fn take(player: &mut PlayerState, registry: &CoreRegistry) -> PlayerEffects {
 fn enchanting_debits_lapis_and_only_offer_levels_and_refreshes_seed() {
     let registry = registry();
     let mut player = player(&registry, MenuKind::EnchantingTable);
-    player.enchantment_seed = 12345;
+    player.enchantment_offer_seed = 12345;
     let menu = player.open.as_mut().unwrap();
     menu.grid[0] = stack(&registry, "minecraft:diamond_sword", 1);
     menu.grid[1] = stack(&registry, "minecraft:lapis_lazuli", 8);
     let window = menu.window;
-    let before = player.enchantment_seed;
+    let before = player.enchantment_offer_seed;
     let effects = player.enchant_offer(
         &registry.enchantments,
         &registry.item_rules(),
@@ -57,7 +57,7 @@ fn enchanting_debits_lapis_and_only_offer_levels_and_refreshes_seed() {
     assert!(!menu.grid[0].enchantments.is_empty());
     assert_eq!(menu.grid[1].count, 5);
     assert_eq!(player.vitals.experience.level, 37);
-    assert_ne!(player.enchantment_seed, before);
+    assert_ne!(player.enchantment_offer_seed, before);
     assert_eq!(
         player
             .statistics
@@ -77,10 +77,10 @@ fn enchanting_debits_lapis_and_only_offer_levels_and_refreshes_seed() {
 fn enchanting_rejects_insufficient_lapis_and_level_without_mutating() {
     let registry = registry();
     let mut player = player(&registry, MenuKind::EnchantingTable);
-    player.enchantment_seed = 12345;
+    player.enchantment_offer_seed = 12345;
     player.open.as_mut().unwrap().grid[0] = stack(&registry, "minecraft:diamond_sword", 1);
     let window = player.open.as_ref().unwrap().window;
-    let seed = player.enchantment_seed;
+    let seed = player.enchantment_offer_seed;
     assert!(
         player
             .enchant_offer(
@@ -93,7 +93,7 @@ fn enchanting_rejects_insufficient_lapis_and_level_without_mutating() {
             .changes
             .is_empty()
     );
-    assert_eq!(player.enchantment_seed, seed);
+    assert_eq!(player.enchantment_offer_seed, seed);
     player.open.as_mut().unwrap().grid[1] = stack(&registry, "minecraft:lapis_lazuli", 3);
     player.vitals.experience.level = 2;
     assert!(
@@ -223,4 +223,24 @@ fn closing_station_returns_inputs_and_never_returns_preview_output() {
         .collect();
     assert_eq!(swords.len(), 1);
     assert!(swords[0].custom_name.is_none());
+}
+
+#[test]
+fn unbreaking_does_not_reroll_enchanting_offers() {
+    let registry = registry();
+    let mut player = player(&registry, MenuKind::EnchantingTable);
+    player.enchantment_offer_seed = 12345;
+    player.open.as_mut().unwrap().grid[0] = stack(&registry, "minecraft:diamond_sword", 1);
+    player.initialize_station(&registry.enchantments, &registry.item_rules(), 15);
+    let before = player.open.as_ref().unwrap().station.clone();
+    player.inventory.slots[0] = stack(&registry, "minecraft:diamond_pickaxe", 1).with_enchantment(
+        mc_data::Identifier::parse("minecraft:unbreaking").unwrap(),
+        3,
+    );
+    let rng = player.enchantment_seed;
+    player.damage_held_tool(&registry.item_rules(), 1);
+    assert_ne!(player.enchantment_seed, rng);
+    assert_eq!(player.enchantment_offer_seed, 12345);
+    player.initialize_station(&registry.enchantments, &registry.item_rules(), 15);
+    assert_eq!(player.open.as_ref().unwrap().station, before);
 }

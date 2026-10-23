@@ -20,7 +20,7 @@ impl PlayerState {
         menu.refresh_station(
             catalog,
             rules,
-            self.enchantment_seed,
+            self.enchantment_offer_seed,
             creative,
             self.vitals.experience.level,
         );
@@ -69,7 +69,7 @@ impl PlayerState {
         menu.refresh_station(
             catalog,
             rules,
-            self.enchantment_seed,
+            self.enchantment_offer_seed,
             creative,
             self.vitals.experience.level,
         );
@@ -95,7 +95,7 @@ impl PlayerState {
         menu.refresh_station(
             catalog,
             rules,
-            self.enchantment_seed,
+            self.enchantment_offer_seed,
             creative,
             self.vitals.experience.level,
         );
@@ -169,7 +169,7 @@ impl PlayerState {
         menu.refresh_station(
             catalog,
             rules,
-            self.enchantment_seed,
+            self.enchantment_offer_seed,
             creative,
             self.vitals.experience.level,
         );
@@ -189,7 +189,7 @@ impl PlayerState {
             catalog,
             rules,
             &menu.grid[0],
-            self.enchantment_seed,
+            self.enchantment_offer_seed,
             bookshelves,
             index,
         ) else {
@@ -203,14 +203,14 @@ impl PlayerState {
         if !creative {
             mc_data::inventory_semantics_26_1_2::take_from_stack(&mut menu.grid[1], cost);
         }
-        self.enchantment_seed = next_seed(self.enchantment_seed);
+        self.enchantment_offer_seed = next_seed(self.enchantment_offer_seed);
         self.statistics
             .increment_custom(mc_data::statistics::CustomStat::EnchantItem, 1);
         menu.state_id = (menu.state_id + 1) & 0x7fff;
         menu.refresh_station(
             catalog,
             rules,
-            self.enchantment_seed,
+            self.enchantment_offer_seed,
             creative,
             self.vitals.experience.level,
         );
@@ -258,7 +258,7 @@ impl PlayerState {
         menu.refresh_station(
             catalog,
             rules,
-            self.enchantment_seed,
+            self.enchantment_offer_seed,
             creative,
             self.vitals.experience.level,
         );

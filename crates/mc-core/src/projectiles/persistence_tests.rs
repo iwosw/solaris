@@ -399,6 +399,7 @@ fn player_inventory_entry(inventory: Vec<ItemStack>, tick: u64) -> JournalEntry 
         respawn_pitch: 0.0,
         active_effects: Default::default(),
         enchantment_seed: 0,
+        enchantment_offer_seed: 0,
         warden_warning: Default::default(),
         current_impulse_impact_pos: None,
         burn_ticks: 0,

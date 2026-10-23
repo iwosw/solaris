@@ -25,15 +25,29 @@ impl Menu {
         inventory: &mut PlayerInventory,
         recipe: u32,
         make_all: bool,
+        container: &mut [ItemStack],
     ) -> ClickOutcome {
-        let before = self.contents(inventory, &[]);
+        let before = self.contents(inventory, container);
         let carried_before = self.carried.clone();
-        if let Some(plan) = self.plan(rules, inventory, recipe, make_all) {
+        let mut container_changed = false;
+        if let Some(plan) = self.plan(rules, inventory, recipe, make_all, container) {
             *inventory = plan.inventory;
-            self.grid = plan.grid;
-            self.result = super::crafting::grid_result(rules, &self.grid);
+            if matches!(self.kind, super::MenuKind::Furnace(_)) {
+                container_changed = container[0] != plan.grid[0];
+                container[0] = plan.grid.into_iter().next().expect("furnace input");
+            } else {
+                self.grid = plan.grid;
+                self.result = super::crafting::grid_result(rules, &self.grid);
+            }
         }
-        self.outcome(&before, &carried_before, Vec::new(), false, inventory, &[])
+        self.outcome(
+            &before,
+            &carried_before,
+            Vec::new(),
+            container_changed,
+            inventory,
+            container,
+        )
     }
 
     fn plan(
@@ -42,21 +56,55 @@ impl Menu {
         inventory: &PlayerInventory,
         recipe_index: u32,
         make_all: bool,
+        container: &[ItemStack],
     ) -> Option<Placement> {
         let recipe = rules.recipes.get(usize::try_from(recipe_index).ok()?)?;
-        let width = match self.grid.len() {
-            4 => 2,
-            9 => 3,
-            _ => return None,
+        let cooking = match (&self.kind, &recipe.kind) {
+            (
+                super::MenuKind::Furnace(mc_data::recipes::CookingKind::Furnace),
+                RecipeKind::Smelting(recipe),
+            )
+            | (
+                super::MenuKind::Furnace(mc_data::recipes::CookingKind::Smoker),
+                RecipeKind::Smoking(recipe),
+            )
+            | (
+                super::MenuKind::Furnace(mc_data::recipes::CookingKind::BlastFurnace),
+                RecipeKind::Blasting(recipe),
+            ) if container.len() == 3 => Some(recipe),
+            (super::MenuKind::Furnace(_), _) => return None,
+            _ => None,
         };
-        let positions = ingredient_positions(&recipe.kind, width)?;
-
-        let already = grid_input(&self.grid).is_some_and(|input| {
-            !self.result.is_empty()
-                && crafting_recipe_matches(rules.items, rules.facts, rules.tags, &input, recipe)
-        });
-        let held = self
-            .grid
+        let grid = if cooking.is_some() {
+            &container[..1]
+        } else {
+            self.grid.as_slice()
+        };
+        let positions = if let Some(cooking) = cooking {
+            vec![(0, &cooking.ingredient)]
+        } else {
+            let width = match grid.len() {
+                4 => 2,
+                9 => 3,
+                _ => return None,
+            };
+            ingredient_positions(&recipe.kind, width)?
+        };
+        let already = if let Some(cooking) = cooking {
+            ingredient_accepts_stack(
+                rules.items,
+                rules.facts,
+                rules.tags,
+                &grid[0],
+                &cooking.ingredient,
+            )
+        } else {
+            grid_input(grid).is_some_and(|input| {
+                !self.result.is_empty()
+                    && crafting_recipe_matches(rules.items, rules.facts, rules.tags, &input, recipe)
+            })
+        };
+        let held = grid
             .iter()
             .filter(|stack| !stack.is_empty())
             .map(|stack| stack.count)
@@ -64,7 +112,7 @@ impl Menu {
             .unwrap_or(0);
 
         let mut cleared = inventory.clone();
-        for stack in &self.grid {
+        for stack in grid {
             let mut stack = stack.clone();
             cleared.add(rules, &mut stack);
             if !stack.is_empty() {
@@ -78,7 +126,7 @@ impl Menu {
         } else {
             1
         };
-        let mut grid = vec![ItemStack::EMPTY; self.grid.len()];
+        let mut grid = vec![ItemStack::EMPTY; grid.len()];
         for amount in (1..=desired).rev() {
             if let Some(picks) = pick_sources(rules, &cleared, &positions, amount) {
                 for (&(slot, _), kind) in positions.iter().zip(picks) {

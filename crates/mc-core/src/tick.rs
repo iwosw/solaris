@@ -33,6 +33,7 @@ use crate::world::ChunkWorld;
 
 mod auth;
 pub(crate) use auth::unlock_session;
+mod container_access;
 mod damage;
 mod elytra;
 mod input;
@@ -42,6 +43,8 @@ mod passive_follow;
 mod stations;
 mod system_graph;
 
+#[cfg(test)]
+mod furnace_tests;
 #[cfg(test)]
 pub(crate) mod mining_tests;
 
@@ -561,6 +564,7 @@ impl BlockEntityState {
                 lit_total: progress.lit_total,
                 cook_progress: progress.cook_progress,
                 cook_total: progress.cook_total,
+                recipes_used: Arc::clone(&progress.recipes_used),
             })
     }
 }
@@ -1045,7 +1049,7 @@ impl TickState {
             IntentKind::BreakBlock { pos } => {
                 // Drops read the broken state now (merge precedes writes).
                 if let Some(broken) = self.world.block_at(pos.x, pos.y, pos.z) {
-                    let wear = self.block_break_tool_wear(intent.actor);
+                    let wear = self.block_break_tool_wear(intent.actor, broken);
                     let Ok(wear) = self.player_tool_wear_plan(intent.actor, wear) else {
                         return false;
                     };
@@ -1131,7 +1135,7 @@ impl TickState {
                             && crate::fluids::fluid_at(&self.registry.states, *new).is_some()
                     })
                 {
-                    let wear = self.block_break_tool_wear(intent.actor);
+                    let wear = self.block_break_tool_wear(intent.actor, old);
                     let Ok(wear) = self.player_tool_wear_plan(intent.actor, wear) else {
                         return false;
                     };
@@ -1680,7 +1684,14 @@ impl TickState {
                 let drop = spawn_item_entity(self, centre, stack);
                 spawned.push(drop);
             }
-            self.block_entities.remove(&(x, y, z));
+            if let Some(mut furnace) = self
+                .block_entities
+                .remove(&(x, y, z))
+                .and_then(|record| record.furnace)
+            {
+                let award = furnace.take_experience(&self.registry.item_rules(), self.tick);
+                crate::experience_orbs::award(self, centre, award, &mut spawned);
+            }
             self.brewing.remove(&(x, y, z));
             self.crafters.remove(&(x, y, z));
             let pos = BlockPos { x, y, z };
@@ -1797,7 +1808,10 @@ impl TickState {
         }
     }
 
-    fn block_break_tool_wear(&self, actor: EntityId) -> i32 {
+    fn block_break_tool_wear(&self, actor: EntityId, broken: u32) -> i32 {
+        if self.registry.mining.destroy_speed(broken) == Some(0.0) {
+            return 0;
+        }
         let Some(player) = self.players.get(&actor) else {
             return 0;
         };
@@ -2514,9 +2528,8 @@ fn hydrate_player(
     player.current_impulse_impact_pos = record.current_impulse_impact_pos;
     player.fall_flying = record.fall_flying;
     player.warden_warning = record.warden_warning;
-    if record.enchantment_seed != 0 {
-        player.enchantment_seed = record.enchantment_seed;
-    }
+    player.enchantment_seed = record.enchantment_seed;
+    player.enchantment_offer_seed = record.enchantment_offer_seed;
     player.game_mode = match record.game_mode {
         1 => crate::commands::GameMode::Creative,
         2 => crate::commands::GameMode::Adventure,
@@ -3763,7 +3776,9 @@ pub(crate) fn plan_client_build_at(
                 }
                 crate::composter::UsePlan::Pass => {}
             }
-            if container_menu_for(state, position.x, position.y, position.z).is_some() {
+            if !secondary_use(state, entity)
+                && container_menu_for(state, position.x, position.y, position.z).is_some()
+            {
                 return None;
             }
             let slot = state.entities.slot_of(entity)?;
@@ -3935,8 +3950,20 @@ pub(crate) fn obstructed(state: &TickState, pos: BlockPos) -> bool {
     false
 }
 
-/// Container menu for the block at `(x, y, z)`: (kind, title, slots). Both
-/// halves of a double chest open one 54-slot menu.
+/// Sneaking with an occupied hand bypasses block-menu activation.
+fn secondary_use(state: &TickState, entity: EntityId) -> bool {
+    state
+        .entities
+        .slot_of(entity)
+        .is_some_and(|slot| state.entities.row(slot).appearance.shared_flags & SNEAKING_FLAG != 0)
+        && state.players.get(&entity).is_some_and(|player| {
+            !player.inventory.slots[held_slot_index(player, crate::boundary::Hand::Main)].is_empty()
+                || !player.inventory.slots[held_slot_index(player, crate::boundary::Hand::Off)]
+                    .is_empty()
+        })
+}
+
+/// Container menu for a block; both halves share one double-chest menu.
 fn container_menu_for(
     state: &TickState,
     x: i32,
@@ -4461,7 +4488,7 @@ fn sync_chunk_block_entities(state: &mut TickState) {
                         lit_total: i32::from(furnace.burn_total),
                         cook_progress: i32::from(furnace.cook_progress),
                         cook_total: i32::from(furnace.cook_total),
-                        recipes_used: std::collections::BTreeMap::new(),
+                        recipes_used: Arc::new(furnace.recipes_used.clone()),
                     }),
                 });
         }

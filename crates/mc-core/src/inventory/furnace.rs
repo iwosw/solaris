@@ -30,7 +30,7 @@ pub struct FurnaceState {
     pub cook_progress: i32,
     pub cook_total: i32,
     /// Recipe id -> crafts since the output was last taken (experience).
-    pub recipes_used: BTreeMap<String, i32>,
+    pub recipes_used: std::sync::Arc<BTreeMap<String, i32>>,
 }
 
 /// What one furnace tick changed.
@@ -106,8 +106,7 @@ impl FurnaceState {
                 if self.cook_progress >= self.cook_total {
                     self.cook_progress = 0;
                     burn(rules, recipe, slots);
-                    *self
-                        .recipes_used
+                    *std::sync::Arc::make_mut(&mut self.recipes_used)
                         .entry(recipe.id.as_str().to_owned())
                         .or_default() += 1;
                     changed = true;
@@ -176,7 +175,9 @@ impl FurnaceState {
     /// Experience for taking output; clears the used-recipe record.
     pub fn take_experience(&mut self, rules: &ItemRules<'_>, seed: u64) -> i32 {
         let award = furnace_experience_award(rules.recipes, &self.recipes_used, seed);
-        self.recipes_used.clear();
+        if !self.recipes_used.is_empty() {
+            self.recipes_used = Default::default();
+        }
         award
     }
 }

@@ -203,3 +203,64 @@ fn repeated_shield_use_preserves_raise_delay_and_release_restarts_it() {
     player.tick_item_use(&rules);
     assert_eq!(player.raised_shield(&rules), None);
 }
+
+#[test]
+fn harmful_foods_apply_effects_only_after_consumption_completes() {
+    let (mut state, entity, _) = flat_player_fixture();
+    let registry = std::sync::Arc::clone(&state.registry);
+    for (name, expected) in [
+        (
+            "pufferfish",
+            vec![
+                (EffectId::Hunger, 1200, 2),
+                (EffectId::Poison, 1200, 1),
+                (EffectId::Nausea, 300, 0),
+            ],
+        ),
+        ("spider_eye", vec![(EffectId::Poison, 100, 0)]),
+    ] {
+        let food = item(&state, name, 2);
+        let player = state.players.get_mut(&entity).unwrap();
+        player.clear_effects(None);
+        player.vitals.food = 10;
+        player.inventory.slots[0] = food;
+        player.use_item(&registry.item_rules(), Hand::Main);
+        assert!(player.active_effects.entries.is_empty());
+        let mut received = Vec::new();
+        for _ in 0..40 {
+            received.extend(player.tick_item_use(&registry.item_rules()).changes);
+        }
+        assert_eq!(player.inventory.slots[0].count, 1);
+        for (id, duration, amplifier) in expected {
+            assert!(received.iter().any(|change| matches!(change, PlayerChange::MobEffect { effect, .. } if effect.id == id && effect.duration == duration && effect.amplifier == amplifier)));
+        }
+    }
+}
+
+#[test]
+fn probabilistic_food_penalties_use_retained_gameplay_rng() {
+    let (mut state, entity, _) = flat_player_fixture();
+    let registry = std::sync::Arc::clone(&state.registry);
+    for (name, probability, effect) in [
+        ("rotten_flesh", 0.8, EffectId::Hunger),
+        ("chicken", 0.3, EffectId::Hunger),
+        ("poisonous_potato", 0.6, EffectId::Poison),
+    ] {
+        let food = item(&state, name, 1);
+        let player = state.players.get_mut(&entity).unwrap();
+        let offer_seed = player.enchantment_offer_seed;
+        let mut successes = 0;
+        for seed in 0..1000 {
+            player.clear_effects(None);
+            player.enchantment_seed = seed;
+            let mut expected = seed;
+            let applies = crate::enchantments::random(&mut expected) < probability;
+            player.consume_effects(&registry.item_rules(), &food);
+            assert_eq!(player.active_effects.has(effect), applies);
+            assert_eq!(player.enchantment_seed, expected);
+            assert_eq!(player.enchantment_offer_seed, offer_seed);
+            successes += usize::from(applies);
+        }
+        assert!(successes > 0 && successes < 1000);
+    }
+}

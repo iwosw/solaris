@@ -25,6 +25,7 @@ use mc_world::{BlockPos, BlockRegistry, BlockState, BlockStateId, ScheduledBlock
 use planning::BlockPlanningRead;
 use std::collections::{BTreeMap, HashSet};
 
+
 #[derive(Default)]
 pub(crate) struct RedstoneState {
     loaded: HashSet<ChunkPos>,

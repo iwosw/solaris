@@ -561,3 +561,79 @@ fn breaking_one_half_keeps_the_other_halfs_items() {
         assert_eq!(contents(&drains).len(), 27 + 36);
     }
 }
+
+#[test]
+fn sneak_use_places_against_chest_instead_of_opening_it() {
+    let mut rig = Rig::new();
+    rig.double_chest(&[], &[]);
+    let dirt = item(&rig.state, "minecraft:dirt", 2);
+    rig.state
+        .players
+        .get_mut(&rig.player)
+        .unwrap()
+        .inventory
+        .slots[0] = dirt;
+    rig.input(PlayerInput::Sneak {
+        connection: ConnectionId(1),
+        sneaking: true,
+    });
+    assert!(opened(&rig.open(rig.left)).is_none());
+    assert_eq!(rig.state.players[&rig.player].inventory.slots[0].count, 1);
+    assert_eq!(
+        rig.state
+            .world
+            .block_at(rig.left.x, rig.left.y + 1, rig.left.z),
+        Some(block(&rig.state, "minecraft:dirt", &[]))
+    );
+}
+
+#[test]
+fn either_chest_half_obstruction_blocks_open_but_barrel_does_not() {
+    let mut rig = Rig::new();
+    rig.double_chest(&[], &[]);
+    let stone = block(&rig.state, "minecraft:stone", &[]);
+    rig.state
+        .world
+        .set_block(rig.right.x, rig.right.y + 1, rig.right.z, stone);
+    rig.state.world.fold_overlay();
+    assert!(opened(&rig.open(rig.left)).is_none());
+    let barrel = block(&rig.state, "minecraft:barrel", &[]);
+    rig.state
+        .world
+        .set_block(rig.right.x, rig.right.y, rig.right.z, barrel);
+    rig.state.world.fold_overlay();
+    assert!(opened(&rig.open(rig.right)).is_some());
+}
+
+#[test]
+fn shulker_lid_obstruction_respects_facing_and_half_block_sweep() {
+    for (facing, delta) in [
+        ("up", (0, 1, 0)),
+        ("north", (0, 0, -1)),
+        ("east", (1, 0, 0)),
+    ] {
+        let mut rig = Rig::new();
+        let shulker = block(&rig.state, "minecraft:shulker_box", &[("facing", facing)]);
+        let stone = block(&rig.state, "minecraft:stone", &[]);
+        let pos = rig.left;
+        let obstruction = BlockPos {
+            x: pos.x + delta.0,
+            y: pos.y + delta.1,
+            z: pos.z + delta.2,
+        };
+        rig.state.world.set_block(pos.x, pos.y, pos.z, shulker);
+        rig.state
+            .world
+            .set_block(obstruction.x, obstruction.y, obstruction.z, stone);
+        rig.state.world.fold_overlay();
+        assert!(opened(&rig.open(pos)).is_none(), "{facing}");
+        rig.state.world.set_block(
+            obstruction.x,
+            obstruction.y,
+            obstruction.z,
+            rig.state.registry.states.air,
+        );
+        rig.state.world.fold_overlay();
+        assert!(opened(&rig.open(pos)).is_some(), "{facing}");
+    }
+}

@@ -204,6 +204,7 @@ fn abrupt_stop_loses_only_unflushed_tail() {
                             respawn_pitch: 0.0,
                             active_effects: Default::default(),
                             enchantment_seed: 0x12345678,
+                            enchantment_offer_seed: 12345,
                             warden_warning: Default::default(),
                             current_impulse_impact_pos: None,
                             fall_flying: false,
@@ -259,6 +260,7 @@ fn abrupt_stop_loses_only_unflushed_tail() {
     assert_eq!(player.tick, 5);
     assert_eq!(player.inventory.len(), 41);
     assert_eq!(player.enchantment_seed, 0x12345678);
+    assert_eq!(player.enchantment_offer_seed, 12345);
     let entity = replay.entities.get(&7).expect("entity");
     assert_eq!(entity.tick, 5);
     let _ = std::fs::remove_dir_all(&dir);
@@ -394,6 +396,7 @@ fn checkpoint_dat_is_vanilla_readable() {
         respawn_pitch: -30.0,
         active_effects: Default::default(),
         enchantment_seed: 0x12345678,
+        enchantment_offer_seed: 12345,
         warden_warning: Default::default(),
         current_impulse_impact_pos: None,
         fall_flying: false,
@@ -421,6 +424,7 @@ fn checkpoint_dat_is_vanilla_readable() {
     assert_eq!(back.experience_level, 7);
     assert_eq!(back.experience_total, 100);
     assert_eq!(back.enchantment_seed, record.enchantment_seed);
+    assert_eq!(back.enchantment_offer_seed, record.enchantment_offer_seed);
     assert_eq!(back.inventory[0], record.inventory[0]);
     assert_eq!(back.inventory[0].damage, Some(37));
     assert_eq!(
@@ -610,6 +614,7 @@ fn checkpoint_dat_uses_vanilla_slots_and_equipment() {
         respawn_pitch: 0.0,
         active_effects: Default::default(),
         enchantment_seed: 0x12345678,
+        enchantment_offer_seed: 12345,
         warden_warning: Default::default(),
         current_impulse_impact_pos: None,
         fall_flying: false,
@@ -699,6 +704,7 @@ fn effects_survive_checkpoint_and_journal_recovery() {
         respawn_pitch: 0.0,
         active_effects: effects.clone(),
         enchantment_seed: 0x34567890,
+        enchantment_offer_seed: 12345,
         warden_warning: Default::default(),
         current_impulse_impact_pos: None,
         fall_flying: false,
@@ -822,6 +828,7 @@ fn fall_flying_survives_nbt_and_journal_replay() {
         respawn_pitch: record.respawn_pitch,
         active_effects: record.active_effects.clone(),
         enchantment_seed: record.enchantment_seed,
+        enchantment_offer_seed: record.enchantment_offer_seed,
         warden_warning: record.warden_warning,
         current_impulse_impact_pos: record.current_impulse_impact_pos,
         fall_flying: record.fall_flying,

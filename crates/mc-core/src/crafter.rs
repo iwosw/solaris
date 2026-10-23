@@ -317,7 +317,15 @@ fn craft(
         &state.registry.item_facts,
         &ingredients,
     )
-    .or_else(|| mc_data::recipes::armor_dye_crafting_result(&state.registry.items, &ingredients));
+    .or_else(|| mc_data::recipes::armor_dye_crafting_result(&state.registry.items, &ingredients))
+    .or_else(|| {
+        mc_data::recipes::cloning::result(
+            &state.registry.items,
+            &state.registry.item_facts,
+            &state.registry.tags,
+            &ingredients,
+        )
+    });
     let recipe = repair
         .is_none()
         .then(|| {
@@ -373,6 +381,12 @@ fn craft(
         .map(|(_, value)| value.as_str())
         .unwrap_or("north_up");
     let travel = direction(orientation);
+    let retained_source = mc_data::recipes::cloning::source(
+        &state.registry.items,
+        &state.registry.item_facts,
+        &state.registry.tags,
+        &ingredients,
+    );
     let mut remainders = Vec::new();
     for (i, stack) in state
         .block_entities
@@ -384,6 +398,11 @@ fn craft(
     {
         if settings.disabled_slots & (1 << i) != 0 || stack.is_empty() {
             continue;
+        }
+        if Some(i) == retained_source {
+            let mut source = stack.clone();
+            source.count = 1;
+            remainders.push(source);
         }
         let remainder = state
             .registry

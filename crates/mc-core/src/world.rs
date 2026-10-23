@@ -2196,7 +2196,11 @@ impl ChunkWorld {
                             .as_ref()
                             .map(|furnace| furnace.cook_total as i16)
                             .unwrap_or(200),
-                        recipes_used: std::collections::BTreeMap::new(),
+                        recipes_used: record
+                            .furnace
+                            .as_ref()
+                            .map(|furnace| (*furnace.recipes_used).clone())
+                            .unwrap_or_default(),
                     },
                 );
             } else if matches!(

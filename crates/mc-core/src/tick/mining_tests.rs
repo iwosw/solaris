@@ -496,3 +496,20 @@ fn mining_airborne_ground_claim_does_not_remove_hand_rate_penalty() {
     assert!(!state.entities.ground(slot));
     assert!((crate::effects::mining_progress(&state, actor, grass) - 1.0 / 90.0).abs() < 0.000001);
 }
+
+#[test]
+fn zero_hardness_break_does_not_damage_tool() {
+    let (mut state, actor, _) = setup("torch");
+    let pickaxe = state
+        .registry
+        .items
+        .id_of(&mc_data::Identifier::parse("minecraft:stone_pickaxe").unwrap())
+        .unwrap();
+    state.players.get_mut(&actor).unwrap().inventory.slots[0] = mc_data::ItemStack::new(pickaxe, 1);
+    run_tick(&mut state, &[input(DigAction::Start)]);
+    assert_eq!(
+        state.world.block_at(POS.x, POS.y, POS.z),
+        Some(state.registry.states.air)
+    );
+    assert_eq!(state.players[&actor].inventory.slots[0].damage, None);
+}

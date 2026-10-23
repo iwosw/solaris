@@ -181,8 +181,13 @@ pub(in crate::tick) fn use_item_on(
         return;
     }
     // Containers open on use: chest/barrel/crafting/furnace family.
-    if let Some((kind, title, size)) = container_menu_for(state, position.x, position.y, position.z)
+    if !crate::tick::secondary_use(state, entity)
+        && let Some((kind, title, size)) =
+            container_menu_for(state, position.x, position.y, position.z)
     {
+        if !crate::tick::container_access::can_open(state, *position) {
+            return;
+        }
         if kind == crate::inventory::MenuKind::Beacon {
             crate::beacon::open(state, entity, *connection, *position, changes);
             return;

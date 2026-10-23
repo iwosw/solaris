@@ -70,7 +70,12 @@ pub(super) fn consume_craft(
     inventory: &mut PlayerInventory,
     dropped: &mut Vec<ItemStack>,
 ) {
-    for slot in grid.iter_mut() {
+    let retained_source =
+        mc_data::recipes::cloning::source(rules.items, rules.facts, rules.tags, grid);
+    for (index, slot) in grid.iter_mut().enumerate() {
+        if Some(index) == retained_source {
+            continue;
+        }
         if slot.is_empty() {
             continue;
         }

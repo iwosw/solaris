@@ -16,6 +16,7 @@ pub(crate) struct InventoryTransitionPlan {
     open: Option<Menu>,
     experience: Experience,
     enchantment_seed: i32,
+    enchantment_offer_seed: i32,
     using: Option<ItemUse>,
     container: Vec<ItemStack>,
     effects: PlayerEffects,
@@ -87,6 +88,7 @@ impl PlayerState {
             vitals: self.vitals.clone(),
             active_effects: Default::default(),
             enchantment_seed: self.enchantment_seed,
+            enchantment_offer_seed: self.enchantment_offer_seed,
             warden_warning: Default::default(),
             game_mode: self.game_mode,
             fall_distance: 0.0,
@@ -125,6 +127,7 @@ impl PlayerState {
             open: candidate.open,
             experience: candidate.vitals.experience,
             enchantment_seed: candidate.enchantment_seed,
+            enchantment_offer_seed: candidate.enchantment_offer_seed,
             using: candidate.using,
             container,
             effects,
@@ -145,6 +148,7 @@ impl PlayerState {
         self.open = plan.open;
         self.vitals.experience = plan.experience;
         self.enchantment_seed = plan.enchantment_seed;
+        self.enchantment_offer_seed = plan.enchantment_offer_seed;
         self.using = plan.using;
         for (target, stack) in container.iter_mut().zip(plan.container) {
             *target = stack;
