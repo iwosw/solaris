@@ -340,14 +340,19 @@ impl DensitySampler<'_> {
                     && (p.z.wrapping_sub(cell.z) as u32) < width as u32
             });
             let (x, y, z) = cell.map_or_else(
-                || (
-                    p.x.div_euclid(width) * width,
-                    p.y.div_euclid(height) * height,
-                    p.z.div_euclid(width) * width,
-                ),
+                || {
+                    (
+                        p.x.div_euclid(width) * width,
+                        p.y.div_euclid(height) * height,
+                        p.z.div_euclid(width) * width,
+                    )
+                },
                 |cell| (cell.x, cell.y, cell.z),
             );
-            let values = if let Some(values) = cell.map(|cell| cell.corners).or_else(|| self.cell(id, x, y, z)) {
+            let values = if let Some(values) = cell
+                .map(|cell| cell.corners)
+                .or_else(|| self.cell(id, x, y, z))
+            {
                 values
             } else {
                 let points = std::array::from_fn(|index| Position {
@@ -381,7 +386,12 @@ impl DensitySampler<'_> {
                 );
                 values
             };
-            previous = Some(Cell { x, y, z, corners: values });
+            previous = Some(Cell {
+                x,
+                y,
+                z,
+                corners: values,
+            });
             fractions[0][lane] = (p.x - x) as f32 / width as f32;
             fractions[1][lane] = (p.y - y) as f32 / height as f32;
             fractions[2][lane] = (p.z - z) as f32 / width as f32;

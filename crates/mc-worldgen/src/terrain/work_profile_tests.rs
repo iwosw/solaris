@@ -37,7 +37,9 @@ fn lighting_work() {
                         std::array::from_fn(|dx| Some(&chunks[(z + dz - 1) * 6 + x + dx - 1]))
                     });
                     std::hint::black_box(mc_world::light::compute_chunk_light_in(
-                        &mut workspace, neighbours, &table,
+                        &mut workspace,
+                        neighbours,
+                        &table,
                     ));
                 }
             }
@@ -62,14 +64,15 @@ fn chunk_light_bytes() {
             .map(|pos| generator.generate(pos))
             .collect();
         for chunk in &chunks {
-            let payload = mc_world::anvil::chunk_nbt::chunk_to_payload(
-                chunk, &generator.blocks, 0,
-            ).unwrap();
-            out.write_all(&(payload.uncompressed_nbt.len() as u64).to_le_bytes()).unwrap();
+            let payload =
+                mc_world::anvil::chunk_nbt::chunk_to_payload(chunk, &generator.blocks, 0).unwrap();
+            out.write_all(&(payload.uncompressed_nbt.len() as u64).to_le_bytes())
+                .unwrap();
             out.write_all(&payload.uncompressed_nbt).unwrap();
             for z in 0..16 {
                 for x in 0..16 {
-                    out.write_all(&chunk.highest_opaque.get(x, z).to_le_bytes()).unwrap();
+                    out.write_all(&chunk.highest_opaque.get(x, z).to_le_bytes())
+                        .unwrap();
                 }
             }
         }
@@ -78,11 +81,13 @@ fn chunk_light_bytes() {
                 let neighbours = std::array::from_fn(|dz| {
                     std::array::from_fn(|dx| Some(&chunks[(z + dz - 1) * 6 + x + dx - 1]))
                 });
-                let light = mc_world::light::compute_chunk_light_in(&mut workspace, neighbours, &table);
+                let light =
+                    mc_world::light::compute_chunk_light_in(&mut workspace, neighbours, &table);
                 for y in 0..384 {
                     for lz in 0..16 {
                         for lx in 0..16 {
-                            out.write_all(&[light.sky.get(lx, y, lz), light.block.get(lx, y, lz)]).unwrap();
+                            out.write_all(&[light.sky.get(lx, y, lz), light.block.get(lx, y, lz)])
+                                .unwrap();
                         }
                     }
                 }

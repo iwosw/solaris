@@ -764,7 +764,11 @@ fn write_snapshots(
         // Structure starts are saved truth, not a disposable generator prediction.
         // Keep their metadata even when blocks/metadata equal the procedural base.
         if base_metadata == effective_metadata
-            && !snapshot.effective.extras.iter().any(|(key,_)| key == "structures")
+            && !snapshot
+                .effective
+                .extras
+                .iter()
+                .any(|(key, _)| key == "structures")
         {
             db(metadata.remove(key.as_slice()))?;
         } else {

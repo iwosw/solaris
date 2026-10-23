@@ -294,9 +294,11 @@ fn retained_attribute_operations_and_equipment_slot_matching_drive_native_values
 }
 
 fn clear_melee_lane(state: &mut TickState) {
-    state
-        .world
-        .ensure_blocking(&[mc_world::ChunkPos { x: 0, z: 0 }]);
+    state.world.ensure_blocking(
+        &[(mc_world::ChunkPos { x: 0, z: 0 }, 0)]
+            .into_iter()
+            .collect(),
+    );
     for x in 0..=1 {
         for y in 80..=83 {
             state.world.set_block(x, y, 0, state.registry.states.air);

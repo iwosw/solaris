@@ -108,7 +108,11 @@ async fn serverops_console_drain_wait_is_event_driven_and_handles_early_delivery
     state.wait_drained(12).await;
     let waiting = state.wait_drained(13);
     tokio::pin!(waiting);
-    assert!(std::future::poll_fn(|cx| std::task::Poll::Ready(waiting.as_mut().poll(cx))).await.is_pending());
+    assert!(
+        std::future::poll_fn(|cx| std::task::Poll::Ready(waiting.as_mut().poll(cx)))
+            .await
+            .is_pending()
+    );
     state.drained(13);
     waiting.await;
 }

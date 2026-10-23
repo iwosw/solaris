@@ -371,6 +371,39 @@ fn translation(change: &PlayerChange, key: &str) -> bool {
 }
 
 #[test]
+fn shared_command_execution_reports_missing_player_and_entity_targets() {
+    let (mut state, _, _) = worlds();
+    for connection in [1, 2] {
+        for (input, key) in [
+            (
+                "gamemode creative Missing",
+                "argument.entity.notfound.player",
+            ),
+            (
+                "give Missing minecraft:stone",
+                "argument.entity.notfound.player",
+            ),
+            ("kill Missing", "argument.entity.notfound.entity"),
+            (
+                "effect give Missing minecraft:speed",
+                "argument.entity.notfound.entity",
+            ),
+        ] {
+            let (_, drains) = command(&mut state, connection, input);
+            let feedback: Vec<_> = drains
+                .iter()
+                .filter(|(recipient, _)| *recipient == ConnectionId(connection))
+                .flat_map(|(_, changes)| changes)
+                .collect();
+            assert!(
+                format!("{feedback:?}").contains(key),
+                "{input}: {feedback:?}"
+            );
+        }
+    }
+}
+
+#[test]
 fn global_give_and_message_reach_the_nether_player_once() {
     let (mut state, alice, bob) = worlds();
     command(&mut state, 1, "give @a minecraft:stone 3");

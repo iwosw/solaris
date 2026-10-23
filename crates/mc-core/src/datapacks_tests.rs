@@ -233,7 +233,7 @@ fn schedule_checkpoint_wal_recovery_and_clear_tombstone() {
         matches!(&entries[..],[crate::journal::JournalEntry::ScheduledFunctions{value}] if value.is_empty())
     );
     let mut writer = crate::journal::JournalWriter::open(root.path(), 1).unwrap();
-    writer.append(1, 1, &entries).unwrap();
+    writer.append(state.tick + 1, state.tick + 1, &entries).unwrap();
     drop(writer);
     let recovered =
         crate::core::recover_dimension_state(&config, crate::dimensions::Dimension::Overworld)
@@ -353,13 +353,18 @@ fn datapack_idle_and_execute_microbench() {
         let start = std::time::Instant::now();
         for _ in 0..10_000 {
             state.tick += 1;
-            run(std::hint::black_box(&mut state),
-                "execute positioned 8 60 8 rotated 0 0 unless entity @s run time add 1");
+            run(
+                std::hint::black_box(&mut state),
+                "execute positioned 8 60 8 rotated 0 0 unless entity @s run time add 1",
+            );
             state.outbox.clear();
         }
         execute.push(start.elapsed().as_nanos() / 10_000);
     }
     idle.sort_unstable();
     execute.sort_unstable();
-    eprintln!("approximate, contended machine: idle datapack ns/call median={} samples={idle:?}; execute ns/call median={} samples={execute:?}", idle[3], execute[3]);
+    eprintln!(
+        "approximate, contended machine: idle datapack ns/call median={} samples={idle:?}; execute ns/call median={} samples={execute:?}",
+        idle[3], execute[3]
+    );
 }

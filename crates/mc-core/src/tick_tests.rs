@@ -24,12 +24,12 @@ mod effects_trigger_tests;
 mod elytra_tests;
 #[path = "mace_tests.rs"]
 mod mace_tests;
+#[path = "maps/tests.rs"]
+mod maps_tests;
 #[path = "tick/movement_tests.rs"]
 mod movement_tests;
 #[path = "tick/statistics_tests.rs"]
 mod statistics_tests;
-#[path = "maps/tests.rs"]
-mod maps_tests;
 
 #[test]
 fn integrity_lethal_damage_rejects_staged_pickup_before_respawn() {
@@ -6579,7 +6579,8 @@ fn team_join_and_friendly_fire_block_melee_and_projectiles_without_hurt_side_eff
 
 #[test]
 fn scoreboard_trigger_requires_enable_and_relocks_without_affecting_admin_scores() {
-    let (mut state, player, _) = flat_player_fixture();
+    let mut state = test_state();
+    let player = join(&mut state, 1, "Alice");
     let run = |state: &mut TickState, input: &str, operator: bool| {
         let crate::commands::Command::Scoreboard(command) =
             crate::commands::parse(input, operator).unwrap()

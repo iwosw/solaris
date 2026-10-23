@@ -17,8 +17,15 @@ fn packed_light_population_matches_cell_reads_at_every_palette_width() {
         let mut actual_block = vec![0; N_VOL];
         let mut actual_emitters = Vec::new();
         populate_indirect_section(
-            2, 1, 368, &section, &table, &mut actual_opacity,
-            &mut actual_sky, &mut actual_block, &mut actual_emitters,
+            2,
+            1,
+            368,
+            &section,
+            &table,
+            &mut actual_opacity,
+            &mut actual_sky,
+            &mut actual_block,
+            &mut actual_emitters,
         );
         let mut expected_emitters = Vec::new();
         for y in 0..16 {
@@ -27,7 +34,10 @@ fn packed_light_population_matches_cell_reads_at_every_palette_width() {
                     let state = section.get(x, y, z);
                     let idx = grid_idx(32 + x as usize, 368 + y as usize, 16 + z as usize);
                     assert_eq!(actual_opacity[idx], table.opacity(state.0).unwrap_or(0));
-                    assert_eq!(actual_sky[idx], table.propagates_sky(state.0).unwrap_or(true));
+                    assert_eq!(
+                        actual_sky[idx],
+                        table.propagates_sky(state.0).unwrap_or(true)
+                    );
                     let emission = table.emission(state.0).unwrap_or(0);
                     assert_eq!(actual_block[idx], emission);
                     if emission > 0 {

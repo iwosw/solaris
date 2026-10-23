@@ -300,7 +300,7 @@ Implementation boundaries: [world conversion](../crates/mc-core/src/world_conver
 **Bukkit/Spigot/Paper JARs are not supported natively by the default Solaris
 binary.** Do not copy a Paper `plugins/` directory into Solaris's package root.
 The normal plugin surface is sandboxed Wasmtime components implementing
-`solaris:plugin@0.7.0`, deployed as `plugin.toml` + `plugin.wasm` packages via
+`solaris:plugin@0.8.0`, deployed as `plugin.toml` + `plugin.wasm` packages via
 `[plugins].directory`; see [PLUGINS.md](PLUGINS.md). First-party packages live in
 [solaris-default-plugins](https://github.com/kaiserproger/solaris-default-plugins).
 Matching plugin names do not imply compatible configuration or databases.

@@ -210,7 +210,7 @@ fn score(
         .scores
         .get(holder)
         .and_then(|scores| scores.get(objective))
-        .copied())
+        .map(|score| score.value))
 }
 fn condition(state: &TickState, context: Context, text: &mut &str) -> Result<bool, String> {
     match word(text)? {
@@ -292,8 +292,9 @@ fn face(context: &mut Context, target: [f64; 3]) {
     let origin = context.coordinate_origin(true);
     let [x, y, z] = std::array::from_fn::<_, 3, _>(|axis| target[axis] - origin[axis]);
     context.rotation = [
-        ((z.atan2(x).to_degrees() - 90.0 + 180.0).rem_euclid(360.0) - 180.0) as f32,
-        (-y.atan2(x.hypot(z)).to_degrees()) as f32,
+        ((mc_physics::mth::atan2(z, x).to_degrees() - 90.0 + 180.0).rem_euclid(360.0) - 180.0)
+            as f32,
+        (-mc_physics::mth::atan2(y, (x * x + z * z).sqrt()).to_degrees()) as f32,
     ];
 }
 /// Iterative branches prevent a long `run execute ...` chain from using the Rust stack.

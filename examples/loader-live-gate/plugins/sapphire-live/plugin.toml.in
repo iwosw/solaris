@@ -1,7 +1,7 @@
 id = "sapphire-live"
 name = "Sapphire Loader Live Gate"
 version = "1.0.0"
-api = "0.7.0"
+api = "0.8.0"
 events = ["player.joined", "player.left"]
 player_commands = ["loader_sapphire"]
 

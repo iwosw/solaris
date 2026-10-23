@@ -48,10 +48,10 @@ impl Spawner {
         {
             return Err("custom spawner entity/rules are unsupported".into());
         }
-        if let Some(value) = field(&fields, "SpawnPotentials") {
-            if !matches!(value, Tag::List(list) if list.elements.is_empty()) {
-                return Err("weighted SpawnPotentials are unsupported".into());
-            }
+        if let Some(value) = field(&fields, "SpawnPotentials")
+            && !matches!(value, Tag::List(list) if list.elements.is_empty())
+        {
+            return Err("weighted SpawnPotentials are unsupported".into());
         }
         let Some(Tag::String(name)) = field(entity, "id") else {
             return Err("SpawnData.entity.id missing".into());
@@ -337,11 +337,10 @@ pub(crate) fn run(state: &mut TickState, changes: &mut ChangeSet) {
             .chunks
             .get_mut(&(key.0.div_euclid(16), key.2.div_euclid(16)))
             .and_then(|entries| entries.get_mut(key))
+            && let Some(deadline) = entry.deadline.take()
         {
-            if let Some(deadline) = entry.deadline.take() {
-                entry.delay = deadline.saturating_sub(state.tick).min(entry.delay);
-                entry.persist(state, *key);
-            }
+            entry.delay = deadline.saturating_sub(state.tick).min(entry.delay);
+            entry.persist(state, *key);
         }
     }
     for &key in &spawners.scratch {

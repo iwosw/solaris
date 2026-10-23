@@ -1094,6 +1094,8 @@ fn built_base_cooling_hopper_wal_has_no_per_tick_timer_images() {
     use crate::journal::{JournalEntry, JournalWriter};
     let mut state = state();
     state.gamerules.insert("spawn_mobs".into(), "false".into());
+    // Isolate private timer revisions from unrelated terrain growth/decay.
+    state.gamerules.insert("random_tick_speed".into(), "0".into());
     let chunks: rustc_hash::FxHashMap<_, _> = (-4..0)
         .flat_map(|x| (-4..0).map(move |z| (ChunkPos { x, z }, 0)))
         .collect();

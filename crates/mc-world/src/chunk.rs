@@ -923,7 +923,10 @@ impl Chunk {
                     ("X".into(), Tag::Double(inhabitant.position[0])),
                     ("Y".into(), Tag::Double(inhabitant.position[1])),
                     ("Z".into(), Tag::Double(inhabitant.position[2])),
-                    ("PersistenceRequired".into(), Tag::Byte(i8::from(inhabitant.persistent))),
+                    (
+                        "PersistenceRequired".into(),
+                        Tag::Byte(i8::from(inhabitant.persistent)),
+                    ),
                     (
                         "PersistenceRequired".into(),
                         Tag::Byte(i8::from(inhabitant.persistent)),

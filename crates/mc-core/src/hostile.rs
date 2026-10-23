@@ -122,15 +122,21 @@ pub(crate) fn refresh_targets(state: &mut TickState) {
         if !retains_target(blueprint)
             || state.entities.row(slot).controls.no_ai
             || (blueprint.capabilities.dark_aggro_only
-                && !state.entities.row(slot).last_player_hit
+                && !state
+                    .entities
+                    .row(slot)
+                    .last_player_hit
                     .is_some_and(|(_, tick)| state.tick.saturating_sub(tick) < 100)
                 && {
                     let pos = state.entities.pos(slot);
-                    !state.world.light_at(
-                        pos[0].floor() as i32,
-                        pos[1].floor() as i32,
-                        pos[2].floor() as i32,
-                    ).is_some_and(|(sky, block)| block.max(sky.saturating_sub(sky_darken)) < 8)
+                    !state
+                        .world
+                        .light_at(
+                            pos[0].floor() as i32,
+                            pos[1].floor() as i32,
+                            pos[2].floor() as i32,
+                        )
+                        .is_some_and(|(sky, block)| block.max(sky.saturating_sub(sky_darken)) < 8)
                 })
             || (blueprint.category == crate::blueprint::MobCategory::Monster
                 && state.difficulty == Difficulty::Peaceful)

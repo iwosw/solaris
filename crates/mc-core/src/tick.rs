@@ -6343,15 +6343,11 @@ fn run_entity_phase(state: &mut TickState, sim: bool) -> Vec<Intent> {
     villager_grid.batch(
         searches
             .clone()
-            .filter(|row| crate::piglin::hunts_villagers_type(row.type_id))
+            .filter(|row| row.hunts_villagers)
             .map(query),
     );
     golem_grid.batch(searches.clone().filter(|row| row.is_iron_golem).map(query));
-    zoglin_grid.batch(
-        searches
-            .filter(|row| crate::piglin::is_zoglin_type(row.type_id))
-            .map(query),
-    );
+    zoglin_grid.batch(searches.filter(|row| row.hunts_living).map(query));
     let cows_ref = &cow_cells;
     let scope_start = std::time::Instant::now();
     // Work-stealing over the core's long-lived rayon workers (no threads
@@ -6800,19 +6796,19 @@ fn step_entity(row: ReadRow, ctx: &StepCtx) -> (MoveWrite, Vec<RawIntent>) {
             }
         }
         let target_admitted = !row.dark_aggro
-                || ctx
-                    .entities
-                    .row(row.slot)
-                    .last_player_hit
-                    .is_some_and(|(_, tick)| ctx.tick.saturating_sub(tick) < 100)
-                || ctx
-                    .world
-                    .light_at(
-                        row.pos[0].floor() as i32,
-                        row.pos[1].floor() as i32,
-                        row.pos[2].floor() as i32,
-                    )
-                    .is_some_and(|(sky, block)| block.max(sky.saturating_sub(ctx.sky_darken)) < 8);
+            || ctx
+                .entities
+                .row(row.slot)
+                .last_player_hit
+                .is_some_and(|(_, tick)| ctx.tick.saturating_sub(tick) < 100)
+            || ctx
+                .world
+                .light_at(
+                    row.pos[0].floor() as i32,
+                    row.pos[1].floor() as i32,
+                    row.pos[2].floor() as i32,
+                )
+                .is_some_and(|(sky, block)| block.max(sky.saturating_sub(ctx.sky_darken)) < 8);
         if row.retain_target && !row.has_retained_target && target_admitted {
             chase_target = nearest;
         }

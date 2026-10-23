@@ -425,6 +425,12 @@ fn hostile_gap_spiders_use_local_light_and_retaliate_in_bright_light() {
             [centre[0] + 1.5, centre[1], centre[2]],
             16.0,
         );
+        state.hostile.targets.insert(mob, ((player, centre), 1.5));
+        crate::hostile::refresh_targets(&mut state);
+        assert!(
+            state.hostile.targets.contains_key(&mob),
+            "daytime cave target survives sensor refresh"
+        );
         for _ in 0..25 {
             run_tick(&mut state, &[]);
         }
@@ -448,6 +454,12 @@ fn hostile_gap_spiders_use_local_light_and_retaliate_in_bright_light() {
             [centre[0] + 1.5, centre[1], centre[2]],
             16.0,
         );
+        state.hostile.targets.insert(mob, ((player, centre), 1.5));
+        crate::hostile::refresh_targets(&mut state);
+        assert!(
+            !state.hostile.targets.contains_key(&mob),
+            "torchlit target is cleared despite nighttime"
+        );
         for _ in 0..25 {
             run_tick(&mut state, &[]);
         }
@@ -458,6 +470,12 @@ fn hostile_gap_spiders_use_local_light_and_retaliate_in_bright_light() {
         );
         let slot = state.entities.slot_of(mob).unwrap();
         state.entities.row_mut(slot).last_player_hit = Some((player, state.tick));
+        state.hostile.targets.insert(mob, ((player, centre), 1.5));
+        crate::hostile::refresh_targets(&mut state);
+        assert!(
+            state.hostile.targets.contains_key(&mob),
+            "retaliation survives bright-light refresh"
+        );
         for _ in 0..25 {
             run_tick(&mut state, &[]);
         }

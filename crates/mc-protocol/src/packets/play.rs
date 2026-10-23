@@ -45,8 +45,8 @@ mod item_admission_tests;
 mod item_stack_template;
 #[cfg(test)]
 mod item_stack_template_tests;
-mod merchant;
 mod map_data;
+mod merchant;
 pub use map_data::{ClientboundMapData, MapDecoration};
 mod rename_item;
 mod scoreboard;
@@ -92,10 +92,9 @@ pub use chat_commands::{
     ClientboundCommandSuggestions, ClientboundCommands, ClientboundOpenBook, ClientboundSystemChat,
     ClientboundTabList, CommandArgumentParser, CommandNode, CommandNodeKind, CommandStringKind,
     CommandSuggestionEntry, ServerboundChangeGameMode, ServerboundChat, ServerboundChatAck,
-    ServerboundChatCommand, ServerboundChunkBatchReceived, ServerboundClientTickEnd,
-    ServerboundCommandSuggestion, ServerboundEditBook, ServerboundPlayerLoaded,
-    ServerboundChatCommandSigned, ServerboundChatSessionUpdate,
-    ServerboundSignUpdate,
+    ServerboundChatCommand, ServerboundChatCommandSigned, ServerboundChatSessionUpdate,
+    ServerboundChunkBatchReceived, ServerboundClientTickEnd, ServerboundCommandSuggestion,
+    ServerboundEditBook, ServerboundPlayerLoaded, ServerboundSignUpdate,
 };
 pub use chunks::{
     BlockChangedAck, BlockEntityInfo, BlockUpdate, ChunkHeightmap, ForgetLevelChunk,

@@ -2,7 +2,6 @@ use super::{NativeCheckpointReader, NativeError, codec, db};
 use crate::{ChunkPos, chunk::GeneratedStructureSite};
 use mc_nbt::Tag;
 
-
 impl NativeCheckpointReader {
     /// Read coverage and start metadata from one pinned snapshot, without block
     /// palette expansion, procedural generation or mutable world admission.

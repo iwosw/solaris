@@ -23,8 +23,8 @@ pub mod configuration;
 pub mod handshake;
 pub mod login;
 pub mod play;
-pub mod status;
 pub mod resource_pack;
+pub mod status;
 
 /// Direction a packet travels: serverbound (client → server) or
 /// clientbound (server → client).

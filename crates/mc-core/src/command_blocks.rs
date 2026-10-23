@@ -46,7 +46,9 @@ fn read(state: &TickState, pos: BlockPos) -> Result<Vec<(String, Tag)>, String> 
                     "LastExecution" => matches!(value, Tag::Long(_)),
                     _ => true,
                 };
-                if !valid { return Err(format!("Corrupt command block field {name}")); }
+                if !valid {
+                    return Err(format!("Corrupt command block field {name}"));
+                }
             }
             Ok(fields)
         }

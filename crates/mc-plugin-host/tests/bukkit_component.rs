@@ -6,9 +6,10 @@ use mc_plugin_host::bindings::exports::solaris::plugin::events::{
 use mc_plugin_host::bindings::exports::solaris::plugin::lifecycle::InitContext;
 use mc_plugin_host::bindings::solaris::plugin::commands::{Command, MessageTarget};
 use mc_plugin_host::bindings::solaris::plugin::types::Position;
+use mc_plugin_host::package::compile_package;
 use mc_plugin_host::{
-    compile_package, engine, linker, load_package, HostServices, LogLevel, PluginInstance,
-    PluginLimits, PluginStartup,
+    HostServices, LogLevel, PluginInstance, PluginLimits, PluginStartup, engine, linker,
+    load_package,
 };
 use mc_script::precommit::{BuildContext, BuildEdit, HookActor, HookDecision, HookPlayer};
 use std::path::Path;
@@ -215,8 +216,10 @@ fn converted_jar_runs_through_existing_component_host() {
         vec![BuildEdit::new(0, 64, 0, u32::MAX, air)],
     )
     .expect("unknown build state");
-    assert!(unknown
-        .before_build(&context, Instant::now() + Duration::from_millis(100))
-        .is_err());
+    assert!(
+        unknown
+            .before_build(&context, Instant::now() + Duration::from_millis(100))
+            .is_err()
+    );
     assert!(unknown.retired_because().is_some());
 }

@@ -131,7 +131,9 @@ fn interpolation_cell_reuse_preserves_sparse_cross_cell_batches() {
             cell_height: height,
         };
         let mut batch = DensitySampler::for_chunk(&runtime, -16, -16);
-        batch.batch_values.resize(runtime.nodes.len(), BatchMemo::default());
+        batch
+            .batch_values
+            .resize(runtime.nodes.len(), BatchMemo::default());
         let mut scalar = DensitySampler::for_chunk(&runtime, -16, -16);
         for mask in [1, 0b10101010, 0b11011011, 255] {
             for y in [-64, -57, -1, 0, 7, 8, 63, 319] {

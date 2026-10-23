@@ -531,7 +531,10 @@ fn load_dimension_state(
         climate.restore(&mut tick_state)?;
     }
     tick_state.scoreboard = replay.scoreboard.unwrap_or_default();
-    tick_state.maps = crate::maps::Maps::restore(replay.saved_maps, crate::maps::sequence(settlement_globals)?)?;
+    tick_state.maps = crate::maps::Maps::restore(
+        replay.saved_maps,
+        crate::maps::sequence(settlement_globals)?,
+    )?;
     tick_state.bossbars = replay
         .bossbars
         .as_deref()
@@ -938,7 +941,7 @@ impl Core {
         }
         crate::plugin::start_events(&mut tick_state)?;
         if !plugin_packages.is_empty() {
-            tracing::info!(target: "plugin.runtime_ready", loaded_packages = plugin_packages.len(), "native production component host loaded");
+            tracing::info!(target: "plugin.runtime_ready", loaded_packages = plugin_packages.len(), packages = ?plugin_packages, "native production component host loaded");
         }
 
         // Channels.

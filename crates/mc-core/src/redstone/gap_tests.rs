@@ -152,11 +152,16 @@ fn gap_daylight_detector_requires_local_sky_and_overworld() {
     wake(&mut s, detector);
     advance(&mut s, 1);
     assert_eq!(value(&s, detector, "power"), "15");
+    s.weather = (crate::commands::Weather::Thunder, 1000);
+    s.thundering = true;
+    s.thunder_remaining_ticks = 1000;
     s.rain_level = 1.0;
     s.thunder_level = 1.0;
     wake(&mut s, detector);
     advance(&mut s, 1);
     assert_eq!(value(&s, detector, "power"), "10");
+    s.weather = (crate::commands::Weather::Clear, 1000);
+    s.thundering = false;
     s.rain_level = 0.0;
     s.thunder_level = 0.0;
     for d in NEIGHBOURS {

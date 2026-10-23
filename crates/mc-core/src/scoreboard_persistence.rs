@@ -635,11 +635,26 @@ mod tests {
     fn absent_locked_field_defaults_to_locked() {
         let value = board();
         let mut root = value.to_nbt();
-        let Tag::Compound(fields) = &mut root else { unreachable!() };
-        let Tag::List(scores) = &mut fields.iter_mut()
-            .find(|(key, _)| key == "PlayerScores").unwrap().1 else { unreachable!() };
+        let Tag::Compound(fields) = &mut root else {
+            unreachable!()
+        };
+        let Tag::Compound(fields) =
+            &mut fields.iter_mut().find(|(key, _)| key == "data").unwrap().1
+        else {
+            unreachable!()
+        };
+        let Tag::List(scores) = &mut fields
+            .iter_mut()
+            .find(|(key, _)| key == "PlayerScores")
+            .unwrap()
+            .1
+        else {
+            unreachable!()
+        };
         for score in &mut scores.elements {
-            let Tag::Compound(fields) = score else { unreachable!() };
+            let Tag::Compound(fields) = score else {
+                unreachable!()
+            };
             fields.retain(|(key, _)| key != "Locked");
         }
         assert_eq!(Scoreboard::from_nbt(&root).unwrap(), value);

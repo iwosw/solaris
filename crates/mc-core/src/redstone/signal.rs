@@ -218,7 +218,7 @@ pub(super) fn daylight(state: &TickState, pos: BlockPos, inverted: bool) -> u8 {
         return 0;
     }
     let phase = (time.rem_euclid(24000) as f64 / 24000.0 - 0.25).rem_euclid(1.0);
-    let eased = (1.0 - (phase * std::f64::consts::PI).cos()) / 2.0;
+    let eased = (1.0 - f64::from(mc_physics::mth::cos(phase * std::f64::consts::PI))) / 2.0;
     let angle = (phase + (eased - phase) / 3.0) * std::f64::consts::TAU;
     let noon = if angle < std::f64::consts::PI {
         0.0
@@ -226,7 +226,9 @@ pub(super) fn daylight(state: &TickState, pos: BlockPos, inverted: bool) -> u8 {
         std::f64::consts::TAU
     };
     let angle = angle + (noon - angle) * 0.2;
-    (f64::from(light) * angle.cos()).round().clamp(0.0, 15.0) as u8
+    (f64::from(light) * f64::from(mc_physics::mth::cos(angle)))
+        .round()
+        .clamp(0.0, 15.0) as u8
 }
 
 pub(super) fn connects(block: &BlockState, direction: (i32, i32, i32)) -> bool {

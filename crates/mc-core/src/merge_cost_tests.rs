@@ -45,15 +45,26 @@ fn state_hash(state: &TickState) -> String {
     let mut hash = HashWriter(Sha256::new());
     write!(hash, "{}:{}", state.tick, state.day_time).unwrap();
     for slot in state.entities.slots() {
-        write!(hash, "{:?}|{:?}|{:?}|{:?}|{:?}", state.entities.body(slot),
-            state.entities.row(slot), state.entities.pos(slot),
-            state.entities.vel(slot), state.entities.rot(slot)).unwrap();
+        write!(
+            hash,
+            "{:?}|{:?}|{:?}|{:?}|{:?}",
+            state.entities.body(slot),
+            state.entities.row(slot),
+            state.entities.pos(slot),
+            state.entities.vel(slot),
+            state.entities.rot(slot)
+        )
+        .unwrap();
     }
     let mut players: Vec<_> = state.players.iter().collect();
     players.sort_by_key(|(id, _)| **id);
     for (id, player) in players {
-        write!(hash, "{id:?}|{:?}|{:?}|{:?}", player.inventory, player.vitals,
-            player.advancement_progress).unwrap();
+        write!(
+            hash,
+            "{id:?}|{:?}|{:?}|{:?}",
+            player.inventory, player.vitals, player.advancement_progress
+        )
+        .unwrap();
     }
     let mut chunks = state.world.resident_positions();
     chunks.sort_by_key(|pos| (pos.x, pos.z));
@@ -61,8 +72,16 @@ fn state_hash(state: &TickState) -> String {
         let chunk = state.world.chunk(pos).unwrap();
         write!(hash, "{pos:?}").unwrap();
         for section in &chunk.sections {
-            write!(hash, "{}|{:?}|{:?}", section.non_air_count(), section.palette(),
-                section.indices().map(|indices| (indices.bits_per_entry(), indices.words()))).unwrap();
+            write!(
+                hash,
+                "{}|{:?}|{:?}",
+                section.non_air_count(),
+                section.palette(),
+                section
+                    .indices()
+                    .map(|indices| (indices.bits_per_entry(), indices.words()))
+            )
+            .unwrap();
         }
     }
     format!("{:x}", hash.0.finalize())
@@ -81,12 +100,17 @@ fn merge_cost_profile() {
     let scene_name = std::env::var("MERGE_SCENE").unwrap_or_else(|_| "native100".into());
     let ticks: usize = std::env::var("MERGE_TICKS").map_or(240, |s| s.parse().unwrap());
     let warmup: usize = std::env::var("MERGE_WARMUP").map_or(32, |s| s.parse().unwrap());
-    let population: usize = std::env::var("MERGE_POPULATION").map_or(100_000, |s| s.parse().unwrap());
+    let population: usize =
+        std::env::var("MERGE_POPULATION").map_or(100_000, |s| s.parse().unwrap());
     let trace = std::env::var_os("MERGE_TRACE").is_some();
     assert!(ticks > 0);
     let content = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data/vanilla");
     let (zombies, villagers, cows) = match scene_name.as_str() {
-        "native100" => (population * 3 / 10, population * 3 / 10, population * 4 / 10),
+        "native100" => (
+            population * 3 / 10,
+            population * 3 / 10,
+            population * 4 / 10,
+        ),
         "villagers" => (0, population, 0),
         _ => panic!("unknown scene {scene_name}"),
     };
@@ -111,7 +135,9 @@ fn merge_cost_profile() {
         let start = Instant::now();
         let entries = crate::core::journal_entries_for_tick(&mut scene.state, &output);
         let journal_us = start.elapsed().as_micros() as u64;
-        let probe = PROBE.with(|probe| probe.borrow_mut().take()).unwrap_or_default();
+        let probe = PROBE
+            .with(|probe| probe.borrow_mut().take())
+            .unwrap_or_default();
         if tick >= warmup {
             total.push(tick_us + journal_us);
             merge.push(times.merge_us);

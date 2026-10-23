@@ -286,15 +286,24 @@ pub(super) fn convert(
     } else {
         refresh_saved(&mut metadata, scoreboard_path.into(), scoreboard)?;
     }
-    for (id,map) in &world.dimensions[&Dimension::Overworld].saved_maps {
-        refresh_saved(&mut metadata, format!("data/minecraft/maps/{id}.dat"),
-            crate::maps::nbt::to_tag(map).map_err(fail)?)?;
+    for (id, map) in &world.dimensions[&Dimension::Overworld].saved_maps {
+        refresh_saved(
+            &mut metadata,
+            format!("data/minecraft/maps/{id}.dat"),
+            crate::maps::nbt::to_tag(map).map_err(fail)?,
+        )?;
     }
     let next_map = crate::maps::sequence(&checkpoint.globals)?.max(
-        world.dimensions[&Dimension::Overworld].saved_maps.last_key_value()
-            .map_or(0, |(&id,_)| i64::from(id) + 1));
-    refresh_saved(&mut metadata, "data/minecraft/maps/last_id.dat".into(),
-        crate::maps::nbt::sequence_to_tag(next_map).map_err(fail)?)?;
+        world.dimensions[&Dimension::Overworld]
+            .saved_maps
+            .last_key_value()
+            .map_or(0, |(&id, _)| i64::from(id) + 1),
+    );
+    refresh_saved(
+        &mut metadata,
+        "data/minecraft/maps/last_id.dat".into(),
+        crate::maps::nbt::sequence_to_tag(next_map).map_err(fail)?,
+    )?;
     for dimension in [Dimension::Overworld, Dimension::Nether, Dimension::End] {
         let replay = &world.dimensions[&dimension];
         let root = dimension.directory(Path::new(""));
@@ -717,23 +726,22 @@ fn export_entities(
         .filter(|entity| entity.dimension == dimension)
     {
         if let Some(mut tag) = entity.payload.take() {
-            if let Tag::Compound(fields) = &mut tag {
-                if let Some(index) = fields
+            if let Tag::Compound(fields) = &mut tag
+                && let Some(index) = fields
                     .iter()
                     .position(|(key, _)| key == "solaris:Presentation")
-                {
-                    let (_, presentation) = fields.remove(index);
-                    if !matches!(presentation, Tag::String(_)) {
-                        return Err(fail("custom mob export: invalid presentation id"));
-                    }
-                    let (_, id) = fields
-                        .iter_mut()
-                        .find(|(key, _)| key == "id")
-                        .ok_or_else(|| fail("custom mob export: missing id"))?;
-                    let native = std::mem::replace(id, presentation);
-                    fields.retain(|(key, _)| key != "solaris:MobBlueprint");
-                    fields.push(("solaris:MobBlueprint".into(), native));
+            {
+                let (_, presentation) = fields.remove(index);
+                if !matches!(presentation, Tag::String(_)) {
+                    return Err(fail("custom mob export: invalid presentation id"));
                 }
+                let (_, id) = fields
+                    .iter_mut()
+                    .find(|(key, _)| key == "id")
+                    .ok_or_else(|| fail("custom mob export: missing id"))?;
+                let native = std::mem::replace(id, presentation);
+                fields.retain(|(key, _)| key != "solaris:MobBlueprint");
+                fields.push(("solaris:MobBlueprint".into(), native));
             }
             let x = entity.position.x;
             let z = entity.position.z;

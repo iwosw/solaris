@@ -48,15 +48,33 @@ pub fn plan_player_changes(
 fn plan_change(change: &PlayerChange, viewer: &mut ViewerState, out: &mut Vec<PlannedPacket>) {
     let conn = viewer.connection;
     match change {
-        PlayerChange::Map { update } => push_reliable(out, conn,
+        PlayerChange::Map { update } => push_reliable(
+            out,
+            conn,
             &mc_protocol::packets::play::ClientboundMapData {
-                id: update.id, scale: update.scale, locked: update.locked,
-                decorations: Some(update.markers.iter().map(|d| mc_protocol::packets::play::MapDecoration {
-                    kind: d.kind, x: d.x, z: d.z, rotation: d.rotation,
-                    name: d.name.as_ref().map(|name| mc_nbt::Tag::String(name.clone())),
-                }).collect()),
-                rectangle: update.rectangle, colors: update.colors.clone(),
-            }),
+                id: update.id,
+                scale: update.scale,
+                locked: update.locked,
+                decorations: Some(
+                    update
+                        .markers
+                        .iter()
+                        .map(|d| mc_protocol::packets::play::MapDecoration {
+                            kind: d.kind,
+                            x: d.x,
+                            z: d.z,
+                            rotation: d.rotation,
+                            name: d
+                                .name
+                                .as_ref()
+                                .map(|name| mc_nbt::Tag::String(name.clone())),
+                        })
+                        .collect(),
+                ),
+                rectangle: update.rectangle,
+                colors: update.colors.clone(),
+            },
+        ),
         PlayerChange::Statistics { stats, .. } => push_reliable(
             out,
             conn,

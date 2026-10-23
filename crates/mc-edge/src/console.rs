@@ -23,7 +23,7 @@ impl ConsoleState {
         if let Some(response) = self.response.lock().as_mut()
             && let Ok(text) = response
         {
-            if text.len() + message.len() + 1 <= 1024 * 1024 {
+            if text.len() + message.len() < 1024 * 1024 {
                 text.push_str(message);
                 text.push('\n');
             } else {
@@ -34,13 +34,16 @@ impl ConsoleState {
     }
 
     pub(crate) fn drained(&self, tick: u64) {
-        self.drained.store(tick, std::sync::atomic::Ordering::Release);
+        self.drained
+            .store(tick, std::sync::atomic::Ordering::Release);
         self.ready.notify_waiters();
     }
     async fn wait_drained(&self, tick: u64) {
         loop {
             let ready = self.ready.notified();
-            if self.drained.load(std::sync::atomic::Ordering::Acquire) >= tick { break; }
+            if self.drained.load(std::sync::atomic::Ordering::Acquire) >= tick {
+                break;
+            }
             ready.await;
         }
     }
@@ -48,7 +51,9 @@ impl ConsoleState {
 
 struct Capture<'a>(&'a ConsoleState);
 impl Drop for Capture<'_> {
-    fn drop(&mut self) { self.0.response.lock().take(); }
+    fn drop(&mut self) {
+        self.0.response.lock().take();
+    }
 }
 
 pub(crate) async fn remote(server: &EdgeServer, line: &str) -> anyhow::Result<String> {
@@ -58,7 +63,12 @@ pub(crate) async fn remote(server: &EdgeServer, line: &str) -> anyhow::Result<St
     if let Some(tick) = execute_inner(server, line).await? {
         capture.0.wait_drained(tick).await;
     }
-    capture.0.response.lock().take().unwrap_or_else(|| Ok(String::new()))
+    capture
+        .0
+        .response
+        .lock()
+        .take()
+        .unwrap_or_else(|| Ok(String::new()))
         .map_err(anyhow::Error::msg)
 }
 
@@ -96,14 +106,20 @@ pub(crate) fn spawn(server: Arc<EdgeServer>) -> std::io::Result<tokio::task::Joi
 /// the outcome prints when the copy finishes.
 fn backup(server: &EdgeServer, command: &str) {
     if command != "backup" {
-        server.console_state.feedback("Incorrect argument for command");
+        server
+            .console_state
+            .feedback("Incorrect argument for command");
         return;
     }
     let Some(directory) = server.cfg.data.backup_dir.clone() else {
-        server.console_state.feedback("Backups are disabled: set backup_dir under [data]");
+        server
+            .console_state
+            .feedback("Backups are disabled: set backup_dir under [data]");
         return;
     };
-    server.console_state.feedback("Backing up the world (the server keeps running)");
+    server
+        .console_state
+        .feedback("Backing up the world (the server keeps running)");
     let core = Arc::clone(&server.hub);
     tokio::spawn(async move {
         let started = std::time::Instant::now();
@@ -129,7 +145,10 @@ pub(crate) async fn execute(server: &EdgeServer, line: &str) -> anyhow::Result<(
     let _serial = server.console_state.serial.lock().await;
     let tick = execute_inner(server, line).await?;
     if let Some(tick) = tick
-        && server.console_state.running.load(std::sync::atomic::Ordering::Relaxed)
+        && server
+            .console_state
+            .running
+            .load(std::sync::atomic::Ordering::Relaxed)
     {
         server.console_state.wait_drained(tick).await;
     }

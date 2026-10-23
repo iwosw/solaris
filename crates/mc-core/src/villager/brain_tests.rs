@@ -4144,8 +4144,16 @@ fn golem_gossip_summoning_requires_five_recently_sleeping_villagers() {
         }
         assert_eq!(changes.entities_spawned.len(), expected, "{count}, {slept}");
         if expected != 0 {
-            assert!(actors.iter().all(|&slot| state.entities.row(slot)
-                .villager.as_ref().unwrap().golem_detected_until.is_some()));
+            assert!(actors.iter().all(|&slot| {
+                state
+                    .entities
+                    .row(slot)
+                    .villager
+                    .as_ref()
+                    .unwrap()
+                    .golem_detected_until
+                    .is_some()
+            }));
             golems(&mut state, &mut cache, &mut changes);
             assert_eq!(changes.entities_spawned.len(), 1, "no duplicate summon");
         }
@@ -4158,16 +4166,27 @@ fn golem_detection_uses_axis_aligned_range_and_ignores_dead_golems() {
         let mut state = test_state();
         state.tick = 200;
         let resident = villager(&mut state, [0.5, 201.0, 0.5]);
-        let type_id = state.registry.entity_types
-            .id_of(&mc_data::Identifier::parse("minecraft:iron_golem").unwrap()).unwrap();
+        let type_id = state
+            .registry
+            .entity_types
+            .id_of(&mc_data::Identifier::parse("minecraft:iron_golem").unwrap())
+            .unwrap();
         let id = state.spawn_mob(type_id, [15.5, 201.0, 15.5], 100.0);
         let slot = state.entities.slot_of(id).unwrap();
         state.entities.body_mut(slot).alive = alive;
         let mut cache = PoiCache::default();
         cache.refresh(&state);
         golems(&mut state, &mut cache, &mut ChangeSet::default());
-        assert_eq!(state.entities.row(resident).villager.as_ref().unwrap()
-            .golem_detected_until, alive.then_some(799));
+        assert_eq!(
+            state
+                .entities
+                .row(resident)
+                .villager
+                .as_ref()
+                .unwrap()
+                .golem_detected_until,
+            alive.then_some(799)
+        );
     }
 }
 

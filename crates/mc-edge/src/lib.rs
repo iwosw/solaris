@@ -60,10 +60,10 @@ pub mod startup_data;
 pub mod status;
 
 mod conn_limit;
-mod vanilla_items;
-mod server_properties;
-mod resource_pack;
 mod remote_admin;
+mod resource_pack;
+mod server_properties;
+mod vanilla_items;
 
 #[cfg(test)]
 mod plugin_tests;

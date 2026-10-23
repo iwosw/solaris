@@ -78,7 +78,7 @@ fn hostile_gap_spawn_support_rejects_glass_and_bottom_slabs() {
         ("stone_slab", Some("top"), true),
         ("stone_slab", Some("double"), true),
     ] {
-        let name = mc_data::Identifier::parse(&format!("minecraft:{name}")).unwrap();
+        let name = mc_data::Identifier::parse(format!("minecraft:{name}")).unwrap();
         let block = state.registry.blocks.block(&name).unwrap();
         let mut props = state
             .registry

@@ -2035,7 +2035,17 @@ mod tests {
             if level < 2 {
                 assert_eq!(
                     roots,
-                    ["help", "list", "me", "msg", "tell", "w", "teammsg", "tm", "settlement"]
+                    [
+                        "help",
+                        "list",
+                        "me",
+                        "msg",
+                        "tell",
+                        "w",
+                        "teammsg",
+                        "tm",
+                        "settlement"
+                    ]
                 );
             }
             for &index in &packet.nodes[0].children {

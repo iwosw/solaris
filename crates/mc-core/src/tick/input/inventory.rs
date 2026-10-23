@@ -77,7 +77,12 @@ pub(in crate::tick) fn container_click(
         return;
     }
     if crate::maps::cartography::is_open(state, entity) {
-        crate::maps::cartography::click(state, entity, (*window, *state_id, *slot, *button, *mode), changes);
+        crate::maps::cartography::click(
+            state,
+            entity,
+            (*window, *state_id, *slot, *button, *mode),
+            changes,
+        );
         return;
     }
     if state
@@ -262,7 +267,7 @@ fn sync_container_viewers(
             if let Some(menu) = viewer_state.open.as_mut() {
                 menu.state_id = (menu.state_id + 1) & 0x7FFF;
             }
-            let sync = viewer_state.sync_container_view(&container);
+            let sync = viewer_state.sync_container_view(container);
             for change in sync {
                 state.push_player(viewer_conn, change);
             }

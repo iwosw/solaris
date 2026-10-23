@@ -24,9 +24,9 @@ pub(crate) mod block_tools;
 mod block_tools_tests;
 pub mod blocks;
 pub mod blueprint;
-mod books;
 #[cfg(test)]
 mod blueprint_family_tests;
+mod books;
 pub mod bossbar;
 mod bottles;
 pub mod boundary;

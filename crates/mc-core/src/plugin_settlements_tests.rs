@@ -6,8 +6,7 @@
 use std::num::NonZeroUsize;
 use std::sync::Arc;
 
-#[path = "../../mc-plugin-host/tests/fixture/mod.rs"]
-mod component_fixture;
+use crate::plugin_blueprint_tests::fixture as component_fixture;
 
 use component_fixture::component_bytes;
 use mc_plugin_host::bindings::exports::solaris::plugin::events::{

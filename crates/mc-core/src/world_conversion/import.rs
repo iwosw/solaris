@@ -1,7 +1,7 @@
 //! Offline Java 1.18+ Anvil admission into an unpublished native database.
 use std::collections::{BTreeMap, BTreeSet};
-use std::io::Write as _;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use mc_nbt::Tag;
 use mc_world::anvil::upgrade::{self, PreservationReceipt, RecordKind, UpgradeReport};
@@ -1235,10 +1235,15 @@ pub(super) fn convert(
                 );
                 receipt.kind = "saved_data".into();
                 stats.upgrades.push(receipt);
-                let id: i32 = destination.file_stem().and_then(|id| id.to_str())
-                    .ok_or_else(|| fail("invalid saved map filename"))?.parse()
+                let id: i32 = destination
+                    .file_stem()
+                    .and_then(|id| id.to_str())
+                    .ok_or_else(|| fail("invalid saved map filename"))?
+                    .parse()
                     .map_err(|_| fail("invalid saved map id"))?;
-                if id < 0 { return Err(fail("negative saved map id")); }
+                if id < 0 {
+                    return Err(fail("negative saved map id"));
+                }
                 let map = crate::maps::nbt::from_tag(&tag).map_err(fail)?;
                 saved_maps.insert(id, Arc::new(map));
                 consumed.insert(relative.clone());
@@ -1267,7 +1272,10 @@ pub(super) fn convert(
         }
     }
     let mut globals = bridge::generation_records(config)?;
-    globals.insert("map_sequence".into(), bridge::record(tick, serde_json::to_vec(&map_sequence).map_err(fail)?));
+    globals.insert(
+        "map_sequence".into(),
+        bridge::record(tick, serde_json::to_vec(&map_sequence).map_err(fail)?),
+    );
     crate::maps::checkpoint(&saved_maps, tick, &mut globals)?;
     std::fs::create_dir(stage.join("native")).map_err(fail)?;
     let store = NativeStore::create(

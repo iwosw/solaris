@@ -55,7 +55,11 @@ fn native100_like_entity_phase_micro() {
     let villagers: usize = std::env::var("N100_VILLAGERS")
         .map(|value| value.parse().expect("N100_VILLAGERS must be an integer"))
         .unwrap_or(64);
-    assert_eq!(mobs % 8, 0, "N100_MOBS must divide evenly among eight kinds");
+    assert_eq!(
+        mobs % 8,
+        0,
+        "N100_MOBS must divide evenly among eight kinds"
+    );
     eprintln!("NATIVE100 population mobs={mobs} villagers={villagers} players=100");
     let registry = Arc::new(CoreRegistry::load(None).unwrap());
     let world = crate::horde_bench::flat_world(&registry);

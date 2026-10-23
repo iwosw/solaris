@@ -279,7 +279,9 @@ fn inactive_raid_freezes_wave_clock_and_hides_bar_until_village_reactivates() {
     begin(&mut state, player, 0);
     let before = state.raids.raids[&2].clone();
     let player_slot = state.entities.slot_of(player).unwrap();
-    state.entities.set_pos(player_slot, [10_000.0, 201.0, 10_000.0]);
+    state
+        .entities
+        .set_pos(player_slot, [10_000.0, 201.0, 10_000.0]);
     state.refresh_active_chunks(state.tick);
     assert!(!state.world.is_active(0, 0));
     for _ in 0..400 {
@@ -295,7 +297,10 @@ fn inactive_raid_freezes_wave_clock_and_hides_bar_until_village_reactivates() {
     state.refresh_active_chunks(state.tick);
     assert!(state.world.is_active(0, 0));
     step(&mut state);
-    assert_eq!(state.raids.raids[&2].cooldown_ticks, before.cooldown_ticks - 1);
+    assert_eq!(
+        state.raids.raids[&2].cooldown_ticks,
+        before.cooldown_ticks - 1
+    );
     assert_eq!(bars(&state).len(), 1);
 }
 #[test]

@@ -298,36 +298,54 @@ fn iron_ingot_repairs_golem_from_either_hand_without_overhealing() {
     use crate::boundary::Hand;
     for (hand, creative) in [(Hand::Main, false), (Hand::Off, false), (Hand::Main, true)] {
         let mut state = fixture();
-        run_tick(&mut state, &[PlayerInput::Join {
-            connection: ConnectionId(1),
-            uuid: uuid::Uuid::from_u128(1),
-            name: "repairer".into(),
-            permission_level: 0,
-        }]);
+        run_tick(
+            &mut state,
+            &[PlayerInput::Join {
+                connection: ConnectionId(1),
+                uuid: uuid::Uuid::from_u128(1),
+                name: "repairer".into(),
+                permission_level: 0,
+            }],
+        );
         let actor = state.connections.entity_of(ConnectionId(1)).unwrap();
         let actor_slot = state.entities.slot_of(actor).unwrap();
         state.entities.set_pos(actor_slot, [8.5, 201.0, 8.5]);
-        let type_id = state.registry.entity_types
-            .id_of(&Identifier::parse("minecraft:iron_golem").unwrap()).unwrap();
+        let type_id = state
+            .registry
+            .entity_types
+            .id_of(&Identifier::parse("minecraft:iron_golem").unwrap())
+            .unwrap();
         let target = state.spawn_mob(type_id, [8.5, 201.0, 7.0], 100.0);
         let slot = state.entities.slot_of(target).unwrap();
         state.entities.row_mut(slot).health = 60.0;
-        let item = state.registry.items
-            .id_of(&Identifier::parse("minecraft:iron_ingot").unwrap()).unwrap();
-        let index = if hand == Hand::Main { 0 } else { crate::inventory::OFF_HAND };
+        let item = state
+            .registry
+            .items
+            .id_of(&Identifier::parse("minecraft:iron_ingot").unwrap())
+            .unwrap();
+        let index = if hand == Hand::Main {
+            0
+        } else {
+            crate::inventory::OFF_HAND
+        };
         let player = state.players.get_mut(&actor).unwrap();
         if creative {
             player.game_mode = crate::commands::GameMode::Creative;
         }
         player.inventory.slots[index] = mc_data::ItemStack::new(item, 3);
         let input = PlayerInput::InteractEntity {
-            connection: ConnectionId(1), target, hand, location: [0.0, 1.0, 0.0],
+            connection: ConnectionId(1),
+            target,
+            hand,
+            location: [0.0, 1.0, 0.0],
         };
         for (health, spent) in [(85.0, 1), (100.0, 2), (100.0, 2)] {
             run_tick(&mut state, std::slice::from_ref(&input));
             assert_eq!(state.entities.row(slot).health, health);
-            assert_eq!(state.players[&actor].inventory.slots[index].count,
-                if creative { 3 } else { 3 - spent });
+            assert_eq!(
+                state.players[&actor].inventory.slots[index].count,
+                if creative { 3 } else { 3 - spent }
+            );
         }
     }
 }
@@ -338,12 +356,15 @@ fn natural_golem_player_damage_scales_with_difficulty() {
     let mut damage = Vec::new();
     for difficulty in [Difficulty::Easy, Difficulty::Normal, Difficulty::Hard] {
         let mut state = fixture();
-        run_tick(&mut state, &[PlayerInput::Join {
-            connection: ConnectionId(1),
-            uuid: uuid::Uuid::from_u128(1),
-            name: "target".into(),
-            permission_level: 0,
-        }]);
+        run_tick(
+            &mut state,
+            &[PlayerInput::Join {
+                connection: ConnectionId(1),
+                uuid: uuid::Uuid::from_u128(1),
+                name: "target".into(),
+                permission_level: 0,
+            }],
+        );
         state.difficulty = difficulty;
         let actor = state.connections.entity_of(ConnectionId(1)).unwrap();
         let actor_slot = state.entities.slot_of(actor).unwrap();
@@ -351,8 +372,11 @@ fn natural_golem_player_damage_scales_with_difficulty() {
         state.players.get_mut(&actor).unwrap().vitals.health = 100.0;
         state.entities.row_mut(actor_slot).health = 100.0;
         state.entities.row_mut(actor_slot).protected_until = 0;
-        let type_id = state.registry.entity_types
-            .id_of(&Identifier::parse("minecraft:iron_golem").unwrap()).unwrap();
+        let type_id = state
+            .registry
+            .entity_types
+            .id_of(&Identifier::parse("minecraft:iron_golem").unwrap())
+            .unwrap();
         let target = state.spawn_mob(type_id, [8.5, 201.0, 7.0], 100.0);
         let slot = state.entities.slot_of(target).unwrap();
         state.entities.row_mut(slot).last_player_hit = Some((actor, state.tick));
@@ -364,6 +388,8 @@ fn natural_golem_player_damage_scales_with_difficulty() {
         }
         damage.push(100.0 - state.players[&actor].vitals.health);
     }
-    assert!(damage[0] > 0.0 && damage[0] < damage[1] && damage[1] < damage[2],
-        "difficulty must affect a natural golem's player hit: {damage:?}");
+    assert!(
+        damage[0] > 0.0 && damage[0] < damage[1] && damage[1] < damage[2],
+        "difficulty must affect a natural golem's player hit: {damage:?}"
+    );
 }

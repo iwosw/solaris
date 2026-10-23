@@ -303,7 +303,11 @@ impl MenuKind {
         match self {
             Self::Player => 4,
             Self::CraftingTable => 9,
-            Self::EnchantingTable | Self::Anvil | Self::Grindstone | Self::Merchant | Self::Cartography => 2,
+            Self::EnchantingTable
+            | Self::Anvil
+            | Self::Grindstone
+            | Self::Merchant
+            | Self::Cartography => 2,
             Self::Smithing | Self::Loom => 3,
             Self::Stonecutter | Self::Beacon => 1,
             Self::Chest { .. }

@@ -249,9 +249,13 @@ impl CoreRegistry {
                 .map_err(|error| CoreError::Registry(error.to_string()))?,
         );
         let map_colors: Vec<u8> = serde_json::from_slice(
-            &std::fs::read(root.join("reports/block_map_colors.json"))
-                .map_err(|e| CoreError::Registry(format!("map colors: {e}; run tools/extract-block-map-colors.sh")))?,
-        ).map_err(|e| CoreError::Registry(format!("map colors: {e}")))?;
+            &std::fs::read(root.join("reports/block_map_colors.json")).map_err(|e| {
+                CoreError::Registry(format!(
+                    "map colors: {e}; run tools/extract-block-map-colors.sh"
+                ))
+            })?,
+        )
+        .map_err(|e| CoreError::Registry(format!("map colors: {e}")))?;
         if map_colors.len() != blocks.len() || map_colors.iter().any(|c| *c >= 62) {
             return Err(CoreError::Registry("invalid map color registry".into()));
         }

@@ -80,6 +80,34 @@ fn commit(
 }
 
 #[test]
+fn native_checkpoint_map_rows_and_sequence_roundtrip_with_strict_keys() {
+    let directory = tempfile::tempdir().unwrap();
+    let store = NativeStore::create(&directory.path().join("state.redb"), [1; 32]).unwrap();
+    let record = |tick, value: Value| NativeDomainRecord {
+        version: 1,
+        captured_tick: tick,
+        payload: serde_json::to_vec(&value).unwrap(),
+    };
+    let mut records = globals(0);
+    records.insert("map_sequence".into(), record(0, json!(0)));
+    commit(&store, 0, 0, &records, &[], &[]).unwrap();
+    let mut records = globals(1);
+    records.insert("map/0".into(), record(1, json!({})));
+    records.insert("map_sequence".into(), record(1, json!(1)));
+    commit(&store, 1, 0, &records, &[], &[]).unwrap();
+    assert_eq!(store.read_checkpoint().unwrap().globals["map/0"], records["map/0"]);
+    for key in ["map/-1", "map/00", "map/2147483648", "unknown"] {
+        let mut invalid = globals(2);
+        invalid.insert(key.into(), record(2, json!({})));
+        invalid.insert("map_sequence".into(), record(2, json!(1)));
+        assert!(commit(&store, 2, 1, &invalid, &[], &[]).is_err(), "{key}");
+    }
+    let mut missing_sequence = globals(2);
+    missing_sequence.insert("map/0".into(), record(2, json!({})));
+    assert!(commit(&store, 2, 1, &missing_sequence, &[], &[]).is_err());
+}
+
+#[test]
 fn native_checkpoint_zero_versions_and_rollback() {
     let directory = tempfile::tempdir().unwrap();
     let store = NativeStore::create(&directory.path().join("state.redb"), [1; 32]).unwrap();

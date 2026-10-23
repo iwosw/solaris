@@ -167,7 +167,9 @@ impl PackSet {
                 if kind == "function" && resource.ends_with(".mcfunction") {
                     let id = identifier(&format!(
                         "{namespace}:{}",
-                        resource.strip_suffix(".mcfunction").expect("function extension checked")
+                        resource
+                            .strip_suffix(".mcfunction")
+                            .expect("function extension checked")
                     ))?;
                     let lines = text
                         .lines()
@@ -190,8 +192,10 @@ impl PackSet {
                     let id = identifier(&format!(
                         "{namespace}:{}",
                         resource
-                            .strip_prefix("function/").expect("function tag directory checked")
-                            .strip_suffix(".json").expect("tag extension checked")
+                            .strip_prefix("function/")
+                            .expect("function tag directory checked")
+                            .strip_suffix(".json")
+                            .expect("tag extension checked")
                     ))?;
                     let tag: serde_json::Value =
                         serde_json::from_str(&text).map_err(|e| e.to_string())?;
@@ -283,7 +287,9 @@ impl PackSet {
             let (kind, resource) = tail.split_once('/').ok_or("Missing resource kind")?;
             let id = mc_data::Identifier::parse(format!(
                 "{namespace}:{}",
-                resource.strip_suffix(".json").ok_or("Resource must be JSON")?
+                resource
+                    .strip_suffix(".json")
+                    .ok_or("Resource must be JSON")?
             ))
             .map_err(|e| e.to_string())?;
             if kind == "recipe" {
@@ -359,7 +365,9 @@ impl Runtime {
         for (due, name) in image {
             let raw = name.strip_prefix('#').unwrap_or(&name);
             if identifier(raw).map_err(crate::CoreError::Storage)? != raw {
-                return Err(crate::CoreError::Storage("Noncanonical scheduled function identifier".into()));
+                return Err(crate::CoreError::Storage(
+                    "Noncanonical scheduled function identifier".into(),
+                ));
             }
             if scheduled.insert((due, name), ()).is_some() {
                 return Err(crate::CoreError::Storage(

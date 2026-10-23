@@ -4,7 +4,7 @@ use crate::config::CoreConfig;
 use crate::core::Core;
 
 #[path = "../../mc-plugin-host/tests/fixture/mod.rs"]
-mod fixture;
+pub(super) mod fixture;
 
 fn next(core: &Core, rx: &mut tokio::sync::broadcast::Receiver<TickOutput>) -> TickOutput {
     loop {

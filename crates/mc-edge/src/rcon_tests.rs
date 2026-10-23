@@ -2,7 +2,9 @@ use super::*;
 
 async fn pair() -> (TcpStream, TcpStream) {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let client = TcpStream::connect(listener.local_addr().unwrap()).await.unwrap();
+    let client = TcpStream::connect(listener.local_addr().unwrap())
+        .await
+        .unwrap();
     let (server, _) = listener.accept().await.unwrap();
     (client, server)
 }
@@ -11,16 +13,29 @@ async fn pair() -> (TcpStream, TcpStream) {
 async fn serverops_rcon_fragmented_frames_and_lengths() {
     let (mut client, mut server) = pair().await;
     let task = tokio::spawn(async move { read(&mut server).await });
-    for byte in [14i32.to_le_bytes().as_slice(), 23i32.to_le_bytes().as_slice(), 2i32.to_le_bytes().as_slice(), b"list\0\0"].concat() {
+    for byte in [
+        14i32.to_le_bytes().as_slice(),
+        23i32.to_le_bytes().as_slice(),
+        2i32.to_le_bytes().as_slice(),
+        b"list\0\0",
+    ]
+    .concat()
+    {
         client.write_all(&[byte]).await.unwrap();
     }
     let request = task.await.unwrap().unwrap();
-    assert_eq!((request.id, request.kind, request.body.as_str()), (23, 2, "list"));
+    assert_eq!(
+        (request.id, request.kind, request.body.as_str()),
+        (23, 2, "list")
+    );
     let (mut client, mut server) = pair().await;
     client.write_i32_le(i32::MAX).await.unwrap();
     assert!(read(&mut server).await.is_err());
     let (mut client, mut server) = pair().await;
-    client.write_all(&[10i32.to_le_bytes().as_slice(), &[0; 8], &[1, 0]].concat()).await.unwrap();
+    client
+        .write_all(&[10i32.to_le_bytes().as_slice(), &[0; 8], &[1, 0]].concat())
+        .await
+        .unwrap();
     assert!(read(&mut server).await.is_err());
 }
 
@@ -66,7 +81,10 @@ async fn serverops_rcon_password_admin_and_native_console_feedback() {
     assert!(reply.body.contains("Alice"), "{}", reply.body);
     assert!(server.cfg.server_dir.join("ops.json").is_file());
     send(&mut client, 5, 2, "time set 4321").await.unwrap();
-    let reply = tokio::time::timeout(Duration::from_secs(30), read(&mut client)).await.unwrap().unwrap();
+    let reply = tokio::time::timeout(Duration::from_secs(30), read(&mut client))
+        .await
+        .unwrap()
+        .unwrap();
     assert_eq!(reply.id, 5);
     assert!(reply.body.contains("4321"), "{}", reply.body);
     assert!(!reply.body.contains("Alice"));

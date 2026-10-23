@@ -20,7 +20,7 @@ manifest, their client bundle and the ids they own rather than by a second
 program, and a third plugin id fails its instance instead of being served as one
 of the two.
 
-The server supports only Wasmtime components over `solaris:plugin@0.7.0`.
+The server supports only Wasmtime components over `solaris:plugin@0.8.0`.
 The current config selects `[plugins].directory`; no runtime selector or Luau
 fallback exists. Build artifacts must match the current host/SDK.
 

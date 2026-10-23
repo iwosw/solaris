@@ -97,7 +97,12 @@ pub struct RconSection {
 
 impl Default for RconSection {
     fn default() -> Self {
-        Self { enabled: false, bind_address: default_bind_address(), port: 25575, password: String::new() }
+        Self {
+            enabled: false,
+            bind_address: default_bind_address(),
+            port: 25575,
+            password: String::new(),
+        }
     }
 }
 
@@ -109,7 +114,12 @@ pub struct QuerySection {
 }
 
 impl Default for QuerySection {
-    fn default() -> Self { Self { enabled: false, port: 25565 } }
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            port: 25565,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -659,9 +669,14 @@ impl EdgeConfig {
         if cfg.msmp.enabled && cfg.msmp.bearer_token.is_empty() {
             anyhow::bail!("msmp.enabled = true requires a non-empty msmp.bearer_token");
         }
-        anyhow::ensure!(!cfg.rcon.enabled || !cfg.rcon.password.is_empty(),
-            "rcon.enabled requires a non-empty rcon.password");
-        anyhow::ensure!(!cfg.rcon.password.contains('\0'), "rcon.password cannot contain NUL");
+        anyhow::ensure!(
+            !cfg.rcon.enabled || !cfg.rcon.password.is_empty(),
+            "rcon.enabled requires a non-empty rcon.password"
+        );
+        anyhow::ensure!(
+            !cfg.rcon.password.contains('\0'),
+            "rcon.password cannot contain NUL"
+        );
         crate::resource_pack::validate(&cfg.resource_pack)?;
         anyhow::ensure!(
             (1..=128).contains(&cfg.distant_horizons.radius_chunks),
@@ -792,7 +807,10 @@ fn unknown_leaves(table: &toml::Table) -> Vec<String> {
         ("properties", &["file"]),
         ("rcon", &["enabled", "bind_address", "port", "password"]),
         ("query", &["enabled", "port"]),
-        ("resource_pack", &["url", "sha1", "required", "prompt", "id"]),
+        (
+            "resource_pack",
+            &["url", "sha1", "required", "prompt", "id"],
+        ),
     ];
     for (section, keys) in KNOWN {
         let Some(toml::Value::Table(inner)) = table.get(*section) else {

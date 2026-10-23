@@ -840,14 +840,24 @@ mod tests {
             ] {
                 put(weather, key, value);
             }
-            let expected = tags[path].clone();
+            let expected: BTreeMap<_, _> = weather.iter().cloned().collect();
             import_tags(&tags, &mut manifest).unwrap();
             checkpoint_tags(&mut tags, 42, &manifest).unwrap();
-            assert_eq!(tags[path], expected);
+            let actual: BTreeMap<_, _> = saved_data_mut(&mut tags, path)
+                .unwrap()
+                .iter()
+                .cloned()
+                .collect();
+            assert_eq!(actual, expected);
             // Native simulation changes still replace the projected deadline.
             manifest.climate.as_mut().unwrap().remaining_ticks -= 1;
             checkpoint_tags(&mut tags, 42, &manifest).unwrap();
-            assert_ne!(tags[path], expected);
+            let actual: BTreeMap<_, _> = saved_data_mut(&mut tags, path)
+                .unwrap()
+                .iter()
+                .cloned()
+                .collect();
+            assert_ne!(actual, expected);
         }
     }
 

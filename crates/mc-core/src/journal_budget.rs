@@ -480,9 +480,11 @@ fn entry_heap(entry: &JournalEntry) -> usize {
                     .map_or(0, crate::settlements::SettlementRecord::heap_estimate)
         }
         E::Scoreboard { value } => scoreboard_heap(value),
-        E::SavedMap { value, .. } => value.colors.capacity()
-            + value.banners.len() * std::mem::size_of::<crate::maps::Banner>()
-            + value.decorations.len() * std::mem::size_of::<crate::maps::Decoration>(),
+        E::SavedMap { value, .. } => {
+            value.colors.capacity()
+                + value.banners.len() * std::mem::size_of::<crate::maps::Banner>()
+                + value.decorations.len() * std::mem::size_of::<crate::maps::Decoration>()
+        }
         E::Bossbars { value } => bossbars_heap(value),
         E::Dimension { entries, .. } => {
             entries.capacity() * std::mem::size_of::<JournalEntry>()

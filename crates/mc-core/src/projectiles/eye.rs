@@ -120,7 +120,7 @@ fn flight_target(origin: [f64; 3], destination: (i32, i32, i32)) -> [f64; 3] {
     ];
     let dx = target[0] - origin[0];
     let dz = target[2] - origin[2];
-    let distance = dx.hypot(dz);
+    let distance = (dx * dx + dz * dz).sqrt();
     if distance > 12.0 {
         [
             origin[0] + dx * 12.0 / distance,

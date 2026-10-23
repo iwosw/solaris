@@ -71,9 +71,13 @@ fn execute_and_datapack_roots_admit_namespaced_arguments_at_operator_level_two()
     ] {
         let node = advertised(&decoded, path);
         assert!(node.executable);
-        assert!(matches!(&node.kind, CommandNodeKind::Argument {
-            parser: Parser::String(CommandStringKind::GreedyPhrase), ..
-        }));
+        assert!(matches!(
+            &node.kind,
+            CommandNodeKind::Argument {
+                parser: Parser::String(CommandStringKind::GreedyPhrase),
+                ..
+            }
+        ));
     }
     for command in [
         "execute as @a at @s positioned ~ ~1 ~ run function test:tick",

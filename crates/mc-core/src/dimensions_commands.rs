@@ -223,7 +223,14 @@ pub(crate) fn execute(
         origin,
     );
     if selected.is_empty() {
-        return Err("argument.entity.notfound.entity".into());
+        let key = match request.command {
+            Command::EffectGive { .. }
+            | Command::EffectClear { .. }
+            | Command::Kill { .. }
+            | Command::Enchant(_) => "argument.entity.notfound.entity",
+            _ => "argument.entity.notfound.player",
+        };
+        return Err(key.into());
     }
     if matches!(request.command, Command::ExperienceQuery { .. }) && selected.len() != 1 {
         return Err("argument.player.toomany".into());

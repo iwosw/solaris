@@ -515,7 +515,10 @@ impl Click<'_, '_> {
             self.refresh_result();
             return;
         }
-        if matches!(self.kind, MenuKind::Anvil | MenuKind::Grindstone | MenuKind::Cartography) {
+        if matches!(
+            self.kind,
+            MenuKind::Anvil | MenuKind::Grindstone | MenuKind::Cartography
+        ) {
             *self.station_output_taken = true;
             *self.result = ItemStack::EMPTY;
             return;

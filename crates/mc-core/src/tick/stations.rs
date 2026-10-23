@@ -118,7 +118,9 @@ pub(super) fn open(
         MenuKind::Anvil => Some(mc_data::statistics::CustomStat::InteractWithAnvil),
         MenuKind::Grindstone => Some(mc_data::statistics::CustomStat::InteractWithGrindstone),
         MenuKind::Stonecutter => Some(mc_data::statistics::CustomStat::InteractWithStonecutter),
-        MenuKind::Cartography => Some(mc_data::statistics::CustomStat::InteractWithCartographyTable),
+        MenuKind::Cartography => {
+            Some(mc_data::statistics::CustomStat::InteractWithCartographyTable)
+        }
         MenuKind::Loom => Some(mc_data::statistics::CustomStat::InteractWithLoom),
         MenuKind::Smithing => Some(mc_data::statistics::CustomStat::InteractWithSmithingTable),
         _ => None,

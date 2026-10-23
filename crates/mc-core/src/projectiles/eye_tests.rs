@@ -115,7 +115,9 @@ fn physics_eye_rises_twelve_blocks_hovers_and_expires_once() {
             super::flight::run(&mut state, &mut Vec::new(), std::iter::once(id));
         }
         let at = state.entities.pos(state.entities.slot_of(id).unwrap());
-        assert!(((at[0] - origin[0]).hypot(at[2] - origin[2]) - 12.0).abs() < 1e-6);
+        let dx = at[0] - origin[0];
+        let dz = at[2] - origin[2];
+        assert!(((dx * dx + dz * dz).sqrt() - 12.0).abs() < 1e-6);
         assert_eq!(at[1], origin[1] + 8.0);
         for _ in 0..40 {
             super::flight::run(&mut state, &mut Vec::new(), std::iter::once(id));

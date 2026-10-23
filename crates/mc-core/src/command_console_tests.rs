@@ -1,5 +1,5 @@
 use super::*;
-use crate::boundary::PlayerInput;
+use crate::boundary::{PlayerChange, PlayerInput};
 
 fn fixture() -> TickState {
     let registry = Arc::new(crate::registry::CoreRegistry::load(None).unwrap());

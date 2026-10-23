@@ -327,5 +327,9 @@ fn gap_cultivation_awards_progress_and_discovery_only_on_accepted_use() {
         state.players[&player].advancement_progress["test:till"]["done"],
         true
     );
-    assert!(state.players[&player].unlocked_recipes.contains("minecraft:crafting_table"));
+    assert!(
+        state.players[&player]
+            .unlocked_recipes
+            .contains("minecraft:crafting_table")
+    );
 }

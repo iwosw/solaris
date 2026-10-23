@@ -1,10 +1,10 @@
 //! RCON wire from local 26.1.2 javap RconClient: little-endian length/id/type,
 //! two NUL terminators, auth type 3, command type 2, response type 0.
+use crate::server::EdgeServer;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
-use crate::server::EdgeServer;
 
 const MAX_BODY: usize = 4096;
 const IO_TIMEOUT: Duration = Duration::from_secs(30);
@@ -26,15 +26,25 @@ pub(super) async fn serve(listener: TcpListener, server: Arc<EdgeServer>) -> any
     }
 }
 
-struct Request { id: i32, kind: i32, body: String }
+struct Request {
+    id: i32,
+    kind: i32,
+    body: String,
+}
 
 async fn read(stream: &mut TcpStream) -> anyhow::Result<Request> {
     let size = stream.read_i32_le().await?;
-    anyhow::ensure!((10..=(MAX_BODY as i32 + 10)).contains(&size), "invalid RCON frame length");
+    anyhow::ensure!(
+        (10..=(MAX_BODY as i32 + 10)).contains(&size),
+        "invalid RCON frame length"
+    );
     let mut bytes = vec![0; size as usize];
     stream.read_exact(&mut bytes).await?;
-    anyhow::ensure!(bytes[bytes.len()-2..] == [0, 0], "invalid RCON terminators");
-    let body = &bytes[8..bytes.len()-2];
+    anyhow::ensure!(
+        bytes[bytes.len() - 2..] == [0, 0],
+        "invalid RCON terminators"
+    );
+    let body = &bytes[8..bytes.len() - 2];
     anyhow::ensure!(!body.contains(&0), "embedded RCON NUL");
     Ok(Request {
         id: i32::from_le_bytes(bytes[..4].try_into()?),
@@ -58,7 +68,11 @@ fn password_matches(expected: &str, supplied: &str) -> bool {
     use sha2::{Digest, Sha256};
     let expected = Sha256::digest(expected.as_bytes());
     let supplied = Sha256::digest(supplied.as_bytes());
-    expected.iter().zip(supplied.iter()).fold(0u8, |diff, (a, b)| diff | (a ^ b)) == 0
+    expected
+        .iter()
+        .zip(supplied.iter())
+        .fold(0u8, |diff, (a, b)| diff | (a ^ b))
+        == 0
 }
 
 async fn session(mut stream: TcpStream, server: Arc<EdgeServer>) -> anyhow::Result<()> {
@@ -67,8 +81,16 @@ async fn session(mut stream: TcpStream, server: Arc<EdgeServer>) -> anyhow::Resu
         let request = tokio::time::timeout(IO_TIMEOUT, read(&mut stream)).await??;
         if request.kind == 3 {
             authenticated = password_matches(&server.cfg.rcon.password, &request.body);
-            send(&mut stream, if authenticated { request.id } else { -1 }, 2, "").await?;
-            if !authenticated { return Ok(()); }
+            send(
+                &mut stream,
+                if authenticated { request.id } else { -1 },
+                2,
+                "",
+            )
+            .await?;
+            if !authenticated {
+                return Ok(());
+            }
         } else if !authenticated {
             send(&mut stream, -1, 2, "").await?;
             return Ok(());
@@ -78,14 +100,20 @@ async fn session(mut stream: TcpStream, server: Arc<EdgeServer>) -> anyhow::Resu
                     Ok(response) => response,
                     Err(error) => format!("Command failed: {error:#}"),
                 }
-            } else { format!("Unknown request {:x}", request.kind) };
+            } else {
+                format!("Unknown request {:x}", request.kind)
+            };
             let mut remaining = response.as_str();
             loop {
                 let mut end = remaining.len().min(MAX_BODY);
-                while !remaining.is_char_boundary(end) { end -= 1; }
+                while !remaining.is_char_boundary(end) {
+                    end -= 1;
+                }
                 send(&mut stream, request.id, 0, &remaining[..end]).await?;
                 remaining = &remaining[end..];
-                if remaining.is_empty() { break; }
+                if remaining.is_empty() {
+                    break;
+                }
             }
         }
     }
