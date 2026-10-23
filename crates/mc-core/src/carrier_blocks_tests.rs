@@ -154,3 +154,19 @@ fn a_plain_carrier_item_cannot_place_the_reserved_block() {
         Some(state.registry.states.air)
     );
 }
+
+#[test]
+fn give_hands_out_the_custom_item() {
+    let (mut state, player) = monitor_setup();
+    let _ = run_tick(
+        &mut state,
+        &[PlayerInput::Command {
+            connection: ConnectionId(1),
+            command: "give @s solaris:monitor 3".to_owned(),
+            permission_level: 4,
+        }],
+    );
+    let mut expected = monitor_stack(&state);
+    expected.count = 3;
+    assert!(state.players[&player].inventory.slots.contains(&expected));
+}
