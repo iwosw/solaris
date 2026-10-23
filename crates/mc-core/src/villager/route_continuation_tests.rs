@@ -31,7 +31,6 @@ fn distant_state() -> TickState {
     state
         .gamerules
         .insert("advance_time".into(), "false".into());
-    state.villager_pois.schedule_window = 200;
     state
 }
 

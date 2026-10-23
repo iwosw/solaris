@@ -115,7 +115,6 @@ pub(crate) struct PoiCache {
     pub(crate) previous_merchants: Vec<EntityId>,
     pub(crate) previous_urgent_chunks: FxHashSet<(i32, i32)>,
     pub(crate) schedules: Option<[crate::villager::Activity; 3]>,
-    pub(crate) schedule_window: u64,
     pub(crate) admission_order: Vec<usize>,
     pub(crate) brain_cursors: [Option<EntityId>; 8],
     pub(crate) residents: Vec<EntitySlot>,

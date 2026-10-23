@@ -362,6 +362,8 @@ fn wal_hive_entry_tombstones_source_and_replays_one_full_bee() {
     assert!(!replay.entities.contains_key(&id.0));
     let bytes = replay.opaque_block_entities[&key(POS)].as_ref().unwrap();
     let mut restored = state(None);
+    // Recovery resumes the world clock; derived uuids are keyed on it.
+    restored.tick = original.tick;
     place(&mut restored, POS, "minecraft:beehive");
     restored
         .world

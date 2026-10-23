@@ -73,7 +73,7 @@ pub(crate) fn award(
         let unit = |salt| random(seed ^ salt) as f64 / u64::MAX as f64;
         state.entities.spawn(
             id,
-            uuid::Uuid::new_v4(),
+            state.entity_uuid(id),
             EntityKind::ExperienceOrb { type_id },
             ColdFields {
                 pos,

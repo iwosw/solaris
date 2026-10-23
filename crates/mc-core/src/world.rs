@@ -99,6 +99,9 @@ pub struct ChunkWorld {
     /// Ticket of the one load request currently accepted per position; a
     /// result with any other ticket (superseded or re-requested) is dropped.
     in_flight: HashMap<ChunkPos, u64>,
+    /// Loader ticket source, apart from `next_revision`: a refused submit or
+    /// a racing load must never shift the stamps of durable chunk revisions.
+    next_ticket: u64,
     /// Finished loads wait outside residency until a whole-chunk light solve
     /// fits this tick's admission batch. Tickets remain in `in_flight`.
     ready: Vec<crate::chunk_loader::Ready>,
@@ -463,6 +466,7 @@ impl ChunkWorld {
             inhabited_current: Vec::new(),
             inhabited_changes: Vec::new(),
             in_flight: HashMap::default(),
+            next_ticket: 0,
             ready: Vec::new(),
             admission_us_per_chunk: ADMISSION_BUDGET_US,
             failed: HashMap::default(),
@@ -611,29 +615,38 @@ impl ChunkWorld {
             {
                 continue;
             }
-            let ticket = self.next_revision + 1;
+            let ticket = self.next_ticket + 1;
             if !self.loader.try_submit(pos, ticket, self.ready.len()) {
                 break;
             }
-            self.next_revision = ticket;
+            self.next_ticket = ticket;
             self.in_flight.insert(pos, ticket);
         }
         loaded
     }
 
     /// [`Self::ensure`], then block until wanted chunks are resident or have
-    /// failed closed (initial load and tests; never on the tick).
+    /// failed closed (initial load and tests; never on the tick). Every round
+    /// first collects all pending loads, so chunks are admitted (and stamped
+    /// with revisions) in `(priority, position)` order, never in worker
+    /// completion order.
     pub fn ensure_blocking(&mut self, want: &HashMap<ChunkPos, i32>) -> Vec<ChunkPos> {
-        let mut loaded = self.admit_ready(want);
-        while want
-            .keys()
-            .any(|pos| !self.chunks.contains_key(pos) && !self.failed.contains_key(pos))
-        {
-            let (pos, ticket, chunk) = self.loader.recv();
-            if self.accept(pos, ticket, chunk, want) {
-                loaded.push(pos);
+        let mut loaded = Vec::new();
+        loop {
+            while self.loader.pending() > 0 {
+                let finished = self.loader.recv();
+                self.ready.push(finished);
             }
-            loaded.extend(self.admit_ready(want));
+            let round = self.admit_ready(want);
+            let progressed = !round.is_empty() || self.loader.pending() > 0;
+            loaded.extend(round);
+            if !want
+                .keys()
+                .any(|pos| !self.chunks.contains_key(pos) && !self.failed.contains_key(pos))
+            {
+                break;
+            }
+            assert!(progressed, "wanted chunks neither loading nor resident");
         }
         self.relight_admitted(&loaded, true);
         loaded

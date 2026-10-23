@@ -20,6 +20,11 @@ use mc_physics::mth;
 use rustc_hash::FxHashSet;
 use std::cmp::Reverse;
 
+/// Ticks over which scheduled activity switches are spread per villager.
+/// Fixed (once 600 on hosts with <= 2 CPUs, 200 otherwise) so the same inputs
+/// produce the same world regardless of the host's core count.
+const SCHEDULE_WINDOW: u64 = 200;
+
 // Full decisions spend the global tick allowance shared with settlement
 // allocation and other dimensions; the brain never refills it locally.
 
@@ -263,14 +268,6 @@ impl PoiCache {
         }
         self.selected.clear();
         self.full_brains.resize(state.entities.len(), false);
-        if self.schedule_window == 0 {
-            self.schedule_window =
-                if std::thread::available_parallelism().is_ok_and(|n| n.get() <= 2) {
-                    600
-                } else {
-                    200
-                };
-        }
         let schedules = [
             schedule(0, Profession::Nitwit, state.day_time),
             schedule(-1, Profession::None, state.day_time),
@@ -514,9 +511,7 @@ impl PoiCache {
             u64::MAX
         } else if let Some(band) = brain.ready_band {
             if band >= 3 {
-                brain
-                    .last_full
-                    .saturating_add(if self.schedule_window == 600 { 63 } else { 31 })
+                brain.last_full.saturating_add(31)
             } else {
                 u64::MAX
             }
@@ -527,11 +522,7 @@ impl PoiCache {
                 .min(brain.wake_at)
                 .min(brain.search_due)
                 .min(brain.schedule_due);
-            due = due.min(
-                brain
-                    .last_full
-                    .saturating_add(if self.schedule_window == 600 { 63 } else { 31 }),
-            );
+            due = due.min(brain.last_full.saturating_add(31));
             if brain.protected_until > tick {
                 due = due.min(brain.protected_until);
             }
@@ -587,11 +578,6 @@ impl PoiCache {
         } else {
             brain_period(brain.cadence.period, distance)
         };
-        let period = if period == 32 && self.schedule_window == 600 {
-            64
-        } else {
-            period
-        };
         if period < brain.cadence.period || brain.wake {
             brain.cadence.next = brain.cadence.next.min(state.tick);
         }
@@ -601,14 +587,12 @@ impl PoiCache {
             if brain.schedule_due == u64::MAX {
                 brain.schedule_due = state
                     .tick
-                    .saturating_add(u64::from(brain.id.0.unsigned_abs()) % self.schedule_window);
+                    .saturating_add(u64::from(brain.id.0.unsigned_abs()) % SCHEDULE_WINDOW);
             }
         } else {
             brain.schedule_due = u64::MAX;
         }
-        let service_due = brain
-            .last_full
-            .saturating_add(if self.schedule_window == 600 { 63 } else { 31 });
+        let service_due = brain.last_full.saturating_add(31);
         let due = brain.wake
             || state.tick >= brain.cadence.next
             || state.tick >= brain.wake_at

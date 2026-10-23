@@ -626,7 +626,7 @@ fn mutate(
     if !ids.iter().any(would_change) {
         return 0;
     }
-    let timestamp = timestamp_now();
+    let timestamp = timestamp_from_unix((state.wall_clock)());
     let progress = Arc::make_mut(&mut player.advancement_progress)
         .as_object_mut()
         .expect("preflight admitted an advancement object");
@@ -897,11 +897,18 @@ pub fn timestamp_to_millis(timestamp: &str) -> Option<i64> {
     )
 }
 
-fn timestamp_now() -> String {
-    let seconds = SystemTime::now()
+/// Real UTC seconds: the production wall clock behind `TickState::wall_clock`.
+/// Advancement obtained-stamps are real calendar data, so the clock is an
+/// injectable external input; deterministic runs install a fixed clock.
+pub(crate) fn system_unix_seconds() -> i64 {
+    SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
-        .as_secs() as i64;
+        .as_secs() as i64
+}
+
+/// Vanilla-format criterion stamp for unix `seconds`.
+fn timestamp_from_unix(seconds: i64) -> String {
     let days = seconds.div_euclid(86400) + 719468;
     let era = days.div_euclid(146097);
     let doe = days - era * 146097;
@@ -930,7 +937,12 @@ mod tests {
         assert_eq!(timestamp_to_millis("1970-01-01 01:00:00 +0100"), Some(0));
         assert_eq!(timestamp_to_millis("1969-12-31 23:00:00 -0100"), Some(0));
         assert_eq!(timestamp_to_millis("2026-02-29 00:00:00 +0000"), None);
-        assert!(timestamp_to_millis(&timestamp_now()).is_some());
+        assert!(timestamp_to_millis(&timestamp_from_unix(system_unix_seconds())).is_some());
+        assert_eq!(timestamp_from_unix(0), "1970-01-01 00:00:00 +0000");
+        assert_eq!(
+            timestamp_from_unix(1_767_225_600 + 86_461),
+            "2026-01-02 00:01:01 +0000"
+        );
     }
 }
 

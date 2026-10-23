@@ -350,6 +350,10 @@ pub struct TickState {
     /// `Disconnect` was sealed into its queue).
     pub disconnects: Vec<(ConnectionId, u64)>,
     pub tick: u64,
+    /// Unix seconds source for real-calendar stamps (advancement obtained
+    /// dates). Production reads the system clock; deterministic runs inject a
+    /// fixed one, so the wall clock is an explicit external input.
+    pub(crate) wall_clock: fn() -> i64,
     pub day_time: i64,
     /// Block edits staged by merge this tick: (pos, new state).
     pub merge_block_writes: Vec<(BlockPos, u32)>,
@@ -595,6 +599,7 @@ impl TickState {
             outbox_cap,
             disconnects: Vec::new(),
             tick: 0,
+            wall_clock: crate::advancements::system_unix_seconds,
             day_time: 0,
             merge_block_writes: Vec::new(),
             block_phase_writes: Vec::new(),
@@ -1842,7 +1847,7 @@ impl TickState {
         let centre = [pos.x as f64 + 0.5, pos.y as f64 + 0.5, pos.z as f64 + 0.5];
         for (index, stack) in drops.into_iter().enumerate() {
             let id = self.entities.alloc_id();
-            let uuid = uuid::Uuid::new_v4();
+            let uuid = self.entity_uuid(id);
             let type_id = self.registry.item_type_id;
             // Deterministic scatter (no RNG on the tick path).
             let scatter = |salt: u64| {
@@ -2015,7 +2020,7 @@ impl TickState {
     /// Spawn a mob/item entity from a blueprint type id.
     pub fn spawn_mob(&mut self, type_id: u32, pos: [f64; 3], health: f32) -> EntityId {
         let id = self.entities.alloc_id();
-        let uuid = uuid::Uuid::new_v4();
+        let uuid = self.entity_uuid(id);
         let blueprint = self.registry.blueprint(type_id);
         let (movement, half_width, height, speed, damage, sight, reach) = blueprint
             .map(|blueprint| {
@@ -4415,7 +4420,7 @@ pub(crate) fn spawn_item_entity(
         crate::vibration::emit(state, pos, crate::vibration::GameEvent::EntityPlace, None);
     }
     let id = state.entities.alloc_id();
-    let uuid = uuid::Uuid::new_v4();
+    let uuid = state.entity_uuid(id);
     let type_id = state.registry.item_type_id;
     let appearance = std::sync::Arc::new(EntityAppearance {
         item: Some(stack.clone()),

@@ -13,6 +13,8 @@ pub(crate) struct Image {
     state: EntityStateImage,
     villager: Option<crate::villager::VillagerState>,
     equipment: Option<[Option<mc_data::ItemStack>; 6]>,
+    /// The command supplied `UUID`; otherwise the spawn's derived uuid stands.
+    uuid_authored: bool,
 }
 fn error(text: impl Into<String>) -> CommandError {
     CommandError::Message(text.into())
@@ -458,9 +460,10 @@ pub(crate) fn prepare(
         };
         fields.push((key.clone(), value));
     }
+    let uuid_authored = fields.iter().any(|(key, _)| key == "UUID");
     let base = VanillaEntity {
         id: name.into(),
-        uuid: uuid::Uuid::new_v4(),
+        uuid: uuid::Uuid::nil(),
         pos,
         health: state
             .registry
@@ -503,14 +506,18 @@ pub(crate) fn prepare(
         state: image,
         villager,
         equipment,
+        uuid_authored,
     })
 }
 pub(crate) fn apply(state: &mut TickState, id: EntityId, mut image: Image) {
     let slot = state.entities.slot_of(id).expect("new summon");
     let native = image.native;
-    state.entities.set_uuid(slot, native.uuid);
+    if image.uuid_authored {
+        state.entities.set_uuid(slot, native.uuid);
+    }
     if state.dimension_globals.active {
-        state.dimension_globals.reserved_uuids.insert(native.uuid);
+        let uuid = state.entities.row(slot).uuid;
+        state.dimension_globals.reserved_uuids.insert(uuid);
     }
     state
         .entities

@@ -75,6 +75,7 @@ pub mod entity_controls;
 pub mod entity_life;
 pub mod entity_loot;
 pub mod entity_motion;
+mod entity_uuid;
 mod entity_views;
 pub mod experience_orbs;
 pub mod explosion;
@@ -179,6 +180,8 @@ mod entity_loot_tests;
 #[cfg(test)]
 mod entity_motion_tests;
 #[cfg(test)]
+mod entity_uuid_tests;
+#[cfg(test)]
 mod farming_tests;
 #[cfg(test)]
 mod fluids_tests;
@@ -196,6 +199,8 @@ mod pause_when_empty_tests;
 mod quirk_parity_tests;
 #[cfg(test)]
 mod rare_mobs_tests;
+#[cfg(test)]
+mod replay_determinism_tests;
 #[cfg(test)]
 mod spawn_clearance_tests;
 #[cfg(test)]

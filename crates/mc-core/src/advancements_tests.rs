@@ -105,6 +105,7 @@ fn advancement_requirements_rewards_deltas_and_recipe_unlocks_are_once_only() {
             ),
         ),
     ]));
+    state.wall_clock = || 1_767_225_600;
     let apple = ItemStack::new(
         state
             .registry
@@ -141,7 +142,11 @@ fn advancement_requirements_rewards_deltas_and_recipe_unlocks_are_once_only() {
     let stamp = player.advancement_progress["test:reward"]["criteria"]["test"]
         .as_str()
         .unwrap();
-    assert!(timestamp_to_millis(stamp).is_some());
+    assert_eq!(
+        stamp, "2026-01-01 00:00:00 +0000",
+        "stamp follows the injected clock"
+    );
+    assert_eq!(timestamp_to_millis(stamp), Some(1_767_225_600_000));
     let queue = &state.outbox[&ConnectionId(1)];
     assert!(queue.iter().any(|event| matches!(event,PlayerChange::Advancements {reset:false,progress,..} if progress.get("test:reward").is_some())));
     assert_eq!(

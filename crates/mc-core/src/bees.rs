@@ -787,7 +787,7 @@ fn release(
         let id = state.entities.alloc_id();
         // Vanilla strips occupant UUIDs. The old body may already have a durable
         // checkpoint tombstone; retain its state, never resurrect its identity.
-        image.uuid = uuid::Uuid::new_v4().to_string();
+        image.uuid = state.entity_uuid(id).to_string();
         image.pos = exit;
         image.vel = [0.0; 3];
         image.state.entity_life.child_ticks = image
