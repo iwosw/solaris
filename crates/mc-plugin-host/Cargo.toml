@@ -30,6 +30,7 @@ wasmtime = { version = "36", default-features = false, features = [
     "runtime",
     "component-model",
     "cranelift",
+    "winch",
     "parallel-compilation",
     "cache",
 ] }

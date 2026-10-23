@@ -375,8 +375,15 @@ impl CompiledPlugin {
 /// by content hash plus the engine revision and every compile setting, so
 /// changed bytes or a changed compiler can never reuse stale code, and entries
 /// it cannot decode are recompiled instead of served. Unavailable or malformed
-/// cache configuration falls back to compilation. Wasmtime's default
-/// `OptLevel::Speed` is unchanged.
+/// cache configuration falls back to compilation.
+///
+/// Components compile with Winch, Wasmtime's single-pass baseline compiler,
+/// not Cranelift: the generated `on_events` lift of the 0.8 contract is one
+/// ~1.2 MB wasm function, and Cranelift needs more than 3 GB of memory (and
+/// about a minute on a 2-core host) to compile it, which OOM-killed the server
+/// at startup on the 4 GB test VPS before the first log line. Winch compiles
+/// the same plugins in about a second at ~0.4 GB peak server RSS; plugin guest
+/// code is host-call-bound glue, so its slower code is the accepted price.
 pub fn engine(limits: &PluginLimits) -> Result<Engine, HostError> {
     let mut config = Config::new();
     config
@@ -385,6 +392,7 @@ pub fn engine(limits: &PluginLimits) -> Result<Engine, HostError> {
         .epoch_interruption(true)
         .wasm_backtrace(false)
         .parallel_compilation(false)
+        .strategy(wasmtime::Strategy::Winch)
         .max_wasm_stack(usize::try_from(limits.wasm_stack_bytes).unwrap_or(usize::MAX));
     match wasmtime::Cache::from_file(None) {
         Ok(cache) => {

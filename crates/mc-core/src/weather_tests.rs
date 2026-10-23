@@ -725,3 +725,25 @@ fn weather_gap_microbench_precipitation_and_rod_search() {
         precipitation[3], attraction[3]
     );
 }
+
+/// Climate images saved before the independent thunder clock carry only the
+/// old fields; they still load, and a stored thunder target keeps thundering.
+#[test]
+fn pre_thunder_clock_climate_image_still_loads() {
+    let old = r#"{"day_time":5,"weather_kind":2,"remaining_ticks":99,
+        "rain_level_bits":1065353216,"thunder_level_bits":1065353216,
+        "advance_time":true,"advance_weather":true}"#;
+    let image: ClimateImage = serde_json::from_str(old).expect("old image parses");
+    assert_eq!(
+        (
+            image.thunder_remaining_ticks,
+            image.clear_remaining_ticks,
+            image.thundering
+        ),
+        (0, 0, false)
+    );
+    let mut state = fixture();
+    image.restore(&mut state).expect("restore");
+    assert!(state.thundering);
+    assert_eq!(state.weather, (Weather::Thunder, 99));
+}

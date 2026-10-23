@@ -20,8 +20,13 @@ pub struct ClimateImage {
     pub day_time: i64,
     pub weather_kind: u8,
     pub remaining_ticks: i64,
+    /// Absent in worlds saved before the independent thunder clock; a zero
+    /// clock draws a fresh natural duration on the next tick.
+    #[serde(default)]
     pub thunder_remaining_ticks: i64,
+    #[serde(default)]
     pub clear_remaining_ticks: i64,
+    #[serde(default)]
     pub thundering: bool,
     pub rain_level_bits: u32,
     pub thunder_level_bits: u32,
@@ -70,7 +75,7 @@ impl ClimateImage {
         state.weather = (kind, self.remaining_ticks);
         state.thunder_remaining_ticks = self.thunder_remaining_ticks;
         state.clear_remaining_ticks = self.clear_remaining_ticks;
-        state.thundering = self.thundering;
+        state.thundering = self.thundering || kind == Weather::Thunder;
         state.rain_level = rain_level;
         state.thunder_level = thunder_level;
         state
