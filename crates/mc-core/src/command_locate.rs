@@ -784,11 +784,10 @@ pub(crate) fn execute(
     executor: EntityId,
     command: &LocateCommand,
 ) {
-    let origin_f = state
-        .entities
-        .slot_of(executor)
-        .map(|slot| state.entities.pos(slot))
-        .unwrap_or_else(|| state.world.world_spawn_position());
+    let origin_f = crate::command_console::pose(state, executor).map_or_else(
+        || state.world.world_spawn_position(),
+        |(position, _)| position,
+    );
     let origin = (
         origin_f[0].floor() as i32,
         origin_f[1].floor() as i32,

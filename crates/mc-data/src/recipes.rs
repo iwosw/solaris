@@ -567,6 +567,14 @@ pub fn parse_plugin_crafting_recipe(id: Identifier, json: &str) -> Result<Recipe
         .ok_or_else(|| "plugin crafting recipe is unsupported".to_owned())
 }
 
+/// Compile an authored datapack recipe, refusing unsupported serializers.
+pub fn parse_datapack_recipe(id: Identifier, json: &str) -> Result<Recipe, String> {
+    let value = serde_json::from_str(json).map_err(|error| error.to_string())?;
+    parse_recipe_value(Path::new("datapack recipe"), id, value)
+        .map_err(|error| error.to_string())?
+        .ok_or_else(|| "Unsupported datapack recipe serializer or result".to_owned())
+}
+
 fn load_one_recipe(root: &Path, path: &Path) -> Result<Option<Recipe>, RecipeDataError> {
     let id = id_from_file(root, path)?;
     let value: serde_json::Value = read_json_file(

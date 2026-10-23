@@ -88,10 +88,8 @@ pub(crate) fn entity_name(state: &TickState, entity: EntityId) -> Tag {
 }
 
 fn selector(state: &TickState, executor: EntityId, selector: &Selector) -> Vec<EntityId> {
-    let origin = state
-        .entities
-        .slot_of(executor)
-        .map(|slot| state.entities.pos(slot))
+    let origin = crate::command_console::pose(state, executor)
+        .map(|(position, _)| position)
         .unwrap_or_else(|| state.world.world_spawn_position());
     let origin: [f64; 3] =
         std::array::from_fn(|axis| selector.position[axis].unwrap_or(origin[axis]));
@@ -664,22 +662,11 @@ pub(crate) fn execute(
                 );
                 return;
             }
-            let origin = state
-                .entities
-                .slot_of(executor)
-                .map(|slot| state.entities.pos(slot))
-                .unwrap_or_else(|| state.world.world_spawn_position());
-            let rotation = state
-                .entities
-                .slot_of(executor)
-                .map(|slot| {
-                    let [yaw, pitch, _] = state.entities.rot(slot);
-                    [yaw, pitch]
-                })
-                .unwrap_or([0.0, 0.0]);
+            let (origin, rotation) = crate::command_console::pose(state, executor)
+                .unwrap_or((state.world.world_spawn_position(), [0.0; 2]));
             let (to, destination_name, destination_rotation) = match destination {
                 Destination::Position(coords) => (
-                    crate::commands::resolve_coords(*coords, origin, rotation),
+                    crate::command_context::resolve_coords(state, *coords, origin, rotation),
                     None,
                     None,
                 ),
@@ -901,11 +888,10 @@ pub(crate) fn execute(
             );
         }
         Command::WorldBorder(command) => {
-            let origin = state
-                .entities
-                .slot_of(executor)
-                .map(|slot| state.entities.pos(slot))
-                .unwrap_or_else(|| state.world.world_spawn_position());
+            let origin = crate::command_console::pose(state, executor).map_or_else(
+                || state.world.world_spawn_position(),
+                |(position, _)| position,
+            );
             let message = crate::command_border::execute(&mut state.border, *command, origin);
             state.push_player(connection, PlayerChange::Chat { message });
         }
@@ -938,22 +924,13 @@ pub(crate) fn execute(
                 return;
             }
             let type_id = facts.protocol_id;
-            let origin = state
-                .entities
-                .slot_of(executor)
-                .map(|slot| state.entities.pos(slot))
-                .unwrap_or_else(|| state.world.world_spawn_position());
-            let rotation = state
-                .entities
-                .slot_of(executor)
-                .map(|slot| {
-                    let [yaw, pitch, _] = state.entities.rot(slot);
-                    [yaw, pitch]
-                })
-                .unwrap_or([0.0, 0.0]);
+            let (origin, rotation) = crate::command_console::pose(state, executor)
+                .unwrap_or((state.world.world_spawn_position(), [0.0; 2]));
             let at = position
                 .as_ref()
-                .map(|coords| crate::commands::resolve_coords(*coords, origin, rotation))
+                .map(|coords| {
+                    crate::command_context::resolve_coords(state, *coords, origin, rotation)
+                })
                 .unwrap_or(origin);
             if at[0].abs() >= 30_000_000.0
                 || at[2].abs() >= 30_000_000.0
@@ -1211,19 +1188,8 @@ fn settlement(
                 );
                 return;
             };
-            let anchor = state
-                .entities
-                .slot_of(executor)
-                .map(|slot| {
-                    let pos = state.entities.pos(slot);
-                    pos.map(|coordinate| coordinate.floor() as i32)
-                })
-                .or_else(|| {
-                    (connection == crate::command_console::CONNECTION).then(|| {
-                        let pos = state.world.world_spawn_position();
-                        pos.map(|coordinate| coordinate.floor() as i32)
-                    })
-                });
+            let anchor = crate::command_console::pose(state, executor)
+                .map(|(position, _)| position.map(|coordinate| coordinate.floor() as i32));
             let Some(anchor) = anchor else {
                 error(
                     state,

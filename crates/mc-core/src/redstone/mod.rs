@@ -244,7 +244,7 @@ pub(crate) fn schedule_cell(state: &mut TickState, pos: BlockPos, delay: u64, pr
     state.block_ticks.schedule(ScheduledBlockTick::new(
         pos,
         id,
-        state.tick.saturating_add(delay),
+        crate::command_context::execution_tick(state).saturating_add(delay),
         priority,
     ));
 }
@@ -284,6 +284,7 @@ pub(crate) fn neighbours(state: &mut TickState, writes: &[(BlockPos, u32)]) {
             };
             crate::fire::changed(state, cell);
             crate::tnt::changed(state, cell);
+            crate::command_blocks::changed(state, cell);
             crate::enchantment_locations::changed(state, cell);
             if at(state, cell).is_some_and(conducts) {
                 for direction in NEIGHBOURS {
@@ -504,7 +505,9 @@ fn hydrate(state: &mut TickState) {
                     for x in 0..16 {
                         let id = section.get(x, y, z);
                         if state.registry.blocks.by_id(id).is_some_and(|b| {
-                            reactive(b.block.id.path()) || b.block.id.path() == "tnt"
+                            reactive(b.block.id.path())
+                                || b.block.id.path() == "tnt"
+                                || crate::command_blocks::is_block(b.block.id.path())
                         }) {
                             cells.push(BlockPos {
                                 x: cp.x * 16 + i32::from(x),
@@ -518,6 +521,7 @@ fn hydrate(state: &mut TickState) {
         }
         for cell in cells {
             crate::tnt::changed(state, cell);
+            crate::command_blocks::changed(state, cell);
             containers::register(state, cell);
             schedule_cell(state, cell, 1, 0);
         }
@@ -549,6 +553,7 @@ fn tick_cell(
                 change(state, writes, pos, "powered", "false");
             }
         }
+        "command_block" | "repeating_command_block" => state.command_blocks_due.push(pos),
         "redstone_wire" => {
             if wires.settled.contains(&pos) {
                 return;

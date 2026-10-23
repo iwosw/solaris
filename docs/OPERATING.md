@@ -63,6 +63,8 @@ accepts_transfers = false
 # Vanilla `pause-when-empty-seconds`: stop world simulation after this many
 # idle seconds; zero or negative never pauses (vanilla accepts -1).
 pause_when_empty_seconds = 60
+# Vanilla enable-command-block execution gate (creative operator placement only).
+enable_command_block = false
 # Opt-in per-tick input log for replay from a checkpoint (default off).
 input_log = false
 
@@ -614,6 +616,90 @@ POIs are read from the loaded chunks within 256 blocks, with vanilla's POI-type
 block lists. The tab-complete structure list comes from the local vanilla data;
 boss-bar id suggestions are empty because the registry lives on the tick thread.
 
+## Datapacks and command blocks
+
+Solaris loads directory packs from `<world_dir>/datapacks/<pack>/` at startup.
+Each pack needs `pack.mcmeta` with a `pack` object. Packs are ordered by directory
+name; the lexically later resource overrides the earlier one. This is not the
+vanilla enabled/disabled pack-order UI. ZIP files, symlinks, worldgen/custom
+dimension resources and unimplemented resource kinds fail startup with an
+explicit error, rather than silently falling back to built-in content.
+
+Supported resources (singular 26.1.2 directory names):
+
+- `data/<namespace>/function/<path>.mcfunction`: native commands, blank lines and
+  `#` comments. Macros and leading `/` are refused.
+- `data/<namespace>/tags/function/<path>.json`: `values`, nested `#tag` entries,
+  optional `{ "id": "...", "required": false }` entries and `replace`.
+  `minecraft:load` runs on installation/reload; `minecraft:tick` runs each
+  simulation tick. Cycles and excessive expansion are rejected.
+- `data/<namespace>/recipe/<path>.json`: serializers already supported by the
+  native recipe parser. An existing id is replaced in place, preserving display
+  indices; new ids are appended. Recipe changes are startup-only.
+- `data/<namespace>/loot_table/blocks/<block>.json`: plain `minecraft:block`
+  tables, one `minecraft:item` entry per pool, supported roll counts and
+  `minecraft:set_count`. Empty block tables suppress drops. Other conditions,
+  entry types and loot domains are refused; this is not arbitrary loot scripting.
+
+Operator level 2 commands: `/function <id|#tag>`,
+`/schedule function <id|#tag> <time> [append|replace]`,
+`/schedule clear <id|#tag>`, `/datapack list [enabled]`, `/reload`.
+Time uses ticks by default or `t`, `s`, `d`; zero/negative delays are rejected.
+Schedules use native checkpoint/WAL post-images and survive restart.
+`/reload` compiles off the tick thread, then swaps functions/tags at a tick
+boundary. Changed recipe/loot resources require restart: reload refuses the
+whole candidate and retains the old pack set. Load errors also retain the old set.
+Functions invoked from any vanilla dimension retain their explicit command
+source; schedules and load/tick tags run from the overworld server source.
+
+Commands share a 65536-dispatch budget per tick, including `/execute` branches;
+function bodies have a further 65536-line budget. Function recursion uses an
+explicit stack, not the Rust call stack. Excess work is aborted with feedback.
+Nested cross-dimension/function dispatch also has a 64-frame stack bound.
+At most 65536 due schedules are processed per tick. Pack compilation is limited
+to 16 MiB of text, 16384 resource/directory entries and 32 nesting levels.
+No filesystem reads or whole-world scans are added to the tick path.
+
+With `[server] enable_command_block = true`, unconditional impulse, chain and
+repeating command blocks execute through the native command owner. Ordinary
+placement requires creative mode and operator permission. Configure a placed
+block using, for example:
+
+```text
+/data merge block 0 80 0 {Command:"time add 1",auto:1b}
+/data get block 0 80 0
+```
+
+`/data` currently inspects command-block NBT and merges only `Command` and `auto`;
+it cannot bypass another block entity's native owner. Impulse blocks respond to
+redstone rising edges; repeating blocks use the durable scheduled-block queue;
+chains follow facing, with a bounded traversal and once-per-tick execution.
+Relative coordinates resolve at the command block, not world spawn.
+NBT updates and scheduled work use the native store and tick WAL. Client editor
+packets, conditional execution/success counts, comparator result output and
+command minecarts are not implemented. Conditional blocks are not executed as
+unconditional blocks. Other map-making commands such as `/clone` and `/place`
+remain unsupported.
+
+Mechanics reference: [world simulation and scheduled work](https://github.com/kaiserproger/minecraft-how-it-works/blob/main/server-how-it-works-book/05-world-simulation.md).
+
+`/execute` carries executor, position, rotation, dimension and feet/eyes anchor
+without moving the executing entity. Supported modifiers: `as`, `at`,
+`positioned <pos>|as <entities>`, `rotated <rotation>|as <entities>`,
+`facing <pos>|entity <entities> feet|eyes`, `anchored`, `align`, `in`.
+Conditions: `if|unless entity`, block id/properties (not block tags/SNBT), and
+score comparisons or `matches` ranges. `run` dispatches the supported native
+command set with the original permission level. Local `^` coordinates honor
+rotation/anchor; relative `~` and selector origins honor source position.
+Cross-world execution uses the shared `dimensions_travel` commit authority,
+not direct edge mutation. Conditional block-region comparison (`blocks`),
+`store` and general NBT predicates remain gaps. Eye anchors use native player
+pose heights or the local entity-dimensions contract scaled to body height.
+The edge advertises greedy argument tails for these roots, with native syntax
+validation; rich vanilla subcommand suggestions are not implemented.
+
+Additional mechanics reference: [scheduled ticks and neighbor updates](https://github.com/kaiserproger/minecraft-how-it-works/blob/main/server-how-it-works-book/11-core-mechanics-step-by-step.md#5-scheduled-block-ticks).
+
 ## Forced chunks and ender-pearl loaders
 
 `/forceload add <x z> [<x z>]`, `/forceload remove <x z> [<x z>]|all` and
@@ -621,7 +707,7 @@ boss-bar id suggestions are empty because the registry lives on the tick thread.
 `ForceLoadCommand`: block-column coordinates (`~` allowed), at most 256 chunks
 per command, vanilla translation keys, and per-dimension state: the command acts
 on the dimension of the player who runs it (the console source is the
-overworld; `/execute in` only wraps `/teleport`). A forced chunk is a persisted ticket
+overworld; `/execute in` supplies an explicit dimension). A forced chunk is a persisted ticket
 (`minecraft:forced:<x>:<z>`, restored after restart and written to Anvil
 `chunk_tickets.dat` on export) with no player required: like vanilla's level-31
 `forced` ticket it keeps the chunk plus a two-chunk ring loaded and the chunk

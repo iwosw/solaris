@@ -466,6 +466,10 @@ fn entry_heap(entry: &JournalEntry) -> usize {
         }
         E::Raids { value } => raids_heap(value),
         E::WanderingTrader { .. } => 0,
+        E::ScheduledFunctions { value } => {
+            value.capacity() * std::mem::size_of::<(u64, String)>()
+                + value.iter().map(|(_, name)| name.capacity()).sum::<usize>()
+        }
         E::Settlement { image, .. } => {
             std::mem::size_of::<crate::settlements::RecordImage>()
                 + image

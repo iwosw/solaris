@@ -3,7 +3,7 @@
 //! still owns their journal and container transactions.
 
 use crate::boundary::{BlockPos, ChangeSet, ConnectionId, EntityId, PlayerChange};
-use crate::commands::{CommandError, Coord, Target, coord, coords, resolve_coords, target_of};
+use crate::commands::{CommandError, Coord, Target, coord, coords, target_of};
 use crate::tick::TickState;
 use mc_data::Identifier;
 use mc_world::{BlockRegistry, BlockStateId};
@@ -58,7 +58,7 @@ fn message(text: impl Into<String>) -> CommandError {
     CommandError::Message(text.into())
 }
 
-fn block_spec(word: &str) -> Result<BlockSpec, CommandError> {
+pub(crate) fn block_spec(word: &str) -> Result<BlockSpec, CommandError> {
     if word.contains(['{', '}']) {
         return Err(message("Block entity SNBT is not supported"));
     }
@@ -102,7 +102,7 @@ fn block_spec(word: &str) -> Result<BlockSpec, CommandError> {
 }
 
 impl BlockSpec {
-    fn validate<'a>(
+    pub(crate) fn validate<'a>(
         &self,
         registry: &'a BlockRegistry,
     ) -> Result<&'a mc_world::block::Block, CommandError> {
@@ -145,7 +145,7 @@ impl BlockSpec {
             .ok_or_else(|| message("Invalid block state"))
     }
 
-    fn matches(&self, registry: &BlockRegistry, state: u32) -> bool {
+    pub(crate) fn matches(&self, registry: &BlockRegistry, state: u32) -> bool {
         registry.by_id(BlockStateId(state)).is_some_and(|state| {
             state.block.id == self.name
                 && self
@@ -280,12 +280,14 @@ fn spawn_args(args: &[&str], usage: CommandError) -> Result<SpawnArguments, Comm
 }
 
 fn position(
+    state: &TickState,
     coords: [Coord; 3],
     base: [f64; 3],
     rotation: [f32; 2],
     geometry: mc_world::ChunkGeometry,
 ) -> Result<BlockPos, CommandError> {
-    let values = resolve_coords(coords, base, rotation).map(f64::floor);
+    let values =
+        crate::command_context::resolve_coords(state, coords, base, rotation).map(f64::floor);
     if values
         .iter()
         .any(|value| !value.is_finite() || value.abs() > 30_000_000.0)
@@ -320,6 +322,7 @@ pub(crate) fn spawnpoint_location(
     let (base, [yaw, pitch]) = crate::command_console::pose(state, executor)
         .ok_or_else(|| message("Command source is unavailable"))?;
     let pos = position(
+        state,
         coordinates.unwrap_or(
             [Coord {
                 relative: true,
@@ -369,7 +372,7 @@ fn execute_inner(
             block,
             mode,
         } => {
-            let pos = position(*pos, base, base_rotation, state.dimension.geometry())?;
+            let pos = position(state, *pos, base, base_rotation, state.dimension.geometry())?;
             let block = block.resolve(&state.registry.blocks)?;
             edit_region(
                 state,
@@ -389,8 +392,14 @@ fn execute_inner(
             block,
             mode,
         } => {
-            let from = position(*from, base, base_rotation, state.dimension.geometry())?;
-            let to = position(*to, base, base_rotation, state.dimension.geometry())?;
+            let from = position(
+                state,
+                *from,
+                base,
+                base_rotation,
+                state.dimension.geometry(),
+            )?;
+            let to = position(state, *to, base, base_rotation, state.dimension.geometry())?;
             let block = block.resolve(&state.registry.blocks)?;
             if let FillMode::Replace(Some(filter)) = mode {
                 filter.validate(&state.registry.blocks)?;
@@ -433,6 +442,7 @@ fn execute_inner(
             rotation,
         } => {
             let pos = position(
+                state,
                 pos.unwrap_or(
                     [Coord {
                         relative: true,

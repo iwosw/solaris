@@ -65,8 +65,10 @@ Gameplay aims to feel like vanilla, not to be bit-identical. Exact AI timing and
 vanilla bugs are not reproduced. The network protocol and world file formats
 *are* exact, so normal clients and normal world saves work.
 
-Not there yet: command blocks, `/function` datapacks, `/data` / `/clone` and
-similar map-making commands.
+Partial map-making support: directory `/function` datapacks, schedules and
+unconditional command blocks. See [the limits and setup](docs/OPERATING.md#datapacks-and-command-blocks).
+General `/data`, `/clone`, conditional command blocks and other map-making
+commands are not there yet.
 
 For native settlements and villager professions, see the short
 [player guide (English / Русский)](docs/SETTLEMENTS_GUIDE.md), or `/settlement guide` and `/help settlement` in game.

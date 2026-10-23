@@ -1,6 +1,43 @@
 use super::*;
 
 #[test]
+fn execute_in_commits_native_block_change_and_wal_in_destination_only() {
+    let (mut state, alice, _) = worlds();
+    let (output, _) = command(
+        &mut state,
+        1,
+        "execute positioned 64 150 64 in minecraft:the_nether run setblock ~ ~ ~ minecraft:diamond_block",
+    );
+    let pos = crate::boundary::BlockPos { x: 8, y: 150, z: 8 };
+    let nether = &output.snapshot.dimensions[&Dimension::Nether];
+    assert!(
+        nether
+            .changes
+            .blocks
+            .iter()
+            .any(|change| change.position == pos)
+    );
+    assert!(
+        !output
+            .changes
+            .blocks
+            .iter()
+            .any(|change| change.position == pos)
+    );
+    assert_eq!(
+        travel::locate(&state, alice).unwrap().0,
+        Dimension::Overworld
+    );
+    assert!(
+        state.other_dimensions[&Dimension::Nether]
+            .merge_block_writes
+            .is_empty()
+    );
+    let entries = crate::core::journal_entries_for_tick(&mut state, &output);
+    assert!(entries.iter().any(|entry| matches!(entry, crate::journal::JournalEntry::Dimension { dimension: Dimension::Nether, entries }
+        if entries.iter().any(|entry| matches!(entry, crate::journal::JournalEntry::Block { pos: [8,150,8], .. })))));
+}
+#[test]
 fn integrity_same_tick_dimension_round_trip_survives_wal_recovery() {
     let directory = TempWorld::new();
     let (mut state, _, _) = worlds();

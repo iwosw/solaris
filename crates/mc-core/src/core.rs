@@ -474,6 +474,7 @@ fn load_dimension_state(
     );
     tick_state.require_plugin_login = config.require_plugin_login;
     tick_state.max_airtime_ticks = config.max_airtime_ticks;
+    tick_state.enable_command_block = config.enable_command_block;
     tick_state.mob_griefing = config.mob_griefing;
     tick_state.config_view_distance = i32::from(config.view_distance);
     tick_state.dimension = dimension;
@@ -539,6 +540,7 @@ fn load_dimension_state(
     tick_state.raids = replay.raids.unwrap_or_default();
     tick_state.raids.validate()?;
     tick_state.trader_spawner = replay.wandering_trader.unwrap_or_default();
+    tick_state.datapacks.restore(replay.scheduled_functions)?;
     tick_state.block_log = crate::block_log::BlockLog::restore(config.block_log, replay.block_log);
 
     // Replay player + entity records. Full player state (inventory,
@@ -783,14 +785,12 @@ impl Core {
         let fresh = !path.exists();
         if fresh {
             match std::fs::read_dir(&config.world_dir) {
-                Ok(mut entries) => {
-                    if entries
-                        .next()
-                        .transpose()
-                        .map_err(|e| CoreError::Storage(e.to_string()))?
-                        .is_some()
-                    {
-                        return Err(crate::native_checkpoint::import_required(&config));
+                Ok(entries) => {
+                    for entry in entries {
+                        let entry = entry.map_err(|e| CoreError::Storage(e.to_string()))?;
+                        if entry.file_name() != "datapacks" {
+                            return Err(crate::native_checkpoint::import_required(&config));
+                        }
                     }
                 }
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
@@ -821,6 +821,12 @@ impl Core {
         if let Some(runtime) = &mut plugin_runtime {
             runtime.load_catalogs(&registry)?;
         }
+        let datapack_root = config.world_dir.join("datapacks");
+        let datapacks =
+            crate::datapacks::PackSet::load(&datapack_root).map_err(CoreError::Registry)?;
+        datapacks
+            .install_content(&mut registry)
+            .map_err(CoreError::Registry)?;
         let registry = Arc::new(registry);
         let plugin_commands = plugin_runtime
             .as_ref()
@@ -862,6 +868,7 @@ impl Core {
             plugin_runtime,
             build_queries,
         )?;
+        tick_state.datapacks.install(datapacks, datapack_root);
         let world_spawn = tick_state.world.world_spawn();
         let terrain_epoch = crate::terrain::epoch_for_open(&tick_state)?;
         // Fresh epoch (minted when the stored record had none): stage it in
@@ -2976,6 +2983,7 @@ struct CheckpointJob {
     bossbars: crate::bossbar::BossBars,
     raids: crate::raids::Raids,
     wandering_trader: crate::mob_lanes::TraderSpawner,
+    scheduled_functions: Vec<(u64, String)>,
     generated_entity_claims: std::collections::BTreeSet<String>,
     tickets: std::collections::BTreeMap<String, ([i32; 2], (u64, i32))>,
     block_ticks: crate::block_ticks::BlockTicksImage,
@@ -3076,6 +3084,7 @@ fn start_checkpoint_with_reply(
         bossbars: state.bossbars.clone(),
         raids: state.raids.clone(),
         wandering_trader: state.trader_spawner,
+        scheduled_functions: state.datapacks.image(),
         generated_entity_claims: state.generated_entity_claims.clone(),
         tickets: checkpoint_tickets(state, tick),
         block_ticks: state.block_ticks.image(),
@@ -3232,6 +3241,7 @@ pub(crate) fn journal_entries_for_tick(
     crate::end_fight::journal(state, &mut entries);
     crate::raids::journal(state, &mut entries);
     crate::mob_lanes::journal(state, &mut entries);
+    state.datapacks.journal(&mut entries);
     if state.dimension == crate::dimensions::Dimension::Overworld
         && std::mem::take(&mut state.gamerules_dirty)
     {
@@ -3867,6 +3877,7 @@ fn commit_checkpoint(
         end_fight: None,
         raids: Some(job.raids.clone()),
         wandering_trader: Some(job.wandering_trader),
+        scheduled_functions: job.scheduled_functions.clone(),
     };
     crate::native_checkpoint::validate_manifest(&manifest)?;
     let mut globals = job.globals.clone();

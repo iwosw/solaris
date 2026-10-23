@@ -49,10 +49,6 @@ fn target_mut(command: &mut Command) -> &mut Target {
     }
 }
 
-pub(crate) fn is_global(command: &Command) -> bool {
-    target(command).is_some_and(global_target)
-}
-
 pub(super) fn global_target(target: &Target) -> bool {
     match target {
         Target::Player(_) | Target::AllPlayers => true,
@@ -74,6 +70,11 @@ pub(super) fn resolve(
     target: &Target,
     origin: [f64; 3],
 ) -> Vec<EntityId> {
+    if matches!(target, Target::Executor) {
+        return locate(state, request.executor)
+            .map(|_| vec![request.executor])
+            .unwrap_or_default();
+    }
     if !global_target(target) {
         return world(state, request.dimension)
             .map(|world| crate::command_execution::resolve_target(world, request.executor, target))
@@ -148,13 +149,52 @@ pub(super) fn resolve(
     selected
 }
 
-fn commit(world: &mut TickState, changes: &mut ChangeSet) {
+pub(crate) fn commit(world: &mut TickState, changes: &mut ChangeSet) {
     if !world.merge_damage.is_empty() {
         let (_, mut events, mut spawned, mut removed) = world.commit_merge_effects();
         changes.entity_events.append(&mut events);
         changes.entities_spawned.append(&mut spawned);
         changes.entities_removed.append(&mut removed);
         crate::entity_life::commit_drops(world, &mut changes.entities_spawned);
+    }
+    if !world.merge_block_writes.is_empty() {
+        let mut writes = std::mem::take(&mut world.merge_block_writes);
+        let mut spawned = Vec::new();
+        crate::tick::pop_unsupported(world, &mut writes, &mut spawned);
+        if crate::placement::shape_updates(&world.registry.blocks, &mut writes, &|pos| {
+            world.world.block_at(pos.x, pos.y, pos.z)
+        })
+        .is_some()
+        {
+            for (pos, block) in &writes {
+                world.world.set_block(pos.x, pos.y, pos.z, *block);
+            }
+        }
+        let count = writes.len();
+        for index in 0..count {
+            let pos = writes[index].0;
+            crate::plants::neighbor_updates(world, pos, &mut writes, &mut spawned);
+        }
+        crate::falling::start(world, &mut writes, &mut spawned);
+        crate::signs::invalidate(world, &writes);
+        crate::redstone::neighbours(world, &writes);
+        crate::fluids::schedule(world, &writes);
+        crate::portals::nether::after_blocks(world, &mut writes);
+        crate::shrieker::after_blocks(world, &writes);
+        crate::end_portals::after_blocks(world, &writes);
+        crate::conduit::after_blocks(world, &writes);
+        crate::block_entity_defaults::after_blocks(world, &writes);
+        crate::trial_spawner::after_blocks(world, &writes);
+        crate::vault::after_blocks(world, &writes);
+        crate::block_log::after_blocks(world);
+        world.world.fold_overlay();
+        changes.entities_spawned.append(&mut spawned);
+        changes.blocks.extend(
+            writes
+                .drain(..)
+                .map(|(position, state)| crate::boundary::BlockChange { position, state }),
+        );
+        world.merge_block_writes = writes;
     }
     changes
         .entities_appearance_changed
@@ -170,7 +210,11 @@ pub(crate) fn execute(
         .map(|(dimension, _)| dimension)
         .unwrap_or(state.dimension);
     let source = world(state, source_dimension).expect("executor world");
-    let (origin, _) = crate::command_console::pose(source, request.executor)
+    let (origin, _) = state
+        .command_context
+        .current
+        .map(|context| (context.position, context.rotation))
+        .or_else(|| crate::command_console::pose(source, request.executor))
         .ok_or("argument.entity.notfound.entity")?;
     let selected = resolve(
         state,

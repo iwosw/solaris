@@ -171,6 +171,9 @@ pub struct ServerSection {
     /// keep running, and the first join resumes ticking.
     #[serde(default = "default_pause_when_empty_seconds")]
     pub pause_when_empty_seconds: i32,
+    /// Vanilla enable-command-block execution gate.
+    #[serde(default)]
+    pub enable_command_block: bool,
     /// Opt-in per-tick input log under `<world_dir>/input-log/` for replay
     /// from a checkpoint (see `docs/OPERATING.md`). Off by default.
     #[serde(default)]
@@ -190,6 +193,7 @@ impl Default for ServerSection {
             simulation_distance: default_simulation_distance(),
             accepts_transfers: false,
             pause_when_empty_seconds: default_pause_when_empty_seconds(),
+            enable_command_block: false,
             input_log: false,
             whitelist: None,
         }
@@ -709,6 +713,7 @@ fn unknown_leaves(table: &toml::Table) -> Vec<String> {
                 "simulation_distance",
                 "accepts_transfers",
                 "pause_when_empty_seconds",
+                "enable_command_block",
                 "input_log",
                 "whitelist",
             ],

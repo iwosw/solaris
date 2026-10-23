@@ -56,38 +56,36 @@ fn border_summon_nbt_and_distinct_time_queries_use_exact_packet_parsers() {
 }
 
 #[test]
-fn dimension_execution_advertises_only_the_supported_teleport_subset() {
+fn execute_and_datapack_roots_admit_namespaced_arguments_at_operator_level_two() {
     let packet = tree(2, &[]);
     let mut bytes = Vec::new();
     packet.encode(&mut bytes).unwrap();
     let mut input = bytes.as_slice();
     let decoded = ClientboundCommands::decode(&mut input).unwrap();
     assert!(input.is_empty());
-    let dimension = advertised(&decoded, &["execute", "in", "dimension"]);
-    assert!(matches!(
-        &dimension.kind,
-        CommandNodeKind::Argument {
-            parser: Parser::Dimension,
-            ..
-        }
-    ));
-    let run = advertised(&decoded, &["execute", "in", "dimension", "run"]);
-    assert_eq!(run.children.len(), 2);
-    for name in ["tp", "teleport"] {
-        let command = advertised(&decoded, &["execute", "in", "dimension", "run", name]);
-        let target = &decoded.nodes[command.redirect.unwrap() as usize];
-        assert!(matches!(&target.kind, CommandNodeKind::Literal(name) if name == "teleport"));
+    for path in [
+        &["execute", "arguments"][..],
+        &["function", "name"][..],
+        &["schedule", "function", "arguments"][..],
+        &["schedule", "clear", "name"][..],
+    ] {
+        let node = advertised(&decoded, path);
+        assert!(node.executable);
+        assert!(matches!(&node.kind, CommandNodeKind::Argument {
+            parser: Parser::String(CommandStringKind::GreedyPhrase), ..
+        }));
     }
-    assert!(permitted(
-        "execute in minecraft:the_nether run tp @s 0 80 0",
-        2,
-        &[]
-    ));
-    assert!(!permitted(
-        "execute in minecraft:the_nether run tp @s 0 80 0",
-        1,
-        &[]
-    ));
+    for command in [
+        "execute as @a at @s positioned ~ ~1 ~ run function test:tick",
+        "execute in minecraft:the_nether run setblock 0 80 0 minecraft:stone",
+        "function #minecraft:tick",
+        "schedule function test:entry 2s append",
+        "schedule clear #test:tag",
+        "data merge block 0 80 0 {Command:\"time add 1\",auto:1b}",
+    ] {
+        assert!(permitted(command, 2, &[]), "{command}");
+        assert!(!permitted(command, 1, &[]), "{command}");
+    }
 }
 
 /// LocateCommand.java:56-87, TickCommand.java:20-55,

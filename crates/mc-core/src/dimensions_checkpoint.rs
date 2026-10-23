@@ -105,6 +105,7 @@ pub(crate) fn images(
                 end_fight: capture.end_fight.clone(),
                 raids: None,
                 wandering_trader: None,
+                scheduled_functions: Vec::new(),
             }),
         );
     }

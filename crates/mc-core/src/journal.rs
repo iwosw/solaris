@@ -282,6 +282,10 @@ pub enum JournalEntry {
     BlockLog {
         value: Box<crate::block_log::Delta>,
     },
+    /// Absolute schedule image; appended to preserve older variant indices.
+    ScheduledFunctions {
+        value: Vec<(u64, String)>,
+    },
 }
 
 fn deserialize_statistics_changes<'de, D: serde::Deserializer<'de>>(
@@ -837,6 +841,8 @@ pub struct CheckpointManifest {
     pub raids: Option<crate::raids::Raids>,
     #[serde(default)]
     pub wandering_trader: Option<crate::mob_lanes::TraderSpawner>,
+    #[serde(default)]
+    pub scheduled_functions: Vec<(u64, String)>,
     /// Durable ticket post-images by owner: centre, (capture tick, radius).
     /// Portal transfer tickets are transient and excluded from checkpoint captures.
     #[serde(default)]
@@ -1946,6 +1952,7 @@ pub struct Replay {
     pub end_fight: Option<crate::end_fight::Fight>,
     pub raids: Option<crate::raids::Raids>,
     pub wandering_trader: Option<crate::mob_lanes::TraderSpawner>,
+    pub scheduled_functions: Vec<(u64, String)>,
     pub generated_entity_claims: std::collections::BTreeSet<String>,
     pub block_ticks: crate::block_ticks::BlockTicksImage,
     pub fluid_ticks: crate::fluids::FluidTicksImage,
@@ -2546,6 +2553,9 @@ pub(crate) fn apply_batch_images(
                 }
                 JournalEntry::WanderingTrader { value } => {
                     replay.wandering_trader = Some(*value);
+                }
+                JournalEntry::ScheduledFunctions { value } => {
+                    replay.scheduled_functions.clone_from(value);
                 }
                 JournalEntry::Block { pos, state } => {
                     replay.blocks.insert((pos[0], pos[1], pos[2]), *state);

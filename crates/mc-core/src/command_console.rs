@@ -61,8 +61,17 @@ impl ConsoleCommand {
 /// Native command origin. The console uses spawn and zero rotation, never a
 /// fabricated player, inventory, UUID, or connection registration.
 pub(crate) fn pose(state: &TickState, executor: EntityId) -> Option<([f64; 3], [f32; 2])> {
+    if let Some(context) = state.command_context.current {
+        return Some((context.position, context.rotation));
+    }
     if executor == EXECUTOR {
-        return Some((state.world.world_spawn_position(), [0.0; 2]));
+        return Some((
+            state
+                .datapacks
+                .origin
+                .unwrap_or_else(|| state.world.world_spawn_position()),
+            [0.0; 2],
+        ));
     }
     let slot = state.entities.slot_of_any(executor)?;
     let [yaw, pitch, _] = state.entities.rot(slot);
@@ -96,54 +105,9 @@ pub(crate) fn execute(
     if crate::plugin::route_command(state, connection, command, permission_level) {
         return;
     }
-    if let Some(parsed) = crate::dimensions::travel::parse_execution(command, permission_level >= 2)
-    {
-        match parsed {
-            Ok((dimension, command)) => {
-                state
-                    .dimension_requests
-                    .push(crate::dimensions::travel::Request {
-                        connection,
-                        executor: entity,
-                        dimension,
-                        command,
-                    })
-            }
-            Err(error) => state.push_player(
-                connection,
-                PlayerChange::Chat {
-                    message: error.message(),
-                },
-            ),
-        }
-        return;
-    }
-    let command = match crate::commands::parse(command, permission_level >= 2) {
-        Ok(command) => command,
-        Err(error) => {
-            state.push_player(
-                connection,
-                PlayerChange::Chat {
-                    message: error.message(),
-                },
-            );
-            return;
-        }
-    };
-    if matches!(command, crate::commands::Command::Teleport { .. })
-        || (state.dimension_globals.active && crate::dimensions::commands::is_global(&command))
-    {
-        state
-            .dimension_requests
-            .push(crate::dimensions::travel::Request {
-                connection,
-                executor: entity,
-                dimension: state.dimension,
-                command,
-            });
-        return;
-    }
-    crate::command_execution::execute(state, connection, entity, &command, changes);
+    let context =
+        crate::command_context::Context::source(state, connection, entity, permission_level);
+    crate::command_context::submit(state, command, context, changes);
 }
 
 #[cfg(test)]

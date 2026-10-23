@@ -1,7 +1,7 @@
 //! Cross-world custody moves occur at the shared commit boundary and WAL batch.
 use super::Dimension;
 use crate::boundary::{ChangeSet, ConnectionId, EntityId, PlayerChange, TickOutput};
-use crate::commands::{Command, CommandError, Destination, Target};
+use crate::commands::{Command, Destination, Target};
 use crate::entities::EntitySlot;
 use crate::tick::TickState;
 use std::collections::BTreeMap;
@@ -12,40 +12,6 @@ pub(crate) struct Request {
     pub executor: EntityId,
     pub dimension: Dimension,
     pub command: Command,
-}
-
-fn word(text: &str) -> (&str, &str) {
-    let text = text.trim_start();
-    text.split_once(char::is_whitespace)
-        .map_or((text, ""), |(word, rest)| (word, rest.trim_start()))
-}
-
-/// This extends the existing command subset with dimension-qualified teleport.
-pub(crate) fn parse_execution(
-    text: &str,
-    operator: bool,
-) -> Option<Result<(Dimension, Command), CommandError>> {
-    let (root, rest) = word(text);
-    if root != "execute" {
-        return None;
-    }
-    Some((|| {
-        if !operator {
-            return Err(CommandError::Unknown);
-        }
-        let (mode, rest) = word(rest);
-        let (name, rest) = word(rest);
-        let (run, command) = word(rest);
-        if mode != "in" || run != "run" {
-            return Err(CommandError::Unknown);
-        }
-        let dimension = Dimension::parse(name).ok_or(CommandError::Unknown)?;
-        let command = crate::commands::parse(command, true)?;
-        if !matches!(command, Command::Teleport { .. }) {
-            return Err(CommandError::Unknown);
-        }
-        Ok((dimension, command))
-    })())
 }
 
 pub(crate) fn world(state: &TickState, dimension: Dimension) -> Option<&TickState> {
@@ -97,6 +63,16 @@ fn targets(
         return Vec::new();
     };
     let target = match target {
+        Target::Nearest => Target::Selector(crate::commands::Selector {
+            kind: crate::commands::SelectorKind::Nearest,
+            entity_type: None,
+            name: None,
+            distance: None,
+            position: origin.map(Some),
+            extent: [None; 3],
+            limit: None,
+            sort: None,
+        }),
         Target::Selector(selector) => {
             let mut selector = selector.clone();
             for (axis, coordinate) in selector.position.iter_mut().enumerate() {
@@ -109,6 +85,88 @@ fn targets(
         other => other.clone(),
     };
     crate::command_execution::resolve_target(world, request.executor, &target)
+}
+
+pub(crate) fn context_targets(
+    state: &TickState,
+    context: crate::command_context::Context,
+    target: &Target,
+) -> Result<Vec<EntityId>, String> {
+    let request = Request {
+        connection: context.connection,
+        executor: context.executor,
+        dimension: context.dimension,
+        command: Command::Kill {
+            target: Target::Executor,
+        },
+    };
+    Ok(targets(state, &request, target, context.position))
+}
+
+/// Temporarily select another native world under the shared authority. No entity
+/// custody moves occur: /execute in changes a source, unlike /teleport.
+pub(crate) fn execute_context(
+    state: &mut TickState,
+    text: &str,
+    context: crate::command_context::Context,
+) -> Result<(), String> {
+    if !state.command_context.shared {
+        return Err("Cross-world execution requires the shared tick boundary".into());
+    }
+    sync_wire_ids(state);
+    let source = state.dimension;
+    let mut destination = state
+        .other_dimensions
+        .remove(&context.dimension)
+        .ok_or("Execute dimension unavailable")?;
+    std::mem::swap(&mut state.command_context, &mut destination.command_context);
+    std::mem::swap(&mut state.datapacks, &mut destination.datapacks);
+    super::runtime::swap_globals(state, &mut destination);
+    std::mem::swap(
+        &mut state.other_dimensions,
+        &mut destination.other_dimensions,
+    );
+    std::mem::swap(state, &mut destination);
+    state.other_dimensions.insert(source, destination);
+    let mut changes = state
+        .command_context
+        .changes
+        .remove(&context.dimension)
+        .unwrap_or_default();
+    crate::command_context::run(state, text, context, &mut changes);
+    sync_wire_ids(state);
+    append_changes(
+        state
+            .command_context
+            .changes
+            .entry(context.dimension)
+            .or_default(),
+        changes,
+    );
+    let mut original = state
+        .other_dimensions
+        .remove(&source)
+        .expect("source retained by execution authority");
+    std::mem::swap(state, &mut original);
+    std::mem::swap(&mut state.other_dimensions, &mut original.other_dimensions);
+    std::mem::swap(&mut state.command_context, &mut original.command_context);
+    std::mem::swap(&mut state.datapacks, &mut original.datapacks);
+    super::runtime::swap_globals(state, &mut original);
+    state.other_dimensions.insert(context.dimension, original);
+    Ok(())
+}
+
+fn append_changes(target: &mut ChangeSet, mut source: ChangeSet) {
+    target.blocks.append(&mut source.blocks);
+    target.chunks_loaded.append(&mut source.chunks_loaded);
+    target.chunks_unloaded.append(&mut source.chunks_unloaded);
+    target.entities_spawned.append(&mut source.entities_spawned);
+    target
+        .entities_appearance_changed
+        .append(&mut source.entities_appearance_changed);
+    target.entities_removed.append(&mut source.entities_removed);
+    target.entity_events.append(&mut source.entity_events);
+    target.explosions.append(&mut source.explosions);
 }
 
 fn move_between(
@@ -339,7 +397,7 @@ pub(super) fn sync_wire_ids(state: &mut TickState) {
     }
 }
 
-fn execute(
+pub(crate) fn execute(
     state: &mut TickState,
     request: Request,
     changes: &mut BTreeMap<Dimension, ChangeSet>,
@@ -351,11 +409,16 @@ fn execute(
         .map(|(dimension, _)| dimension)
         .unwrap_or(state.dimension);
     let source = world(state, source_dimension).expect("executor world");
-    let (mut origin, rotation) = crate::command_console::pose(source, request.executor)
-        .ok_or_else(|| "argument.entity.notfound.entity".to_owned())?;
-    let scale = source_dimension.coordinate_scale() / request.dimension.coordinate_scale();
-    origin[0] *= scale;
-    origin[2] *= scale;
+    let (origin, rotation) = if let Some(context) = state.command_context.current {
+        (context.position, context.rotation)
+    } else {
+        let (mut origin, rotation) = crate::command_console::pose(source, request.executor)
+            .ok_or_else(|| "argument.entity.notfound.entity".to_owned())?;
+        let scale = source_dimension.coordinate_scale() / request.dimension.coordinate_scale();
+        origin[0] *= scale;
+        origin[2] *= scale;
+        (origin, rotation)
+    };
     let Command::Teleport {
         target,
         destination,
@@ -382,7 +445,7 @@ fn execute(
     let (dimension, position, destination_rotation, destination_name) = match destination {
         Destination::Position(coords) => (
             request.dimension,
-            crate::commands::resolve_coords(*coords, origin, rotation),
+            crate::command_context::resolve_coords(state, *coords, origin, rotation),
             None,
             None,
         ),
@@ -459,6 +522,30 @@ fn execute(
 }
 
 fn refresh(world: &mut TickState, output: &mut TickOutput, mut changes: ChangeSet) {
+    let entity_changes = !changes.entities_spawned.is_empty()
+        || !changes.entities_removed.is_empty()
+        || !changes.entities_appearance_changed.is_empty()
+        || !changes.entity_events.is_empty();
+    if !entity_changes
+        && changes.blocks.is_empty()
+        && changes.chunks_loaded.is_empty()
+        && changes.chunks_unloaded.is_empty()
+        && changes.explosions.is_empty()
+    {
+        let snapshot =
+            Arc::get_mut(&mut output.snapshot).expect("unpublished dimensional snapshot");
+        snapshot.day_time = world.day_time;
+        snapshot.day_time_rate = if crate::command_rules::boolean(world, "advance_time") {
+            1.0
+        } else {
+            0.0
+        };
+        snapshot.border = world.border;
+        snapshot.raining = world.weather.0 != crate::commands::Weather::Clear;
+        snapshot.rain_level = world.rain_level;
+        snapshot.thunder_level = world.thunder_level;
+        return;
+    }
     let phase_start = std::env::var_os("MC_CORE_PHASE_LOG")
         .is_some()
         .then(std::time::Instant::now);
@@ -469,9 +556,21 @@ fn refresh(world: &mut TickState, output: &mut TickOutput, mut changes: ChangeSe
     world.refresh_active_chunks(output.tick);
     let ensure_done = phase_start.map(|start| start.elapsed()).unwrap_or_default();
     let snapshot = Arc::get_mut(&mut output.snapshot).expect("unpublished dimensional snapshot");
+    snapshot.day_time = world.day_time;
+    snapshot.day_time_rate = if crate::command_rules::boolean(world, "advance_time") {
+        1.0
+    } else {
+        0.0
+    };
+    snapshot.border = world.border;
+    snapshot.raining = world.weather.0 != crate::commands::Weather::Clear;
+    snapshot.rain_level = world.rain_level;
+    snapshot.thunder_level = world.thunder_level;
     snapshot.chunks = world.world.snapshot();
     let chunks_done = phase_start.map(|start| start.elapsed()).unwrap_or_default();
-    snapshot.entities = world.entities.views();
+    if entity_changes {
+        snapshot.entities = world.entities.views();
+    }
     let views_done = phase_start.map(|start| start.elapsed()).unwrap_or_default();
     let output_changes =
         Arc::get_mut(&mut output.changes).expect("unpublished dimensional changes");
@@ -527,7 +626,11 @@ pub(crate) fn finish(
         requests.append(&mut world.dimension_requests);
         respawns.append(&mut world.dimension_respawns);
     }
-    if !requests.is_empty() || !respawns.is_empty() {
+    let mut jobs = std::mem::take(&mut state.command_context.jobs);
+    for world in state.other_dimensions.values_mut() {
+        jobs.append(&mut world.command_context.jobs);
+    }
+    if !requests.is_empty() || !respawns.is_empty() || !jobs.is_empty() {
         super::globals::roster(state);
     }
     let mut changes = BTreeMap::new();
@@ -548,6 +651,20 @@ pub(crate) fn finish(
             crate::command_execution::feedback(world, connection, &message, Vec::new());
         }
     }
+    state.command_context.shared = true;
+    for job in jobs.drain(..) {
+        let dimension = state.dimension;
+        let mut local = changes.remove(&dimension).unwrap_or_default();
+        state.command_context.changes = changes;
+        crate::command_context::run(state, &job.text, job.context, &mut local);
+        changes = std::mem::take(&mut state.command_context.changes);
+        append_changes(changes.entry(dimension).or_default(), local);
+    }
+    if !changes.is_empty() {
+        sync_wire_ids(state);
+    }
+    state.command_context.shared = false;
+    state.command_context.jobs = jobs;
     state.dimension_requests = requests;
     let requests_done = phase_start.map(|start| start.elapsed()).unwrap_or_default();
     finish_respawns(state, &mut changes, &mut respawns);

@@ -408,6 +408,73 @@ impl LootDrop {
 }
 
 impl LootTables {
+    /// Replace one block table atomically; unsupported shapes never fall back
+    /// to built-in drops under an authored resource's name.
+    pub fn override_datapack_block(&mut self, block: Identifier, json: &str) -> Result<(), String> {
+        let path = Path::new("datapack block loot");
+        let value: serde_json::Value =
+            serde_json::from_str(json).map_err(|error| error.to_string())?;
+        // The bundled extractor deliberately skips some unsupported vanilla
+        // branches. Authored overrides must not silently lose such branches.
+        let plain = |node: &serde_json::Value, keys: &[&str]| {
+            node.as_object()
+                .is_some_and(|fields| fields.keys().all(|key| keys.contains(&key.as_str())))
+        };
+        if !plain(&value, &["type", "pools", "random_sequence"])
+            || value.get("type").and_then(serde_json::Value::as_str) != Some("minecraft:block")
+        {
+            return Err("Datapack loot supports plain block tables only".into());
+        }
+        if let Some(pools) = value.get("pools") {
+            for pool in pools.as_array().ok_or("Loot pools must be an array")? {
+                if !plain(pool, &["rolls", "bonus_rolls", "entries"]) {
+                    return Err("Unsupported datapack loot pool conditions/functions".into());
+                }
+                let entries = pool
+                    .get("entries")
+                    .and_then(serde_json::Value::as_array)
+                    .ok_or("Loot pool requires entries")?;
+                if entries.len() != 1 {
+                    return Err("Datapack loot requires one item entry per pool".into());
+                }
+                let (rolls, bonus) = parse_pool_rolls(pool).ok_or("Unsupported loot rolls")?;
+                for entry in entries {
+                    if block_loot_from_entry(path, entry, rolls, bonus)
+                        .map_err(|e| e.to_string())?
+                        .is_none()
+                    {
+                        return Err("Unsupported datapack loot entry".into());
+                    }
+                    if !plain(entry, &["type", "name", "functions"])
+                        || entry.get("type").and_then(serde_json::Value::as_str)
+                            != Some("minecraft:item")
+                    {
+                        return Err("Datapack loot supports plain item entries only".into());
+                    }
+                    if let Some(functions) = entry.get("functions") {
+                        for function in functions
+                            .as_array()
+                            .ok_or("Loot functions must be an array")?
+                        {
+                            if !plain(function, &["function", "count", "add"])
+                                || function.get("function").and_then(serde_json::Value::as_str)
+                                    != Some("minecraft:set_count")
+                            {
+                                return Err("Datapack loot supports set_count only".into());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        let rule = block_loot_from_table(path, &value)
+            .map_err(|error| error.to_string())?
+            .ok_or_else(|| format!("Unsupported datapack block loot table {block}"))?;
+        self.block_drops.remove(&block);
+        self.block_loot.insert(block, rule);
+        Ok(())
+    }
+
     #[must_use]
     pub fn from_maps(block_drops: BTreeMap<Identifier, Identifier>) -> Self {
         Self::from_drop_maps(

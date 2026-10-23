@@ -467,6 +467,7 @@ pub(crate) fn recover_with_reader(
             raids: image.raids.clone(),
             end_fight: image.end_fight.clone(),
             wandering_trader: image.wandering_trader,
+            scheduled_functions: image.scheduled_functions.clone(),
             generated_entity_claims: image.generated_entity_claims.clone(),
             tickets: image.tickets.clone(),
             block_ticks: image.block_ticks.clone(),
@@ -758,6 +759,9 @@ pub(crate) fn encode_checkpoint(
         image.tickets = replay.tickets.clone();
         image.raids = replay.raids.clone();
         image.wandering_trader = replay.wandering_trader;
+        image
+            .scheduled_functions
+            .clone_from(&replay.scheduled_functions);
         image.end_fight = replay.end_fight.clone();
         let memory = crate::world::ChunkWorld::new(
             world.config.seed,
@@ -772,6 +776,9 @@ pub(crate) fn encode_checkpoint(
         state.tick = tick;
         state.raids = replay.raids.clone().unwrap_or_default();
         state.trader_spawner = replay.wandering_trader.unwrap_or_default();
+        state
+            .datapacks
+            .restore(replay.scheduled_functions.clone())?;
         state.end_fight = replay.end_fight.clone().unwrap_or_default();
         for (&id, entity) in &replay.entities {
             crate::core::restore_entity(&mut state, id, entity)?;

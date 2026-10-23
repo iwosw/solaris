@@ -76,6 +76,11 @@ const ROOTS: &[(&str, u8)] = &[
     ("tellraw", 2),
     ("title", 2),
     ("bossbar", 2),
+    ("function", 2),
+    ("schedule", 2),
+    ("datapack", 2),
+    ("reload", 2),
+    ("data", 2),
     ("tick", 3),
     ("kick", 3),
     ("mute", 3),
@@ -699,6 +704,43 @@ impl<'a> Tree<'a> {
 
 pub(crate) fn tree(op_level: u8, plugins: &[(String, u8)]) -> ClientboundCommands {
     let mut t = Tree::new(op_level, plugins);
+    t.root("reload", true);
+    if let Some(root) = t.root("data", false) {
+        t.argument(
+            root,
+            "arguments",
+            Parser::String(CommandStringKind::GreedyPhrase),
+            true,
+        );
+    }
+    if let Some(root) = t.root("function", false) {
+        t.argument(
+            root,
+            "name",
+            Parser::String(CommandStringKind::GreedyPhrase),
+            true,
+        );
+    }
+    if let Some(root) = t.root("schedule", false) {
+        let function = t.literal(root, "function", false);
+        t.argument(
+            function,
+            "arguments",
+            Parser::String(CommandStringKind::GreedyPhrase),
+            true,
+        );
+        let clear = t.literal(root, "clear", false);
+        t.argument(
+            clear,
+            "name",
+            Parser::String(CommandStringKind::GreedyPhrase),
+            true,
+        );
+    }
+    if let Some(root) = t.root("datapack", false) {
+        let list = t.literal(root, "list", true);
+        t.literal(list, "enabled", true);
+    }
     if let Some(root) = t.root("help", true) {
         t.argument(
             root,
@@ -735,17 +777,14 @@ pub(crate) fn tree(op_level: u8, plugins: &[(String, u8)]) -> ClientboundCommand
         t.argument(location, "rotation", Parser::Rotation, true);
         t.argument(targets, "destination", entities(true), true);
         t.alias("tp", root);
-        if let Some(execute) = t.root("execute", false) {
-            let in_dimension = t.literal(execute, "in", false);
-            // ExecuteCommand.java:258-261 / ArgumentTypeInfos.java:133:
-            // minecraft:dimension is singleton argument registry id 41.
-            let dimension = t.argument(in_dimension, "dimension", Parser::Dimension, false);
-            let run = t.literal(dimension, "run", false);
-            for name in ["tp", "teleport"] {
-                let teleport = t.literal(run, name, false);
-                t.nodes[teleport as usize].redirect = Some(root);
-            }
-        }
+    }
+    if let Some(root) = t.root("execute", false) {
+        t.argument(
+            root,
+            "arguments",
+            Parser::String(CommandStringKind::GreedyPhrase),
+            true,
+        );
     }
     if let Some(root) = t.root("give", false) {
         let targets = t.argument(root, "targets", players(false), false);

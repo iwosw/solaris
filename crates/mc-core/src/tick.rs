@@ -322,6 +322,8 @@ pub struct TickState {
     active_ticket_ranges: Vec<(ChunkPos, i32)>,
     active_sim_radius: i32,
     pub registry: Arc<CoreRegistry>,
+    pub(crate) datapacks: crate::datapacks::Runtime,
+    pub(crate) command_context: crate::command_context::Runtime,
     pub world: ChunkWorld,
     /// This world's dimension; other worlds share its tick owner and WAL.
     pub dimension: crate::dimensions::Dimension,
@@ -337,6 +339,8 @@ pub struct TickState {
     /// Consecutive unsupported non-descending movement samples permitted before
     /// anti-flight corrects and disconnects the player; zero disables it.
     pub(crate) max_airtime_ticks: u32,
+    pub(crate) enable_command_block: bool,
+    pub(crate) command_blocks_due: Vec<BlockPos>,
     /// Per-mob switches layered under the `mob_griefing` gamerule.
     pub(crate) mob_griefing: crate::config::MobGriefingRules,
     /// Player state per player entity (inventory, menus, vitals, mode).
@@ -605,12 +609,16 @@ impl TickState {
             require_plugin_login: false,
             locked_sessions: BTreeSet::new(),
             max_airtime_ticks: 80,
+            enable_command_block: false,
+            command_blocks_due: Vec::new(),
             mob_griefing: crate::config::MobGriefingRules::default(),
             players: HashMap::default(),
             offline_players: HashMap::default(),
             advancement_events: Vec::new(),
             advancement_reward_spawns: Vec::new(),
             native_globals: Default::default(),
+            datapacks: Default::default(),
+            command_context: Default::default(),
             plugins: Default::default(),
             plugin_runtime: None,
             build_queries: None,
@@ -2667,6 +2675,9 @@ fn run_dimension_tick_inner<'a>(
     let mut intents: Vec<Intent> = Vec::new();
     let mut changes = ChangeSet::default();
     if sim {
+        crate::datapacks::tick(state, &mut changes);
+    }
+    if sim {
         crate::natural_spawn::advance_ages_and_run(state, &mut changes);
         crate::mob_lanes::traders(state, &mut changes);
         crate::vibration::tick(state);
@@ -2817,6 +2828,7 @@ fn run_dimension_tick_inner<'a>(
         crate::sculk::run(state, &mut block_writes);
         crate::crafter::advance(state, &mut block_writes);
         crate::redstone::run(state, &mut block_writes, &mut popped_drops);
+        crate::command_blocks::run(state, &mut changes);
         crate::jukebox::run(state, &mut block_writes, &mut popped_drops);
         crate::brewing::run(state, &mut block_writes, &mut popped_drops);
         crate::crafter::run(state);
@@ -3539,6 +3551,11 @@ fn plan_placement_click(
     click: crate::placement::Click,
 ) -> Option<Intent> {
     let item_block = block_for_item(state, held)?;
+    if crate::command_blocks::is_block(item_block.id.path())
+        && !crate::command_blocks::can_place(state, entity)
+    {
+        return None;
+    }
     let dependencies = std::cell::RefCell::new(Vec::new());
     let block_at = |pos: BlockPos| {
         let current = state.world.block_at(pos.x, pos.y, pos.z)?;

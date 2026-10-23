@@ -45,6 +45,8 @@ pub struct CoreConfig {
     /// The minimal config keeps it disabled for embedded/test cores; the edge
     /// server sets the vanilla default (60) from `[server]`.
     pub pause_when_empty_seconds: u32,
+    /// Vanilla command-block execution gate; disabled by default.
+    pub enable_command_block: bool,
     /// Per-mob switches layered under the `mobGriefing` gamerule.
     pub mob_griefing: MobGriefingRules,
     /// `[block_log]`: attributed block/container history for `/co`.
@@ -102,6 +104,7 @@ impl CoreConfig {
             require_plugin_login: false,
             max_airtime_ticks: 80,
             pause_when_empty_seconds: 0,
+            enable_command_block: false,
             mob_griefing: MobGriefingRules::default(),
             block_log: crate::block_log::Settings::default(),
             input_log: false,
