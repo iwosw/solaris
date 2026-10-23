@@ -24,6 +24,7 @@ summarizes current boundaries.
 | [0013](0013-core-model-v2.md) | Accepted; sole current core model | Data-parallel snapshot/intents/merge, native state, one tick WAL, off-tick plugins and remote tickets |
 | [0014](0014-v1-core-retirement.md) | Accepted; Phase 5 source retirement complete | Shared Loader/vanilla boundaries, v2-only harness/operator surface and clean v1 deletion |
 | [0015](0015-multiversion-protocol-translation.md) | Proposed; 26.3 deferred by measured diff | Per-session `mc-edge` protocol translation and profile evidence |
+| [0016](0016-mob-capabilities.md) | Accepted; layer 1 implemented | Owned data blueprints, mob capabilities, bounded data-defined mob types and their vanilla presentation |
 
 ## Routing
 
@@ -32,6 +33,7 @@ summarizes current boundaries.
 - Per-session protocol version translation: 0015.
 - Current state authority, tick/merge, threads, waiting, persistence, shutdown,
   snapshots, plugin intents, block work and tickets: 0013.
+- Mob blueprint capabilities, data-defined mob types and their bounds: 0016.
 - Current crate ownership, retirement and explicit port/delete decisions: 0013/0014.
 - Worldgen topology, climate, rivers, caves and feature ownership: 0008; runtime
   storage/recovery constraints remain 0013.

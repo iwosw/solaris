@@ -27,7 +27,7 @@ fn hostile(state: &TickState, slot: EntitySlot) -> bool {
     state.entities.body(slot).alive
         && state.registry.blueprint(type_id).is_some_and(|b| {
             matches!(
-                b.name,
+                b.name.as_str(),
                 "minecraft:zombie"
                     | "minecraft:husk"
                     | "minecraft:drowned"

@@ -236,7 +236,7 @@ fn entity_snapshot_inner(state: &TickState, entity: EntityId, relations: bool) -
             .blueprints
             .iter()
             .find(|(id, _)| *id == type_id)
-            .map_or("", |(_, blueprint)| blueprint.name),
+            .map_or("", |(_, blueprint)| blueprint.name.as_str()),
     };
     let tags = mc_data::entity_types::entity_type_contract_26_1_2_by_name(entity_type)
         .map_or_else(Vec::new, |contract| {

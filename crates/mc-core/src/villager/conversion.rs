@@ -15,7 +15,7 @@ fn type_id(state: &TickState, name: &str) -> Option<u32> {
 }
 
 pub(crate) fn initialize(state: &mut TickState, slot: EntitySlot, type_id: u32) {
-    let name = state.registry.blueprint(type_id).map(|b| b.name);
+    let name = state.registry.blueprint(type_id).map(|b| b.name.as_str());
     if matches!(
         name,
         Some("minecraft:villager" | "minecraft:zombie_villager")
@@ -57,11 +57,12 @@ pub(crate) fn infect(state: &mut TickState, slot: EntitySlot, attacker: Option<E
     else {
         return false;
     };
-    if !state
-        .registry
-        .blueprint(attacker_type)
-        .is_some_and(|b| matches!(b.name, "minecraft:zombie" | "minecraft:zombie_villager"))
-    {
+    if !state.registry.blueprint(attacker_type).is_some_and(|b| {
+        matches!(
+            b.name.as_str(),
+            "minecraft:zombie" | "minecraft:zombie_villager"
+        )
+    }) {
         return false;
     }
     let chance = match state.difficulty {

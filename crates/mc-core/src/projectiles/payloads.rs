@@ -106,7 +106,7 @@ fn entity_name(state: &TickState, id: EntityId) -> Option<&str> {
     let slot = state.entities.slot_of(id)?;
     match state.entities.body(slot).kind {
         EntityKind::Player { .. } => Some("minecraft:player"),
-        EntityKind::Mob { type_id } => state.registry.blueprint(type_id).map(|bp| bp.name),
+        EntityKind::Mob { type_id } => state.registry.blueprint(type_id).map(|bp| bp.name.as_str()),
         _ => None,
     }
 }
@@ -183,26 +183,18 @@ fn potion_color(stack: &ItemStack) -> i32 {
     }
 }
 
+/// Instant health/damage swap for [`Capabilities::inverted_healing`](crate::blueprint::Capabilities::inverted_healing).
 fn inverted(state: &TickState, target: EntityId) -> bool {
-    matches!(
-        entity_name(state, target),
-        Some(
-            "minecraft:zombie"
-                | "minecraft:zombie_villager"
-                | "minecraft:husk"
-                | "minecraft:drowned"
-                | "minecraft:zombified_piglin"
-                | "minecraft:zoglin"
-                | "minecraft:skeleton"
-                | "minecraft:stray"
-                | "minecraft:bogged"
-                | "minecraft:wither_skeleton"
-                | "minecraft:wither"
-                | "minecraft:phantom"
-                | "minecraft:zombie_horse"
-                | "minecraft:skeleton_horse"
-        )
-    )
+    let Some(slot) = state.entities.slot_of(target) else {
+        return false;
+    };
+    match state.entities.body(slot).kind {
+        EntityKind::Mob { type_id } => state
+            .registry
+            .blueprint(type_id)
+            .is_some_and(|blueprint| blueprint.capabilities.inverted_healing),
+        _ => false,
+    }
 }
 
 pub(crate) fn give_effect(state: &mut TickState, target: EntityId, effect: ActiveEffect) {

@@ -206,19 +206,11 @@ pub(crate) fn tick(state: &mut TickState) {
         ) {
             continue;
         }
+        // The water damage itself is the generic `hurt_by_water` capability
+        // (`contact_hazards::hurt_by_water`); escaping it is enderman-only.
         if crate::conduit::wet(state, pos)
             || crate::conduit::water(state, [pos[0], pos[1] + body.height * 0.5, pos[2]])
         {
-            state.merge_damage.push((
-                slot,
-                DamagePiece {
-                    physical: None,
-                    custom_armor: false,
-                    amount: 1.0,
-                    kind: DamageKind::Drowning,
-                    source: None,
-                },
-            ));
             teleport(state, slot);
         }
         if state.entities.row(slot).controls.no_ai {

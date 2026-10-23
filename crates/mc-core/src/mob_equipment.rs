@@ -95,7 +95,8 @@ fn enchant(state: &TickState, stack: &mut ItemStack, factor: f64, chance: f64, r
 }
 
 pub(crate) fn initialize(state: &mut TickState, slot: EntitySlot, type_id: u32) {
-    let Some(name) = state.registry.blueprint(type_id).map(|b| b.name) else {
+    let registry = std::sync::Arc::clone(&state.registry);
+    let Some(name) = registry.blueprint(type_id).map(|b| b.name.as_str()) else {
         return;
     };
     let skeleton = matches!(

@@ -56,7 +56,7 @@ pub(crate) fn observe(state: &mut TickState, slot: EntitySlot) {
     if let Some(cost) = state
         .registry
         .blueprint(type_id)
-        .and_then(|blueprint| cost_at(state, blueprint.name, position))
+        .and_then(|blueprint| cost_at(state, &blueprint.name, position))
     {
         state
             .spawn_census

@@ -22,7 +22,7 @@ fn species_id_helpers_match_contract_and_blueprint_names() {
             crate::piglin::is_hoglin_type(type_id),
             name == "minecraft:hoglin"
         );
-        let blueprint = registry.blueprint(type_id).map_or("", |b| b.name);
+        let blueprint = registry.blueprint(type_id).map_or("", |b| b.name.as_str());
         assert_eq!(
             crate::piglin::is_iron_golem_type(type_id),
             blueprint == "minecraft:iron_golem"

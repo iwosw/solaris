@@ -166,14 +166,15 @@ pub(crate) fn extend_blueprints(
         out.push((
             type_id,
             MobBlueprint {
-                name,
+                name: name.to_owned(),
                 type_id,
                 movement,
                 goals: GOALS
                     .iter()
                     .find(|(goal, _)| *goal == kind)
                     .expect("special goal")
-                    .1,
+                    .1
+                    .to_vec(),
                 sensors: Sensors {
                     sight_range: range,
                     attack_reach: if matches!(kind, SonicBoom | VexLife) {
@@ -192,6 +193,8 @@ pub(crate) fn extend_blueprints(
                     attack_damage: damage,
                     pickup_delay: 0,
                     breed_cooldown: 0,
+                    armor: 0.0,
+                    knockback_resistance: 0.0,
                 },
                 half_width: facts.dimensions.half_width(),
                 height: facts.dimensions.height,
@@ -205,8 +208,7 @@ pub(crate) fn extend_blueprints(
                 .mob_category(),
                 wool: false,
                 spawn_weight: 1,
-                burns_in_daylight: false,
-                night_aggro_only: false,
+                capabilities: crate::blueprint::Capabilities::default(),
             },
         ));
     }

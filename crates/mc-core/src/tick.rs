@@ -5208,6 +5208,9 @@ struct ReadRow {
     is_enderman: bool,
     is_iron_golem: bool,
     is_slime_size_one: bool,
+    /// Blueprint locomotion capabilities read by the motion step.
+    climbs_walls: bool,
+    aquatic_control: crate::species::AquaticControl,
     /// Resolved from the blueprint's goal set (data, not type names).
     chaser: bool,
     /// Breed goal, eligibility, adulthood, cooldown and love checked once.
@@ -5338,8 +5341,12 @@ fn idle_wander_motion_unchanged(view: &PrepView, slot: EntitySlot) -> bool {
         block_at: &|x, y, z| reader.block_at(x, y, z),
         registry: view.registry,
     };
-    let type_id = match body.kind {
-        EntityKind::Mob { type_id } => type_id,
+    let capabilities = match body.kind {
+        EntityKind::Mob { type_id } => view
+            .registry
+            .blueprint(type_id)
+            .map(|blueprint| blueprint.capabilities)
+            .unwrap_or_default(),
         _ => return false,
     };
     let effects =
@@ -5352,8 +5359,8 @@ fn idle_wander_motion_unchanged(view: &PrepView, slot: EntitySlot) -> bool {
             impulse: view.impulses[slot.0 as usize],
             rotation,
             look_target: None,
-            climbs_walls: crate::species::climbs_walls(type_id),
-            aquatic_control: crate::species::aquatic_control(type_id),
+            climbs_walls: capabilities.climbs_walls,
+            aquatic_control: capabilities.aquatic,
             air_supply: body.air_supply,
             levitation: effects.map_or(0.0, |effects| {
                 effects.level(crate::effects::EffectId::Levitation)
@@ -5735,7 +5742,7 @@ fn read_row(
                 false,
                 false,
                 special,
-                blueprint.is_some_and(|blueprint| blueprint.night_aggro_only),
+                blueprint.is_some_and(|blueprint| blueprint.capabilities.night_aggro_only),
             )
         }
         EntityKind::Item { .. } => (false, false, true, false, None, false),
@@ -5816,6 +5823,10 @@ fn read_row(
         is_enderman,
         is_iron_golem,
         is_slime_size_one,
+        climbs_walls: blueprint.is_some_and(|blueprint| blueprint.capabilities.climbs_walls),
+        aquatic_control: blueprint.map_or(crate::species::AquaticControl::Other, |blueprint| {
+            blueprint.capabilities.aquatic
+        }),
         chaser,
         breed_ready: breeder
             && crate::entity_life::can_breed_in(view.registry, body, row)
@@ -5865,6 +5876,7 @@ fn read_row(
 /// synchronization is the scope join.
 fn run_entity_phase(state: &mut TickState, sim: bool) -> Vec<Intent> {
     if sim {
+        crate::contact_hazards::hurt_by_water(state);
         crate::enderman::tick(state);
     }
     let prep_start = std::time::Instant::now();
@@ -6680,8 +6692,8 @@ fn step_entity(row: ReadRow, ctx: &StepCtx) -> (MoveWrite, Vec<RawIntent>) {
             impulse: row.horizontal_impulse,
             rotation: row.rotation,
             look_target,
-            climbs_walls: crate::species::climbs_walls(row.type_id),
-            aquatic_control: crate::species::aquatic_control(row.type_id),
+            climbs_walls: row.climbs_walls,
+            aquatic_control: row.aquatic_control,
             air_supply: row.air_supply,
             levitation: row.levitation,
             slow_falling: row.slow_falling,

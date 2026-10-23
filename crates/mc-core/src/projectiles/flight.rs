@@ -281,7 +281,7 @@ pub(super) fn run(
             let Some(kind) = state
                 .registry
                 .blueprint(type_id)
-                .and_then(|blueprint| ProjectileKind::from_name(blueprint.name))
+                .and_then(|blueprint| ProjectileKind::from_name(&blueprint.name))
             else {
                 continue;
             };

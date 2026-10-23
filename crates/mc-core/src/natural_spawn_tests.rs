@@ -588,20 +588,30 @@ fn savanna_tables_spawn_every_available_native_creature() {
             let EntityKind::Mob { type_id } = state.entities.body(slot).kind else {
                 panic!("creature is a mob");
             };
-            species.insert(state.registry.blueprint(type_id).expect("supported").name);
+            species.insert(
+                state
+                    .registry
+                    .blueprint(type_id)
+                    .expect("supported")
+                    .name
+                    .clone(),
+            );
         }
     }
     assert_eq!(
         species,
-        std::collections::BTreeSet::from([
-            "minecraft:sheep",
-            "minecraft:pig",
-            "minecraft:chicken",
-            "minecraft:cow",
-            "minecraft:horse",
-            "minecraft:donkey",
-            "minecraft:armadillo",
-        ]),
+        std::collections::BTreeSet::from(
+            [
+                "minecraft:sheep",
+                "minecraft:pig",
+                "minecraft:chicken",
+                "minecraft:cow",
+                "minecraft:horse",
+                "minecraft:donkey",
+                "minecraft:armadillo",
+            ]
+            .map(str::to_owned)
+        ),
     );
 }
 

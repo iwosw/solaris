@@ -11,39 +11,6 @@ use crate::blueprint::MovementClass;
 use crate::effects::EffectId;
 use crate::entities::{EntityKind, EntitySlot};
 use crate::tick::TickState;
-use std::sync::LazyLock;
-
-/// `#minecraft:fall_damage_immune` of the 26.1.2 data pack.
-const IMMUNE: [&str; 18] = [
-    "minecraft:copper_golem",
-    "minecraft:iron_golem",
-    "minecraft:snow_golem",
-    "minecraft:shulker",
-    "minecraft:allay",
-    "minecraft:bat",
-    "minecraft:bee",
-    "minecraft:blaze",
-    "minecraft:cat",
-    "minecraft:chicken",
-    "minecraft:ghast",
-    "minecraft:happy_ghast",
-    "minecraft:phantom",
-    "minecraft:magma_cube",
-    "minecraft:ocelot",
-    "minecraft:parrot",
-    "minecraft:wither",
-    "minecraft:breeze",
-];
-
-static IMMUNE_BY_TYPE: LazyLock<[bool; mc_data::entity_types::ENTITY_TYPE_COUNT]> =
-    LazyLock::new(|| {
-        let mut immune = [false; mc_data::entity_types::ENTITY_TYPE_COUNT];
-        for (index, slot) in immune.iter_mut().enumerate() {
-            *slot = mc_data::entity_types::entity_type_contract_26_1_2_by_protocol_id(index as u32)
-                .is_some_and(|contract| IMMUNE.contains(&contract.name));
-        }
-        immune
-    });
 
 /// Account one mob move; returns the fall damage owed on a landing.
 ///
@@ -67,10 +34,10 @@ pub(crate) fn after_move(
     if matches!(
         body.movement,
         MovementClass::Flyer | MovementClass::Swimmer | MovementClass::Stationary
-    ) || IMMUNE_BY_TYPE
-        .get(type_id as usize)
-        .copied()
-        .unwrap_or(true)
+    ) || state
+        .registry
+        .blueprint(type_id)
+        .is_some_and(|blueprint| blueprint.capabilities.fall_damage_immune)
     {
         return 0.0;
     }

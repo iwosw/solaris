@@ -418,11 +418,17 @@ pub(crate) fn launch_arrow(
     crate::projectiles::launch(state, record, from, velocity)
 }
 
-// --- creeper ----------------------------------------------------------
+// --- swell (creeper) ----------------------------------------------------
 
-/// Advance a creeper's fuse (vanilla `SwellGoal`): it starts within the
+/// Clients animate the fuse from [`CREEPER_SWELL_DIR_INDEX`] only on the
+/// creeper wire layout; other presentations keep the fuse server-side.
+static CREEPER_WIRE_TYPE: std::sync::LazyLock<Option<u32>> =
+    std::sync::LazyLock::new(|| crate::piglin::type_id_of("minecraft:creeper"));
+
+/// Advance a swell fuse (vanilla `SwellGoal`): it starts within the
 /// blueprint's reach of a visible player, keeps burning while the player
-/// stays within 7 blocks in sight and loses a tick per tick otherwise.
+/// stays within 7 blocks in sight and loses a tick per tick otherwise. The
+/// fuse length and blast are the blueprint's [`Capabilities::explodes`](crate::blueprint::Capabilities::explodes).
 fn swell(
     state: &mut TickState,
     intents: &mut Vec<Intent>,
@@ -434,6 +440,16 @@ fn swell(
         return;
     };
     let body = state.entities.body(slot);
+    let crate::entities::EntityKind::Mob { type_id } = body.kind else {
+        return;
+    };
+    let Some(explosion) = state
+        .registry
+        .blueprint(type_id)
+        .and_then(|blueprint| blueprint.capabilities.explodes)
+    else {
+        return;
+    };
     let row = state.entities.row(slot);
     let (start, height) = (f64::from(row.attack_reach), body.height);
     let pos = state.entities.pos(slot);
@@ -449,22 +465,28 @@ fn swell(
     } else {
         fuse.saturating_sub(1)
     };
-    set_extra(
-        state,
-        slot,
-        CREEPER_SWELL_DIR_INDEX,
-        EntityDataValue::VarInt(-1),
-        EntityDataValue::VarInt(if swelling { 1 } else { -1 }),
-    );
-    if next >= FUSE_TICKS {
+    if Some(crate::blueprint::wire_type_id(type_id)) == *CREEPER_WIRE_TYPE {
+        set_extra(
+            state,
+            slot,
+            CREEPER_SWELL_DIR_INDEX,
+            EntityDataValue::VarInt(-1),
+            EntityDataValue::VarInt(if swelling { 1 } else { -1 }),
+        );
+    }
+    if next >= explosion.fuse_ticks {
         let seq = state.next_seq(id);
         intents.push(Intent {
             actor: id,
             seq,
             kind: IntentKind::Explode {
                 center: pos,
-                power: CREEPER_POWER,
-                mob_grief: Some(crate::command_rules::MobGrief::Creeper),
+                power: explosion.power,
+                mob_grief: Some(if explosion.griefing {
+                    crate::command_rules::MobGrief::Creeper
+                } else {
+                    crate::command_rules::MobGrief::Never
+                }),
                 kill_credit: crate::statistics::living_type(state, id).map(|type_id| (id, type_id)),
             },
             footprint: Footprint::default(),

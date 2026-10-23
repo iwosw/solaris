@@ -617,7 +617,7 @@ pub(crate) fn death(state: &mut TickState, slot: crate::entities::EntitySlot) ->
         row.loot.slime_size.map_or_else(
             || {
                 crate::experience_orbs::mob_experience(
-                    b.name,
+                    &b.name,
                     row.appearance.baby,
                     state.tick ^ state.entities.body(slot).id.0 as u64,
                 )

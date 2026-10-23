@@ -58,8 +58,13 @@ pub struct CoreRegistry {
     pub(crate) max_collision_boxes_per_cell: usize,
     /// Resolved block states the tick needs by name.
     pub states: ResolvedStates,
-    /// Mob blueprints keyed by protocol entity type id.
-    pub blueprints: Vec<(u32, MobBlueprint)>,
+    /// Mob blueprints keyed by blueprint key (protocol entity type id, or a
+    /// data-defined [`CUSTOM_TYPE_FLAG`](crate::blueprint::CUSTOM_TYPE_FLAG)
+    /// key). Mutate only through methods that rebuild `blueprint_index`.
+    pub(crate) blueprints: Vec<(u32, MobBlueprint)>,
+    /// Dense key -> position in `blueprints` (`u32::MAX` = none); vanilla
+    /// keys first, data-defined ordinals after `ENTITY_TYPE_COUNT`.
+    blueprint_index: Vec<u32>,
     /// Vanilla biome creature weights and herd sizes, resolved at startup.
     pub biome_spawns: mc_data::biomes::BiomeSpawnRules,
     /// Item entity blueprint: protocol type id of `minecraft:item`.
@@ -461,6 +466,7 @@ impl CoreRegistry {
             max_collision_box_y,
             max_collision_boxes_per_cell,
             states,
+            blueprint_index: index_blueprints(&blueprints),
             blueprints,
             biome_spawns,
             item_type_id,
@@ -556,13 +562,76 @@ impl CoreRegistry {
         Ok((item_facts, tags, recipes, loot, mining, worldgen_tags))
     }
 
-    /// Blueprint for a protocol entity type id, if the core simulates it.
+    /// Blueprint for a blueprint key, if the core simulates it. O(1): the
+    /// tick reads capabilities through this on every mob.
     #[must_use]
     pub fn blueprint(&self, type_id: u32) -> Option<&MobBlueprint> {
+        let at = *self.blueprint_index.get(index_slot(type_id))?;
         self.blueprints
-            .iter()
-            .find_map(|(id, blueprint)| (*id == type_id).then_some(blueprint))
+            .get(at as usize)
+            .filter(|(id, _)| *id == type_id)
+            .map(|(_, blueprint)| blueprint)
     }
+
+    /// Admit one data-defined blueprint (ADR 0016) and return its key. Any
+    /// bound violation, unknown reference or duplicate id is a load error.
+    pub fn register_blueprint(
+        &mut self,
+        definition: crate::blueprint::MobBlueprintDef,
+    ) -> Result<u32, CoreError> {
+        if self
+            .blueprints
+            .iter()
+            .any(|(_, blueprint)| blueprint.name == definition.id.as_str())
+        {
+            return Err(CoreError::Registry(format!(
+                "mob blueprint {} is already registered",
+                definition.id
+            )));
+        }
+        let ordinal = self
+            .blueprints
+            .iter()
+            .filter(|(id, _)| id & crate::blueprint::CUSTOM_TYPE_FLAG != 0)
+            .count();
+        let blueprint = definition
+            .admit(ordinal, &self.entity_types, &self.entity_loot)
+            .map_err(CoreError::Registry)?;
+        let key = blueprint.type_id;
+        self.blueprints.push((key, blueprint));
+        self.blueprint_index = index_blueprints(&self.blueprints);
+        Ok(key)
+    }
+
+    /// Drop blueprints (fixtures that test a missing type).
+    #[cfg(test)]
+    pub(crate) fn retain_blueprints(&mut self, keep: impl FnMut(&(u32, MobBlueprint)) -> bool) {
+        self.blueprints.retain(keep);
+        self.blueprint_index = index_blueprints(&self.blueprints);
+    }
+}
+
+fn index_slot(type_id: u32) -> usize {
+    if type_id & crate::blueprint::CUSTOM_TYPE_FLAG == 0 {
+        type_id as usize
+    } else {
+        mc_data::entity_types::ENTITY_TYPE_COUNT + ((type_id >> 16) & 0x7FFF) as usize
+    }
+}
+
+/// First registration of a key wins, like the former linear lookup.
+fn index_blueprints(blueprints: &[(u32, MobBlueprint)]) -> Vec<u32> {
+    let mut index = vec![u32::MAX; mc_data::entity_types::ENTITY_TYPE_COUNT];
+    for (at, (type_id, _)) in blueprints.iter().enumerate() {
+        let slot = index_slot(*type_id);
+        if slot >= index.len() {
+            index.resize(slot + 1, u32::MAX);
+        }
+        if index[slot] == u32::MAX {
+            index[slot] = at as u32;
+        }
+    }
+    index
 }
 
 impl ResolvedStates {

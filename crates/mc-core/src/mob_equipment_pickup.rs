@@ -173,7 +173,7 @@ pub(crate) fn run(state: &mut TickState, changes: &mut ChangeSet) {
             state
                 .registry
                 .blueprint(type_id)
-                .is_some_and(|bp| supported(bp.name))
+                .is_some_and(|bp| supported(&bp.name))
         })
         .into_iter()
         .filter_map(|slot| {
@@ -187,6 +187,8 @@ pub(crate) fn run(state: &mut TickState, changes: &mut ChangeSet) {
     }
     crate::natural_spawn::census(state, &[]);
     let mut candidates = Vec::new();
+    // Immutable startup data: one handle outlives the mutable state borrows below.
+    let registry = std::sync::Arc::clone(&state.registry);
     for collector in collectors {
         let Some(collector_slot) = state.entities.slot_of(collector) else {
             continue;
@@ -204,7 +206,7 @@ pub(crate) fn run(state: &mut TickState, changes: &mut ChangeSet) {
         let EntityKind::Mob { type_id } = body.kind else {
             continue;
         };
-        let name = state.registry.blueprint(type_id).unwrap().name;
+        let name = registry.blueprint(type_id).unwrap().name.as_str();
         candidates.clear();
         candidates.extend(state.spawn_census.nearby_entities(p, reach + 1.0));
         for item in candidates.iter().copied() {

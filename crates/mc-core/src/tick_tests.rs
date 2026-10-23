@@ -1274,10 +1274,10 @@ fn blueprint_goals_drive_behavior_not_type_ids() {
         },
     ];
     let blueprint_a = MobBlueprint {
-        name: "test:chaser_a",
+        name: "test:chaser_a".to_owned(),
         type_id: 9001,
         movement: MovementClass::Walker,
-        goals: goals_a,
+        goals: goals_a.to_vec(),
         sensors: crate::blueprint::Sensors {
             sight_range: 35.0,
             attack_reach: 2.2,
@@ -1288,6 +1288,8 @@ fn blueprint_goals_drive_behavior_not_type_ids() {
             attack_damage: 3.0,
             pickup_delay: 0,
             breed_cooldown: 0,
+            armor: 0.0,
+            knockback_resistance: 0.0,
         },
         half_width: 0.3,
         height: 1.95,
@@ -1297,11 +1299,13 @@ fn blueprint_goals_drive_behavior_not_type_ids() {
         category: crate::blueprint::MobCategory::Monster,
         wool: false,
         spawn_weight: 100,
-        burns_in_daylight: true,
-        night_aggro_only: false,
+        capabilities: crate::blueprint::Capabilities {
+            burns_in_daylight: true,
+            ..Default::default()
+        },
     };
     let blueprint_b = MobBlueprint {
-        name: "test:chaser_b",
+        name: "test:chaser_b".to_owned(),
         type_id: 9002,
         ..blueprint_a.clone()
     };

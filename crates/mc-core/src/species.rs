@@ -148,29 +148,30 @@ pub fn extend_blueprints(
         let table = mc_data::Identifier::parse(format!("minecraft:entities/{}", id.path()))
             .expect("canonical loot table");
         let loot_table = loot.has_root(&table).then_some(table);
+        // Giants retain ground physics and attributes, but vanilla registers
+        // no AI goals (including no wandering).
+        let goals: &[Goal] = if contract.name == "minecraft:giant" {
+            &[]
+        } else if movement == MovementClass::Stationary {
+            STATIONARY
+        } else if profile.combat == MobCombatPolicy::Arrow {
+            RANGED
+        } else if hostile && offspring.is_some() {
+            MELEE_BREED
+        } else if hostile {
+            MELEE
+        } else if offspring.is_some() {
+            PASSIVE
+        } else {
+            WANDER
+        };
         out.push((
             type_id,
             MobBlueprint {
-                name: contract.name,
+                name: contract.name.to_owned(),
                 type_id,
                 movement,
-                // Giants retain ground physics and attributes, but vanilla
-                // registers no AI goals (including no wandering).
-                goals: if contract.name == "minecraft:giant" {
-                    &[]
-                } else if movement == MovementClass::Stationary {
-                    STATIONARY
-                } else if profile.combat == MobCombatPolicy::Arrow {
-                    RANGED
-                } else if hostile && offspring.is_some() {
-                    MELEE_BREED
-                } else if hostile {
-                    MELEE
-                } else if offspring.is_some() {
-                    PASSIVE
-                } else {
-                    WANDER
-                },
+                goals: goals.to_vec(),
                 sensors: Sensors {
                     sight_range: facts.attributes.follow_range.unwrap_or(16.0) as f32,
                     attack_reach: if profile.combat == MobCombatPolicy::Arrow {
@@ -198,6 +199,8 @@ pub fn extend_blueprints(
                     ) as f32,
                     pickup_delay: 0,
                     breed_cooldown: if offspring.is_some() { 6000 } else { 0 },
+                    armor: 0.0,
+                    knockback_resistance: 0.0,
                 },
                 half_width: facts.dimensions.half_width(),
                 height: facts.dimensions.height,
@@ -207,73 +210,21 @@ pub fn extend_blueprints(
                 category: contract.mob_category(),
                 wool: false,
                 spawn_weight: 1,
-                burns_in_daylight: matches!(
-                    contract.name,
-                    "minecraft:stray"
-                        | "minecraft:bogged"
-                        | "minecraft:parched"
-                        | "minecraft:phantom"
-                ),
-                night_aggro_only: contract.name == "minecraft:cave_spider",
+                capabilities: crate::blueprint::Capabilities::default(),
             },
         ));
     }
 }
 
-/// Ground obstacle climbing is a reusable control capability.
-#[must_use]
-pub fn climbs_walls(type_id: u32) -> bool {
-    entity_type_contract_26_1_2_by_protocol_id(type_id).is_some_and(|contract| {
-        matches!(contract.name, "minecraft:spider" | "minecraft:cave_spider")
-    })
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Swimmer steering family, a blueprint capability.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum AquaticControl {
     Fish,
     Squid,
     Dolphin,
+    #[default]
     Other,
-}
-
-#[must_use]
-pub fn aquatic_control(type_id: u32) -> AquaticControl {
-    match entity_type_contract_26_1_2_by_protocol_id(type_id).map(|contract| contract.name) {
-        Some(
-            "minecraft:cod"
-            | "minecraft:salmon"
-            | "minecraft:tropical_fish"
-            | "minecraft:pufferfish"
-            | "minecraft:tadpole",
-        ) => AquaticControl::Fish,
-        Some("minecraft:squid" | "minecraft:glow_squid") => AquaticControl::Squid,
-        Some("minecraft:dolphin") => AquaticControl::Dolphin,
-        _ => AquaticControl::Other,
-    }
-}
-
-/// Supplemental native base armor, before equipment modifiers.
-#[must_use]
-pub fn base_armor(name: &str) -> f64 {
-    match name {
-        "minecraft:zombie"
-        | "minecraft:zombie_villager"
-        | "minecraft:husk"
-        | "minecraft:drowned"
-        | "minecraft:zombified_piglin" => 2.0,
-        _ => 0.0,
-    }
-}
-
-/// Supplemental native body resistance, before equipment modifiers.
-#[must_use]
-pub fn base_knockback_resistance(name: &str) -> f64 {
-    match name {
-        "minecraft:iron_golem" => 1.0,
-        "minecraft:hoglin" | "minecraft:zoglin" => 0.6,
-        "minecraft:ravager" => 0.75,
-        _ => 0.0,
-    }
 }
 
 /// Resolve species food tags once at startup; the loaded data pack's membership

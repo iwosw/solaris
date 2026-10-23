@@ -700,14 +700,14 @@ pub(crate) fn extend_blueprints(
         out.push((
             id,
             MobBlueprint {
-                name,
+                name: name.to_owned(),
                 type_id: id,
                 movement: if name == "minecraft:experience_orb" {
                     MovementClass::Item
                 } else {
                     MovementClass::Stationary
                 },
-                goals: &[],
+                goals: Vec::new(),
                 sensors: Sensors {
                     sight_range: 150.0,
                     attack_reach: 0.0,
@@ -718,6 +718,8 @@ pub(crate) fn extend_blueprints(
                     attack_damage: 0.0,
                     pickup_delay: 0,
                     breed_cooldown: 0,
+                    armor: 0.0,
+                    knockback_resistance: 0.0,
                 },
                 half_width: width,
                 height,
@@ -729,8 +731,7 @@ pub(crate) fn extend_blueprints(
                     .mob_category(),
                 wool: false,
                 spawn_weight: 0,
-                burns_in_daylight: false,
-                night_aggro_only: false,
+                capabilities: Capabilities::default(),
             },
         ));
     }

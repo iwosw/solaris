@@ -50,6 +50,46 @@ pub(crate) fn ignite(state: &mut TickState, entity: EntityId, ticks: u32) {
     }
 }
 
+/// One drowning damage per tick in water or rain for every blueprint with
+/// [`Capabilities::hurt_by_water`](crate::blueprint::Capabilities::hurt_by_water)
+/// (vanilla `isSensitiveToWater`): live rows in active chunks, registry then
+/// dense-slot order. Runs before the enderman pass, which teleports out.
+pub(crate) fn hurt_by_water(state: &mut TickState) {
+    let sensitive: Vec<_> = state
+        .registry
+        .blueprints
+        .iter()
+        .filter(|(_, blueprint)| blueprint.capabilities.hurt_by_water)
+        .flat_map(|(type_id, _)| state.entities.mob_slots(*type_id))
+        .collect();
+    for slot in sensitive {
+        let body = state.entities.body(slot);
+        let pos = state.entities.pos(slot);
+        if !body.alive
+            || !state.world.is_active(
+                floor_i32(pos[0]).div_euclid(16),
+                floor_i32(pos[2]).div_euclid(16),
+            )
+        {
+            continue;
+        }
+        if crate::conduit::wet(state, pos)
+            || crate::conduit::water(state, [pos[0], pos[1] + body.height * 0.5, pos[2]])
+        {
+            state.merge_damage.push((
+                slot,
+                crate::tick::DamagePiece {
+                    physical: None,
+                    custom_armor: false,
+                    amount: 1.0,
+                    kind: DamageKind::Drowning,
+                    source: None,
+                },
+            ));
+        }
+    }
+}
+
 fn damage(
     state: &mut TickState,
     entity: EntityId,
@@ -233,8 +273,9 @@ fn classify_row(
             return None;
         }
     };
+    // Data-defined blueprints are living through their presentation type.
     let living = LIVING_BY_TYPE
-        .get(type_id as usize)
+        .get(crate::blueprint::wire_type_id(type_id) as usize)
         .copied()
         .unwrap_or(false);
     if !row.alive || !living {
@@ -334,7 +375,7 @@ fn scan_row(state: &mut TickState, scratch: &mut Scratch, intents: &mut Vec<Inte
         true
     } else if let crate::entities::EntityKind::Mob { type_id } = kind {
         living_by_type
-            .get(type_id as usize)
+            .get(crate::blueprint::wire_type_id(type_id) as usize)
             .copied()
             .unwrap_or(false)
     } else {

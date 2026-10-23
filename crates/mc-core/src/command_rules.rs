@@ -261,6 +261,9 @@ pub enum MobGrief {
     Wither,
     VillagerFarming,
     SheepGrazing,
+    /// A mob blast whose blueprint never breaks blocks (data-defined
+    /// [`Explosion::griefing`](crate::blueprint::Explosion::griefing) off).
+    Never,
 }
 
 /// `mobGriefing` combined with the per-mob switch for `grief`.
@@ -277,6 +280,7 @@ pub fn mob_griefing(state: &TickState, grief: MobGrief) -> bool {
         MobGrief::Wither => rules.wither_block_damage,
         MobGrief::VillagerFarming => rules.villager_farming,
         MobGrief::SheepGrazing => rules.sheep_grazing,
+        MobGrief::Never => false,
     }
 }
 

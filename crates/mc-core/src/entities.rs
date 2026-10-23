@@ -946,11 +946,12 @@ impl EntityStore {
         EntityView {
             id: body.id,
             uuid: row.uuid,
+            // Clients only know vanilla types: data-defined blueprints
+            // present as theirs (ADR 0016).
             type_id: match body.kind {
                 EntityKind::Player { .. } => player_type_id(),
-                EntityKind::Mob { type_id }
-                | EntityKind::Item { type_id }
-                | EntityKind::ExperienceOrb { type_id } => type_id,
+                EntityKind::Mob { type_id } => crate::blueprint::wire_type_id(type_id),
+                EntityKind::Item { type_id } | EntityKind::ExperienceOrb { type_id } => type_id,
             },
             position: self.pos[slot],
             velocity: self.vel[slot],
@@ -1729,7 +1730,7 @@ fn motion_flags_for(
             if !chaser {
                 flags |= MOTION_WANDER_REST;
             } else if !matches!(
-                blueprint.name,
+                blueprint.name.as_str(),
                 "minecraft:zombie" | "minecraft:zombie_villager" | "minecraft:iron_golem"
             ) && crate::piglin::name(type_id) != "minecraft:zoglin"
             {

@@ -402,7 +402,7 @@ fn burns_in_daylight(state: &TickState, slot: EntitySlot) -> bool {
         EntityKind::Mob { type_id } => state
             .registry
             .blueprint(type_id)
-            .is_some_and(|blueprint| blueprint.burns_in_daylight),
+            .is_some_and(|blueprint| blueprint.capabilities.burns_in_daylight),
         _ => false,
     }
 }
@@ -889,8 +889,10 @@ fn admitted(
                             || u64::from(brightness) > rng.below(8)
                     }
                     crate::dimensions::Dimension::Nether => {
-                        !matches!(blueprint.name, "minecraft:ghast" | "minecraft:magma_cube")
-                            && block > 11
+                        !matches!(
+                            blueprint.name.as_str(),
+                            "minecraft:ghast" | "minecraft:magma_cube"
+                        ) && block > 11
                     }
                     crate::dimensions::Dimension::End => block > 7,
                 }
@@ -953,11 +955,12 @@ fn spawn_group_in_column(
     let Some(type_id) = state.registry.entity_types.id_of(&entry.entity_type) else {
         return 0;
     };
-    let Some(blueprint) = state.registry.blueprint(type_id) else {
+    let registry = std::sync::Arc::clone(&state.registry);
+    let Some(blueprint) = registry.blueprint(type_id) else {
         return 0;
     };
     let health = blueprint.params.max_health;
-    let name = blueprint.name;
+    let name = blueprint.name.as_str();
     let min = entry.min_count.min(entry.max_count).max(1);
     let max = entry.max_count.max(min);
     let size = u64::from(min) + rng.below(u64::from(max - min) + 1);

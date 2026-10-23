@@ -269,8 +269,9 @@ fn crossbow_refuses_bad_geometry_or_any_missing_multishot_type_without_spawns_or
             2 => state.entities.set_rot(owner, 0.0, f32::NAN),
             _ => std::sync::Arc::get_mut(&mut state.registry)
                 .unwrap()
-                .blueprints
-                .retain(|(_, blueprint)| blueprint.name != ProjectileKind::Firework.name()),
+                .retain_blueprints(|(_, blueprint)| {
+                    blueprint.name != ProjectileKind::Firework.name()
+                }),
         }
         fire_crossbow(&mut state, actor, 0, &weapon);
         assert!(

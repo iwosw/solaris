@@ -605,7 +605,7 @@ impl TickState {
                         let xp = row.loot.slime_size.map_or_else(
                             || {
                                 crate::experience_orbs::mob_experience(
-                                    blueprint.name,
+                                    &blueprint.name,
                                     row.appearance.baby,
                                     self.tick ^ id.0 as u64,
                                 )

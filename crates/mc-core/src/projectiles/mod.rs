@@ -535,10 +535,10 @@ pub(crate) fn extend_blueprints(
         out.push((
             type_id,
             MobBlueprint {
-                name: kind.name(),
+                name: kind.name().to_owned(),
                 type_id,
                 movement: MovementClass::Projectile,
-                goals: GOALS,
+                goals: GOALS.to_vec(),
                 sensors: Sensors {
                     sight_range: 0.0,
                     attack_reach: 0.0,
@@ -549,6 +549,8 @@ pub(crate) fn extend_blueprints(
                     attack_damage: 0.0,
                     pickup_delay: 0,
                     breed_cooldown: 0,
+                    armor: 0.0,
+                    knockback_resistance: 0.0,
                 },
                 half_width,
                 height,
@@ -558,8 +560,7 @@ pub(crate) fn extend_blueprints(
                 category: MobCategory::Misc,
                 wool: false,
                 spawn_weight: 0,
-                burns_in_daylight: false,
-                night_aggro_only: false,
+                capabilities: crate::blueprint::Capabilities::default(),
             },
         ));
     }

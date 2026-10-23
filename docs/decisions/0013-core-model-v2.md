@@ -1373,6 +1373,8 @@ parameters. Vanilla mobs are blueprints too. The entity phase executes
 blueprints natively; there is no per-type code path that a plugin type cannot
 use. Plugin code is invoked only through events and decisions (for example
 "assign work", "choose target set") outside the tick.
+Shared behaviours are blueprint capabilities and data-defined types are admitted
+under bounded, fail-closed validation; see [ADR 0016](0016-mob-capabilities.md).
 
 Vanilla baseline registration (`species.rs`) composes every supported living
 contract's exact registry dimensions and mob category with `MobBehaviorTable`

@@ -93,10 +93,10 @@ pub(crate) fn extend_blueprints(
     out.push((
         id,
         MobBlueprint {
-            name: "minecraft:copper_golem",
+            name: "minecraft:copper_golem".to_owned(),
             type_id: id,
             movement: MovementClass::Stationary,
-            goals: &[],
+            goals: Vec::new(),
             sensors: Sensors {
                 sight_range: 32.0,
                 attack_reach: 0.0,
@@ -107,6 +107,8 @@ pub(crate) fn extend_blueprints(
                 attack_damage: 0.0,
                 pickup_delay: 0,
                 breed_cooldown: 0,
+                armor: 0.0,
+                knockback_resistance: 0.0,
             },
             half_width: facts.dimensions.half_width(),
             height: facts.dimensions.height,
@@ -116,8 +118,7 @@ pub(crate) fn extend_blueprints(
             category: MobCategory::Misc,
             wool: false,
             spawn_weight: 0,
-            burns_in_daylight: false,
-            night_aggro_only: false,
+            capabilities: Capabilities::default(),
         },
     ));
 }

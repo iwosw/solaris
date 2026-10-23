@@ -92,7 +92,7 @@ fn loot_entity(state: &TickState, entity: EntityId) -> Option<EntityLootEntity> 
     let row = state.entities.row(slot);
     let name = match body.kind {
         EntityKind::Player { .. } => "minecraft:player",
-        EntityKind::Mob { type_id } => state.registry.blueprint(type_id)?.name,
+        EntityKind::Mob { type_id } => state.registry.blueprint(type_id)?.name.as_str(),
         _ => return None,
     };
     let mut result = EntityLootEntity::new(id(name));
@@ -468,7 +468,7 @@ pub fn set_size(state: &mut TickState, slot: EntitySlot, size: u8, heal: bool) {
     let Some(bp) = state.registry.blueprint(type_id) else {
         return;
     };
-    if !matches!(bp.name, "minecraft:slime" | "minecraft:magma_cube") {
+    if !matches!(bp.name.as_str(), "minecraft:slime" | "minecraft:magma_cube") {
         return;
     }
     let magma = bp.name == "minecraft:magma_cube";
@@ -517,7 +517,8 @@ pub(crate) fn restore(state: &mut TickState, slot: EntitySlot) {
     let Some(bp) = state.registry.blueprint(type_id) else {
         return;
     };
-    let name = bp.name;
+    let name = bp.name.as_str();
+    let (armor, knockback_resistance) = (bp.params.armor, bp.params.knockback_resistance);
     let width = bp.half_width;
     let height = bp.height;
     let speed = f64::from(bp.params.speed) / 10.0;
@@ -535,8 +536,8 @@ pub(crate) fn restore(state: &mut TickState, slot: EntitySlot) {
         appearance.body_armor = row.loot.body_armor.as_deref().cloned();
         appearance.saddle = row.loot.saddle.as_deref().cloned();
     }
-    row.loot.base_armor = crate::species::base_armor(name);
-    row.loot.base_knockback_resistance = crate::species::base_knockback_resistance(name);
+    row.loot.base_armor = armor;
+    row.loot.base_knockback_resistance = knockback_resistance;
     if matches!(name, "minecraft:slime" | "minecraft:magma_cube") {
         let size = row.loot.slime_size.unwrap_or(1);
         row.loot.slime_size = Some(size);
@@ -564,10 +565,9 @@ pub(crate) fn restore(state: &mut TickState, slot: EntitySlot) {
 pub(crate) fn initialize(state: &mut TickState, slot: EntitySlot) {
     restore(state, slot);
     if let EntityKind::Mob { type_id } = state.entities.body(slot).kind
-        && state
-            .registry
-            .blueprint(type_id)
-            .is_some_and(|bp| matches!(bp.name, "minecraft:slime" | "minecraft:magma_cube"))
+        && state.registry.blueprint(type_id).is_some_and(|bp| {
+            matches!(bp.name.as_str(), "minecraft:slime" | "minecraft:magma_cube")
+        })
     {
         let seed = state.entities.row(slot).uuid.as_u128() as u64;
         set_size(state, slot, 1 << (mix(seed) % 3), true);
@@ -596,10 +596,11 @@ pub(crate) fn commit_death(
     let EntityKind::Mob { type_id } = body.kind else {
         return;
     };
-    let Some(bp) = state.registry.blueprint(type_id) else {
+    let registry = std::sync::Arc::clone(&state.registry);
+    let Some(bp) = registry.blueprint(type_id) else {
         return;
     };
-    let name = bp.name;
+    let name = bp.name.as_str();
     let table = bp.loot_table.clone();
     let wool = bp.wool.then(|| {
         row.appearance

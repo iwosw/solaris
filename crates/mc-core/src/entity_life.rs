@@ -96,7 +96,7 @@ pub(crate) fn can_breed_in(
     let Some(blueprint) = registry.blueprint(type_id) else {
         return false;
     };
-    match blueprint.name {
+    match blueprint.name.as_str() {
         "minecraft:wolf" | "minecraft:cat" => row.entity_life.tamed && !row.entity_life.sitting,
         "minecraft:horse" | "minecraft:donkey" | "minecraft:llama" | "minecraft:trader_llama" => {
             row.entity_life.tamed
@@ -299,7 +299,7 @@ fn harvest(
     if name == "minecraft:bucket"
         && adult(row)
         && matches!(
-            blueprint.name,
+            blueprint.name.as_str(),
             "minecraft:cow" | "minecraft:goat" | "minecraft:mooshroom"
         )
         && item(state, "minecraft:milk_bucket").is_some()

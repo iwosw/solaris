@@ -88,7 +88,9 @@ fn supported_humanoids_collect_armor_and_keep_other_collectors_out() {
         for slot in state.entities.slots().collect::<Vec<_>>() {
             if state.entities.body(slot).id != id
                 && supported(match state.entities.body(slot).kind {
-                    EntityKind::Mob { type_id } => state.registry.blueprint(type_id).unwrap().name,
+                    EntityKind::Mob { type_id } => {
+                        state.registry.blueprint(type_id).unwrap().name.as_str()
+                    }
                     _ => "",
                 })
             {

@@ -173,6 +173,8 @@ pub mod weather;
 pub mod world;
 
 #[cfg(test)]
+mod blueprint_tests;
+#[cfg(test)]
 mod core_tests;
 #[cfg(test)]
 mod debt_tests;

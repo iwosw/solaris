@@ -1475,7 +1475,9 @@ pub(crate) fn restore_entity(
             if let Some(kind) = state
                 .registry
                 .blueprint(record.type_id)
-                .and_then(|blueprint| crate::projectiles::ProjectileKind::from_name(blueprint.name))
+                .and_then(|blueprint| {
+                    crate::projectiles::ProjectileKind::from_name(&blueprint.name)
+                })
                 .filter(|kind| kind.arrow())
             {
                 let mut migrated =
