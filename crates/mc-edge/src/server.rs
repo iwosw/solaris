@@ -1928,9 +1928,11 @@ async fn handle_connection(stream: TcpStream, server: Arc<EdgeServer>) -> anyhow
             dh: dh_rx,
         },
     ));
+    let mut writer_finished = false;
     let exit_stage: &'static str = 'play_loop: loop {
         tokio::select! {
             ended = &mut writer_task => {
+                writer_finished = true;
                 match ended {
                     Ok((stage, Some(reason))) => {
                         warn!(%peer, connection = id.0, stage = "play", name = %outcome.name, reason = %reason, "core-ordered disconnect flushed; connection closed");
@@ -1952,7 +1954,10 @@ async fn handle_connection(stream: TcpStream, server: Arc<EdgeServer>) -> anyhow
                 };
                 if !packet_limiter.allow(frame.id) {
                     warn!(%peer, connection = id.0, stage = "play-rate-limit", name = %outcome.name, packet = frame.id, "play packet rate limit exceeded");
-                    server.kick(id, serde_json::json!({"text":"Too many packets of this type"}))?;
+                    if let Err(error) = server.kick(id, serde_json::json!({"text":"Too many packets of this type"})) {
+                        warn!(%peer, connection = id.0, %error, "rate-limit kick undeliverable; connection closed");
+                        break 'play_loop "rate-limit-kick";
+                    }
                     continue;
                 }
                 match server.handle_edge_frame(id, frame.id, &frame.body).await {
@@ -2043,7 +2048,10 @@ async fn handle_connection(stream: TcpStream, server: Arc<EdgeServer>) -> anyhow
                             .uuid_of(id)
                             .is_some_and(|uuid| server.admin.muted(uuid))
                     {
-                        server.feedback(id, "You are muted.")?;
+                        if let Err(error) = server.feedback(id, "You are muted.") {
+                            warn!(%peer, connection = id.0, %error, "mute feedback undeliverable; connection closed");
+                            break 'play_loop "mute-feedback";
+                        }
                         continue;
                     }
                     if let PlayerInput::Command { command, permission_level, .. } = &mut input {
@@ -2092,7 +2100,13 @@ async fn handle_connection(stream: TcpStream, server: Arc<EdgeServer>) -> anyhow
             }
         }
     };
-    writer_task.abort();
+    if !writer_finished {
+        // Wait for the cancelled writer to drop its socket half, so the
+        // session's end (which re-opens accept after fd exhaustion) really
+        // means the socket is released.
+        writer_task.abort();
+        let _ = writer_task.await;
+    }
     warn!(%peer, connection = id.0, stage = "play", exit = exit_stage, name = %outcome.name, "connection closed");
 
     drop(joined_cleanup);
