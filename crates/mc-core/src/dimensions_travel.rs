@@ -177,6 +177,11 @@ fn move_between(
     rotation: [f32; 2],
     changes: &mut ChangeSet,
 ) {
+    // Authentication presentations have no world-travel custody. Keep the
+    // pending claimant beside its saved record until native unlock restores it.
+    if source.entity_session_locked(id) {
+        return;
+    }
     let slot = source
         .entities
         .slot_of_any(id)

@@ -17,6 +17,10 @@ pub struct RosterPlayer {
 #[derive(Debug)]
 pub(crate) enum Broadcast {
     Chat(mc_nbt::Tag),
+    TeamChat {
+        members: std::collections::BTreeSet<String>,
+        content: mc_nbt::Tag,
+    },
     Scoreboard(crate::scoreboard::ScoreboardEvent),
     BossBar {
         players: Vec<uuid::Uuid>,
@@ -65,6 +69,28 @@ fn relay(world: &mut TickState, event: &Broadcast) {
         Broadcast::Chat(content) => queue_each(world, || PlayerChange::StyledChat {
             content: content.clone(),
         }),
+        Broadcast::TeamChat { members, content } => {
+            let recipients: Vec<_> = world
+                .connections
+                .all_connections()
+                .filter(|connection| !world.session_locked(*connection))
+                .filter(|connection| {
+                    world
+                        .connections
+                        .entity_of(*connection)
+                        .and_then(|entity| world.connections.name_of(entity))
+                        .is_some_and(|name| members.contains(name))
+                })
+                .collect();
+            for connection in recipients {
+                world.push_player(
+                    connection,
+                    PlayerChange::StyledChat {
+                        content: content.clone(),
+                    },
+                );
+            }
+        }
         Broadcast::Scoreboard(event) => queue_each(world, || PlayerChange::Scoreboard {
             event: event.clone(),
         }),
@@ -136,12 +162,19 @@ pub(super) fn roster(state: &mut TickState) {
     let worlds =
         || std::iter::once(&*state).chain(state.other_dimensions.values().map(|world| &**world));
     let count: usize = worlds()
-        .map(|world| world.connections.all_connections().count())
+        .map(|world| {
+            world
+                .connections
+                .all_connections()
+                .filter(|connection| !world.session_locked(*connection))
+                .count()
+        })
         .sum();
     let changed = count != state.dimension_globals.roster.len()
         || state.dimension_globals.roster.iter().any(|player| {
             !worlds().any(|world| {
                 world.connections.entity_of(player.connection) == Some(player.entity)
+                    && !world.session_locked(player.connection)
                     && world.connections.uuid_of(player.connection) == Some(player.uuid)
                     && world.connections.name_of(player.entity) == Some(player.name.as_str())
                     && game_mode(world, player.entity) == Some(player.game_mode)
@@ -153,6 +186,9 @@ pub(super) fn roster(state: &mut TickState) {
     let mut players = Vec::with_capacity(count);
     for world in worlds() {
         for connection in world.connections.all_connections() {
+            if world.session_locked(connection) {
+                continue;
+            }
             let entity = world
                 .connections
                 .entity_of(connection)

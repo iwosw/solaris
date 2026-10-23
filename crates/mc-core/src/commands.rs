@@ -256,6 +256,10 @@ pub enum Command {
         message: String,
         selectors: bool,
     },
+    TeamMessage {
+        message: String,
+        selectors: bool,
+    },
     Message {
         target: Target,
         message: String,
@@ -306,7 +310,12 @@ pub fn parse(command: &str, operator: bool) -> Result<Command, CommandError> {
     let command = command.trim();
     let words = command_words(command)?;
     let (name, args) = words.split_first().ok_or(CommandError::Unknown)?;
-    if !operator && !matches!(*name, "me" | "msg" | "tell" | "w" | "settlement") {
+    if !operator
+        && !matches!(
+            *name,
+            "me" | "msg" | "tell" | "w" | "teammsg" | "tm" | "settlement"
+        )
+    {
         return Err(CommandError::Unknown);
     }
     match *name {
@@ -357,6 +366,10 @@ pub fn parse(command: &str, operator: bool) -> Result<Command, CommandError> {
                 }
             })
         }
+        "teammsg" | "tm" if !args.is_empty() => Ok(Command::TeamMessage {
+            message: command[name.len()..].trim_start().to_owned(),
+            selectors: operator,
+        }),
         "msg" | "tell" | "w" if args.len() >= 2 => {
             if !operator && args[0].starts_with('@') {
                 return Err(CommandError::Message("Selector not allowed".into()));

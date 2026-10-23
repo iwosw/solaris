@@ -440,7 +440,7 @@ Anything that does not parse as a duration is the first word of the reason, so
 vanilla `/ban <player> <reason>` is unchanged. `/mute <player> [duration]
 [reason]` and `/unmute <player>` use `muted-players.json` in the same directory:
 a muted identity cannot send ordinary chat or native communication commands
-(`/me`, `/msg`, `/tell`, `/w`, `/say`, `/tellraw`, `/title`); other command rights
+(`/me`, `/msg`, `/tell`, `/w`, `/teammsg`, `/tm`, `/say`, `/tellraw`, `/title`); other command rights
 are unchanged. Refused messages receive a private "You are muted." notice.
 `/warn <player> [reason]` delivers one private warning line to an online player
 and keeps no record.
@@ -544,6 +544,42 @@ Negotiation is bounded to 120 seconds and 32 packets (the enclosing login
 deadline may be shorter). Required-pack policy trusts the client's protocol
 acknowledgement, not a proof of rendered assets. This is independent of Solaris
 Loader bundle negotiation; it works without a Loader installation.
+
+Both unsigned and signed-command packet forms enter the same permission, mute
+and native spam policy. Command text keeps its 32,767-unit wire bound rather
+than chat's 256-unit bound. `/msg`, `/tell` and `/w` support named recipients in
+other dimensions; `/teammsg` (`/tm`) delivers only to authenticated members of
+the sender's scoreboard team, including other dimensions.
+
+Chat remains **unsigned system chat** (`enforces_secure_chat = false`).
+Signed-command metadata and chat-session updates are bounded and decoded, but
+their signatures/certificates are not trusted or advertised as authenticated
+chat sessions. This is not secure-chat verification or reportable signed-chat
+delivery. Online login authenticates the connection's identity, not each chat
+message's signature.
+
+Login reserves player capacity atomically before Configuration; pending joins
+and backpressured retirement retain their reservation. Access-list policy is
+checked again before native Join. A connection owns its cleanup before any
+Join submission, and its Leave waits for native input capacity rather than
+being dropped. Retired connections cannot recreate pre-registration stashes.
+
+Handshake, Login and Configuration share one absolute 45-second deadline,
+in addition to individual read and write deadlines. Play sends a fresh
+keepalive challenge every 15 seconds when none is outstanding, accepts only
+its matching echo, and closes after 30 seconds without that reply. Ordinary
+traffic and partial inbound frames do not renew that challenge.
+
+With `require_plugin_login`, a pending claimant receives an empty, temporary
+presentation at a fresh spawn, not the saved inventory, vitals, XP, position or
+operator advertisement. The saved native record stays untouched until a
+trusted auth plugin unlocks that exact session. Multiple pending claimants can
+authenticate; the first verified claim receives saved custody and other
+pending claims are retired. An authenticated incumbent cannot be displaced.
+Temporary claims are excluded from player persistence and the authenticated
+roster, cannot activate pressure plates or travel dimensions, and cannot ask
+for native LOD terrain. LOD distance follows committed position, not inbound
+movement proposals.
 
 
 Connection admission has two optional per-address limits under `[network]`:

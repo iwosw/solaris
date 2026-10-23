@@ -508,6 +508,34 @@ fn scoreboard_and_chat_are_global_but_entity_visibility_is_not() {
 }
 
 #[test]
+fn private_and_team_messages_cross_dimensions() {
+    let (mut state, _, _) = worlds();
+    for alias in ["msg", "tell", "w"] {
+        let (_, drains) = command(&mut state, 1, &format!("{alias} Bob hello"));
+        assert!(
+            drains
+                .iter()
+                .filter(|(id, _)| *id == ConnectionId(2))
+                .flat_map(|(_, changes)| changes)
+                .any(|change| translation(change, "commands.message.display.incoming"))
+        );
+    }
+    command(&mut state, 1, "team add red");
+    command(&mut state, 1, "team join red Alice");
+    command(&mut state, 1, "team join red Bob");
+    for alias in ["teammsg", "tm"] {
+        let (_, drains) = command(&mut state, 1, &format!("{alias} hello"));
+        assert!(
+            drains
+                .iter()
+                .filter(|(id, _)| *id == ConnectionId(2))
+                .flat_map(|(_, changes)| changes)
+                .any(|change| translation(change, "chat.type.team.text"))
+        );
+    }
+}
+
+#[test]
 fn roster_spans_dimensions_without_changing_on_travel() {
     let (mut state, _, _) = worlds();
     assert_eq!(state.dimension_globals.roster.len(), 2);

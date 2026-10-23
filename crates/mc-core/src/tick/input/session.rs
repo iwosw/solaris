@@ -94,8 +94,8 @@ pub(in crate::tick) fn join(
         || state
             .connections
             .uuids
-            .values()
-            .any(|joined| joined == uuid)
+            .iter()
+            .any(|(incumbent, joined)| joined == uuid && !state.session_locked(*incumbent))
     {
         state.push_player(
             *connection,
@@ -107,8 +107,13 @@ pub(in crate::tick) fn join(
         return;
     }
     let id = state.entities.alloc_id();
-    // Rejoin restores the full offline record; fresh players spawn.
-    let offline = state.offline_players.remove(uuid);
+    // Unverified claimants never take custody of the saved player. Multiple
+    // claimants may authenticate; native unlock chooses one live owner.
+    let offline = if state.require_plugin_login {
+        None
+    } else {
+        state.offline_players.remove(uuid)
+    };
     let spawn = offline
         .as_ref()
         .map(|record| record.pos)
@@ -129,7 +134,11 @@ pub(in crate::tick) fn join(
     });
     let slot = state.entities.spawn(
         id,
-        *uuid,
+        if state.require_plugin_login {
+            uuid::Uuid::from_u128((u128::from(connection.0) << 64) | 0x534f_4c41_5249_5300)
+        } else {
+            *uuid
+        },
         EntityKind::Player {
             connection: *connection,
         },
@@ -163,19 +172,7 @@ pub(in crate::tick) fn join(
         .insert(id, hydrate_player(*connection, offline.as_ref()));
     if state.require_plugin_login {
         state.locked_sessions.insert(*connection);
-        if let (Some(player), Some(record)) = (state.players.get_mut(&id), offline.as_ref()) {
-            // Keep custody private until login: returning these stacks now can
-            // overflow a full inventory and expose another player's items.
-            player.inventory_menu.carried = record.carried.clone();
-            player.inventory_menu.grid = record.grid.clone();
-            // Non-crafting menus restore no grid; window zero still has four
-            // input slots. Retain larger grids intact until authenticated close.
-            let slots = player.inventory_menu.grid.len().max(4);
-            player
-                .inventory_menu
-                .grid
-                .resize(slots, mc_data::ItemStack::EMPTY);
-        }
+        // Empty, nonpersistent authentication presentation.
     }
     if let Some(player) = state.players.get_mut(&id) {
         player.statistics.advance_tick(state.tick);
@@ -311,7 +308,9 @@ pub(in crate::tick) fn join(
         }
     }
     changes.entities_spawned.push(id);
-    announce_player(state, "multiplayer.player.joined", name, None);
+    if !state.session_locked(*connection) {
+        announce_player(state, "multiplayer.player.joined", name, None);
+    }
 }
 
 pub(in crate::tick) fn leave(
@@ -345,6 +344,7 @@ pub(in crate::tick) fn leave(
         .connections
         .entity_of(*connection)
         .and_then(|entity| state.connections.name_of(entity))
+        .filter(|_| !state.session_locked(*connection))
         .map(str::to_owned);
     // Capture the final player image BEFORE removing the live
     // player: Join restores only from `offline_players`, so a

@@ -25,7 +25,7 @@ use mc_protocol::packets::play::{
     EntityAttributeModifier, EntityAttributeSnapshot, EntityDataValue as WireEntityDataValue,
     EntityEffectFlags, EntityEvent as WireEntityEvent, GameEvent, LevelEvent, MerchantItemCost,
     MerchantOffer, MobEffectId, PLAYER_DATA_ABSORPTION_INDEX, PlayDisconnect, PlayerInfoActions,
-    PlayerInfoEntry, PlayerInfoRemove, PlayerInfoUpdate, SetEntityMotion,
+    PlayerInfoEntry, PlayerInfoRemove, PlayerInfoUpdate, RemoveEntities, SetEntityMotion,
     SynchronizePlayerPosition, pack_block_pos,
 };
 
@@ -194,6 +194,30 @@ fn plan_change(change: &PlayerChange, viewer: &mut ViewerState, out: &mut Vec<Pl
         PlayerChange::Roster {
             players, removed, ..
         } => {
+            if !removed.is_empty() {
+                viewer
+                    .player_profiles
+                    .retain(|_, uuid| !removed.contains(uuid));
+            }
+            for player in players.iter() {
+                let previous = viewer.player_profiles.insert(player.entity, player.uuid);
+                if previous != Some(player.uuid)
+                    && player.entity != viewer.entity_id
+                    && viewer.tracked_entities.remove(&player.entity).is_some()
+                {
+                    // A provisional auth body was not a trusted player profile.
+                    // Remove its old client object before respawning with the
+                    // verified UUID on the next world publication.
+                    push_reliable(
+                        out,
+                        conn,
+                        &RemoveEntities {
+                            entity_ids: vec![player.entity.0],
+                        },
+                    );
+                    viewer.entity_interest.removed(player.entity);
+                }
+            }
             if !removed.is_empty() {
                 push_reliable(
                     out,

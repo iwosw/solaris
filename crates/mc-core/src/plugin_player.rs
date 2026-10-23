@@ -206,6 +206,25 @@ pub(crate) fn execute(
         _ => None,
     };
     if let Some(session) = session {
+        if matches!(admitted.request(), ScriptCommand::UnlockSession { .. }) {
+            let worlds = || {
+                std::iter::once(&*state)
+                    .chain(state.other_dimensions.values().map(|world| &**world))
+            };
+            let claimed =
+                worlds().find_map(|world| world.connections.uuid_of(ConnectionId(session.value())));
+            if let Some(uuid) = claimed
+                && worlds().any(|world| {
+                    world.connections.all_connections().any(|other| {
+                        other != ConnectionId(session.value())
+                            && world.connections.uuid_of(other) == Some(uuid)
+                            && !world.session_locked(other)
+                    })
+                })
+            {
+                return None;
+            }
+        }
         let connection = ConnectionId(session.value());
         if state.connections.entity_of(connection).is_none()
             && let Some(dimension) = state

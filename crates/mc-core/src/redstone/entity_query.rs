@@ -25,6 +25,7 @@ impl EntityQuery {
         for slot in state.entities.slots() {
             let body = state.entities.body(slot);
             if !body.alive
+                || state.entity_session_locked(body.id)
                 || state
                     .players
                     .get(&body.id)

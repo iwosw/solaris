@@ -68,6 +68,54 @@ fn has_translation(state: &TickState, connection: ConnectionId, key: &str) -> bo
     })
 }
 
+#[test]
+fn team_message_aliases_require_membership_and_exclude_locked_recipients() {
+    let (mut state, alice, _) = fixture();
+    command(&mut state, alice, "teammsg not on a team");
+    assert!(has_translation(
+        &state,
+        ConnectionId(1),
+        "commands.teammsg.failed.noteam"
+    ));
+    command(&mut state, alice, "team add red");
+    command(&mut state, alice, "team join red Alice");
+    command(&mut state, alice, "team join red Bob");
+    state.outbox.clear();
+    let parsed = parse("tm hello @a", false).unwrap();
+    execute(
+        &mut state,
+        ConnectionId(1),
+        alice,
+        &parsed,
+        &mut ChangeSet::default(),
+    );
+    assert!(has_translation(
+        &state,
+        ConnectionId(1),
+        "chat.type.team.sent"
+    ));
+    assert!(has_translation(
+        &state,
+        ConnectionId(2),
+        "chat.type.team.text"
+    ));
+    state.require_plugin_login = true;
+    state.locked_sessions.insert(ConnectionId(2));
+    state.outbox.clear();
+    command(&mut state, alice, "teammsg private");
+    assert!(!has_translation(
+        &state,
+        ConnectionId(2),
+        "chat.type.team.text"
+    ));
+    command(&mut state, alice, "msg Bob private");
+    assert!(!has_translation(
+        &state,
+        ConnectionId(2),
+        "commands.message.display.incoming"
+    ));
+}
+
 fn advancement_fixture() -> mc_data::advancements::AdvancementTree {
     use mc_data::advancements::{AdvancementDefinition, AdvancementTree, Criterion};
     let mut tree = AdvancementTree::default();

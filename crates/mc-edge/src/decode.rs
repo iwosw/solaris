@@ -18,7 +18,8 @@ use mc_protocol::packets::Packet;
 use mc_protocol::packets::play::{
     ClientCommandAction, ConfirmTeleportation, ContainerInput, InteractionHand, PlayerActionKind,
     PlayerCommandAction, ServerboundAttack, ServerboundChat, ServerboundChatAck,
-    ServerboundChatCommand, ServerboundChunkBatchReceived, ServerboundClientCommand,
+    ServerboundChatCommand, ServerboundChatCommandSigned, ServerboundChatSessionUpdate,
+    ServerboundChunkBatchReceived, ServerboundClientCommand,
     ServerboundClientInformation, ServerboundClientTickEnd, ServerboundCommandSuggestion,
     ServerboundContainerButtonClick, ServerboundContainerClick, ServerboundContainerClose,
     ServerboundContainerSlotStateChanged, ServerboundCustomClickAction, ServerboundCustomPayload,
@@ -205,11 +206,16 @@ pub fn decode_play_frame(
                 message: p.message,
             });
         }
-        ServerboundChatCommand::ID => {
-            let p = read::<ServerboundChatCommand>(body)?;
-            // Verbatim, slash stripped; the core parser owns the rest.
-            let command = p.command.strip_prefix('/').unwrap_or(&p.command).to_owned();
-            validate_chat(&command)?;
+        ServerboundChatCommand::ID | ServerboundChatCommandSigned::ID => {
+            let text = if id == ServerboundChatCommand::ID {
+                read::<ServerboundChatCommand>(body)?.command
+            } else {
+                read::<ServerboundChatCommandSigned>(body)?.command
+            };
+            // Verbatim, slash stripped; the core parser owns the rest. Both
+            // wire forms use the command bound, never chat's shorter limit.
+            let command = text.strip_prefix('/').unwrap_or(&text).to_owned();
+            validate_text_characters(&command)?;
             out.push(PlayerInput::Command {
                 connection: conn,
                 command,
@@ -371,6 +377,9 @@ pub fn decode_play_frame(
             });
         }
         // Validated, no gameplay intent.
+        // Unsigned system-chat mode: bound the session envelope without ever
+        // advertising an unverified key to another client as a trusted session.
+        ServerboundChatSessionUpdate::ID => validate::<ServerboundChatSessionUpdate>(body)?,
         ServerboundSwing::ID => validate::<ServerboundSwing>(body)?,
         ServerboundKeepAlive::ID => validate::<ServerboundKeepAlive>(body)?,
         ServerboundClientTickEnd::ID => validate::<ServerboundClientTickEnd>(body)?,
@@ -431,8 +440,12 @@ fn validate_chat(message: &str) -> Result<(), String> {
     if chars > 256 {
         return Err(format!("chat too long: {chars} chars"));
     }
+    validate_text_characters(message)
+}
+
+fn validate_text_characters(message: &str) -> Result<(), String> {
     if message.chars().any(|c| c.is_control() && c != '\t') {
-        return Err("chat contains control characters".to_owned());
+        return Err("text contains control characters".to_owned());
     }
     Ok(())
 }

@@ -106,7 +106,6 @@ async fn queued_heartbeat_then_dirty_jump_is_fifo_at_the_play_writer() {
     let (_, writer) = server_connection.into_play_halves();
     let writer_task = tokio::spawn(play_writer(
         writer,
-        Arc::clone(&server.tick_stats),
         Arc::clone(&server.net_counters),
         Arc::clone(&server.connections),
         id,
@@ -114,6 +113,7 @@ async fn queued_heartbeat_then_dirty_jump_is_fifo_at_the_play_writer() {
             reliable: reliable_rx,
             world: world_rx,
             dh: mpsc::channel(1).1,
+            keepalive: mpsc::channel(1).1,
         },
     ));
     let mut client = crate::connection::Connection::new(client_socket);

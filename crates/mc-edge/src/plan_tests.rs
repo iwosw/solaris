@@ -52,6 +52,35 @@ fn body_of(packet: &PlannedPacket) -> bytes::Bytes {
 }
 
 #[test]
+fn authenticated_roster_replaces_a_provisional_player_object_once() {
+    let mut viewer = viewer_at(1, [8.0, 64.0, 8.0]);
+    let entity = EntityId(2);
+    viewer
+        .tracked_entities
+        .insert(entity, TrackedEntity::default());
+    let roster = PlayerChange::Roster {
+        players: vec![mc_core::dimensions::RosterPlayer {
+            connection: ConnectionId(2),
+            entity,
+            uuid: uuid::Uuid::from_u128(2),
+            name: "Bob".into(),
+            game_mode: 0,
+        }]
+        .into(),
+        removed: Arc::from([]),
+    };
+    let packets = plan_player_changes(std::slice::from_ref(&roster), &mut viewer);
+    assert!(packets.iter().any(|packet| packet.id == RemoveEntities::ID));
+    assert!(!viewer.tracked_entities.contains_key(&entity));
+    viewer
+        .tracked_entities
+        .insert(entity, TrackedEntity::default());
+    let packets = plan_player_changes(&[roster], &mut viewer);
+    assert!(!packets.iter().any(|packet| packet.id == RemoveEntities::ID));
+    assert!(viewer.tracked_entities.contains_key(&entity));
+}
+
+#[test]
 fn player_air_supply_is_reliable_own_metadata_without_world_credit() {
     let mut viewer = viewer_at(1, [8.0, 64.0, 8.0]);
     viewer.entity_id = EntityId(3174);

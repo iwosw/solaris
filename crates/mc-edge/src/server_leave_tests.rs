@@ -118,3 +118,95 @@ async fn client_dying_during_join_burst_leaves_core() {
     core.shutdown();
     pump.abort();
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn cancellation_while_waiting_for_join_retires_native_player() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Arc::new(server(dir.path()));
+    let core = Arc::clone(&server.hub);
+    let mut ticks = core.subscribe();
+    // Deliberately no pump: native Join commits, but its notification cannot
+    // reach the edge's waiter before cancellation.
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let connection_server = Arc::clone(&server);
+    let accepted = tokio::spawn(async move {
+        let (socket, _) = listener.accept().await.unwrap();
+        handle_connection(socket, connection_server).await
+    });
+    let mut client = Client::connect(address).await.unwrap();
+    let login = client.drive_login(address, "WaitVictim").await.unwrap();
+    client.drive_configuration().await.unwrap();
+    wait_snapshot(&mut ticks, Duration::from_secs(60), |snapshot| {
+        snapshot.entities.iter().any(|row| row.uuid == login.uuid)
+    })
+    .await;
+    accepted.abort();
+    assert!(accepted.await.unwrap_err().is_cancelled());
+    wait_snapshot(&mut ticks, Duration::from_secs(60), |snapshot| {
+        !snapshot.entities.iter().any(|row| row.uuid == login.uuid)
+    })
+    .await;
+    assert!(server.connections.inner.lock().active.is_empty());
+    core.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn pre_play_deadline_is_absolute_across_repeated_configuration_packets() {
+    use mc_protocol::packets::configuration::{
+        ClientboundKnownPacks, ServerboundClientInformation,
+    };
+    use mc_protocol::packets::{ChatVisibility, ClientInformation, MainHand, ParticleStatus};
+    let dir = tempfile::tempdir().unwrap();
+    let server = Arc::new(server(dir.path()));
+    let core = Arc::clone(&server.hub);
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let accepted = tokio::spawn(async move {
+        let (socket, _) = listener.accept().await.unwrap();
+        handle_connection(socket, server).await
+    });
+    let mut client = Client::connect(address).await.unwrap();
+    client.drive_login(address, "Deadline").await.unwrap();
+    loop {
+        if client.read_frame().await.unwrap().id == ClientboundKnownPacks::ID {
+            break;
+        }
+    }
+    let packet = ServerboundClientInformation {
+        information: ClientInformation {
+            language: "en_us".into(),
+            view_distance: 2,
+            chat_visibility: ChatVisibility::Full,
+            chat_colors: true,
+            model_customisation: 0,
+            main_hand: MainHand::Right,
+            text_filtering_enabled: false,
+            allows_listing: true,
+            particle_status: ParticleStatus::All,
+        },
+    };
+    let mut repeated = tokio::time::interval(Duration::from_secs(8));
+    let mut accepted = accepted;
+    let result = tokio::time::timeout(Duration::from_secs(55), async {
+        loop {
+            tokio::select! {
+                result = &mut accepted => break result.unwrap(),
+                _ = repeated.tick() => {
+                    if client.write_packet(&packet).await.is_err() {
+                        break accepted.await.unwrap();
+                    }
+                }
+            }
+        }
+    })
+    .await
+    .expect("absolute pre-play timeout must terminate repeated valid packets");
+    assert!(
+        result
+            .unwrap_err()
+            .to_string()
+            .contains("total pre-play deadline")
+    );
+    core.shutdown();
+}

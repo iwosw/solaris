@@ -217,7 +217,7 @@ pub(crate) fn frame(channel: Identifier, payload: Vec<u8>) -> anyhow::Result<byt
 /// Per-connection LOD state on the Play read loop.
 pub(crate) struct LodConnection {
     inflight: Arc<AtomicUsize>,
-    /// Last position the client reported (x, z); tiles are served around it.
+    /// Last committed native position (x, z); tiles are served around it.
     anchor: [f64; 2],
 }
 
@@ -240,6 +240,9 @@ impl LodConnection {
         connection: mc_core::boundary::ConnectionId,
         payload: &[u8],
     ) -> anyhow::Result<()> {
+        if server.hub.session_locked(connection) {
+            return Ok(());
+        }
         let Some(service) = server.lod.as_ref() else {
             return Ok(());
         };
@@ -275,6 +278,9 @@ impl LodConnection {
                     Ok(Err(error)) => return tracing::warn!(%error, "lod tile failed"),
                     Err(error) => return tracing::warn!(%error, "lod tile task failed"),
                 };
+                if server.hub.session_locked(connection) {
+                    return;
+                }
                 let Some(service) = server.lod.as_ref() else {
                     return;
                 };

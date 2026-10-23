@@ -461,7 +461,7 @@ impl EdgeServer {
         if let Some(sender) = sender
             && sender.try_send(frame.freeze()).is_err()
         {
-            self.connections.remove(id);
+            self.connections.retire(id);
             anyhow::bail!("reliable command queue full");
         }
         Ok(())
@@ -1129,6 +1129,9 @@ pub struct ConnectionRegistry {
 #[derive(Default)]
 struct RegistryInner {
     handles: HashMap<ConnectionId, ConnectionHandles>,
+    /// Admitted Login sessions, including Configuration and queued retirement.
+    admitted: std::collections::HashSet<ConnectionId>,
+    active: std::collections::HashSet<ConnectionId>,
     names: HashMap<ConnectionId, String>,
     view_distances: HashMap<ConnectionId, i32>,
     /// Client locale last admitted to the core (`ClientInformation.language`);
@@ -1162,7 +1165,23 @@ impl ConnectionRegistry {
 
     /// Allocate the next connection id.
     pub fn alloc_id(&self) -> ConnectionId {
-        ConnectionId(self.next_id.fetch_add(1, Ordering::Relaxed))
+        let id = ConnectionId(self.next_id.fetch_add(1, Ordering::Relaxed));
+        self.inner.lock().active.insert(id);
+        id
+    }
+
+    fn admit(
+        &self,
+        id: ConnectionId,
+        max: usize,
+        policy: impl FnOnce(bool) -> Option<serde_json::Value>,
+    ) -> Option<serde_json::Value> {
+        let mut inner = self.inner.lock();
+        if let Some(reason) = policy(inner.admitted.len() >= max) {
+            return Some(reason);
+        }
+        inner.admitted.insert(id);
+        None
     }
 
     /// Register a connection's queue handles and take the reliable changes the
@@ -1221,6 +1240,9 @@ impl ConnectionRegistry {
     fn stash_join(&self, id: ConnectionId, joined: JoinedSpawn) {
         let senders = {
             let mut inner = self.inner.lock();
+            if !inner.active.contains(&id) {
+                return;
+            }
             inner.pending_joins.insert(id, joined);
             inner.join_waiters.remove(&id).unwrap_or_default()
         };
@@ -1262,6 +1284,10 @@ impl ConnectionRegistry {
             if let Some(handles) = inner.handles.get(&id) {
                 return Some(handles.clone());
             }
+            if !inner.active.contains(&id) {
+                changes.clear();
+                return None;
+            }
             inner
                 .pending_reliable
                 .entry(id)
@@ -1277,7 +1303,10 @@ impl ConnectionRegistry {
     /// Stash a core-ordered disconnect reason for a connection. The play
     /// loop takes it after flushing the kick packet and logs peer+reason.
     pub fn stash_disconnect_reason(&self, id: ConnectionId, reason: String) {
-        self.inner.lock().disconnect_reasons.insert(id, reason);
+        let mut inner = self.inner.lock();
+        if inner.active.contains(&id) {
+            inner.disconnect_reasons.insert(id, reason);
+        }
     }
 
     /// Take a stashed core-ordered disconnect reason, if the pump routed one.
@@ -1305,9 +1334,15 @@ impl ConnectionRegistry {
     /// waiters (their receivers fail closed), and the stashed disconnect
     /// reason.
     pub fn remove(&self, id: ConnectionId) {
+        self.retire(id);
+        self.inner.lock().admitted.remove(&id);
+    }
+
+    fn retire(&self, id: ConnectionId) {
         crate::vanilla_items::unmark(id);
         let mut inner = self.inner.lock();
         inner.handles.remove(&id);
+        inner.active.remove(&id);
         if inner.names.remove(&id).is_some() {
             inner.roster_dirty = true;
         }
@@ -1610,23 +1645,30 @@ fn accept_failure(error: &std::io::Error, open_sessions: usize) -> AcceptFailure
 
 /// Per-connection pipeline. Status connections return after the ping;
 /// Play connections run until disconnect or overflow.
-/// After the core answered `Joined` for a connection, every exit path must
-/// retire that player. A socket that dies during the initial burst otherwise
-/// leaves an invisible core player behind (ordinary multiplayer: ghost player,
-/// slot leak, and the empty-server pause can never re-arm). The guard also
-/// covers the normal play-loop exit.
+/// The guard begins before admission. A submitted Join always has a retirement
+/// owner, including cancellation while waiting for Joined.
 struct JoinedConnectionCleanup {
     server: Arc<EdgeServer>,
     id: ConnectionId,
+    join_submitted: bool,
 }
 
 impl Drop for JoinedConnectionCleanup {
     fn drop(&mut self) {
-        let _ = self.server.hub.submit(PlayerInput::Leave {
-            connection: self.id,
-        });
-        self.server.connections.remove(self.id);
         self.server.admin.remove(self.id);
+        self.server.connections.retire(self.id);
+        if self.join_submitted {
+            let server = Arc::clone(&self.server);
+            let id = self.id;
+            // Keep capacity reserved while backpressured; disconnected sessions
+            // cannot create an unbounded detached cleanup backlog.
+            tokio::spawn(async move {
+                server.hub.leave(id).await;
+                server.connections.remove(id);
+            });
+        } else {
+            self.server.connections.remove(self.id);
+        }
     }
 }
 
@@ -1636,89 +1678,113 @@ async fn handle_connection(stream: TcpStream, server: Arc<EdgeServer>) -> anyhow
         .map(|a| a.to_string())
         .unwrap_or_else(|_| "<unknown>".to_owned());
     let id = server.connections.alloc_id();
+    let mut joined_cleanup = JoinedConnectionCleanup {
+        server: Arc::clone(&server),
+        id,
+        join_submitted: false,
+    };
     let mut conn = crate::connection::Connection::new(stream);
-    // --- Handshake: route to status or login. Every `?` below logs the
-    // --- peer + stage + reason first: a silent TCP close is undebuggable.
-    let Some(handshake) =
-        (match crate::handshake::read_handshake(&mut conn, server.cfg.server.accepts_transfers)
-            .await
+    let pre_play = async {
+        // --- Handshake: route to status or login. Every `?` below logs the
+        // --- peer + stage + reason first: a silent TCP close is undebuggable.
+        let Some(handshake) = (match crate::handshake::read_handshake(
+            &mut conn,
+            server.cfg.server.accepts_transfers,
+        )
+        .await
         {
             Ok(next) => next,
             Err(error) => {
                 warn!(%peer, connection = id.0, stage = "handshake", %error, "connection closed");
                 return Err(error);
             }
-        })
-    else {
-        warn!(%peer, connection = id.0, stage = "handshake", "handshake refused (disconnect packet sent); connection closed");
-        return Ok(());
-    };
-    let next_state = handshake.next;
-    if next_state == crate::handshake::NextState::Status {
-        let motd = server.cfg.server.motd.clone();
-        let max = server.cfg.server.max_players;
-        let online = server.connections.len();
-        if let Err(error) = crate::status::handle_status(&mut conn, &motd, max, online).await {
-            warn!(%peer, connection = id.0, stage = "status", %error, "connection closed");
-            return Err(error);
-        }
-        return Ok(());
-    }
-
-    // --- Login (offline, or online verification when configured). ---
-    let peer_ip = stream_peer_ip(&peer);
-    let outcome = match crate::login::handle_login_admitted(
-        &mut conn,
-        &crate::login::LoginOpts {
-            online_mode: server.cfg.auth.online_mode,
-            compression_threshold: crate::login::DEFAULT_COMPRESSION_THRESHOLD,
-            velocity: server.velocity.clone(),
-        },
-        server.online_authentication.as_ref(),
-        peer_ip,
-        |uuid, ip| {
-            if *server.stop.borrow() {
-                return Some(
-                    serde_json::json!({"translate":"multiplayer.disconnect.server_shutdown"}),
-                );
+        }) else {
+            warn!(%peer, connection = id.0, stage = "handshake", "handshake refused (disconnect packet sent); connection closed");
+            return Ok(None);
+        };
+        let next_state = handshake.next;
+        if next_state == crate::handshake::NextState::Status {
+            let motd = server.cfg.server.motd.clone();
+            let max = server.cfg.server.max_players;
+            let online = server.connections.len();
+            if let Err(error) = crate::status::handle_status(&mut conn, &motd, max, online).await {
+                warn!(%peer, connection = id.0, stage = "status", %error, "connection closed");
+                return Err(error);
             }
-            server.admin.admission(
-                uuid,
-                ip,
-                server.connections.len() >= server.cfg.server.max_players as usize,
-            )
-        },
-    )
-    .await
-    {
-        Ok(outcome) => outcome,
-        Err(error) => {
-            warn!(%peer, connection = id.0, stage = "login", %error, "connection closed");
-            return Err(error);
+            return Ok(None);
         }
+
+        // --- Login (offline, or online verification when configured). ---
+        let peer_ip = stream_peer_ip(&peer);
+        let outcome = match crate::login::handle_login_admitted(
+            &mut conn,
+            &crate::login::LoginOpts {
+                online_mode: server.cfg.auth.online_mode,
+                compression_threshold: crate::login::DEFAULT_COMPRESSION_THRESHOLD,
+                velocity: server.velocity.clone(),
+            },
+            server.online_authentication.as_ref(),
+            peer_ip,
+            |uuid, ip| {
+                if *server.stop.borrow() {
+                    return Some(
+                        serde_json::json!({"translate":"multiplayer.disconnect.server_shutdown"}),
+                    );
+                }
+                server
+                    .connections
+                    .admit(id, server.cfg.server.max_players as usize, |full| {
+                        server.admin.admission(uuid, ip, full)
+                    })
+            },
+        )
+        .await
+        {
+            Ok(outcome) => outcome,
+            Err(error) => {
+                warn!(%peer, connection = id.0, stage = "login", %error, "connection closed");
+                return Err(error);
+            }
+        };
+        let Some(outcome) = outcome else {
+            warn!(%peer, connection = id.0, stage = "login", "login rejected (disconnect packet sent); connection closed");
+            return Ok(None);
+        };
+
+        // --- Configuration (registries, tags, finish). ---
+        let config_outcome = match crate::configuration::handle_configuration(
+            &mut conn,
+            &server.data,
+            &server.tags,
+            server.loader_manifest.as_ref(),
+            server.loader_required,
+            &server.cfg.resource_pack,
+        )
+        .await
+        {
+            Ok(outcome) => outcome,
+            Err(error) => {
+                warn!(%peer, connection = id.0, stage = "configuration", name = %outcome.name, %error, "connection closed");
+                return Err(error);
+            }
+        };
+        Ok(Some((outcome, config_outcome)))
     };
-    let Some(outcome) = outcome else {
-        warn!(%peer, connection = id.0, stage = "login", "login rejected (disconnect packet sent); connection closed");
+    let Some((outcome, config_outcome)) =
+        tokio::time::timeout(crate::connection::PRE_PLAY_TOTAL_TIMEOUT, pre_play)
+            .await
+            .map_err(|_| anyhow::anyhow!("total pre-play deadline exceeded"))??
+    else {
         return Ok(());
     };
-
-    // --- Configuration (registries, tags, finish). ---
-    let config_outcome = match crate::configuration::handle_configuration(
-        &mut conn,
-        &server.data,
-        &server.tags,
-        server.loader_manifest.as_ref(),
-        server.loader_required,
-        &server.cfg.resource_pack,
-    )
-    .await
-    {
-        Ok(outcome) => outcome,
-        Err(error) => {
-            warn!(%peer, connection = id.0, stage = "configuration", name = %outcome.name, %error, "connection closed");
-            return Err(error);
-        }
-    };
+    // Access-list changes during Configuration revoke admission before Join.
+    if let Some(reason) = server.admin.admission(
+        outcome.uuid,
+        outcome.remote_address.or(stream_peer_ip(&peer)),
+        false,
+    ) {
+        anyhow::bail!("admission revoked during Configuration: {reason}");
+    }
 
     // The radius and locale precede Join on the reliable queue: the first
     // residency reconciliation never expands this client to the server-wide
@@ -1747,6 +1813,7 @@ async fn handle_connection(stream: TcpStream, server: Arc<EdgeServer>) -> anyhow
         let mut sheds = 0u32;
         loop {
             if server.hub.submit(input.clone()) {
+                joined_cleanup.join_submitted = true;
                 break;
             }
             sheds += 1;
@@ -1772,15 +1839,8 @@ async fn handle_connection(stream: TcpStream, server: Arc<EdgeServer>) -> anyhow
         Ok(joined) => joined,
         Err(error) => {
             warn!(%peer, connection = id.0, stage = "join-wait", name = %outcome.name, %error, "connection closed");
-            server.connections.remove(id);
             return Err(error);
         }
-    };
-    // The core has this connection as a player from now on: every later
-    // return (including a dead socket mid-burst) must submit Leave.
-    let joined_cleanup = JoinedConnectionCleanup {
-        server: Arc::clone(&server),
-        id,
     };
 
     if config_outcome.loader_session.is_none() {
@@ -1819,7 +1879,11 @@ async fn handle_connection(stream: TcpStream, server: Arc<EdgeServer>) -> anyhow
         simulation_distance,
         game_mode,
         recipes: &server.recipes,
-        op_level: server.admin.level(outcome.uuid),
+        op_level: if server.hub.session_locked(id) {
+            0
+        } else {
+            server.admin.level(outcome.uuid)
+        },
         plugin_commands: server.hub.plugin_commands(),
     })
     .await
@@ -1879,7 +1943,7 @@ async fn handle_connection(stream: TcpStream, server: Arc<EdgeServer>) -> anyhow
         }
     }
     server.connections.set_name(id, outcome.name.clone());
-    if let Some(ip) = outcome.remote_address.or(peer_ip) {
+    if let Some(ip) = outcome.remote_address.or(stream_peer_ip(&peer)) {
         server
             .admin
             .register(id, outcome.uuid, outcome.name.clone(), ip);
@@ -1937,9 +2001,9 @@ async fn handle_connection(stream: TcpStream, server: Arc<EdgeServer>) -> anyhow
     let mut sheds = 0u32;
     let mut packet_limiter = PacketLimiter::new(&server.cfg.anti_cheat);
     let (mut reader, writer) = conn.into_play_halves();
+    let (keepalive_tx, keepalive_rx) = mpsc::channel(1);
     let mut writer_task = tokio::spawn(play_writer(
         writer,
-        Arc::clone(&server.tick_stats),
         Arc::clone(&server.net_counters),
         Arc::clone(&server.connections),
         id,
@@ -1947,6 +2011,7 @@ async fn handle_connection(stream: TcpStream, server: Arc<EdgeServer>) -> anyhow
             reliable: reliable_rx,
             world: world_rx,
             dh: dh_rx,
+            keepalive: keepalive_rx,
         },
     ));
     let mut writer_finished = false;
@@ -1978,6 +2043,18 @@ async fn handle_connection(stream: TcpStream, server: Arc<EdgeServer>) -> anyhow
                     if let Err(error) = server.kick(id, serde_json::json!({"text":"Too many packets of this type"})) {
                         warn!(%peer, connection = id.0, %error, "rate-limit kick undeliverable; connection closed");
                         break 'play_loop "rate-limit-kick";
+                    }
+                    continue;
+                }
+                if frame.id == mc_protocol::packets::play::ServerboundKeepAlive::ID {
+                    let mut body = &frame.body[..];
+                    match mc_protocol::packets::play::ServerboundKeepAlive::decode(&mut body) {
+                        Ok(reply) if body.is_empty() => {
+                            if keepalive_tx.try_send(reply.id).is_err() {
+                                break 'play_loop "keepalive-reply-overflow";
+                            }
+                        }
+                        _ => break 'play_loop "keepalive-malformed",
                     }
                     continue;
                 }
@@ -2014,10 +2091,20 @@ async fn handle_connection(stream: TcpStream, server: Arc<EdgeServer>) -> anyhow
                     dh.receive(payload);
                     continue;
                 }
-                if let Some(lod) = &lod
+                if let Some(lod) = &mut lod
                     && frame.id == mc_protocol::packets::play::ServerboundCustomPayload::ID
                     && let Some(payload) = crate::lod::request_payload(&frame.body)
                 {
+                    if server.hub.session_locked(id) {
+                        continue;
+                    }
+                    // Native LOD currently serves the root world only. Its
+                    // radius follows committed state, never a rejected Move.
+                    let latest = latest_output(&server);
+                    let Some(player) = latest.snapshot.entities.get(entity) else {
+                        continue;
+                    };
+                    lod.moved(player.position);
                     if let Err(error) = lod.request(&server, id, &payload) {
                         warn!(%peer, connection = id.0, stage = "lod-request", name = %outcome.name, %error, "connection closed");
                         break 'play_loop "lod-request-decode";
@@ -2065,13 +2152,6 @@ async fn handle_connection(stream: TcpStream, server: Arc<EdgeServer>) -> anyhow
                 {
                     warn!(%peer, connection = id.0, stage = "play-decode", name = %outcome.name, frame = frame.id, reason = %reason, "connection closed");
                     break 'play_loop "decode-error";
-                }
-                if let Some(lod) = &mut lod {
-                    for input in &inputs {
-                        if let PlayerInput::Move { position, .. } = input {
-                            lod.moved(*position);
-                        }
-                    }
                 }
                 if inputs.iter().any(|input| matches!(input, PlayerInput::Respawn { .. }))
                     && let Some(dh) = &dh
@@ -2156,6 +2236,7 @@ struct PlayReceivers {
     reliable: mpsc::Receiver<bytes::Bytes>,
     world: mpsc::Receiver<bytes::Bytes>,
     dh: mpsc::Receiver<crate::dh::Outbound>,
+    keepalive: mpsc::Receiver<i64>,
 }
 
 /// Play writer task: keepalive first, then reliable before world, so a
@@ -2165,7 +2246,6 @@ struct PlayReceivers {
 /// Returns the exit stage and, for a core-ordered kick, its reason.
 async fn play_writer(
     mut writer: crate::connection::PlayWriter,
-    tick_stats: Arc<TickStats>,
     net_counters: Arc<NetCounters>,
     connections: Arc<ConnectionRegistry>,
     id: ConnectionId,
@@ -2175,6 +2255,7 @@ async fn play_writer(
         reliable: mut reliable_rx,
         world: mut world_rx,
         dh: mut dh_rx,
+        keepalive: mut keepalive_rx,
     } = receivers;
     // Vanilla Play KeepAlive: the server pings every 15 s and the client
     // kicks after ~30 s of silence. Without this a parked-but-live
@@ -2183,14 +2264,33 @@ async fn play_writer(
     keepalive.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     // Skip the immediate first tick: the join burst just spoke.
     keepalive.reset();
+    let mut challenge = 0_i64;
+    let mut pending = None;
+    let mut reply_deadline = tokio::time::Instant::now();
     let mut batch: Vec<u8> = Vec::with_capacity(WRITE_BATCH_BYTES);
     loop {
         let mut reliable = false;
         tokio::select! {
             biased;
+            _ = tokio::time::sleep_until(reply_deadline), if pending.is_some() => {
+                return ("keepalive-timeout", None);
+            }
+            reply = keepalive_rx.recv(), if !keepalive_rx.is_closed() => {
+                if reply.is_none() || reply != pending {
+                    return ("keepalive-invalid-reply", None);
+                }
+                pending = None;
+                continue;
+            }
             _ = keepalive.tick() => {
+                if pending.is_some() {
+                    continue;
+                }
+                challenge = challenge.wrapping_add(1);
+                pending = Some(challenge);
+                reply_deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(30);
                 let packet = mc_protocol::packets::play::ClientboundKeepAlive {
-                    id: tick_stats.tick() as i64,
+                    id: challenge,
                 };
                 if let Err(error) = writer.send_packet(&packet).await {
                     warn!(%error, connection = id.0, "keepalive write failed");
@@ -2496,9 +2596,33 @@ fn route_outbox(
         let Some(viewer) = viewers.get_mut(&connection) else {
             continue;
         };
+        // The authenticated roster is also the edge's unlock notification.
+        // Restore the private operator command tree once, not on every tick.
+        if !viewer.player_profiles.contains_key(&viewer.entity_id)
+            && let Some(uuid) = changes.iter().find_map(|change| match change {
+                mc_core::boundary::PlayerChange::Roster { players, .. } => players
+                    .iter()
+                    .find(|player| player.connection == connection)
+                    .map(|player| player.uuid),
+                _ => None,
+            })
+            && server
+                .send(
+                    connection,
+                    &crate::command_tree::tree(
+                        server.admin.level(uuid),
+                        server.hub.plugin_commands(),
+                    ),
+                )
+                .is_err()
+        {
+            connections.remove(&connection);
+            viewers.remove(&connection);
+            continue;
+        }
         for planned in crate::plan::plan_player_changes(&changes, viewer) {
             if handles.reliable_tx.try_send(planned.data).is_err() {
-                server.connections.remove(connection);
+                server.connections.retire(connection);
                 connections.remove(&connection);
                 server
                     .net_counters
@@ -2554,7 +2678,7 @@ async fn publish_and_route(
     });
     // Reliable overflow takes precedence: disconnect victims first.
     for victim in crate::fanout::reliable_overflow(&packets) {
-        server.connections.remove(victim);
+        server.connections.retire(victim);
         connections.remove(&victim);
         server
             .net_counters
@@ -2571,7 +2695,7 @@ async fn publish_and_route(
                 // In-order, never dropped: a full reliable queue
                 // disconnects the connection.
                 if handles.reliable_tx.try_send(packet.data).is_err() {
-                    server.connections.remove(packet.connection);
+                    server.connections.retire(packet.connection);
                     connections.remove(&packet.connection);
                     server
                         .net_counters
@@ -3196,3 +3320,7 @@ mod leave_tests;
 #[cfg(test)]
 #[path = "server_protocol_admission_tests.rs"]
 mod protocol_admission_tests;
+
+#[cfg(test)]
+#[path = "server_session_security_tests.rs"]
+mod session_security_tests;

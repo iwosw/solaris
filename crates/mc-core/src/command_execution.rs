@@ -1105,12 +1105,82 @@ pub(crate) fn execute(
                     .push(crate::dimensions::globals::Broadcast::Chat(content));
             }
         }
+        Command::TeamMessage { message, selectors } => {
+            let sender = state.connections.name_of(executor).unwrap_or("").to_owned();
+            let Some(team) = state
+                .scoreboard
+                .teams
+                .values()
+                .find(|team| team.members.contains(&sender))
+            else {
+                feedback(
+                    state,
+                    connection,
+                    "commands.teammsg.failed.noteam",
+                    Vec::new(),
+                );
+                return;
+            };
+            let members = state.dimension_globals.active.then(|| team.members.clone());
+            let display_name = team.display_name.clone();
+            let recipients: Vec<_> = state
+                .connections
+                .all_connections()
+                .filter(|recipient| !state.session_locked(*recipient))
+                .filter(|recipient| {
+                    state
+                        .connections
+                        .entity_of(*recipient)
+                        .and_then(|id| state.connections.name_of(id))
+                        .is_some_and(|name| team.members.contains(name))
+                })
+                .collect();
+            let message = if *selectors {
+                expand_message(state, executor, message)
+            } else {
+                message.clone()
+            };
+            for recipient in recipients {
+                feedback(
+                    state,
+                    recipient,
+                    if recipient == connection {
+                        "chat.type.team.sent"
+                    } else {
+                        "chat.type.team.text"
+                    },
+                    vec![
+                        text(&display_name),
+                        entity_name(state, executor),
+                        text(&message),
+                    ],
+                );
+            }
+            if let Some(members) = members {
+                state.dimension_globals.broadcasts.push(
+                    crate::dimensions::globals::Broadcast::TeamChat {
+                        members,
+                        content: translated(
+                            "chat.type.team.text",
+                            vec![
+                                text(display_name),
+                                entity_name(state, executor),
+                                text(message),
+                            ],
+                        ),
+                    },
+                );
+            }
+        }
         Command::Message {
             target,
             message,
             selectors,
         } => {
-            let targets = player_targets(state, executor, target);
+            let targets: Vec<_> = player_targets(state, executor, target)
+                .into_iter()
+                .filter(|target| !state.entity_session_locked(*target))
+                .collect();
             if targets.is_empty() {
                 feedback(
                     state,

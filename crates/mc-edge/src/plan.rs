@@ -397,6 +397,9 @@ pub struct ViewerState {
     border_baseline: Option<mc_core::command_border::Border>,
     /// Includes the self appearance baseline, but self is never spawned/removed.
     pub(crate) tracked_entities: HashMap<EntityId, TrackedEntity>,
+    /// Player-only identity baselines, changed by reliable roster events, not
+    /// per-entity tick work. Authentication may replace a provisional UUID.
+    pub(crate) player_profiles: HashMap<EntityId, uuid::Uuid>,
     /// Per entity-plan stamp, not snapshot tick: repeated snapshots are normal.
     plan_stamp: u64,
     /// Last evaluated snapshot tick, for reconciling a due phase skipped by the pump.
@@ -453,6 +456,7 @@ impl ViewerState {
             boss_baseline: crate::boss_bars::BossBaseline::default(),
             border_baseline: None,
             tracked_entities: HashMap::default(),
+            player_profiles: HashMap::default(),
             plan_stamp: 0,
             entity_tick: None,
             entity_interest: entity_interest::EntityInterest::default(),

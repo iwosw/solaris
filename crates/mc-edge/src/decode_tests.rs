@@ -59,6 +59,84 @@ fn edit_book_wire_reaches_native_input_and_rejects_trailing_bytes() {
 }
 
 #[test]
+fn signed_command_metadata_is_bounded_before_allocation() {
+    let mut wire = Vec::new();
+    wire.write_string("me hello", 32767).unwrap();
+    wire.write_i64(0);
+    wire.write_i64(0);
+    wire.write_varint(9);
+    assert!(decode(0x08, wire.clone(), &mut state()).is_err());
+    wire.extend_from_slice(&[0; 9 * 257 + 5]);
+    assert!(decode(0x08, wire, &mut state()).is_err());
+}
+
+#[test]
+fn chat_sessions_are_bounded_untrusted_transport_not_gameplay() {
+    use mc_protocol::packets::play::ServerboundChatSessionUpdate;
+    let packet = ServerboundChatSessionUpdate {
+        session_id: uuid::Uuid::nil(),
+        expires_at_millis: 0,
+        public_key: vec![1; 512],
+        key_signature: vec![2; 4096],
+    };
+    assert!(
+        decode(
+            ServerboundChatSessionUpdate::ID,
+            body(&packet),
+            &mut state()
+        )
+        .unwrap()
+        .is_empty()
+    );
+    let mut wire = Vec::new();
+    wire.write_uuid(uuid::Uuid::nil());
+    wire.write_i64(0);
+    wire.write_varint(513);
+    assert!(decode(0x0a, wire, &mut state()).is_err());
+}
+
+#[test]
+fn signed_message_commands_reach_the_same_authority_as_unsigned_commands() {
+    // Local 26.1.2 GameProtocols, ArgumentSignatures and LastSeenMessages.Update.
+    let mut wire = Vec::new();
+    wire.write_string("msg Bob hello", 32767).unwrap();
+    wire.write_i64(123);
+    wire.write_i64(456);
+    wire.write_varint(1);
+    wire.write_string("message", 16).unwrap();
+    wire.extend_from_slice(&[7; 256]);
+    wire.write_varint(0);
+    wire.extend_from_slice(&[0; 3]);
+    wire.write_i8(0);
+    assert_eq!(
+        decode(0x08, wire.clone(), &mut state()).unwrap(),
+        vec![PlayerInput::Command {
+            connection: conn(),
+            command: "msg Bob hello".into(),
+            permission_level: 0,
+        }]
+    );
+    wire.push(0);
+    assert!(decode(0x08, wire, &mut state()).is_err());
+}
+
+#[test]
+fn legal_long_commands_are_not_subject_to_chat_length_limit() {
+    let command = format!("tellraw @s {{\"text\":\"{}\"}}", "x".repeat(300));
+    let inputs = decode(
+        ServerboundChatCommand::ID,
+        body(&ServerboundChatCommand {
+            command: command.clone(),
+        }),
+        &mut state(),
+    )
+    .unwrap();
+    assert!(
+        matches!(&inputs[..], [PlayerInput::Command { command: text, .. }] if text == &command)
+    );
+}
+
+#[test]
 fn elytra_start_command_reaches_authoritative_core() {
     // Local 26.1.2 GameProtocols + ServerboundPlayerCommandPacket$Action:
     // packet 0x2A, entity 1, START_FALL_FLYING ordinal 6, data 0.

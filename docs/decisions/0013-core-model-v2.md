@@ -45,6 +45,26 @@ XP once before removing custody. Furnace recipe-book placement uses the ordinary
 shared-container inventory transaction and reserved-item floors, never an edge
 inventory or a separate ingredient store.
 
+## Session admission and unverified identities (2026-10-23)
+
+Edge admission reserves capacity across Login, Configuration, pending Join and
+queued Leave. Its connection guard owns retirement before native submission.
+Leave uses the existing bounded native FIFO with asynchronous backpressure,
+never a second gameplay owner or a best-effort dropped lifecycle message.
+Retired edges discard subsequent reliable output instead of reopening a stash.
+
+When plugin login is required, native Join creates only a transient empty
+presentation with a connection-scoped UUID. The claimed identity remains in
+the connection context for the auth plugin; its saved player record stays in
+native offline custody. Native unlock selects one authenticated claimant,
+restores saved state and cursor/grid custody, and publishes the resulting
+position, inventory, vitals and roster. Locked presentations never enter the
+player WAL/checkpoint image and never overwrite an account on disconnect.
+The authenticated session exclusion is checked across dimensions at the plugin
+unlock boundary. Pending bodies cannot trigger redstone or dimension travel.
+These transitions remain tick-owned; edge liveness deadlines do not mutate
+native state directly.
+
 ## Mining and piston protection admission (2026-10-23)
 
 Survival digging is native tick-owned, transient player state: Start selects

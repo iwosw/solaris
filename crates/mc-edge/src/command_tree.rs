@@ -41,6 +41,8 @@ const ROOTS: &[(&str, u8)] = &[
     ("msg", 0),
     ("tell", 0),
     ("w", 0),
+    ("teammsg", 0),
+    ("tm", 0),
     ("settlement", 0),
     ("gamemode", 2),
     ("teleport", 2),
@@ -760,6 +762,10 @@ pub(crate) fn tree(op_level: u8, plugins: &[(String, u8)]) -> ClientboundCommand
         t.argument(targets, "message", Parser::Message, true);
         t.alias("tell", root);
         t.alias("w", root);
+    }
+    if let Some(root) = t.aliased_root("teammsg", false) {
+        t.argument(root, "message", Parser::Message, true);
+        t.alias("tm", root);
     }
     if let Some(root) = t.root("settlement", false) {
         settlement_tree(&mut t, root);
@@ -2012,7 +2018,7 @@ mod tests {
             if level < 2 {
                 assert_eq!(
                     roots,
-                    ["help", "list", "me", "msg", "tell", "w", "settlement"]
+                    ["help", "list", "me", "msg", "tell", "w", "teammsg", "tm", "settlement"]
                 );
             }
             for &index in &packet.nodes[0].children {
@@ -2020,7 +2026,7 @@ mod tests {
                 assert_eq!(
                     root.restricted,
                     level >= 2
-                        && !matches!(&root.kind, CommandNodeKind::Literal(name) if ["help", "list", "me", "msg", "tell", "w", "settlement"].contains(&name.as_str()))
+                        && !matches!(&root.kind, CommandNodeKind::Literal(name) if ["help", "list", "me", "msg", "tell", "w", "teammsg", "tm", "settlement"].contains(&name.as_str()))
                 );
             }
         }
@@ -2216,11 +2222,13 @@ mod tests {
     #[test]
     fn help_derives_smart_optional_and_alternative_usages_from_the_tree() {
         let public = help(None, 0, &[]).unwrap();
-        assert_eq!(public.len(), 7);
+        assert_eq!(public.len(), 9);
         assert!(public.contains(&"/help [<command>]".to_owned()));
         assert!(public.contains(&"/list [uuids]".to_owned()));
         assert!(public.contains(&"/msg <targets> <message>".to_owned()));
         assert!(public.contains(&"/tell -> msg".to_owned()));
+        assert!(public.contains(&"/teammsg <message>".to_owned()));
+        assert!(public.contains(&"/tm -> teammsg".to_owned()));
         assert!(public.iter().all(|line| !line.contains("gamemode")));
         assert_eq!(
             help(Some("give"), 2, &[]).unwrap(),

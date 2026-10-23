@@ -48,7 +48,79 @@ fn apply(state: &mut TickState, inputs: &[PlayerInput]) -> (Vec<Intent>, ChangeS
 }
 
 #[test]
-fn auth_gate_new_session_is_locked_and_leave_preserves_inventory() {
+fn auth_gate_competing_claimants_cannot_read_or_replace_saved_player() {
+    let (mut state, entity) = fixture(false);
+    let uuid = uuid::Uuid::from_u128(1);
+    state
+        .players
+        .get_mut(&entity)
+        .unwrap()
+        .vitals
+        .experience
+        .level = 37;
+    let record = crate::core::player_record_for(&state, entity, 1).unwrap();
+    apply(
+        &mut state,
+        &[PlayerInput::Leave {
+            connection: SESSION,
+        }],
+    );
+    state.require_plugin_login = true;
+    for connection in [SESSION, ConnectionId(2)] {
+        apply(
+            &mut state,
+            &[PlayerInput::Join {
+                connection,
+                uuid,
+                name: "AuthPlayer".into(),
+                permission_level: 4,
+            }],
+        );
+        let pending = state
+            .connections
+            .entity_of(connection)
+            .expect("both can authenticate");
+        let slot = state.entities.slot_of(pending).unwrap();
+        assert_ne!(state.entities.pos(slot), record.pos);
+        assert!(
+            state.players[&pending]
+                .inventory
+                .slots
+                .iter()
+                .all(mc_data::ItemStack::is_empty)
+        );
+        assert_eq!(state.players[&pending].vitals.experience.level, 0);
+        assert!(crate::core::player_record_for(&state, pending, 2).is_none());
+    }
+    assert_eq!(state.offline_players[&uuid].inventory, record.inventory);
+    unlock_session(&mut state, ConnectionId(2));
+    let winner = state.connections.entity_of(ConnectionId(2)).unwrap();
+    assert!(!state.session_locked(ConnectionId(2)));
+    assert_eq!(state.players[&winner].inventory.slots, record.inventory);
+    assert_eq!(state.players[&winner].vitals.experience.level, 37);
+    assert_eq!(
+        state.entities.pos(state.entities.slot_of(winner).unwrap()),
+        record.pos
+    );
+    unlock_session(&mut state, SESSION);
+    assert!(
+        state.session_locked(SESSION),
+        "an authenticated incumbent cannot be displaced"
+    );
+    apply(
+        &mut state,
+        &[PlayerInput::Leave {
+            connection: SESSION,
+        }],
+    );
+    assert!(
+        !state.offline_players.contains_key(&uuid),
+        "loser never overwrites winner"
+    );
+}
+
+#[test]
+fn auth_gate_new_session_is_locked_and_authenticated_leave_preserves_inventory() {
     let (mut state, entity) = fixture(true);
     assert!(state.session_locked(SESSION));
     let inventory = state.players[&entity].inventory.clone();
@@ -59,6 +131,7 @@ fn auth_gate_new_session_is_locked_and_leave_preserves_inventory() {
             whole_stack: true,
         }],
     );
+    unlock_session(&mut state, SESSION);
     apply(
         &mut state,
         &[PlayerInput::Leave {

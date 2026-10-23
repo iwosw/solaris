@@ -94,6 +94,7 @@ pub use chat_commands::{
     CommandSuggestionEntry, ServerboundChangeGameMode, ServerboundChat, ServerboundChatAck,
     ServerboundChatCommand, ServerboundChunkBatchReceived, ServerboundClientTickEnd,
     ServerboundCommandSuggestion, ServerboundEditBook, ServerboundPlayerLoaded,
+    ServerboundChatCommandSigned, ServerboundChatSessionUpdate,
     ServerboundSignUpdate,
 };
 pub use chunks::{

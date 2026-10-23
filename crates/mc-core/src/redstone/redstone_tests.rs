@@ -749,6 +749,35 @@ fn spectator_body_never_triggers_a_pressure_plate() {
 }
 
 #[test]
+fn locked_player_body_never_triggers_pressure_plates() {
+    let mut s = state();
+    let plate = place(&mut s, 5, 200, 5, "stone_pressure_plate", &[]);
+    let type_id = s
+        .registry
+        .entity_types
+        .id_of(&mc_data::Identifier::parse("minecraft:pig").unwrap())
+        .unwrap();
+    let id = s.spawn_mob(type_id, [5.5, 200.0, 5.5], 20.0);
+    let slot = s.entities.slot_of(id).unwrap();
+    let connection = crate::boundary::ConnectionId(9);
+    s.entities
+        .set_kind(slot, crate::entities::EntityKind::Player { connection });
+    s.players.insert(
+        id,
+        crate::player::PlayerState::new(connection, crate::commands::GameMode::Survival),
+    );
+    s.require_plugin_login = true;
+    s.locked_sessions.insert(connection);
+    wake(&mut s, plate);
+    advance(&mut s, 1);
+    assert_eq!(value(&s, plate, "powered"), "false");
+    s.locked_sessions.remove(&connection);
+    wake(&mut s, plate);
+    advance(&mut s, 1);
+    assert_eq!(value(&s, plate, "powered"), "true");
+}
+
+#[test]
 fn idle_controls_back_off_and_current_pass_census_detects_new_bodies() {
     let mut s = state();
     let wooden = place(&mut s, 2, 200, 2, "oak_button", &[]);

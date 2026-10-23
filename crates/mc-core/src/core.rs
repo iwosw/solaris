@@ -44,6 +44,10 @@ mod stop;
 #[path = "core_stop_tests.rs"]
 mod stop_tests;
 
+#[cfg(test)]
+#[path = "core_session_tests.rs"]
+mod session_tests;
+
 type OutboxBatch = Vec<(ConnectionId, Vec<PlayerChange>)>;
 
 /// Only edge consumers share this receiver; the tick owns its sender.
@@ -1131,6 +1135,17 @@ impl Core {
                 false
             }
         }
+    }
+
+    /// Retire a submitted Join without shedding its Leave on a full gameplay
+    /// queue. The edge retains its admission reservation until this completes.
+    /// A closed receiver means the authoritative owner has already stopped.
+    pub async fn leave(&self, connection: ConnectionId) {
+        let _ = self
+            .inner
+            .input_tx
+            .send(PlayerInput::Leave { connection })
+            .await;
     }
 
     /// Subscribe to tick outputs. Bounded broadcast; laggards see `Lagged`
@@ -2924,6 +2939,9 @@ fn player_record(
     tick: u64,
     include_statistics: bool,
 ) -> Option<crate::journal::ReplayPlayer> {
+    if state.entity_session_locked(id) {
+        return None;
+    }
     let slot = state.entities.slot_of_any(id)?;
     let player = state.players.get(&id)?;
     let rot = state.entities.rot(slot);

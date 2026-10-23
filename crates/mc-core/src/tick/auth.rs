@@ -61,15 +61,86 @@ pub(super) fn refuse_input(state: &mut TickState, input: &PlayerInput) -> bool {
     true
 }
 
-/// Release one live lock and finish deferred restored cursor/grid custody only
-/// after authentication. Unauthenticated disconnects never create overflow drops.
+/// Commit the first verified claim, then restore private saved state and finish
+/// cursor/grid custody. Locked presentations never replace durable player data.
 pub(crate) fn unlock_session(state: &mut TickState, connection: ConnectionId) {
-    if !state.require_plugin_login || !state.locked_sessions.remove(&connection) {
+    if !state.require_plugin_login
+        || !state.locked_sessions.contains(&connection)
+        || state
+            .disconnects
+            .iter()
+            .any(|(closing, _)| *closing == connection)
+    {
         return;
     }
     let Some(entity) = state.connections.entity_of(connection) else {
         return;
     };
+    let Some(uuid) = state.connections.uuid_of(connection) else {
+        return;
+    };
+    if state.connections.uuids.iter().any(|(other, claimed)| {
+        *other != connection && *claimed == uuid && !state.session_locked(*other)
+    }) {
+        state.push_player(
+            connection,
+            crate::boundary::PlayerChange::Disconnect {
+                reason: "UUID is already authenticated".into(),
+            },
+        );
+        state.disconnects.push((connection, state.tick));
+        return;
+    }
+    let Some(slot) = state.entities.slot_of_any(entity) else {
+        return;
+    };
+    state.locked_sessions.remove(&connection);
+    state.entities.set_uuid(slot, uuid);
+    let competing: Vec<_> = state
+        .connections
+        .uuids
+        .iter()
+        .filter_map(|(other, claimed)| (*other != connection && *claimed == uuid).then_some(*other))
+        .collect();
+    for other in competing {
+        state.push_player(
+            other,
+            crate::boundary::PlayerChange::Disconnect {
+                reason: "Another session authenticated this identity".into(),
+            },
+        );
+        state.disconnects.push((other, state.tick));
+    }
+    if let Some(record) = state.offline_players.remove(&uuid) {
+        let mut player = super::hydrate_player(connection, Some(&record));
+        player.inventory_menu.carried = record.carried;
+        player.inventory_menu.grid = record.grid;
+        player.inventory_menu.grid.resize(
+            player.inventory_menu.grid.len().max(4),
+            mc_data::ItemStack::EMPTY,
+        );
+        player.statistics.advance_tick(state.tick);
+        player
+            .statistics
+            .set_active(true, !player.vitals.is_dead(), false, false);
+        player.warden_warning.advance_tick(state.tick);
+        player.warden_warning.set_active(true);
+        state.players.insert(entity, player);
+        state.entities.set_pos(slot, record.pos);
+        state.entities.set_rot(slot, record.yaw, record.pitch);
+        state.entities.set_ground(slot, !record.fall_flying);
+        let (body, row) = state.entities.parts_mut(slot);
+        body.alive = record.health > 0.0;
+        body.height = if record.fall_flying { 0.6 } else { 1.8 };
+        row.health = record.health;
+        row.entity_life.portal = record.portal;
+        let appearance = std::sync::Arc::make_mut(&mut row.appearance);
+        appearance.health = record.health;
+        appearance.pose = if record.fall_flying { 1 } else { 0 };
+        appearance.shared_flags = if record.fall_flying { 0x80 } else { 0 };
+        crate::contact_hazards::ignite(state, entity, record.burn_ticks);
+        state.correct_position(connection, record.pos, record.yaw, record.pitch);
+    }
     let effects = {
         let rules = state.registry.item_rules();
         state.players.get_mut(&entity).map(|player| {
@@ -84,5 +155,33 @@ pub(crate) fn unlock_session(state: &mut TickState, connection: ConnectionId) {
         let mut changes = ChangeSet::default();
         apply_player_effects(state, connection, entity, effects, &mut changes);
         state.plugin_spawned.extend(changes.entities_spawned);
+    }
+    if let Some(player) = state.players.get(&entity) {
+        let burst = [
+            player.inventory_contents(),
+            player.health_change(),
+            player.air_change(),
+            player.experience_change(),
+            crate::boundary::PlayerChange::GameModeChanged {
+                game_mode: player.game_mode as u8,
+            },
+        ];
+        let dead = player.vitals.is_dead();
+        for change in burst {
+            state.push_player(connection, change);
+        }
+        if dead {
+            state.push_player(
+                connection,
+                crate::boundary::PlayerChange::Died {
+                    message: "You died".into(),
+                },
+            );
+        }
+    }
+    crate::effects::sync_join(state, entity);
+    crate::advancements::sync_join(state, entity);
+    if let Some(name) = state.connections.name_of(entity).map(str::to_owned) {
+        super::input::session::announce_player(state, "multiplayer.player.joined", &name, None);
     }
 }

@@ -49,6 +49,113 @@ impl Packet for ServerboundChatCommand {
     }
 }
 
+/// 26.1.2 `SERVERBOUND_CHAT_COMMAND_SIGNED` (game-SB index 8).
+/// Layout: local ServerboundChatCommandSignedPacket, ArgumentSignatures and
+/// LastSeenMessages.Update. Transport support does not imply signature trust.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ServerboundChatCommandSigned {
+    pub command: String,
+    pub timestamp_millis: i64,
+    pub salt: i64,
+    pub signatures: Vec<(String, [u8; 256])>,
+    pub last_seen_offset: i32,
+    pub last_seen_acknowledged: [u8; LAST_SEEN_FIXED_BITSET_BYTES],
+    pub last_seen_checksum: i8,
+}
+
+impl Packet for ServerboundChatCommandSigned {
+    const ID: i32 = 0x08;
+
+    fn encode<B: BufMut>(&self, buf: &mut B) -> Result<(), CodecError> {
+        if self.signatures.len() > 8 {
+            return Err(CodecError::StringTooLong {
+                len: self.signatures.len(),
+                max: 8,
+            });
+        }
+        buf.write_string(&self.command, MAX_COMMAND_LEN)?;
+        buf.write_i64(self.timestamp_millis);
+        buf.write_i64(self.salt);
+        buf.write_varint(self.signatures.len() as i32);
+        for (name, signature) in &self.signatures {
+            buf.write_string(name, 16)?;
+            buf.put_slice(signature);
+        }
+        buf.write_varint(self.last_seen_offset);
+        buf.put_slice(&self.last_seen_acknowledged);
+        buf.write_i8(self.last_seen_checksum);
+        Ok(())
+    }
+
+    fn decode<B: Buf>(buf: &mut B) -> Result<Self, CodecError> {
+        let command = buf.read_string(MAX_COMMAND_LEN)?;
+        let timestamp_millis = buf.read_i64()?;
+        let salt = buf.read_i64()?;
+        let signatures = read_bounded_vec(buf, 8, 257, |buf| {
+            let name = buf.read_string(16)?;
+            let mut signature = [0; 256];
+            for byte in &mut signature {
+                *byte = buf.read_u8()?;
+            }
+            Ok((name, signature))
+        })?;
+        let last_seen_offset = buf.read_varint()?;
+        let mut last_seen_acknowledged = [0; LAST_SEEN_FIXED_BITSET_BYTES];
+        for byte in &mut last_seen_acknowledged {
+            *byte = buf.read_u8()?;
+        }
+        Ok(Self {
+            command,
+            timestamp_millis,
+            salt,
+            signatures,
+            last_seen_offset,
+            last_seen_acknowledged,
+            last_seen_checksum: buf.read_i8()?,
+        })
+    }
+}
+
+/// Local 26.1.2 GameProtocols index 10; RemoteChatSession.Data and
+/// ProfilePublicKey.Data: UUID, expiry millis, DER key (512), certificate (4096).
+/// This is an untrusted transport value, not a verified identity.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ServerboundChatSessionUpdate {
+    pub session_id: Uuid,
+    pub expires_at_millis: i64,
+    pub public_key: Vec<u8>,
+    pub key_signature: Vec<u8>,
+}
+
+impl Packet for ServerboundChatSessionUpdate {
+    const ID: i32 = 0x0a;
+
+    fn encode<B: BufMut>(&self, buf: &mut B) -> Result<(), CodecError> {
+        for (len, max) in [
+            (self.public_key.len(), 512),
+            (self.key_signature.len(), 4096),
+        ] {
+            if len > max {
+                return Err(CodecError::StringTooLong { len, max });
+            }
+        }
+        buf.write_uuid(self.session_id);
+        buf.write_i64(self.expires_at_millis);
+        buf.write_byte_array(&self.public_key)?;
+        buf.write_byte_array(&self.key_signature)?;
+        Ok(())
+    }
+
+    fn decode<B: Buf>(buf: &mut B) -> Result<Self, CodecError> {
+        Ok(Self {
+            session_id: buf.read_uuid()?,
+            expires_at_millis: buf.read_i64()?,
+            public_key: buf.read_byte_array(512)?,
+            key_signature: buf.read_byte_array(4096)?,
+        })
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ServerboundChat {
     pub message: String,
