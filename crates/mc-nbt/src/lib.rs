@@ -366,6 +366,16 @@ fn budgeted_string_with_capacity(
     Ok(value)
 }
 
+fn compound_capacity(len: usize) -> usize {
+    if len == 0 {
+        0
+    } else if len <= COMPOUND_RESERVE_CHUNK {
+        len.next_power_of_two().max(4)
+    } else {
+        len.div_ceil(COMPOUND_RESERVE_CHUNK) * COMPOUND_RESERVE_CHUNK
+    }
+}
+
 fn ensure_budgeted_compound_capacity(
     entries: &mut Vec<(String, Tag)>,
     budget: &mut NbtBudget,
@@ -374,7 +384,10 @@ fn ensure_budgeted_compound_capacity(
         return Ok(());
     }
     let remaining = MAX_NBT_COMPOUND_ENTRIES.saturating_sub(entries.capacity());
-    let additional = remaining.clamp(1, COMPOUND_RESERVE_CHUNK);
+    let additional = compound_capacity(entries.len() + 1)
+        .saturating_sub(entries.capacity())
+        .min(remaining)
+        .max(1);
     let requested_bytes =
         capacity_bytes::<(String, Tag)>(additional, budget.limits.allocation_bytes)?;
     budget.charge_allocation(requested_bytes)?;
@@ -940,8 +953,7 @@ fn validate_payload(tag: &Tag, depth: usize, budget: &mut NbtBudget) -> Result<(
                         });
                     }
                     if budget.model_decoder_allocation {
-                        let capacity =
-                            entries.len().div_ceil(COMPOUND_RESERVE_CHUNK) * COMPOUND_RESERVE_CHUNK;
+                        let capacity = compound_capacity(entries.len());
                         let bytes = capacity_bytes::<(String, Tag)>(
                             capacity,
                             budget.limits.allocation_bytes,

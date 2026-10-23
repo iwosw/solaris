@@ -1,10 +1,13 @@
 //! Retained native projectiles: one flight authority for mobs, items and dispensers.
 
 pub(crate) mod embedded_projectiles;
+pub(crate) mod eye;
 pub mod fishing;
 pub(crate) mod flight;
 #[cfg(test)]
 mod flight_tests;
+#[cfg(test)]
+mod eye_tests;
 pub mod payloads;
 pub mod persistence;
 pub mod weapons;
@@ -49,6 +52,7 @@ pub enum ProjectileKind {
     ShulkerBullet,
     LlamaSpit,
     Lightning,
+    EyeOfEnder,
 }
 
 impl ProjectileKind {
@@ -75,6 +79,7 @@ impl ProjectileKind {
             Self::ShulkerBullet => "minecraft:shulker_bullet",
             Self::LlamaSpit => "minecraft:llama_spit",
             Self::Lightning => "minecraft:lightning_bolt",
+            Self::EyeOfEnder => "minecraft:eye_of_ender",
         }
     }
     pub fn from_name(name: &str) -> Option<Self> {
@@ -107,6 +112,7 @@ const ALL_KINDS: &[ProjectileKind] = &[
     ProjectileKind::ShulkerBullet,
     ProjectileKind::LlamaSpit,
     ProjectileKind::Lightning,
+    ProjectileKind::EyeOfEnder,
 ];
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -122,6 +128,11 @@ pub enum ProjectileData {
     /// UUID survives allocator remapping and offline/rejoined targets.
     Homing {
         target: Uuid,
+    },
+    Eye {
+        origin: [f64; 3],
+        target: [f64; 3],
+        drop_item: bool,
     },
 }
 
@@ -273,6 +284,8 @@ pub(crate) fn initialize_appearance(
     let owner = owner_id(state, record).map_or(0, |owner| owner.0);
     let data = if record.kind == ProjectileKind::FishingHook && owner == 0 {
         id.0
+    } else if record.kind == ProjectileKind::EyeOfEnder {
+        0
     } else {
         owner
     };

@@ -608,7 +608,7 @@ pub(crate) fn record_crossbow_kill(
     crate::advancements::trigger(state, actor, "minecraft:killed_by_arrow", event);
 }
 
-fn level_event(state: &mut TickState, position: [f64; 3], event: i32, data: i32) {
+pub(super) fn level_event(state: &mut TickState, position: [f64; 3], event: i32, data: i32) {
     let recipients: Vec<_> = state
         .players
         .iter()
@@ -670,6 +670,7 @@ pub(crate) fn initialize(state: &mut TickState, id: EntityId) {
             ProjectileKind::Snowball => Some("minecraft:snowball"),
             ProjectileKind::Egg => Some("minecraft:egg"),
             ProjectileKind::EnderPearl => Some("minecraft:ender_pearl"),
+            ProjectileKind::EyeOfEnder => Some("minecraft:ender_eye"),
             ProjectileKind::ExperienceBottle => Some("minecraft:experience_bottle"),
             ProjectileKind::Firework => Some("minecraft:firework_rocket"),
             _ => None,
@@ -703,6 +704,8 @@ pub(crate) fn initialize(state: &mut TickState, id: EntityId) {
         ProjectileKind::Snowball
         | ProjectileKind::Egg
         | ProjectileKind::EnderPearl
+        // Local EyeOfEnder javap: Entity + first ITEM_STACK accessor (8).
+        | ProjectileKind::EyeOfEnder
         | ProjectileKind::Potion
         | ProjectileKind::LingeringPotion
         | ProjectileKind::ExperienceBottle => {

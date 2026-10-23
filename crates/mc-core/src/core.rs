@@ -526,6 +526,7 @@ fn load_dimension_state(
         climate.restore(&mut tick_state)?;
     }
     tick_state.scoreboard = replay.scoreboard.unwrap_or_default();
+    tick_state.maps = crate::maps::Maps::restore(replay.saved_maps, crate::maps::sequence(settlement_globals)?)?;
     tick_state.bossbars = replay
         .bossbars
         .as_deref()
@@ -2967,6 +2968,7 @@ struct CheckpointJob {
     world_spawn: [i32; 3],
     world_spawn_rotation: [f32; 2],
     scoreboard: crate::scoreboard::Scoreboard,
+    saved_maps: std::collections::BTreeMap<i32, Arc<crate::maps::SavedMap>>,
     bossbars: crate::bossbar::BossBars,
     raids: crate::raids::Raids,
     wandering_trader: crate::mob_lanes::TraderSpawner,
@@ -3066,6 +3068,7 @@ fn start_checkpoint_with_reply(
         world_spawn: state.world.world_spawn(),
         world_spawn_rotation: state.world.world_spawn_rotation(),
         scoreboard: state.scoreboard.clone(),
+        saved_maps: state.maps.records.clone(),
         bossbars: state.bossbars.clone(),
         raids: state.raids.clone(),
         wandering_trader: state.trader_spawner,
@@ -3272,6 +3275,14 @@ pub(crate) fn journal_entries_for_tick(
         entries.push(JournalEntry::Bossbars {
             value: state.bossbars.to_bytes(),
         });
+    }
+    if state.dimension == crate::dimensions::Dimension::Overworld {
+        for id in std::mem::take(&mut state.maps.dirty) {
+            entries.push(JournalEntry::SavedMap {
+                id,
+                value: Arc::clone(&state.maps.records[&id]),
+            });
+        }
     }
     // Removals precede final storage images: a replacement at the same cell
     // must clear its old family without deleting the newly installed entity.
@@ -3887,6 +3898,7 @@ fn commit_checkpoint(
         "bossbars".into(),
         crate::native_checkpoint::tag_record(job.tick, &job.bossbars.to_nbt())?,
     );
+    crate::maps::checkpoint(&job.saved_maps, job.tick, &mut globals)?;
     crate::native_checkpoint::refresh_metadata(&mut globals, &manifest)?;
     let extras = globals
         .get("conversion_extras")

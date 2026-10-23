@@ -345,6 +345,9 @@ impl Click<'_, '_> {
             return false;
         }
         match (self.kind, self.slot_ref(index)) {
+            (MenuKind::Cartography, SlotRef::Grid(slot)) => {
+                return crate::maps::cartography::allowed(self.rules, slot, stack);
+            }
             (MenuKind::Crafter, SlotRef::Container(slot)) => {
                 return self.crafter_disabled & (1 << slot) == 0;
             }
@@ -512,7 +515,7 @@ impl Click<'_, '_> {
             self.refresh_result();
             return;
         }
-        if matches!(self.kind, MenuKind::Anvil | MenuKind::Grindstone) {
+        if matches!(self.kind, MenuKind::Anvil | MenuKind::Grindstone | MenuKind::Cartography) {
             *self.station_output_taken = true;
             *self.result = ItemStack::EMPTY;
             return;
@@ -748,7 +751,7 @@ impl Click<'_, '_> {
                 }
                 _ => self.move_to(&mut stack, 0, 1, false),
             },
-            MenuKind::Anvil | MenuKind::Grindstone => match index {
+            MenuKind::Anvil | MenuKind::Grindstone | MenuKind::Cartography => match index {
                 2 => self.move_to(&mut stack, 3, 39, true),
                 0..=1 => self.move_to(&mut stack, 3, 39, false),
                 _ => self.move_to(&mut stack, 0, 2, false),

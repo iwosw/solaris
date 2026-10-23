@@ -178,6 +178,9 @@ pub(super) fn open(
     if let Some(villager) = state.entities.row_mut(slot).villager.as_mut() {
         trades::generate(villager, &registry);
     }
+    if crate::maps::trades::before_open(state, merchant, connection, hand) {
+        return true;
+    }
     let Some(villager) = state.entities.row(slot).villager.as_ref() else {
         return true;
     };

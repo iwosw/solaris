@@ -45,6 +45,43 @@ fn empty_compound_round_trip() {
 }
 
 #[test]
+fn many_small_compounds_fit_unchanged_allocation_budget() {
+    // Canonical bastion air_base contains 23,447 tiny block compounds in an
+    // 845 KiB document. Reserving 64 entries for every three-field record
+    // exhausts the 64 MiB budget despite the small actual content.
+    let root = Tag::Compound(vec![(
+        "blocks".into(),
+        Tag::List(ListTag {
+            element_type: tag_type::COMPOUND,
+            elements: (0..24_000)
+                .map(|index| {
+                    Tag::Compound(vec![
+                        ("x".into(), Tag::Int(index)),
+                        ("y".into(), Tag::Int(0)),
+                        ("z".into(), Tag::Int(0)),
+                    ])
+                })
+                .collect(),
+        }),
+    )]);
+    let mut bytes = Vec::new();
+    write_named(&mut bytes, "", &root).unwrap();
+    assert!(bytes.len() < 1024 * 1024);
+    let mut cursor = bytes.as_slice();
+    let mut budget = NbtBudget::production();
+    let (_, decoded) = read_named_with_budget(&mut cursor, &mut budget).unwrap();
+    assert_eq!(decoded, root);
+    assert!(cursor.is_empty());
+    assert!(budget.allocation_bytes < MAX_NBT_ALLOCATION_BYTES / 4);
+    let mut document = Vec::new();
+    write_named_document(&mut document, "", &root).unwrap();
+    assert_eq!(
+        document, bytes,
+        "checkpoint preflight models the same capacity policy"
+    );
+}
+
+#[test]
 fn primitives_round_trip() {
     round_trip_network(Tag::Compound(vec![
         ("b".into(), Tag::Byte(-1)),

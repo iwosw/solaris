@@ -403,6 +403,11 @@ fn chunk_from_nbt_with_items_impl(
                     mc_nbt::write_network(&mut bytes, be)?;
                     chunk.block_entities.insert(pos, bytes);
                 }
+                if chest.loot_table.is_some() && !chunk.block_entities.contains_key(&pos) {
+                    let mut bytes = Vec::new();
+                    mc_nbt::write_network(&mut bytes, be)?;
+                    chunk.block_entities.insert(pos, bytes);
+                }
                 chunk.chests.insert(pos, chest);
                 continue;
             }

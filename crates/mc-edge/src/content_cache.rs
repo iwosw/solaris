@@ -53,6 +53,7 @@ pub const REQUIRED_FILES: &[&str] = &[
     "reports/blocks.json",
     "reports/registries.json",
     "reports/block_light.json",
+    "reports/block_map_colors.json",
     "reports/block_mining.json",
     "reports/block_explosion.json",
     "reports/minecraft/components/item",

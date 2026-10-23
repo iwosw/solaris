@@ -1139,9 +1139,8 @@ pub(super) fn convert(
         }
         consumed.insert(relative.clone());
     }
-    // Upgraded map payloads awaiting extras publish: destination -> upgraded
-    // Tag. The source tree is never written; these replace raw bytes below.
-    let mut upgraded_extras: BTreeMap<String, Tag> = BTreeMap::new();
+    let mut saved_maps = BTreeMap::new();
+    let mut map_sequence = 0_i64;
     // Only stat regular auxiliary files; session.lock must never be opened.
     let mut extras_bytes = 4_u64;
     for relative in paths.iter().filter(|path| !consumed.contains(*path)) {
@@ -1214,6 +1213,11 @@ pub(super) fn convert(
                 return Err(fail(format!("{name}: unsupported saved-data semantics")));
             }
             let mut tag = read_nbt(&path)?;
+            if name == "data/minecraft/maps/last_id.dat" {
+                map_sequence = crate::maps::nbt::sequence_from_tag(&tag).map_err(fail)?;
+                consumed.insert(relative.clone());
+                continue;
+            }
             // The common saved-data loader defaults every absent version to
             // 1343, without imposing the region/level floor. Map upgrades own
             // their transformation; other old envelopes remain explicitly deferred.
@@ -1223,12 +1227,7 @@ pub(super) fn convert(
                 let version = saved_data_source_version(&tag, &path)?;
                 let report = upgrade::upgrade_map_data(&mut tag, version)
                     .map_err(|error| fail(format!("{}: {error}", path.display())))?;
-                // Standalone map upgrade: no new RecordKind (avoids the
-                // exhaustive match blast radius). RecordKind::Item is only a
-                // carrier for from_report's kind string, immediately
-                // overwritten with the free-form "saved_data" kind. The
-                // upgraded Tag replaces the raw bytes in extras (below);
-                // the source tree is never written. No deferred receipt:
+                // Upgrade the source envelope, then activate its native map row.
                 let mut receipt = RecordUpgradeReceipt::from_report(
                     relative.to_string_lossy().into_owned(),
                     RecordKind::Item,
@@ -1236,7 +1235,13 @@ pub(super) fn convert(
                 );
                 receipt.kind = "saved_data".into();
                 stats.upgrades.push(receipt);
-                upgraded_extras.insert(destination.to_string_lossy().into_owned(), tag);
+                let id: i32 = destination.file_stem().and_then(|id| id.to_str())
+                    .ok_or_else(|| fail("invalid saved map filename"))?.parse()
+                    .map_err(|_| fail("invalid saved map id"))?;
+                if id < 0 { return Err(fail("negative saved map id")); }
+                let map = crate::maps::nbt::from_tag(&tag).map_err(fail)?;
+                saved_maps.insert(id, Arc::new(map));
+                consumed.insert(relative.clone());
                 continue;
             }
             let version = saved_data_source_version(&tag, &path)?;
@@ -1262,6 +1267,8 @@ pub(super) fn convert(
         }
     }
     let mut globals = bridge::generation_records(config)?;
+    globals.insert("map_sequence".into(), bridge::record(tick, serde_json::to_vec(&map_sequence).map_err(fail)?));
+    crate::maps::checkpoint(&saved_maps, tick, &mut globals)?;
     std::fs::create_dir(stage.join("native")).map_err(fail)?;
     let store = NativeStore::create(
         &stage.join("native/state.redb"),
@@ -2142,24 +2149,7 @@ pub(super) fn convert(
                 "{name}: duplicate owned saved-data destination {destination_name}"
             )));
         }
-        // Upgraded map payloads replace the raw source bytes: the same
-        // gzip named-NBT convention `write_nbt` uses (export restores the
-        // file verbatim from these bytes). The source tree is never written.
-        let overridden = upgraded_extras
-            .remove(destination_name)
-            .map(|tag| {
-                let mut raw = Vec::new();
-                mc_nbt::write_named(&mut raw, "", &tag).map_err(fail)?;
-                let mut encoder =
-                    flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
-                encoder.write_all(&raw).map_err(fail)?;
-                encoder.finish().map_err(fail)
-            })
-            .transpose()?;
-        let bytes = match overridden {
-            Some(bytes) => bytes,
-            None => std::fs::read(source.join(relative)).map_err(fail)?,
-        };
+        let bytes = std::fs::read(source.join(relative)).map_err(fail)?;
         extras.push((
             destination_name.into(),
             Tag::ByteArray(bytes.into_iter().map(|byte| byte as i8).collect()),

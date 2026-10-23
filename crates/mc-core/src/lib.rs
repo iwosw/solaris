@@ -108,6 +108,7 @@ mod level_metadata;
 mod light;
 pub mod lod;
 pub(crate) mod mace;
+pub mod maps;
 mod mob_equipment;
 mod mob_equipment_pickup;
 pub(crate) mod mob_fall;

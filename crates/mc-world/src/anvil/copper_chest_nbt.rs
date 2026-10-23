@@ -32,6 +32,9 @@ pub(super) fn materialize(
             "copper chest LootTable {id}: unsupported saved container table"
         ))
     })?;
+    if table.requires_world_context() {
+        return Ok(());
+    }
     let mut rng = mc_data::loot::chest_26_1_2::ChestRng::new(chest.loot_seed as u64);
     let stacks = table.roll(&mut rng, items, 0.0).map_err(|error| {
         ChunkNbtError::InvalidBlockEntity(format!("copper chest LootTable {id}: {error}"))

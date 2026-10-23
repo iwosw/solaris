@@ -174,6 +174,9 @@ pub(in crate::tick) fn use_item_on(
     if crate::vehicles::use_on(state, entity, *hand, *position, *face, changes) {
         return;
     }
+    if crate::maps::banner::use_on(state, entity, *hand, *position) {
+        return;
+    }
     if crate::shelf::use_on(state, entity, *hand, *position, *face, *cursor) {
         return;
     }
@@ -191,6 +194,9 @@ pub(in crate::tick) fn use_item_on(
         // One storage per cell; the menu shows them back to back
         // (a double chest's two halves share its 54 slots).
         let cells = container_cells(state, (position.x, position.y, position.z));
+        if crate::maps::loot::before_open(state, *connection, input, &cells) {
+            return;
+        }
         let each = size / cells.len();
         for cell in &cells {
             let storage = state.block_entities.entry(*cell).or_insert_with(|| {
@@ -554,6 +560,9 @@ pub(in crate::tick) fn use_item(
         || crate::physical_attacks::try_use(state, slot, *hand)
             != crate::physical_attacks::AttackAdmission::NotCustom
     {
+        return;
+    }
+    if crate::maps::use_empty(state, entity, *hand, changes) {
         return;
     }
     if crate::bottles::use_item(state, entity, *hand, *yaw, *pitch, changes) {

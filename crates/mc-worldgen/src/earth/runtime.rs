@@ -5,8 +5,6 @@ use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
 
 use mc_data::Identifier;
-use mc_data::items::ItemRegistry;
-use mc_data::loot::chest_26_1_2::ChestLootCatalog;
 use mc_world::native::NativeError;
 use mc_world::storage::{NativeNaturalSource, NaturalTerrainColumn};
 use mc_world::{
@@ -20,7 +18,6 @@ use super::prepared::{PrepareError, PreparedWorld};
 use super::region::{GeoNodeId, NaturalColumnSample, RegionPlan, RegionPlanner};
 use super::region_water::WaterPlan;
 use super::world_plan::WorldPlan;
-use crate::structures::StructureLoot;
 use crate::terrain::{SpawnLocation, TerrainDiagnosticSample};
 use crate::village::plan_source::{VillagePlan, VillagePlanSet, VillagePlanSource};
 
@@ -37,8 +34,6 @@ pub struct EarthRuntime {
     world: Arc<PreparedWorld>,
     blocks: Arc<BlockRegistry>,
     villages: Option<Arc<VillagePlanSource>>,
-    loot: ChestLootCatalog,
-    items: Arc<ItemRegistry>,
     air: BlockStateId,
     palette: Palette,
     cache: EarthSourceCache,
@@ -85,8 +80,6 @@ pub struct EarthBaseSource<'a> {
     root: &'a WorldPlan,
     blocks: &'a BlockRegistry,
     villages: Option<&'a VillagePlanSource>,
-    loot: &'a ChestLootCatalog,
-    items: &'a ItemRegistry,
     air: BlockStateId,
     palette: Palette,
     cache: &'a EarthSourceCache,
@@ -99,17 +92,11 @@ impl<'a> EarthBaseSource<'a> {
         root: &'a WorldPlan,
         blocks: &'a BlockRegistry,
         villages: Option<&'a VillagePlanSource>,
-        loot: StructureLoot<'a>,
         cache: &'a EarthSourceCache,
     ) -> Result<Self, PrepareError> {
         if root.plane().is_none() {
             return Err(PrepareError::Invalid(
                 "Earth runtime base requires a prepared physical plane root",
-            ));
-        }
-        if loot.seed != definition.input().seed {
-            return Err(PrepareError::Invalid(
-                "Earth loot seed differs from immutable definition",
             ));
         }
         let palette = Palette::new(blocks)?;
@@ -123,8 +110,6 @@ impl<'a> EarthBaseSource<'a> {
             root,
             blocks,
             villages,
-            loot: loot.catalog,
-            items: loot.items,
             cache,
             air,
             palette,
@@ -486,20 +471,8 @@ impl<'a> EarthBaseSource<'a> {
                     MIN_Y
                 }
             };
-            let loot = StructureLoot {
-                seed: self.definition.input().seed,
-                catalog: self.loot,
-                items: self.items,
-            };
             source
-                .write_plans(
-                    &mut chunk,
-                    &plans,
-                    &mut [false; 256],
-                    &surface,
-                    self.air,
-                    &loot,
-                )
+                .write_plans(&mut chunk, &plans, &mut [false; 256], &surface, self.air)
                 .map_err(|cause| PrepareError::Committed {
                     identity: self.identity().hex(),
                     reason: cause.to_string(),
@@ -595,20 +568,10 @@ impl EarthRuntime {
             world,
             blocks,
             villages,
-            loot: ChestLootCatalog::new(),
-            items: Arc::new(ItemRegistry::default()),
             air,
             palette,
             cache: EarthSourceCache::default(),
         })
-    }
-
-    /// Retain the world's item decoder even when optional chest tables are absent.
-    /// Callers must supply an empty catalog plus the actual registry on fallback.
-    pub fn with_chest_loot(mut self, loot: ChestLootCatalog, items: Arc<ItemRegistry>) -> Self {
-        self.loot = loot;
-        self.items = items;
-        self
     }
 
     fn base_source(&self) -> EarthBaseSource<'_> {
@@ -618,8 +581,6 @@ impl EarthRuntime {
             root: self.world.root_plan(),
             blocks: &self.blocks,
             villages: self.villages.as_deref(),
-            loot: &self.loot,
-            items: &self.items,
             air: self.air,
             palette: self.palette,
             cache: &self.cache,

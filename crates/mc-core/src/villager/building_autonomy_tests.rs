@@ -89,6 +89,7 @@ impl mc_world::ChunkGenerator for VillageGenerator {
             let markers: Vec<_> = professions.iter().enumerate().map(|(index, profession)| mc_world::GeneratedEntityMarker {
                 claim: format!("minecraft:village/plains/town_centers/plains_meeting_point_1@0:200:0#{index}"),
                 entity_type: "minecraft:villager".into(), position: [index as f64 + 0.5, 201.0, 2.5],
+                persistent: false,
                 villager_kind: "minecraft:plains".into(), profession: format!("minecraft:{profession}"),
                 level: 1, age: 0, yaw: 0.0, pitch: 0.0,
             }).collect();

@@ -95,7 +95,7 @@ use mc_world::{
     GeneratedVillageSite,
 };
 
-use crate::structures::{StructureLoot, TemplateChest};
+use crate::structures::TemplateChest;
 use crate::vanilla_features::{
     BiomeTagIndex, BlockSemantics, BlockTagIndex, FeatureLevel, LegacyRandom, WorldgenRandom,
 };
@@ -1015,7 +1015,6 @@ impl VillagePlanSource {
         touched: &mut [bool; 256],
         surface: &dyn Fn(i32, i32) -> i32,
         air: BlockStateId,
-        loot: &StructureLoot<'_>,
     ) -> Result<usize, PieceError> {
         let semantics = BlockSemantics::new(self.blocks.as_ref(), self.block_tags.as_ref());
         let geometry = chunk.geometry();
@@ -1056,6 +1055,27 @@ impl VillagePlanSource {
         let (chunk_x, chunk_z) = (chunk.pos.x, chunk.pos.z);
         for plan in plans.plans() {
             let structure = &plan.assembly().structure;
+            if plan.start_chunk() == (chunk_x, chunk_z) {
+                let assembly = plan.assembly();
+                if let Some(first) = assembly.pieces.first() {
+                    let (min, max) = assembly.pieces.iter().skip(1).fold(
+                        (first.bounds_min, first.bounds_max),
+                        |(min, max), piece| {
+                            (min_of(min, piece.bounds_min), max_of(max, piece.bounds_max))
+                        },
+                    );
+                    mc_world::structure_starts::insert(
+                        chunk,
+                        &mc_world::chunk::GeneratedStructureSite {
+                            structure: structure.clone(),
+                            start_chunk: assembly.chunk,
+                            position: assembly.origin,
+                        },
+                        min,
+                        max,
+                    );
+                }
+            }
             // A plan that can draw nothing never touches the stream, so a source
             // whose decor carries no stream for this structure (a closure built
             // without the worldgen cache) can still place it.
@@ -1071,7 +1091,6 @@ impl VillagePlanSource {
                 chunk,
                 touched,
                 surface,
-                loot,
                 air,
                 registry: self.blocks.as_ref(),
                 inhabitants: &mut inhabitants,
@@ -1233,11 +1252,10 @@ impl PieceWriter for ProbePieceWriter {
 /// block reads inside it answer from the chunk, reads outside answer `air`.
 /// That is exactly the view `StructurePlaceSettings.getBoundingBox()` clips
 /// writes to, so no write leaves the chunk.
-struct ChunkPieceWriter<'a, 'b> {
+struct ChunkPieceWriter<'a> {
     chunk: &'a mut Chunk,
     touched: &'a mut [bool; 256],
     surface: &'a dyn Fn(i32, i32) -> i32,
-    loot: &'a StructureLoot<'b>,
     air: BlockStateId,
     /// The registry the decor lane resolves a block state against when it asks
     /// whether a position is a water source.
@@ -1249,7 +1267,7 @@ struct ChunkPieceWriter<'a, 'b> {
     inhabitants: &'a mut Vec<GeneratedEntityMarker>,
 }
 
-impl ChunkPieceWriter<'_, '_> {
+impl ChunkPieceWriter<'_> {
     fn local(&self, pos: BlockPos) -> Option<(u8, u8)> {
         let lx = pos.x - self.chunk.pos.x * 16;
         let lz = pos.z - self.chunk.pos.z * 16;
@@ -1259,7 +1277,7 @@ impl ChunkPieceWriter<'_, '_> {
     }
 }
 
-impl ProcessLevel for ChunkPieceWriter<'_, '_> {
+impl ProcessLevel for ChunkPieceWriter<'_> {
     fn block_state(&self, pos: BlockPos) -> BlockStateId {
         self.local(pos)
             .and_then(|(lx, lz)| self.chunk.get_block(lx, pos.y, lz))
@@ -1280,7 +1298,7 @@ impl ProcessLevel for ChunkPieceWriter<'_, '_> {
     }
 }
 
-impl PieceWriter for ChunkPieceWriter<'_, '_> {
+impl PieceWriter for ChunkPieceWriter<'_> {
     fn set_block(&mut self, pos: BlockPos, state: BlockStateId) {
         let Some((lx, lz)) = self.local(pos) else {
             return;
@@ -1291,33 +1309,33 @@ impl PieceWriter for ChunkPieceWriter<'_, '_> {
     }
 
     fn set_chest(&mut self, pos: BlockPos, chest: &TemplateChest, loot_seed: u64) {
-        let contents = chest.resolve_contents(self.loot, loot_seed);
+        let contents = chest.unopened_contents(loot_seed);
         self.chunk.chests.insert(pos, contents);
     }
 
-    /// Preserve the placed entity's native `VillagerData`, `Age`, and rotation.
-    /// Templates author no POIs here; generation does not invent home, job-site,
-    /// or meeting-point ownership for the runtime entity.
+    fn set_block_entity(&mut self, pos: BlockPos, entity: &crate::structures::TemplateBlockEntity) {
+        self.chunk
+            .block_entities
+            .insert(pos, entity.at_world_position(pos));
+    }
+
+    /// Preserve authored identity, persistence and villager data. Native mob
+    /// blueprints own spawn initialization; generation never invents POI claims.
     fn set_entity(&mut self, placed: &PlacedEntity<'_>) {
-        let Some(villager) = placed.entity.villager.as_ref() else {
-            return;
-        };
-        // Only the villager is spawnable here. A zombie villager or one of the
-        // mobs a village authors (cats, the animal pens' livestock, the iron
-        // golem, a camel, an armour stand) would have to become a different
-        // entity with its own retained state; the closure reports what a village
-        // authors so the gap is visible instead of silently missing.
-        if placed.entity.entity_type != crate::village::closure::SPAWNED_PIECE_MOB {
-            return;
-        }
+        let villager = placed.entity.villager.as_ref();
         self.inhabitants.push(GeneratedEntityMarker {
             claim: placed.claim.clone(),
             entity_type: placed.entity.entity_type.clone(),
             position: placed.position,
-            villager_kind: villager.kind.clone(),
-            profession: villager.profession.clone(),
-            level: villager.level,
-            age: villager.age,
+            persistent: placed.entity.persistent,
+            villager_kind: villager
+                .map_or("plains", |data| data.kind.as_str())
+                .to_owned(),
+            profession: villager
+                .map_or("none", |data| data.profession.as_str())
+                .to_owned(),
+            level: villager.map_or(1, |data| data.level),
+            age: villager.map_or(0, |data| data.age),
             yaw: placed.yaw,
             pitch: placed.pitch,
         });
@@ -1336,7 +1354,7 @@ impl PieceWriter for ChunkPieceWriter<'_, '_> {
 /// caller's existence checks exactly as a write into unloaded ground would),
 /// and the neighbour chunk does not place it later: the piece that carries the
 /// feature belongs to this chunk alone.
-impl FeatureLevel for ChunkPieceWriter<'_, '_> {
+impl FeatureLevel for ChunkPieceWriter<'_> {
     fn min_y(&self) -> i32 {
         self.chunk.geometry().min_y()
     }

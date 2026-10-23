@@ -11,6 +11,7 @@ pub(super) fn craft_menu_for_block(name: &str) -> Option<(MenuKind, String, usiz
         "minecraft:smithing_table" => (MenuKind::Smithing, "Smithing"),
         "minecraft:loom" => (MenuKind::Loom, "Loom"),
         "minecraft:stonecutter" => (MenuKind::Stonecutter, "Stonecutter"),
+        "minecraft:cartography_table" => (MenuKind::Cartography, "Cartography"),
         _ => return None,
     };
     Some((kind, title.into(), 0))
@@ -117,6 +118,7 @@ pub(super) fn open(
         MenuKind::Anvil => Some(mc_data::statistics::CustomStat::InteractWithAnvil),
         MenuKind::Grindstone => Some(mc_data::statistics::CustomStat::InteractWithGrindstone),
         MenuKind::Stonecutter => Some(mc_data::statistics::CustomStat::InteractWithStonecutter),
+        MenuKind::Cartography => Some(mc_data::statistics::CustomStat::InteractWithCartographyTable),
         MenuKind::Loom => Some(mc_data::statistics::CustomStat::InteractWithLoom),
         MenuKind::Smithing => Some(mc_data::statistics::CustomStat::InteractWithSmithingTable),
         _ => None,

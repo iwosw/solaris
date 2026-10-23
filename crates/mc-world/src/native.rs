@@ -10,6 +10,7 @@ mod dictionary;
 mod maintenance;
 mod pack;
 mod state;
+mod structure_starts;
 mod ticks;
 pub use checkpoint::{
     NativeCheckpoint, NativeCheckpointImage, NativeCheckpointIo, NativeCheckpointReader,
@@ -760,7 +761,11 @@ fn write_snapshots(
                 "changed snapshot must have a journal decision",
             ));
         }
-        if base_metadata == effective_metadata {
+        // Structure starts are saved truth, not a disposable generator prediction.
+        // Keep their metadata even when blocks/metadata equal the procedural base.
+        if base_metadata == effective_metadata
+            && !snapshot.effective.extras.iter().any(|(key,_)| key == "structures")
+        {
             db(metadata.remove(key.as_slice()))?;
         } else {
             db(metadata.insert(key.as_slice(), effective_metadata.as_slice()))?;

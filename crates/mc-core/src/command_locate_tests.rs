@@ -7,8 +7,8 @@ use mc_nbt::Tag;
 use mc_world::{BlockPos, BlockRegistry, BlockStateId, Chunk, ChunkGenerator, ChunkPos};
 
 use super::{
-    LocateCommand, ResourceOrTag, found_distance, poi_states, sample_heights, search_biome,
-    search_poi, search_structure, square_ring,
+    LocateCommand, ResourceOrTag, SavedStarts, StructureSearchOptions, found_distance, poi_states,
+    sample_heights, search_biome, search_poi, search_structure, square_ring,
 };
 use crate::boundary::{ChangeSet, ConnectionId, PlayerChange};
 use crate::commands::parse;
@@ -21,32 +21,25 @@ fn id(name: &str) -> Identifier {
 /// Fake generator: fixed village sites and a synthetic biome field.
 struct FakeGenerator {
     sites: Vec<mc_world::GeneratedVillageSite>,
-    structures: Vec<Identifier>,
 }
 
 impl FakeGenerator {
-    fn site(
-        start_chunk: (i32, i32),
-        structure: &str,
-    ) -> (mc_world::GeneratedVillageSite, Identifier) {
-        (
-            mc_world::GeneratedVillageSite {
-                start_chunk,
-                structure: id(structure),
-                min: BlockPos {
-                    x: start_chunk.0 * 16,
-                    y: 60,
-                    z: start_chunk.1 * 16,
-                },
-                max: BlockPos {
-                    x: start_chunk.0 * 16 + 15,
-                    y: 80,
-                    z: start_chunk.1 * 16 + 15,
-                },
-                pieces: Vec::new(),
+    fn site(start_chunk: (i32, i32), structure: &str) -> mc_world::GeneratedVillageSite {
+        mc_world::GeneratedVillageSite {
+            start_chunk,
+            structure: id(structure),
+            min: BlockPos {
+                x: start_chunk.0 * 16,
+                y: 60,
+                z: start_chunk.1 * 16,
             },
-            id(structure),
-        )
+            max: BlockPos {
+                x: start_chunk.0 * 16 + 15,
+                y: 80,
+                z: start_chunk.1 * 16 + 15,
+            },
+            pieces: Vec::new(),
+        }
     }
 }
 
@@ -86,13 +79,84 @@ impl ChunkGenerator for FakeGenerator {
     }
 }
 
-fn fake_generator() -> FakeGenerator {
-    let (a, sa) = FakeGenerator::site((3, -2), "minecraft:village_plains");
-    let (b, sb) = FakeGenerator::site((-5, 4), "minecraft:village_desert");
-    FakeGenerator {
-        sites: vec![a, b],
-        structures: vec![sa, sb],
+#[test]
+fn locate_uses_non_village_start_and_actual_underground_height() {
+    struct Structures;
+    impl ChunkGenerator for Structures {
+        fn generate(&self, _: ChunkPos) -> Chunk {
+            panic!("locate must not generate chunks")
+        }
+        fn structure_sites_in_region(
+            &self,
+            min: (i32, i32),
+            max: (i32, i32),
+        ) -> Vec<mc_world::chunk::GeneratedStructureSite> {
+            assert_eq!(min, (-256, -256));
+            assert_eq!(max, (256, 256));
+            vec![mc_world::chunk::GeneratedStructureSite {
+                structure: id("minecraft:stronghold"),
+                position: BlockPos {
+                    x: 2048,
+                    y: -31,
+                    z: -32,
+                },
+                start_chunk: (128, -2),
+            }]
+        }
     }
+    let hit = search_structure(
+        &Structures,
+        (0, 64, 0),
+        &[id("minecraft:stronghold")],
+        &SavedStarts::new(),
+        &StructureSearchOptions::default(),
+    )
+    .expect("native stronghold start");
+    assert_eq!(hit.pos, (2048, -31, -32));
+    let mut saved = SavedStarts::new();
+    saved.insert(ChunkPos { x: 128, z: -2 }, Vec::new());
+    assert!(
+        search_structure(
+            &Structures,
+            (0, 64, 0),
+            &[id("minecraft:stronghold")],
+            &saved,
+            &StructureSearchOptions::default(),
+        )
+        .is_none(),
+        "covered empty start must suppress procedural plan"
+    );
+    saved.insert(
+        ChunkPos { x: 7, z: 8 },
+        vec![mc_world::chunk::GeneratedStructureSite {
+            structure: id("minecraft:stronghold"),
+            start_chunk: (7, 8),
+            position: BlockPos {
+                x: 117,
+                y: -20,
+                z: 130,
+            },
+        }],
+    );
+    let imported = search_structure(
+        &Structures,
+        (0, 64, 0),
+        &[id("minecraft:stronghold")],
+        &saved,
+        &StructureSearchOptions::default(),
+    )
+    .unwrap();
+    assert_eq!(
+        imported.pos,
+        (117, -20, 130),
+        "imported start need not coincide with planner"
+    );
+}
+
+fn fake_generator() -> FakeGenerator {
+    let a = FakeGenerator::site((3, -2), "minecraft:village_plains");
+    let b = FakeGenerator::site((-5, 4), "minecraft:village_desert");
+    FakeGenerator { sites: vec![a, b] }
 }
 
 #[test]
@@ -145,17 +209,13 @@ fn square_ring_visits_rings_in_order() {
 #[test]
 fn structure_search_finds_nearest_matching_site() {
     let generator = fake_generator();
-    let site_structures: Vec<((i32, i32), Identifier)> = generator
-        .sites
-        .iter()
-        .zip(generator.structures.iter())
-        .map(|(site, structure)| (site.start_chunk, structure.clone()))
-        .collect();
+    let site_structures = SavedStarts::new();
     let hit = search_structure(
         &generator,
         (0, 64, 0),
         &[id("minecraft:village_desert")],
         &site_structures,
+        &StructureSearchOptions::default(),
     )
     .expect("desert village exists");
     assert_eq!(hit.found_id.as_str(), "minecraft:village_desert");
@@ -168,35 +228,44 @@ fn structure_search_finds_nearest_matching_site() {
             &generator,
             (0, 64, 0),
             &[id("minecraft:stronghold")],
-            &site_structures
+            &site_structures,
+            &StructureSearchOptions::default(),
         )
         .is_none()
     );
     // Empty targets never match.
-    assert!(search_structure(&generator, (0, 64, 0), &[], &site_structures).is_none());
-    // Sites missing from the structure map are skipped.
+    assert!(
+        search_structure(
+            &generator,
+            (0, 64, 0),
+            &[],
+            &site_structures,
+            &StructureSearchOptions::default()
+        )
+        .is_none()
+    );
+    // Covered empty village starts suppress generation.
     assert!(
         search_structure(
             &generator,
             (0, 64, 0),
             &[id("minecraft:village_plains")],
-            &[]
+            &HashMap::from([(ChunkPos { x: 3, z: -2 }, Vec::new())]),
+            &StructureSearchOptions::default(),
         )
         .is_none()
     );
     // A site 101 chunks out is past the vanilla search radius.
-    let (far, far_structure) = FakeGenerator::site((101, 0), "minecraft:village_plains");
-    let far_generator = FakeGenerator {
-        sites: vec![far],
-        structures: vec![far_structure.clone()],
-    };
-    let far_map = vec![((101, 0), far_structure)];
+    let far = FakeGenerator::site((101, 0), "minecraft:village_plains");
+    let far_generator = FakeGenerator { sites: vec![far] };
+    let far_map = SavedStarts::new();
     assert!(
         search_structure(
             &far_generator,
             (0, 64, 0),
             &[id("minecraft:village_plains")],
-            &far_map
+            &far_map,
+            &StructureSearchOptions::default(),
         )
         .is_none()
     );
@@ -506,4 +575,115 @@ fn real_terrain_biome_search_uses_noise_field() {
         "locate exhaustive biome miss took {} ms",
         elapsed.as_millis()
     );
+}
+
+#[test]
+fn map_structure_search_obeys_radius_and_persisted_destinations() {
+    let generator = fake_generator();
+    let targets = [id("minecraft:village_plains")];
+    let position = BlockPos {
+        x: 56,
+        y: 64,
+        z: -24,
+    };
+    let saved = SavedStarts::from([(
+        ChunkPos { x: 3, z: -2 },
+        vec![mc_world::chunk::GeneratedStructureSite {
+            structure: targets[0].clone(),
+            position,
+            start_chunk: (3, -2),
+        }],
+    )]);
+    let mut options = StructureSearchOptions {
+        radius: 2,
+        skip_referenced: true,
+        referenced: std::collections::HashSet::new(),
+    };
+    assert!(search_structure(&generator, (0, 64, 0), &targets, &saved, &options).is_none());
+    options.radius = 3;
+    assert_eq!(
+        search_structure(&generator, (0, 64, 0), &targets, &saved, &options)
+            .unwrap()
+            .pos,
+        (56, 64, -24)
+    );
+    options.referenced.insert(position);
+    assert!(search_structure(&generator, (0, 64, 0), &targets, &saved, &options).is_none());
+    options.skip_referenced = false;
+    assert!(search_structure(&generator, (0, 64, 0), &targets, &saved, &options).is_some());
+}
+
+#[test]
+fn structure_lookup_callback_runs_on_drain_even_after_requester_disconnects() {
+    let (mut state, _) = locate_fixture();
+    let connection = ConnectionId(999);
+    let (tx, rx) = std::sync::mpsc::channel();
+    state.locate.done = Some(rx);
+    state.locate.in_flight.insert(connection, 1);
+    let observed = Arc::new(parking_lot::Mutex::new(None));
+    let output = Arc::clone(&observed);
+    tx.send(super::LocateDone {
+        connection,
+        kind: super::LocateKind::Structure,
+        origin: (0, 64, 0),
+        hit: Some(super::LocateHit {
+            pos: (117, -20, 130),
+            found_id: id("minecraft:buried_treasure"),
+            distance: 175,
+        }),
+        elapsed_ms: 0,
+        completion: super::LocateCompletion::Callback(Box::new(move |state, result| {
+            assert_eq!(
+                state.locate.busy(connection),
+                0,
+                "release before callback can resubmit"
+            );
+            *output.lock() = Some(result);
+        })),
+    })
+    .ok()
+    .unwrap();
+    assert_eq!(*observed.lock(), None);
+    super::drain(&mut state);
+    assert_eq!(
+        *observed.lock(),
+        Some(Some(BlockPos {
+            x: 117,
+            y: -20,
+            z: 130
+        }))
+    );
+    assert!(state.outbox.is_empty());
+}
+
+#[test]
+fn structure_lookup_refuses_unknown_tags_radius_and_busy_connections_without_chat() {
+    let (mut state, connection) = locate_fixture();
+    let request = |destination, search_radius| super::StructureLookupRequest {
+        connection,
+        origin: (0, 64, 0),
+        destination: id(destination),
+        search_radius,
+        skip_existing_chunks: true,
+        referenced: Vec::new(),
+        reply: Box::new(|_, _| panic!("rejected request must not complete")),
+    };
+    assert!(!super::submit_structure_lookup(
+        &mut state,
+        request("minecraft:not_a_tag", 50)
+    ));
+    assert!(!super::submit_structure_lookup(
+        &mut state,
+        request("minecraft:on_treasure_maps", 257)
+    ));
+    state
+        .locate
+        .in_flight
+        .insert(connection, super::MAX_JOBS_PER_PLAYER);
+    assert!(!super::submit_structure_lookup(
+        &mut state,
+        request("minecraft:on_treasure_maps", 50)
+    ));
+    assert!(state.outbox.is_empty());
+    assert!(state.locate.jobs.is_none());
 }

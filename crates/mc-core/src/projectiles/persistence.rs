@@ -48,6 +48,13 @@ pub(crate) fn validate_state(state: &ProjectileState) -> Result<(), &'static str
         }
     }
     match &state.data {
+        ProjectileData::Eye { origin, target, .. } => {
+            if state.kind != ProjectileKind::EyeOfEnder
+                || origin.iter().chain(target).any(|value| !value.is_finite())
+            {
+                return Err("data.Eye: incompatible kind or non-finite coordinates");
+            }
+        }
         ProjectileData::Physical { .. } if !state.kind.arrow() => {
             return Err("data.Physical: incompatible native carrier");
         }
@@ -163,6 +170,7 @@ fn item_key(kind: ProjectileKind) -> Option<&'static str> {
         ProjectileKind::Snowball
         | ProjectileKind::Egg
         | ProjectileKind::EnderPearl
+        | ProjectileKind::EyeOfEnder
         | ProjectileKind::Potion
         | ProjectileKind::LingeringPotion
         | ProjectileKind::ExperienceBottle => Some("Item"),

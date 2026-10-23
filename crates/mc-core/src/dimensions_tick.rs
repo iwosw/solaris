@@ -40,6 +40,7 @@ pub(crate) fn swap_globals(root: &mut TickState, world: &mut TickState) {
     std::mem::swap(&mut root.gamerules, &mut world.gamerules);
     std::mem::swap(&mut root.gamerules_dirty, &mut world.gamerules_dirty);
     std::mem::swap(&mut root.scoreboard, &mut world.scoreboard);
+    std::mem::swap(&mut root.maps, &mut world.maps);
     std::mem::swap(&mut root.scoreboard_dirty, &mut world.scoreboard_dirty);
     std::mem::swap(&mut root.bossbars_dirty, &mut world.bossbars_dirty);
     std::mem::swap(&mut root.bossbars, &mut world.bossbars);

@@ -583,12 +583,33 @@ state, never saved.
 
 `/locate structure|biome|poi <id|#tag>` (operator level 2) answers asynchronously
 from a worker thread; the tick never waits for the search and a second `/locate`
-while two are pending (or eight are queued) is refused. Structures are searched
-through the worldgen placement plan (`ChunkGenerator::village_sites_in_region`,
-100 chunks): only the five vanilla village variants (`minecraft:village_plains`,
-`_desert`, `_savanna`, `_snowy`, `_taiga`) are generated, so every other known
-structure id or tag reports vanilla `commands.locate.structure.not_found`. Biomes use
-the generator's 3D noise biome on vanilla's 32/64-block grid out to 6400 blocks.
+while two are pending (or eight are queued) is refused. Structure searches read
+saved native/imported start metadata on that worker. Covered chunks without a
+start suppress procedural candidates; resident metadata overrides checkpoint
+metadata. Only uncovered chunks contribute immutable worldgen plans, without
+generating chunks. Villages use `village_sites_in_region` within 100 chunks;
+non-village starts use `structure_sites_in_region` within 256 chunks and retain
+their underground Y. Native start metadata retains actual bounds separately
+from the locate anchor. Corrupt/unsupported start metadata fails closed.
+
+With local vanilla content the classic Overworld catalog includes strongholds,
+normal/mesa mineshafts, desert/jungle pyramids, igloos with optional basements,
+monuments, warm/cold ocean ruins, outposts with cages, ruined portals,
+shipwrecks, swamp huts, mansions and buried treasure. Counts/spacing/biomes and
+template content come from local assets; older room-based structures use
+Solaris-authored layouts. Dungeon cavities are admitted against generated local
+blocks; wells, fossils and geodes follow bounded placed-feature attempts.
+All template loot tables retain their unopened table id and seed until the
+runtime has first-open context; generation never rolls exploration maps.
+These remain partial families: complete rotations/processors and room
+assemblers, stronghold biome relocation, the jungle piston puzzle and full
+monument/mansion variations are not implemented by the classic catalog.
+
+Eye targets and deferred exploration-map searches share the locator queue.
+Map callbacks run in the native tick, not on the worker; skip-existing searches
+exclude referenced starts and persisted issued-map destinations, not every
+generated chunk. Registry suggestions do not imply generation. Biomes use the
+generator's 3D noise biome on vanilla's 32/64-block grid out to 6400 blocks.
 POIs are read from the loaded chunks within 256 blocks, with vanilla's POI-type
 block lists. The tab-complete structure list comes from the local vanilla data;
 boss-bar id suggestions are empty because the registry lives on the tick thread.

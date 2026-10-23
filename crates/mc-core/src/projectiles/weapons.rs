@@ -272,6 +272,10 @@ pub(crate) fn use_item(state: &mut TickState, actor: EntityId, hand: Hand) -> bo
         return false;
     }
     let name = super::item_name(state, &stack).unwrap_or("");
+    if name == "minecraft:ender_eye" {
+        super::eye::use_item(state, actor, hand);
+        return true;
+    }
     let kind = match name {
         "minecraft:snowball" => Some(ProjectileKind::Snowball),
         "minecraft:egg" => Some(ProjectileKind::Egg),

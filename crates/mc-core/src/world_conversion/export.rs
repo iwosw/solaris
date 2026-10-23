@@ -286,6 +286,15 @@ pub(super) fn convert(
     } else {
         refresh_saved(&mut metadata, scoreboard_path.into(), scoreboard)?;
     }
+    for (id,map) in &world.dimensions[&Dimension::Overworld].saved_maps {
+        refresh_saved(&mut metadata, format!("data/minecraft/maps/{id}.dat"),
+            crate::maps::nbt::to_tag(map).map_err(fail)?)?;
+    }
+    let next_map = crate::maps::sequence(&checkpoint.globals)?.max(
+        world.dimensions[&Dimension::Overworld].saved_maps.last_key_value()
+            .map_or(0, |(&id,_)| i64::from(id) + 1));
+    refresh_saved(&mut metadata, "data/minecraft/maps/last_id.dat".into(),
+        crate::maps::nbt::sequence_to_tag(next_map).map_err(fail)?)?;
     for dimension in [Dimension::Overworld, Dimension::Nether, Dimension::End] {
         let replay = &world.dimensions[&dimension];
         let root = dimension.directory(Path::new(""));

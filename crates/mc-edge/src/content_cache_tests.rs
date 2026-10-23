@@ -73,6 +73,7 @@ pub(crate) fn write_valid_cache(root: &Path) {
         .flat_map(|block| block.states.iter().map(|state| state.id as usize + 1))
         .max()
         .unwrap();
+    write_json(root, "reports/block_map_colors.json", &json!(vec![0;state_count]));
     write_json(
         root,
         "reports/block_light.json",

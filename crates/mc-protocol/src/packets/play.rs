@@ -46,6 +46,8 @@ mod item_stack_template;
 #[cfg(test)]
 mod item_stack_template_tests;
 mod merchant;
+mod map_data;
+pub use map_data::{ClientboundMapData, MapDecoration};
 mod rename_item;
 mod scoreboard;
 mod set_beacon;

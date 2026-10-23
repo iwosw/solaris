@@ -250,7 +250,7 @@ pub(super) fn run(
         return;
     }
     let mut bodies = std::mem::take(&mut state.projectiles.bodies);
-    hittables(state, &mut bodies);
+    let mut have_hittables = false;
     for id in ids {
         let Some(slot) = state.entities.slot_of(id) else {
             continue;
@@ -296,6 +296,10 @@ pub(super) fn run(
         };
         let record = &mut *boxed;
         record.age = record.age.saturating_add(1);
+        if record.kind != ProjectileKind::EyeOfEnder && !have_hittables {
+            hittables(state, &mut bodies);
+            have_hittables = true;
+        }
         let gone = step(state, intents, id, record, &bodies);
         if gone {
             // Removing the row must not discard actual weapon custody before
@@ -369,6 +373,9 @@ fn step(
     record: &mut ProjectileState,
     bodies: &[Hittable],
 ) -> bool {
+    if record.kind == ProjectileKind::EyeOfEnder {
+        return super::eye::step(state, id, record);
+    }
     let is_attached = record.kind == ProjectileKind::Firework
         && record.attached_to.is_some()
         && attached(state, id, record);

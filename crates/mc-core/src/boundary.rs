@@ -745,6 +745,9 @@ pub enum BossBarChange {
 /// Reliable results for the connection identified by the enclosing outbox queue key.
 #[derive(Debug, Clone, PartialEq)]
 pub enum PlayerChange {
+    Map {
+        update: crate::maps::MapUpdate,
+    },
     Advancements {
         reset: bool,
         definitions: Arc<mc_data::advancements::AdvancementTree>,

@@ -173,6 +173,8 @@ pub struct GeneratedEntityMarker {
     pub claim: String,
     pub entity_type: String,
     pub position: [f64; 3],
+    /// Authored `PersistenceRequired`; applied through the native mob row.
+    pub persistent: bool,
     pub villager_kind: String,
     pub profession: String,
     pub level: u8,
@@ -789,6 +791,14 @@ pub struct GeneratedVillagePiece {
     pub entity_owner: Option<String>,
 }
 
+/// A generated non-village structure, using the same start decision as placement.
+#[derive(Debug, Clone, PartialEq)]
+pub struct GeneratedStructureSite {
+    pub structure: Identifier,
+    pub position: BlockPos,
+    pub start_chunk: (i32, i32),
+}
+
 pub trait ChunkGenerator: Send + Sync {
     /// Build a brand-new `Chunk` for the given position.
     /// Complete light arrays, when supplied, must describe the final blocks.
@@ -819,6 +829,15 @@ pub trait ChunkGenerator: Send + Sync {
         _min_chunk: (i32, i32),
         _max_chunk: (i32, i32),
     ) -> Vec<GeneratedVillageSite> {
+        Vec::new()
+    }
+
+    /// Non-village starts in a bounded inclusive chunk rectangle.
+    fn structure_sites_in_region(
+        &self,
+        _min_chunk: (i32, i32),
+        _max_chunk: (i32, i32),
+    ) -> Vec<GeneratedStructureSite> {
         Vec::new()
     }
 
@@ -904,6 +923,7 @@ impl Chunk {
                     ("X".into(), Tag::Double(inhabitant.position[0])),
                     ("Y".into(), Tag::Double(inhabitant.position[1])),
                     ("Z".into(), Tag::Double(inhabitant.position[2])),
+                    ("PersistenceRequired".into(), Tag::Byte(i8::from(inhabitant.persistent))),
                     (
                         "VillagerKind".into(),
                         Tag::String(inhabitant.villager_kind.clone()),
@@ -1011,6 +1031,9 @@ impl Chunk {
                     claim: string("Claim")?,
                     entity_type: string("Entity")?,
                     position: [double("X")?, double("Y")?, double("Z")?],
+                    persistent: fields.iter().any(|(key, value)| {
+                        key == "PersistenceRequired" && matches!(value, Tag::Byte(value) if *value != 0)
+                    }),
                     villager_kind: string("VillagerKind")?,
                     profession: string("Profession")?,
                     level: level?,

@@ -118,6 +118,7 @@ pub struct CoreRegistry {
     pub explosion: Option<mc_data::block_explosion::BlockExplosionTable>,
     /// Exact vanilla light, opacity and suffocation oracle, shared by worlds.
     pub light: Arc<mc_data::block_light::BlockLightTable>,
+    pub(crate) map_colors: Arc<[u8]>,
     /// Configure rules admitted before world loading; terrain consumes tree/clay rules.
     pub(crate) plugin_rules: Option<mc_script::GameplayRules>,
     /// Deployment-owned ore policy, applied before spawn discovery and generation.
@@ -247,6 +248,13 @@ impl CoreRegistry {
             mc_data::block_light::load(root.join("reports/block_light.json"))
                 .map_err(|error| CoreError::Registry(error.to_string()))?,
         );
+        let map_colors: Vec<u8> = serde_json::from_slice(
+            &std::fs::read(root.join("reports/block_map_colors.json"))
+                .map_err(|e| CoreError::Registry(format!("map colors: {e}; run tools/extract-block-map-colors.sh")))?,
+        ).map_err(|e| CoreError::Registry(format!("map colors: {e}")))?;
+        if map_colors.len() != blocks.len() || map_colors.iter().any(|c| *c >= 62) {
+            return Err(CoreError::Registry("invalid map color registry".into()));
+        }
         let (item_facts, tags, recipes, loot, mining, worldgen_tags) = match vanilla_data_dir {
             Some(dir) => {
                 let (item_facts, tags, recipes, loot, mining, worldgen_tags) =
@@ -459,6 +467,7 @@ impl CoreRegistry {
             mining,
             explosion,
             light,
+            map_colors: map_colors.into(),
             entity_types,
             materials,
             collision_boxes,

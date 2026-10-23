@@ -13,6 +13,7 @@ pub mod native;
 pub mod plant_rules_26_1_2;
 pub mod section;
 pub mod storage;
+pub mod structure_starts;
 pub mod wire;
 
 pub use block::{Block, BlockRegistry, BlockState, BlockStateId, RegistryError};
@@ -33,3 +34,6 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 mod inhabited_time_tests;
 #[cfg(test)]
 mod plant_rules_26_1_2_tests;
+
+#[cfg(test)]
+mod structure_starts_tests;

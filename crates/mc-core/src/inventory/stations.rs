@@ -45,6 +45,7 @@ impl MenuKind {
                 | Self::Smithing
                 | Self::Loom
                 | Self::Stonecutter
+                | Self::Cartography
         )
     }
 }
@@ -112,6 +113,13 @@ impl Menu {
     }
 
     pub fn consume_station_output(&mut self) {
+        if self.kind == MenuKind::Cartography {
+            for input in &mut self.grid {
+                mc_data::inventory_semantics_26_1_2::take_from_stack(input, 1);
+            }
+            self.result = ItemStack::EMPTY;
+            return;
+        }
         self.grid[0] = ItemStack::EMPTY;
         if self.kind == MenuKind::Anvil {
             let remaining = self.grid[1].count - self.station.material_cost;

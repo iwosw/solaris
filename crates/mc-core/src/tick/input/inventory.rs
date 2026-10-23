@@ -62,6 +62,10 @@ pub(in crate::tick) fn container_click(
         );
         return;
     }
+    if crate::maps::cartography::is_open(state, entity) {
+        crate::maps::cartography::click(state, entity, (*window, *state_id, *slot, *button, *mode), changes);
+        return;
+    }
     if state
         .players
         .get(&entity)

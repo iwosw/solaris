@@ -4,10 +4,8 @@ use std::path::Path;
 
 use flate2::bufread::GzDecoder;
 use mc_data::Identifier;
-use mc_data::items::ItemRegistry;
-use mc_data::loot::chest_26_1_2::{CHEST_SLOT_COUNT, ChestLootCatalog, ChestRng};
 use mc_nbt::{ListTag, Tag};
-use mc_world::{BlockRegistry, BlockStateId, ChestBlockEntity, FurnaceSlot};
+use mc_world::{BlockRegistry, BlockStateId, ChestBlockEntity};
 use thiserror::Error;
 
 const MAX_STRUCTURE_COMPRESSED_NBT_BYTES: usize = mc_nbt::MAX_NBT_TOTAL_BYTES;
@@ -53,11 +51,13 @@ pub enum StructureError {
 #[derive(Debug, Clone)]
 pub struct StructureTemplate {
     size: [i32; 3],
+    bounds: ([i32; 3], [i32; 3]),
     blocks: Vec<TemplateBlock>,
     chests: Vec<TemplateChest>,
     villager_markers: Vec<[i32; 3]>,
     jigsaws: Vec<TemplateJigsaw>,
     entities: Vec<TemplateEntity>,
+    block_entities: Vec<TemplateBlockEntity>,
     /// Cells the template authors as `minecraft:air`. Vanilla's legacy pool
     /// elements ignore them when placing, so they are not in [`Self::blocks`];
     /// a caller that clears terrain inside a building reads them here.
@@ -165,70 +165,53 @@ pub struct TemplateBlock {
     pub state: BlockStateId,
 }
 
+/// A non-chest block entity authored by a structure template.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TemplateBlockEntity {
+    pub pos: [i32; 3],
+    pub state: BlockStateId,
+    pub nbt: Vec<(String, Tag)>,
+}
+
+impl TemplateBlockEntity {
+    /// Relocate authored block-entity NBT into the chunk's network-NBT store.
+    #[must_use]
+    pub fn at_world_position(&self, pos: mc_world::BlockPos) -> Vec<u8> {
+        let mut nbt = self.nbt.clone();
+        nbt.retain(|(key, _)| !matches!(key.as_str(), "x" | "y" | "z"));
+        nbt.extend([
+            ("x".into(), Tag::Int(pos.x)),
+            ("y".into(), Tag::Int(pos.y)),
+            ("z".into(), Tag::Int(pos.z)),
+        ]);
+        let mut bytes = Vec::new();
+        mc_nbt::write_network(&mut bytes, &Tag::Compound(nbt))
+            .expect("validated structure block entity");
+        bytes
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TemplateChest {
     pub pos: [i32; 3],
     pub chest: ChestBlockEntity,
-    /// Vanilla chest table rolled with the production catalog, retaining
-    /// canonical item components in the generated block entity.
+    /// Vanilla table retained until first open, when player/world context exists.
     pub loot_table: Option<Identifier>,
 }
 
 impl TemplateChest {
-    /// Resolve the production table and distribute canonical stacks into
-    /// distinct slots. Missing catalog entries remain unopened vanilla loot
-    /// instead of substituting a handcrafted inventory.
+    /// Preserve unopened loot instead of rolling without player/world context.
     #[must_use]
-    pub fn resolve_contents(&self, loot: &StructureLoot<'_>, loot_seed: u64) -> ChestBlockEntity {
+    pub fn unopened_contents(&self, loot_seed: u64) -> ChestBlockEntity {
         let Some(table_id) = &self.loot_table else {
             return self.chest.clone();
         };
-        let Some(table) = loot.catalog.get(table_id) else {
-            return ChestBlockEntity {
-                loot_table: Some(table_id.clone()),
-                loot_seed: loot_seed as i64,
-                ..ChestBlockEntity::default()
-            };
-        };
-        let mut rng = ChestRng::new(loot_seed);
-        let mut out = ChestBlockEntity::default();
-        let mut available: [usize; CHEST_SLOT_COUNT as usize] = std::array::from_fn(|slot| slot);
-        let mut remaining = available.len();
-        for stack in table
-            .roll(&mut rng, loot.items, 0.0)
-            .expect("production structure loot")
-        {
-            if remaining == 0 {
-                break;
-            }
-            let choice = rng.next_bounded(remaining as u64) as usize;
-            let slot = available[choice];
-            remaining -= 1;
-            available[choice] = available[remaining];
-            out.slots[slot] = FurnaceSlot {
-                item_id: stack.item_id,
-                count: stack.count,
-                damage: stack.damage,
-                enchantments: stack.enchantments,
-                custom_name: stack.custom_name.map(|name| name.into_string()),
-                item_model: stack.item_model,
-                stew_effects: stack.stew_effects,
-                components: stack.components,
-            };
+        ChestBlockEntity {
+            loot_table: Some(table_id.clone()),
+            loot_seed: loot_seed as i64,
+            ..ChestBlockEntity::default()
         }
-        out
     }
-}
-
-/// Loot context threaded through structure pasting: the world seed plus the
-/// compiled chest tables and the item registry that resolves rolled stacks.
-/// A chest whose table id is absent from the catalog pastes its fixed
-/// contents instead, so generators without wired loot keep legacy output.
-#[derive(Debug)]
-pub struct StructureLoot<'a> {
-    pub seed: i64,
-    pub catalog: &'a ChestLootCatalog,
-    pub items: &'a ItemRegistry,
 }
 
 enum BoundedLength {
@@ -400,13 +383,22 @@ fn decode_single_structure_gzip_member(
 impl StructureTemplate {
     #[must_use]
     pub fn new(size: [i32; 3], blocks: Vec<TemplateBlock>) -> Self {
+        let mut bounds = ([0; 3], size.map(|v| v - 1));
+        for block in &blocks {
+            for axis in 0..3 {
+                bounds.0[axis] = bounds.0[axis].min(block.pos[axis]);
+                bounds.1[axis] = bounds.1[axis].max(block.pos[axis]);
+            }
+        }
         Self {
             size,
+            bounds,
             blocks,
             chests: Vec::new(),
             villager_markers: Vec::new(),
             jigsaws: Vec::new(),
             entities: Vec::new(),
+            block_entities: Vec::new(),
             air_cells: Vec::new(),
         }
     }
@@ -461,6 +453,12 @@ impl StructureTemplate {
         self.size
     }
 
+    /// Inclusive placement envelope, compiled once even for composed templates.
+    #[must_use]
+    pub fn bounds(&self) -> ([i32; 3], [i32; 3]) {
+        self.bounds
+    }
+
     #[must_use]
     pub fn blocks(&self) -> &[TemplateBlock] {
         &self.blocks
@@ -507,10 +505,35 @@ impl StructureTemplate {
         self
     }
 
+    #[must_use]
+    pub fn block_entities(&self) -> &[TemplateBlockEntity] {
+        &self.block_entities
+    }
+
+    #[must_use]
+    pub fn with_block_entities(mut self, entities: Vec<TemplateBlockEntity>) -> Self {
+        self.block_entities = entities;
+        self
+    }
+
     fn from_tag(path: &str, root: &Tag, registry: &BlockRegistry) -> Result<Self, StructureError> {
         let compound = expect_compound(path, root, "root")?;
         let size = expect_int_triplet(path, require(compound, path, "size")?, "size")?;
-        let palette = parse_palette(path, require(compound, path, "palette")?, registry)?;
+        // Multi-palette templates (notably shipwrecks) share block indices.
+        // Select the first authored material variant; layout is unchanged.
+        let palette_tag = if let Some((_, tag)) = compound.iter().find(|(key, _)| key == "palette")
+        {
+            tag
+        } else {
+            expect_list(path, require(compound, path, "palettes")?, "palettes")?
+                .elements
+                .first()
+                .ok_or_else(|| StructureError::InvalidField {
+                    path: path.to_owned(),
+                    field: "palettes",
+                })?
+        };
+        let palette = parse_palette(path, palette_tag, registry)?;
         let parsed = parse_blocks(path, require(compound, path, "blocks")?, &palette, registry)?;
         let mut template = Self::new(size, parsed.blocks);
         template.villager_markers = parsed.villager_markers;
@@ -518,6 +541,7 @@ impl StructureTemplate {
         template.jigsaws = parsed.jigsaws;
         template.entities = parse_entities(path, compound)?;
         template.air_cells = parsed.air_cells;
+        template.block_entities = parsed.block_entities;
         Ok(template)
     }
 }
@@ -615,6 +639,8 @@ fn parse_properties(path: &str, tag: &Tag) -> Result<Vec<(String, String)>, Stru
 pub struct TemplateEntity {
     /// The NBT `id`, e.g. `minecraft:villager`.
     pub entity_type: String,
+    /// The template's `PersistenceRequired` flag.
+    pub persistent: bool,
     /// The NBT `pos`, in template-local doubles.
     pub position: [f64; 3],
     /// The NBT `blockPos`, in template-local blocks.
@@ -771,8 +797,19 @@ fn parse_entities(
                 })
             })
             .transpose()?;
+        let persistent = match nbt.iter().find(|(key, _)| key == "PersistenceRequired") {
+            None => false,
+            Some((_, Tag::Byte(value))) => *value != 0,
+            Some(_) => {
+                return Err(StructureError::InvalidField {
+                    path: path.to_string(),
+                    field: "entities[].nbt.PersistenceRequired",
+                });
+            }
+        };
         entities.push(TemplateEntity {
             entity_type,
+            persistent,
             position,
             block_position,
             yaw,
@@ -839,6 +876,7 @@ struct ParsedBlocks {
     jigsaws: Vec<TemplateJigsaw>,
     chests: Vec<TemplateChest>,
     air_cells: Vec<[i32; 3]>,
+    block_entities: Vec<TemplateBlockEntity>,
 }
 
 fn parse_blocks(
@@ -853,6 +891,7 @@ fn parse_blocks(
     let mut jigsaws = Vec::new();
     let mut chests = Vec::new();
     let mut air_cells = Vec::new();
+    let mut block_entities = Vec::new();
     for entry in &list.elements {
         let compound = expect_compound(path, entry, "blocks[]")?;
         let pos = expect_int_triplet(path, require(compound, path, "pos")?, "blocks[].pos")?;
@@ -879,6 +918,15 @@ fn parse_blocks(
                 // synthesizes the client-render record from the block state.
                 if let Some(chest) = template_chest_from_nbt(pos, compound, registry, *state) {
                     chests.push(chest);
+                } else if let Some(Tag::Compound(nbt)) = compound
+                    .iter()
+                    .find_map(|(key, tag)| (key == "nbt").then_some(tag))
+                {
+                    block_entities.push(TemplateBlockEntity {
+                        pos,
+                        state: *state,
+                        nbt: nbt.clone(),
+                    });
                 }
             }
             TemplatePaletteEntry::Jigsaw(jigsaw_state) => {
@@ -898,6 +946,7 @@ fn parse_blocks(
         jigsaws,
         chests,
         air_cells,
+        block_entities,
     })
 }
 

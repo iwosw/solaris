@@ -12,6 +12,7 @@ pub mod end;
 pub mod mosaic;
 pub mod nether;
 pub mod noise;
+mod overworld_structures;
 pub mod structures;
 pub mod terrain;
 pub mod vanilla_climate;

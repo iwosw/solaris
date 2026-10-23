@@ -1486,6 +1486,7 @@ fn place_piece_places_template_entities_under_every_rotation() {
     let template = StructureTemplate::new([1, 1, 1], Vec::new()).with_entities(vec![
         TemplateEntity {
             entity_type: "minecraft:villager".to_owned(),
+            persistent: false,
             position: [2.25, 3.0, -1.5],
             block_position: [0, 1, 0],
             yaw: 48.821_632,
@@ -1499,6 +1500,7 @@ fn place_piece_places_template_entities_under_every_rotation() {
         },
         TemplateEntity {
             entity_type: "minecraft:villager".to_owned(),
+            persistent: false,
             position: [99.0, 3.0, -1.5],
             block_position: [99, 1, 0],
             yaw: 0.0,

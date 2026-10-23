@@ -955,6 +955,7 @@ fn village_pieces_place_their_villagers_as_chunk_inhabitants() {
     // `Rotation::None` alone.
     let villager = |block_position: [i32; 3], yaw: f32, pitch: f32, age: i32| TemplateEntity {
         entity_type: "minecraft:villager".to_owned(),
+        persistent: false,
         position: [
             f64::from(block_position[0]) + 2.25,
             3.0,
@@ -984,6 +985,7 @@ fn village_pieces_place_their_villagers_as_chunk_inhabitants() {
             villager([40, 1, 0], 48.821_632, 0.0, 0),
             TemplateEntity {
                 entity_type: "minecraft:zombie_villager".to_owned(),
+                persistent: true,
                 position: [0.5, 1.0, 0.5],
                 block_position: [0, 1, 0],
                 yaw: 0.0,
@@ -1020,8 +1022,10 @@ fn village_pieces_place_their_villagers_as_chunk_inhabitants() {
         z: chunk.1,
     });
     let markers = placed.generated_entities();
-    assert_eq!(markers.len(), 1, "one villager is placed, one clipped away");
+    assert_eq!(markers.len(), 2, "villager and zombie villager placed; distant villager clipped");
     let marker = &markers[0];
+    let zombie = markers.iter().find(|marker| marker.entity_type == "minecraft:zombie_villager").unwrap();
+    assert!(zombie.persistent, "template PersistenceRequired survives placement");
     assert_eq!(marker.entity_type, "minecraft:villager");
     assert_eq!(marker.villager_kind, "desert");
     assert_eq!(marker.profession, "nitwit");

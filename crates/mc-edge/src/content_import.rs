@@ -85,6 +85,11 @@ const WORLDGEN_DIRS: &[&str] = &[
 /// sources are the repo's own tooling, kept in-tree rather than shelled.
 const JAVA_EXTRACTORS: &[JavaExtractor] = &[
     JavaExtractor {
+        class_name: "MapColorExtractor",
+        source: include_str!("../../../tools/extract-block-map-colors/MapColorExtractor.java"),
+        output_relative: "reports/block_map_colors.json",
+    },
+    JavaExtractor {
         class_name: "LightExtractor",
         source: include_str!("../../../tools/extract-block-light/LightExtractor.java"),
         output_relative: "reports/block_light.json",

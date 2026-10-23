@@ -485,9 +485,17 @@ pub trait PieceWriter: ProcessLevel {
     ///
     /// `chest` is the template's own chest and `loot_seed` is the
     /// `LootTableSeed` vanilla drew for this container from the same random that
-    /// places the structure's decor, so the writer can roll the real table with
-    /// its own [`crate::structures::StructureLoot`].
+    /// places the structure's decor. The writer preserves the unopened table
+    /// and seed; only the native runtime resolves loot on first open.
     fn set_chest(&mut self, pos: BlockPos, chest: &TemplateChest, loot_seed: u64);
+
+    /// Retain non-chest payloads such as spawner SpawnData.
+    fn set_block_entity(
+        &mut self,
+        _pos: BlockPos,
+        _entity: &crate::structures::TemplateBlockEntity,
+    ) {
+    }
 
     /// Vanilla's entity step for one entity the template places.
     ///
@@ -658,6 +666,11 @@ pub fn place_piece(
                 .expect("a chest-bearing piece draws its loot seed from the structure's random")
                 .next_long() as u64;
             writer.set_chest(block.pos, &template.chests()[*index], loot_seed);
+        }
+        if let Some(entity) = template.block_entities().iter().find(|entity| {
+            entity.state == block.state && world_position(entity.pos, settings) == block.pos
+        }) {
+            writer.set_block_entity(block.pos, entity);
         }
     }
     // `placeInWorld`'s entity step runs after the whole block and block-entity

@@ -214,6 +214,7 @@ fi
 
 echo "[5/9] Extracting block-light report …"
 JAVA="$JAVA" "$REPO_ROOT/tools/extract-block-light.sh" "$BUNDLE_JAR"
+JAVA="$JAVA" bash "$REPO_ROOT/tools/extract-block-map-colors.sh" "$BUNDLE_JAR"
 
 echo "[6/9] Extracting block-mining report …"
 JAVA="$JAVA" "$REPO_ROOT/tools/extract-block-mining.sh" "$BUNDLE_JAR"

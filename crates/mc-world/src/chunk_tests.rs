@@ -77,6 +77,7 @@ fn generated_entity_markers_survive_anvil_nbt_persistence() {
         claim: "minecraft:village/plains/toolsmith@72:66:8#0".to_owned(),
         entity_type: "minecraft:villager".to_owned(),
         position: [72.5, 66.0, 8.5],
+        persistent: true,
         villager_kind: "plains".to_owned(),
         profession: "toolsmith".to_owned(),
         level: 1,

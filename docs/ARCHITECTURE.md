@@ -99,6 +99,25 @@ image in the same WAL batch as the allay credit. Dimension-travel wire removals
 become durable tombstones only when the entity is not live in that dimension
 at the journal boundary, preserving same-tick round trips.
 
+Saved maps are global native rows (`map/<id>`) plus a monotonic `map_sequence`
+allocation fence, shared across dimension ticks. Items retain the vanilla
+`minecraft:map_id` component; cloning shares a row, scaling/locking creates one
+new row only when the cartography output is accepted. Pixel updates sample only
+resident columns around held/viewed maps, with a five-tick cadence, eight-map
+round-robin limit and 1,024-column budget; the edge only encodes dirty rectangles.
+The map palette is extracted from licensed vanilla block states during content
+import (`reports/block_map_colors.json`); a missing/invalid palette fails startup.
+
+First-open exploration loot and cartographer map offers reuse the bounded
+`/locate` worker. Pending lookups own no inventory and allocate no map IDs.
+Container completion rechecks dimension, chunk revision and exact pending loot
+table/seed/metadata before publishing map rows, slots and cleared loot metadata
+in the same native tick/WAL batch. Concurrent opens share one request; a replaced
+or broken container discards the response. Missing destinations omit map loot,
+not fabricated targets. Anvil map files and allocation counters are decoded into
+native rows on import and regenerated from the recovered native state on export;
+unknown map-envelope fields and retained banner metadata remain preserved.
+
 Anvil is explicit offline import/export, never a serving fallback or dual-write
 backend. Conversions retain source worlds, require a new destination and emit
 receipts. Offline native backup/restore requires a stopped, exclusively leased

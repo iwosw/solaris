@@ -2129,7 +2129,9 @@ impl ChunkWorld {
         block_entities: &crate::core::CheckpointBlockEntities,
         registry: &BlockRegistry,
     ) {
-        chunk.chests.retain(|block, _| !Self::in_chunk(*block, pos));
+        chunk.chests.retain(|block, chest| !Self::in_chunk(*block, pos)
+            || (chest.loot_table.is_some()
+                && !block_entities.contains_key(&(block.x, block.y, block.z))));
         chunk
             .furnaces
             .retain(|block, _| !Self::in_chunk(*block, pos));

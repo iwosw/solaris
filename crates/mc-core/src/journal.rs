@@ -95,6 +95,10 @@ pub enum JournalEntry {
     Scoreboard {
         value: crate::scoreboard::Scoreboard,
     },
+    SavedMap {
+        id: i32,
+        value: Arc<crate::maps::SavedMap>,
+    },
     /// Absolute bossbar post-image after a bossbar mutation: named-NBT bytes
     /// of the vanilla saved-data envelope (Tag has no serde); decoded on
     /// replay, fail-closed like checkpoints.
@@ -1918,6 +1922,7 @@ pub struct Replay {
     pub tickets: BTreeMap<String, ([i32; 2], (u64, i32))>,
     /// Latest scoreboard image, including an empty-board reset.
     pub scoreboard: Option<crate::scoreboard::Scoreboard>,
+    pub saved_maps: BTreeMap<i32, Arc<crate::maps::SavedMap>>,
     /// Latest bossbar image (named-NBT bytes), including an empty-registry reset.
     pub bossbars: Option<Vec<u8>>,
     pub end_fight: Option<crate::end_fight::Fight>,
@@ -2511,6 +2516,9 @@ pub(crate) fn apply_batch_images(
                 }
                 JournalEntry::Scoreboard { value } => {
                     replay.scoreboard = Some(value.clone());
+                }
+                JournalEntry::SavedMap { id, value } => {
+                    replay.saved_maps.insert(*id, Arc::clone(value));
                 }
                 JournalEntry::Bossbars { value } => {
                     replay.bossbars = Some(value.clone());

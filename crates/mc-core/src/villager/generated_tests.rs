@@ -9,6 +9,7 @@ impl mc_world::ChunkGenerator for MarkerGenerator {
             claim: "village:0:0:resident:1".into(),
             entity_type: "minecraft:villager".into(),
             position: [0.5, 80., 0.5],
+            persistent: false,
             villager_kind: "minecraft:savanna".into(),
             profession: "minecraft:farmer".into(),
             level: 2,

@@ -440,6 +440,7 @@ fn export_import_does_not_respawn_claimed_dead_generated_villager() {
         claim: claim.into(),
         entity_type: "minecraft:villager".into(),
         position,
+        persistent: false,
         villager_kind: "minecraft:plains".into(),
         profession: "minecraft:farmer".into(),
         level: 1,

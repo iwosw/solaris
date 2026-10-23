@@ -1,8 +1,8 @@
 //! Vanilla `/locate structure|biome|poi` (LocateCommand.java).
 //!
-//! Only the five village structures Solaris natively generates are locatable;
-//! every other vanilla structure id (or tag) resolves but reports
-//! `commands.locate.structure.not_found`. Biome search samples the generator's
+//! Searches the generator's actual village and non-village starts; registry
+//! entries without a generator still report `commands.locate.structure.not_found`.
+//! Biome search samples the generator's
 //! 3D noise biome on expanding square rings (vanilla `findClosestBiome3d`,
 //! 6400/32/64). POI search scans loaded chunks for the vanilla
 //! [`PoiTypes`](https://minecraft.wiki/w/Point_of_interest) block lists.
@@ -359,57 +359,151 @@ fn resolve_poi_tag(tag: &Identifier) -> Option<Vec<Identifier>> {
     Some(out)
 }
 
-/// Synchronous structure search over the generator's village sites: nearest
-/// start within 100 chunks, ring by ring like vanilla `RandomSpread` scan.
-/// `site_structures` maps a site start chunk to the structure id that placed
-/// it (resolved on the tick thread, where settlement records live); sites
-/// missing from the map are skipped.
-pub fn search_structure(
+type SavedStarts = HashMap<mc_world::ChunkPos, Vec<mc_world::chunk::GeneratedStructureSite>>;
+
+/// Saved coverage is authoritative, including covered chunks without starts.
+/// Only uncovered chunks may contribute deterministic generator plans.
+fn search_structure(
     generator: &dyn ChunkGenerator,
     origin: (i32, i32, i32),
     targets: &[Identifier],
-    site_structures: &[((i32, i32), Identifier)],
+    saved: &SavedStarts,
+    options: &StructureSearchOptions,
 ) -> Option<LocateHit> {
-    if targets.is_empty() {
-        return None;
-    }
-    let origin_chunk = (origin.0.div_euclid(16), origin.2.div_euclid(16));
-    let mut best: Option<(i64, (i32, i32, i32), Identifier)> = None;
-    for radius in 0..=MAX_STRUCTURE_SEARCH_RADIUS_CHUNKS {
-        for (cx, cz) in square_ring(origin_chunk, radius) {
-            for site in generator.village_sites_in_region((cx, cz), (cx, cz)) {
-                let Some(structure) = site_structures
-                    .iter()
-                    .find(|(start, _)| *start == site.start_chunk)
-                    .map(|(_, structure)| structure.clone())
-                else {
-                    continue;
-                };
-                if !targets.iter().any(|target| target == &structure) {
-                    continue;
-                }
-                let (x, z) = (site.start_chunk.0 * 16 + 8, site.start_chunk.1 * 16 + 8);
-                let y = generator.surface_height(x, z).unwrap_or(64);
-                let distance_sqr = i64::from(x - origin.0) * i64::from(x - origin.0)
-                    + i64::from(z - origin.2) * i64::from(z - origin.2);
-                let replace = best
-                    .as_ref()
-                    .is_none_or(|(known, _, _)| distance_sqr < *known);
-                if replace {
-                    best = Some((distance_sqr, (x, y, z), structure));
-                }
-            }
+    let centre = (origin.0.div_euclid(16), origin.2.div_euclid(16));
+    let min = (
+        centre.0.saturating_sub(options.radius),
+        centre.1.saturating_sub(options.radius),
+    );
+    let max = (
+        centre.0.saturating_add(options.radius),
+        centre.1.saturating_add(options.radius),
+    );
+    let mut sites = if targets.iter().any(|id| !id.path().starts_with("village_")) {
+        generator.structure_sites_in_region(min, max)
+    } else {
+        Vec::new()
+    };
+    if targets.iter().any(|id| id.path().starts_with("village_")) {
+        let radius = MAX_STRUCTURE_SEARCH_RADIUS_CHUNKS.min(options.radius);
+        for site in generator.village_sites_in_region(
+            (
+                centre.0.saturating_sub(radius),
+                centre.1.saturating_sub(radius),
+            ),
+            (
+                centre.0.saturating_add(radius),
+                centre.1.saturating_add(radius),
+            ),
+        ) {
+            let x = site.start_chunk.0 * 16 + 8;
+            let z = site.start_chunk.1 * 16 + 8;
+            sites.push(mc_world::chunk::GeneratedStructureSite {
+                structure: site.structure,
+                start_chunk: site.start_chunk,
+                position: mc_world::BlockPos {
+                    x,
+                    y: generator.surface_height(x, z).unwrap_or(64),
+                    z,
+                },
+            });
         }
-        // Vanilla returns the nearest hit of the first non-empty ring.
-        if best.is_some() {
-            break;
+    }
+    sites.retain(|site| {
+        !saved.contains_key(&mc_world::ChunkPos {
+            x: site.start_chunk.0,
+            z: site.start_chunk.1,
+        })
+    });
+    sites.extend(saved.values().flatten().cloned());
+    sites
+        .into_iter()
+        .filter(|site| targets.contains(&site.structure))
+        .filter(|site| !options.skip_referenced || !options.referenced.contains(&site.position))
+        .filter(|site| {
+            site.start_chunk.0 >= min.0
+                && site.start_chunk.0 <= max.0
+                && site.start_chunk.1 >= min.1
+                && site.start_chunk.1 <= max.1
+        })
+        .map(|site| {
+            let p = site.position;
+            let dx = i64::from(p.x) - i64::from(origin.0);
+            let dz = i64::from(p.z) - i64::from(origin.2);
+            (dx * dx + dz * dz, (p.x, p.y, p.z), site.structure)
+        })
+        .min_by(|a, b| (a.0, a.1, &a.2).cmp(&(b.0, b.1, &b.2)))
+        .map(|(distance, pos, found_id)| LocateHit {
+            pos,
+            found_id,
+            distance: distance.isqrt() as i32,
+        })
+}
+
+struct StructureSnapshot {
+    source: Arc<crate::chunk_loader::ChunkSource>,
+    resident: Result<SavedStarts, String>,
+    radius: i32,
+    skip_referenced: bool,
+}
+
+impl StructureSnapshot {
+    fn capture(
+        state: &TickState,
+        origin: (i32, i32, i32),
+        options: &StructureSearchOptions,
+    ) -> Self {
+        let centre = (origin.0.div_euclid(16), origin.2.div_euclid(16));
+        let resident = state
+            .world
+            .chunks()
+            .filter(|chunk| {
+                (i64::from(chunk.pos.x) - i64::from(centre.0)).abs() <= i64::from(options.radius)
+                    && (i64::from(chunk.pos.z) - i64::from(centre.1)).abs()
+                        <= i64::from(options.radius)
+            })
+            .map(|chunk| {
+                mc_world::structure_starts::read(&chunk.extras, chunk.pos, options.skip_referenced)
+                    .map(|sites| (chunk.pos, sites))
+            })
+            .collect();
+        Self {
+            source: state.world.chunk_source(),
+            resident,
+            radius: options.radius,
+            skip_referenced: options.skip_referenced,
         }
     }
-    best.map(|(distance_sqr, pos, found_id)| LocateHit {
-        pos,
-        found_id,
-        distance: distance_sqr.isqrt() as i32,
-    })
+
+    /// Called only by the locator worker; never opens native storage on tick.
+    fn load(self, origin: (i32, i32, i32)) -> Result<SavedStarts, String> {
+        let centre = (origin.0.div_euclid(16), origin.2.div_euclid(16));
+        let mut saved: SavedStarts = if let Some(native) = &self.source.native {
+            native
+                .checkpoint_reader()
+                .and_then(|reader| {
+                    reader.structure_starts_in_region(
+                        self.source.dimension,
+                        (
+                            centre.0.saturating_sub(self.radius),
+                            centre.1.saturating_sub(self.radius),
+                        ),
+                        (
+                            centre.0.saturating_add(self.radius),
+                            centre.1.saturating_add(self.radius),
+                        ),
+                        self.skip_referenced,
+                    )
+                })
+                .map_err(|error| error.to_string())?
+                .into_iter()
+                .collect()
+        } else {
+            HashMap::new()
+        };
+        saved.extend(self.resident?);
+        Ok(saved)
+    }
 }
 
 /// Square perimeter at Chebyshev distance `radius` around `centre`, in
@@ -607,18 +701,16 @@ impl LocateState {
     }
 }
 
-/// One async search job: owned inputs plus the shared generator. Structure
-/// jobs also carry each candidate site's own structure id, resolved on the
-/// tick thread where the settlement records live.
+/// One async search with owned inputs and a pinned metadata source.
 struct LocateJob {
     connection: ConnectionId,
     kind: LocateKind,
     origin: (i32, i32, i32),
     generator: Arc<dyn ChunkGenerator>,
     targets: Vec<Identifier>,
-    /// `(start_chunk, structure_id)` for structure jobs; empty otherwise.
-    site_structures: Vec<((i32, i32), Identifier)>,
-    display: String,
+    snapshot: Option<StructureSnapshot>,
+    completion: LocateCompletion,
+    options: StructureSearchOptions,
     min_y: i32,
     max_y: i32,
 }
@@ -630,11 +722,10 @@ enum LocateKind {
 }
 
 /// A finished worker search, delivered to the tick thread.
-#[derive(Debug)]
 struct LocateDone {
+    completion: LocateCompletion,
     connection: ConnectionId,
     kind: LocateKind,
-    display: String,
     origin: (i32, i32, i32),
     hit: Option<LocateHit>,
     elapsed_ms: u128,
@@ -644,12 +735,21 @@ fn locate_worker(jobs: Receiver<LocateJob>, done: Sender<LocateDone>) {
     for job in jobs {
         let start = std::time::Instant::now();
         let hit = match job.kind {
-            LocateKind::Structure => search_structure(
-                job.generator.as_ref(),
-                job.origin,
-                &job.targets,
-                &job.site_structures,
-            ),
+            LocateKind::Structure => {
+                match job.snapshot.expect("structure snapshot").load(job.origin) {
+                    Ok(saved) => search_structure(
+                        job.generator.as_ref(),
+                        job.origin,
+                        &job.targets,
+                        &saved,
+                        &job.options,
+                    ),
+                    Err(error) => {
+                        tracing::error!(%error, "Cannot read authoritative structure starts");
+                        None
+                    }
+                }
+            }
             LocateKind::Biome => {
                 let generator = Arc::clone(&job.generator);
                 search_biome(
@@ -665,10 +765,10 @@ fn locate_worker(jobs: Receiver<LocateJob>, done: Sender<LocateDone>) {
         let result = LocateDone {
             connection: job.connection,
             kind: job.kind,
-            display: job.display,
             origin: job.origin,
             hit,
             elapsed_ms,
+            completion: job.completion,
         };
         if done.send(result).is_err() {
             return;
@@ -714,28 +814,14 @@ fn execute_structure(
             return;
         }
     };
-    // Candidate sites near the origin: the worker searches a bounded chunk
-    // box around it, so resolve that box's villages once here (generator
-    // sites plus adopted settlement villages) instead of per ring.
-    let (min_chunk, max_chunk) = (
-        (
-            (origin.0 - 16 * (MAX_STRUCTURE_SEARCH_RADIUS_CHUNKS + 1)).div_euclid(16),
-            (origin.2 - 16 * (MAX_STRUCTURE_SEARCH_RADIUS_CHUNKS + 1)).div_euclid(16),
-        ),
-        (
-            (origin.0 + 16 * (MAX_STRUCTURE_SEARCH_RADIUS_CHUNKS + 1)).div_euclid(16),
-            (origin.2 + 16 * (MAX_STRUCTURE_SEARCH_RADIUS_CHUNKS + 1)).div_euclid(16),
-        ),
-    );
-    let site_structures = collect_site_structures(state, min_chunk, max_chunk);
     if submit(
         state,
         connection,
         LocateKind::Structure,
         origin,
         targets,
-        site_structures,
-        display,
+        LocateCompletion::Command(display),
+        StructureSearchOptions::default(),
     ) {
         feedback(
             state,
@@ -765,8 +851,8 @@ fn execute_biome(
         LocateKind::Biome,
         origin,
         targets,
-        Vec::new(),
-        display,
+        LocateCompletion::Command(display),
+        StructureSearchOptions::default(),
     ) {
         feedback(
             state,
@@ -914,21 +1000,6 @@ fn poi_type_of(block: &Identifier) -> Identifier {
     Identifier::parse("minecraft:meeting").expect("static POI id")
 }
 
-/// Every village site in the chunk box paired with the structure id that
-/// placed it (the generator's own answer travels with the site). Sites the
-/// worker cannot identify are simply absent from the map, never an error.
-fn collect_site_structures(
-    state: &TickState,
-    min_chunk: (i32, i32),
-    max_chunk: (i32, i32),
-) -> Vec<((i32, i32), Identifier)> {
-    let mut out: Vec<((i32, i32), Identifier)> = Vec::new();
-    for site in state.world.village_sites_in_region(min_chunk, max_chunk) {
-        out.push((site.start_chunk, site.structure.clone()));
-    }
-    out
-}
-
 /// Resolve a structure target: id must be a known vanilla structure, tags
 /// expand to member structures. Returns member ids plus the display name.
 fn resolve_structure_target(
@@ -995,6 +1066,84 @@ fn resolve_poi_target(target: &ResourceOrTag) -> Result<(Vec<Identifier>, String
     }
 }
 
+type StructureLookupReply = Box<dyn FnOnce(&mut TickState, Option<mc_world::BlockPos>) + Send>;
+
+/// Deferred loot/trade lookup. Completion runs on the native tick, including
+/// disconnected requesters; the callback validates its own container/token.
+pub(crate) struct StructureLookupRequest {
+    pub connection: ConnectionId,
+    pub origin: (i32, i32, i32),
+    pub destination: Identifier,
+    pub search_radius: u32,
+    pub skip_existing_chunks: bool,
+    pub referenced: Vec<mc_world::BlockPos>,
+    pub reply: StructureLookupReply,
+}
+
+enum LocateCompletion {
+    Command(String),
+    Eye(crate::projectiles::eye::EyeUse),
+    Callback(StructureLookupReply),
+}
+
+struct StructureSearchOptions {
+    radius: i32,
+    skip_referenced: bool,
+    referenced: HashSet<mc_world::BlockPos>,
+}
+
+impl Default for StructureSearchOptions {
+    fn default() -> Self {
+        Self {
+            radius: 256,
+            skip_referenced: false,
+            referenced: HashSet::new(),
+        }
+    }
+}
+
+pub(crate) fn submit_structure_lookup(
+    state: &mut TickState,
+    request: StructureLookupRequest,
+) -> bool {
+    if request.search_radius > 256 {
+        return false;
+    }
+    let Some(targets) = resolve_structure_tag(&request.destination) else {
+        return false;
+    };
+    submit(
+        state,
+        request.connection,
+        LocateKind::Structure,
+        request.origin,
+        targets,
+        LocateCompletion::Callback(request.reply),
+        StructureSearchOptions {
+            radius: request.search_radius as i32,
+            skip_referenced: request.skip_existing_chunks,
+            referenced: request.referenced.into_iter().collect(),
+        },
+    )
+}
+
+pub(crate) fn submit_eye(state: &mut TickState, request: crate::projectiles::eye::EyeUse) -> bool {
+    let origin = (
+        request.origin[0].floor() as i32,
+        request.origin[1].floor() as i32,
+        request.origin[2].floor() as i32,
+    );
+    submit(
+        state,
+        request.connection,
+        LocateKind::Structure,
+        origin,
+        vec![Identifier::parse("minecraft:stronghold").expect("static structure id")],
+        LocateCompletion::Eye(request),
+        StructureSearchOptions::default(),
+    )
+}
+
 /// Queue a worker search; refuses (with a plain busy message) when the player
 /// or the queue is full.
 fn submit(
@@ -1003,10 +1152,14 @@ fn submit(
     kind: LocateKind,
     origin: (i32, i32, i32),
     targets: Vec<Identifier>,
-    site_structures: Vec<((i32, i32), Identifier)>,
-    display: String,
+    completion: LocateCompletion,
+    options: StructureSearchOptions,
 ) -> bool {
+    let quiet = !matches!(completion, LocateCompletion::Command(_));
     if state.locate.busy(connection) >= MAX_JOBS_PER_PLAYER {
+        if quiet {
+            return false;
+        }
         state.push_player(
             connection,
             PlayerChange::Chat {
@@ -1022,8 +1175,10 @@ fn submit(
         origin,
         generator: state.world.generator(),
         targets,
-        site_structures,
-        display,
+        snapshot: (kind == LocateKind::Structure)
+            .then(|| StructureSnapshot::capture(state, origin, &options)),
+        completion,
+        options,
         min_y: geometry.min_y(),
         max_y: geometry.max_y() - 1,
     };
@@ -1033,6 +1188,9 @@ fn submit(
             true
         }
         Err(TrySendError::Full(_)) => {
+            if quiet {
+                return false;
+            }
             state.push_player(
                 connection,
                 PlayerChange::Chat {
@@ -1042,6 +1200,9 @@ fn submit(
             false
         }
         Err(TrySendError::Disconnected(_)) => {
+            if quiet {
+                return false;
+            }
             state.push_player(
                 connection,
                 PlayerChange::Chat {
@@ -1072,7 +1233,9 @@ pub(crate) fn drain(state: &mut TickState) {
     let mut finished: Vec<LocateDone> = Vec::with_capacity(ready.len());
     let mut pending: VecDeque<LocateDone> = ready.into();
     while let Some(done) = pending.pop_front() {
-        if live.contains(&done.connection) || done.connection == crate::command_console::CONNECTION
+        if matches!(done.completion, LocateCompletion::Callback(_))
+            || live.contains(&done.connection)
+            || done.connection == crate::command_console::CONNECTION
         {
             finished.push(done);
         } else {
@@ -1081,11 +1244,31 @@ pub(crate) fn drain(state: &mut TickState) {
     }
     for done in finished {
         release(state, done.connection);
+        let display = match done.completion {
+            LocateCompletion::Eye(request) => {
+                if let Some(hit) = done.hit {
+                    crate::projectiles::eye::complete(state, request, hit.pos);
+                }
+                continue;
+            }
+            LocateCompletion::Callback(reply) => {
+                reply(
+                    state,
+                    done.hit.map(|hit| mc_world::BlockPos {
+                        x: hit.pos.0,
+                        y: hit.pos.1,
+                        z: hit.pos.2,
+                    }),
+                );
+                continue;
+            }
+            LocateCompletion::Command(display) => display,
+        };
         match done.hit {
             Some(hit) => {
                 let found_name = match done.kind {
-                    LocateKind::Structure => structure_display(&done.display, &hit.found_id),
-                    LocateKind::Biome => biome_display(&done.display, &hit.found_id),
+                    LocateKind::Structure => structure_display(&display, &hit.found_id),
+                    LocateKind::Biome => biome_display(&display, &hit.found_id),
                 };
                 let key = match done.kind {
                     LocateKind::Structure => "commands.locate.structure.success",
@@ -1108,7 +1291,7 @@ pub(crate) fn drain(state: &mut TickState) {
                     LocateKind::Structure => "commands.locate.structure.not_found",
                     LocateKind::Biome => "commands.locate.biome.not_found",
                 };
-                failure(state, done.connection, key, vec![text(&done.display)]);
+                failure(state, done.connection, key, vec![text(&display)]);
             }
         }
     }

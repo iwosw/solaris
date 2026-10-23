@@ -516,6 +516,7 @@ pub struct TickState {
     pub(crate) trader_tick_delay: u32,
     pub(crate) journaled_trader_spawner: Option<crate::mob_lanes::TraderSpawner>,
     pub scoreboard: crate::scoreboard::Scoreboard,
+    pub maps: crate::maps::Maps,
     pub scoreboard_dirty: bool,
     pub bossbars_dirty: bool,
     pub(crate) dimension_globals: crate::dimensions::globals::Globals,
@@ -706,6 +707,7 @@ impl TickState {
             trader_tick_delay: 1200,
             journaled_trader_spawner: None,
             scoreboard: crate::scoreboard::Scoreboard::default(),
+            maps: Default::default(),
             scoreboard_dirty: false,
             bossbars_dirty: false,
             bossbars: Default::default(),
@@ -2941,6 +2943,7 @@ fn run_dimension_tick_inner<'a>(
         state.thunder_level = 0.0;
     }
     crate::scoreboard::automatic(state, &[], &[]);
+    crate::maps::tick(state);
     crate::command_locate::drain(state);
     changes
         .blocks
@@ -4423,6 +4426,9 @@ fn sync_chunk_block_entities(state: &mut TickState) {
             state.tick,
         );
         for (block, chest) in &chunk.chests {
+            if chest.loot_table.is_some() {
+                continue;
+            }
             state
                 .block_entities
                 .hydrate((block.x, block.y, block.z), || BlockEntityState {

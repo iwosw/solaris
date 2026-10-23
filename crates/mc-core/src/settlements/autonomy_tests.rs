@@ -95,6 +95,7 @@ impl mc_world::ChunkGenerator for VillageGenerator {
                     claim: claim.clone().replace("#I", &format!("#{index}")),
                     entity_type: "minecraft:villager".into(),
                     position: *pos,
+                    persistent: false,
                     villager_kind: "minecraft:plains".into(),
                     profession: format!("minecraft:{profession}"),
                     level: 1,

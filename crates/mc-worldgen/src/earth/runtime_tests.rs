@@ -255,8 +255,6 @@ fn prepared_site_consumer_reports_only_villages_written_into_exact_base() {
         )
         .unwrap(),
     );
-    let loot = ChestLootCatalog::new();
-    let items = mc_data::items::solaris_required_items();
     let cache = EarthSourceCache::default();
     let base = EarthBaseSource::new(
         &definition,
@@ -264,11 +262,6 @@ fn prepared_site_consumer_reports_only_villages_written_into_exact_base() {
         &root,
         &blocks,
         Some(&villages),
-        StructureLoot {
-            seed: 42,
-            catalog: &loot,
-            items: &items,
-        },
         &cache,
     )
     .unwrap();
@@ -345,11 +338,6 @@ fn prepared_site_consumer_reports_only_villages_written_into_exact_base() {
         &seasonal_root,
         &blocks,
         Some(&villages),
-        StructureLoot {
-            seed: 42,
-            catalog: &loot,
-            items: &items,
-        },
         &seasonal_cache,
     )
     .unwrap();

@@ -458,6 +458,11 @@ pub(crate) fn recover_with_reader(
             tick: manifest.tick,
             players: players.clone(),
             scoreboard: Some(scoreboard.clone()),
+            saved_maps: if dimension == Dimension::Overworld {
+                crate::maps::recover(&checkpoint.globals)?
+            } else {
+                BTreeMap::new()
+            },
             bossbars: Some(bossbars.to_bytes()),
             raids: image.raids.clone(),
             end_fight: image.end_fight.clone(),
@@ -800,6 +805,7 @@ pub(crate) fn encode_checkpoint(
     }
     validate_manifest(&manifest)?;
     let mut globals = world.checkpoint.globals.clone();
+    crate::maps::checkpoint(&root.saved_maps, tick, &mut globals)?;
     // Settlement rows follow every dimension WAL tail: live images overwrite
     // rows tagged with their home dimension, tombstones delete them. Sequence
     // is the max over rows, tails, and the durable row so exported worlds

@@ -26,6 +26,8 @@ mod mace_tests;
 mod movement_tests;
 #[path = "tick/statistics_tests.rs"]
 mod statistics_tests;
+#[path = "maps/tests.rs"]
+mod maps_tests;
 
 #[test]
 fn integrity_lethal_damage_rejects_staged_pickup_before_respawn() {

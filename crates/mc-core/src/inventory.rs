@@ -198,6 +198,7 @@ pub enum MenuKind {
     Smithing,
     Loom,
     Stonecutter,
+    Cartography,
     Hopper,
     Dispenser,
     Crafter,
@@ -244,6 +245,7 @@ impl MenuKind {
             Self::Smithing => Some(21),
             Self::Loom => Some(18),
             Self::Stonecutter => Some(24),
+            Self::Cartography => Some(23),
             Self::Hopper => Some(16),
             Self::Dispenser => Some(6),
             Self::Crafter => Some(7),
@@ -261,7 +263,7 @@ impl MenuKind {
             Self::ShulkerBox => 63,
             Self::Furnace(_) => 39,
             Self::EnchantingTable => 38,
-            Self::Anvil | Self::Grindstone | Self::Merchant => 39,
+            Self::Anvil | Self::Grindstone | Self::Merchant | Self::Cartography => 39,
             // `javap BeaconMenu`: SLOT_COUNT 1, player tail 1..37.
             Self::Beacon => 37,
             Self::Smithing | Self::Loom => 40,
@@ -285,6 +287,7 @@ impl MenuKind {
             | Self::Smithing
             | Self::Loom
             | Self::Stonecutter
+            | Self::Cartography
             | Self::Beacon => 0,
             Self::Chest { rows } => usize::from(rows) * 9,
             Self::ShulkerBox => 27,
@@ -298,7 +301,7 @@ impl MenuKind {
         match self {
             Self::Player => 4,
             Self::CraftingTable => 9,
-            Self::EnchantingTable | Self::Anvil | Self::Grindstone | Self::Merchant => 2,
+            Self::EnchantingTable | Self::Anvil | Self::Grindstone | Self::Merchant | Self::Cartography => 2,
             Self::Smithing | Self::Loom => 3,
             Self::Stonecutter | Self::Beacon => 1,
             Self::Chest { .. }
@@ -338,7 +341,7 @@ impl MenuKind {
                 2..=37 => player_tail(index - 2),
                 _ => None,
             },
-            Self::Anvil | Self::Grindstone | Self::Merchant => match index {
+            Self::Anvil | Self::Grindstone | Self::Merchant | Self::Cartography => match index {
                 0..=1 => Some(SlotRef::Grid(index)),
                 2 => Some(SlotRef::Result),
                 3..=38 => player_tail(index - 3),

@@ -21,8 +21,6 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use mc_data::Identifier;
-use mc_data::items::ItemRegistry;
-use mc_data::loot::chest_26_1_2::ChestLootCatalog;
 use mc_world::chunk::{Chunk, ChunkGeometry, ChunkPos, Heightmap, OVERWORLD_GEOMETRY};
 use mc_world::{
     BIOME_DIM, BIOME_VOLUME, BiomeSection, BlockRegistry, BlockStateId, ChunkGenerator,
@@ -30,7 +28,6 @@ use mc_world::{
 };
 
 use crate::noise::fbm_2d;
-use crate::structures::StructureLoot;
 use crate::vanilla_climate::VanillaClimate;
 use crate::vanilla_density::{SurfaceHeightSampler, VanillaDensity};
 use crate::village::plan_source::{VillagePlanSet, VillagePlanSource};
@@ -308,6 +305,8 @@ pub struct TerrainGenerator {
     snow_block: BlockStateId,
     deepslate: BlockStateId,
     water: BlockStateId,
+    cave_lava: BlockStateId,
+    terracotta_layers: [BlockStateId; 8],
     biomes: BiomeRules,
     ores: OreRules,
     geological_ores: Option<GeologicalOreRules>,
@@ -315,11 +314,7 @@ pub struct TerrainGenerator {
     /// Native village plans. `None` leaves terrain routing unadapted and places
     /// no village pieces.
     village_plans: Option<Arc<VillagePlanSource>>,
-    /// Compiled vanilla chest tables rolled at structure paste time. Empty
-    /// by default, in which case structure chests paste fixed contents.
-    chest_loot: ChestLootCatalog,
-    /// Item registry resolving rolled chest stacks to protocol ids.
-    chest_loot_items: ItemRegistry,
+    overworld_structures: Option<crate::overworld_structures::OverworldStructures>,
     decorations: DecorationBlocks,
     tree_rules: HashMap<Identifier, TreeRule>,
     clay_rule: ClayRule,
@@ -908,7 +903,13 @@ impl TerrainGenerator {
     pub fn load_vanilla_worldgen(&mut self, data_root: &std::path::Path) -> Result<(), String> {
         let climate = VanillaClimate::new(self.seed as u64, data_root)?;
         let density = VanillaDensity::from_runtime(climate.runtime())?;
+        let structures = crate::overworld_structures::OverworldStructures::load(
+            data_root,
+            self.seed,
+            &self.blocks,
+        )?;
         self.vanilla_worldgen = Some((climate, density));
+        self.overworld_structures = Some(structures);
         self.diagnostic_cache = DiagnosticCache::default();
         Ok(())
     }
@@ -978,13 +979,24 @@ impl TerrainGenerator {
             snow_block: resolve_block_or(registry.as_ref(), "minecraft:snow_block", stone),
             deepslate: resolve_block_or(registry.as_ref(), "minecraft:deepslate", stone),
             water: resolve_block_or(registry.as_ref(), "minecraft:water", air),
+            cave_lava: resolve_block_or(registry.as_ref(), "minecraft:lava", air),
+            terracotta_layers: [
+                "minecraft:terracotta",
+                "minecraft:orange_terracotta",
+                "minecraft:terracotta",
+                "minecraft:yellow_terracotta",
+                "minecraft:brown_terracotta",
+                "minecraft:terracotta",
+                "minecraft:red_terracotta",
+                "minecraft:white_terracotta",
+            ]
+            .map(|name| resolve_block_or(registry.as_ref(), name, stone)),
             biomes,
             ores,
             geological_ores: None,
             ore_generation_profile: "vanilla",
             village_plans: None,
-            chest_loot: ChestLootCatalog::new(),
-            chest_loot_items: ItemRegistry::default(),
+            overworld_structures: None,
             decorations: DecorationBlocks::new(registry.as_ref()),
             tree_rules: HashMap::new(),
             clay_rule: ClayRule::default(),
@@ -1011,17 +1023,6 @@ impl TerrainGenerator {
     #[must_use]
     pub fn village_plan_source(&self) -> Option<&Arc<VillagePlanSource>> {
         self.village_plans.as_ref()
-    }
-
-    /// Wire compiled vanilla chest tables plus the item registry that
-    /// resolves rolled stacks, so structure chests roll loot at paste time
-    /// instead of pasting fixed contents. Deterministic in
-    /// `(seed, structure position, chest index)`.
-    #[must_use]
-    pub fn with_chest_loot(mut self, catalog: ChestLootCatalog, items: ItemRegistry) -> Self {
-        self.chest_loot = catalog;
-        self.chest_loot_items = items;
-        self
     }
 
     /// Explicit standalone vanilla plugin deposit profile. Native Earth never
@@ -1515,7 +1516,7 @@ impl TerrainGenerator {
             return (self.sand, self.sand);
         }
         if path.contains("badlands") {
-            return (self.red_sand, self.red_sand);
+            return (self.red_sand, self.terracotta_layers[0]);
         }
         if path == "desert" {
             return (self.sand, self.sand);
@@ -2089,14 +2090,9 @@ impl TerrainGenerator {
         // piece-column queries do not re-run the density query per column.
         let heights_cell = RefCell::new(heights);
         let surface = |x: i32, z: i32| heights_cell.borrow_mut().structure_surface(x, z);
-        let loot = StructureLoot {
-            seed: self.seed,
-            catalog: &self.chest_loot,
-            items: &self.chest_loot_items,
-        };
         let mut touched = [false; 256];
         source
-            .write_plans(chunk, plans, &mut touched, &surface, self.air, &loot)
+            .write_plans(chunk, plans, &mut touched, &surface, self.air)
             .expect("the plan source was validated against this registry at construction");
         for lz in 0..16u8 {
             for lx in 0..16u8 {
@@ -2698,6 +2694,23 @@ impl ChunkGenerator for TerrainGenerator {
         TerrainGenerator::village_sites_in_region(self, min_chunk, max_chunk)
     }
 
+    fn structure_sites_in_region(
+        &self,
+        min: (i32, i32),
+        max: (i32, i32),
+    ) -> Vec<mc_world::chunk::GeneratedStructureSite> {
+        self.overworld_structures
+            .as_ref()
+            .map_or_else(Vec::new, |structures| {
+                structures.sites(
+                    min,
+                    max,
+                    |x, z| self.surface_height(x, z),
+                    |x, y, z| self.noise_biome(x, y, z),
+                )
+            })
+    }
+
     fn noise_biome(&self, world_x: i32, y: i32, world_z: i32) -> Option<Identifier> {
         Some(TerrainGenerator::noise_biome(self, world_x, y, world_z))
     }
@@ -2815,6 +2828,7 @@ impl ChunkGenerator for TerrainGenerator {
         for plan in &columns {
             if let (Some(values), Some((_, density))) = (&native_density, self.vanilla()) {
                 let idx = usize::from(plan.lz) * 16 + usize::from(plan.lx);
+                let badlands = plan.biome.path().contains("badlands");
                 for y in self.geometry.min_y()..=plan.top_non_air {
                     let offset = y - density.min_y();
                     let solid = offset >= 0
@@ -2827,11 +2841,17 @@ impl ChunkGenerator for TerrainGenerator {
                     } else if y > plan.height {
                         self.water
                     } else if solid || y >= plan.dirt_start {
-                        if y >= plan.dirt_start {
+                        if badlands && y >= 64 {
+                            let band =
+                                (y.div_euclid(3) + self.seed.rem_euclid(8) as i32).rem_euclid(8);
+                            self.terracotta_layers[band as usize]
+                        } else if y >= plan.dirt_start {
                             plan.fill
                         } else {
                             self.base_stone_for_y(plan.lx, y, plan.lz, pos)
                         }
+                    } else if y <= -54 {
+                        self.cave_lava
                     } else {
                         self.air
                     };
@@ -2892,6 +2912,23 @@ impl ChunkGenerator for TerrainGenerator {
         {
             self.apply_decorations(&mut chunk, &columns, &mut heights);
         }
+        if let Some(structures) = &self.overworld_structures {
+            let heights_cell = std::cell::RefCell::new(&mut heights);
+            let touched = structures.paste(
+                &mut chunk,
+                |x, z| heights_cell.borrow_mut().structure_surface(x, z),
+                |x, y, z| self.noise_biome(x, y, z),
+            );
+            for (index, changed) in touched.into_iter().enumerate() {
+                if changed {
+                    self.refresh_structure_column(
+                        &mut chunk,
+                        (index % 16) as u8,
+                        (index / 16) as u8,
+                    );
+                }
+            }
+        }
         #[cfg(test)]
         stage_clock.end(3);
         chunk.status = "minecraft:full".into();
@@ -2921,3 +2958,7 @@ mod village_seed_tests;
 #[cfg(test)]
 #[path = "terrain/profile_tests.rs"]
 mod profile_tests;
+
+#[cfg(test)]
+#[path = "terrain/environment_tests.rs"]
+mod environment_tests;
