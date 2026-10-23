@@ -855,6 +855,7 @@ fn full_step_without_early_rest(
     let ctx = StepCtx {
         rows: std::slice::from_ref(&row),
         entities: &state.entities,
+        retained_targets: &state.hostile.targets,
         players: crate::target_grid::TargetGrid::for_consumers(&targets, 0),
         passive: passive_follow::Context {
             players: crate::target_grid::TargetGrid::for_consumers(&targets, 0),
@@ -1411,4 +1412,135 @@ fn mobs_take_fall_damage_on_landing_unless_immune() {
             );
         }
     }
+}
+
+fn second_sensor_player(state: &mut TickState, pos: [f64; 3]) -> EntityId {
+    let connection = ConnectionId(997);
+    input::session::join(
+        state,
+        (
+            &connection,
+            &uuid::Uuid::from_u128(997),
+            &"second-target".to_owned(),
+            &0,
+        ),
+        &mut ChangeSet::default(),
+    );
+    let id = state.connections.entity_of(connection).unwrap();
+    let slot = state.entities.slot_of(id).unwrap();
+    state.entities.set_pos(slot, pos);
+    id
+}
+
+#[test]
+fn sensors_retain_target_until_range_death_removal_or_player_ineligibility() {
+    for event in [
+        "range",
+        "death",
+        "despawn",
+        "creative",
+        "spectator",
+        "locked",
+    ] {
+        let (mut state, mob) = resting_mob("minecraft:zombie");
+        state.day_time = 14_000;
+        let actor = state.entities.body(mob).id;
+        let first = join_zombie_target(&mut state, [12.5, 101.0, 8.5]);
+        let second = second_sensor_player(&mut state, [15.5, 101.0, 8.5]);
+        let _ = run_entity_phase(&mut state, true);
+        assert_eq!(state.hostile.targets[&actor].0.0, first);
+        let first_slot = state.entities.slot_of(first).unwrap();
+        let second_slot = state.entities.slot_of(second).unwrap();
+        // A closer candidate in the same cell is not a retarget event.
+        state.entities.set_pos(second_slot, [9.5, 101.0, 8.5]);
+        let _ = run_entity_phase(&mut state, true);
+        assert_eq!(
+            state.hostile.targets[&actor].0.0, first,
+            "{event}: retained"
+        );
+        match event {
+            "range" => state.entities.set_pos(first_slot, [120.5, 101.0, 8.5]),
+            "death" => state.entities.body_mut(first_slot).alive = false,
+            "despawn" => {
+                state.remove_entity(first_slot);
+            }
+            "creative" => {
+                state.players.get_mut(&first).unwrap().game_mode =
+                    crate::commands::GameMode::Creative
+            }
+            "spectator" => {
+                state.players.get_mut(&first).unwrap().game_mode =
+                    crate::commands::GameMode::Spectator
+            }
+            "locked" => {
+                state.require_plugin_login = true;
+                state
+                    .locked_sessions
+                    .insert(state.players[&first].connection);
+            }
+            _ => unreachable!(),
+        }
+        let _ = run_entity_phase(&mut state, true);
+        assert_eq!(
+            state.hostile.targets[&actor].0.0, second,
+            "{event}: reacquired"
+        );
+    }
+}
+
+#[test]
+fn sensors_damage_commit_replaces_target_with_attacker() {
+    let (mut state, mob) = resting_mob("minecraft:zombie");
+    state.day_time = 14_000;
+    let actor = state.entities.body(mob).id;
+    let first = join_zombie_target(&mut state, [12.5, 101.0, 8.5]);
+    let second = second_sensor_player(&mut state, [15.5, 101.0, 8.5]);
+    let _ = run_entity_phase(&mut state, true);
+    assert_eq!(state.hostile.targets[&actor].0.0, first);
+    state.merge_damage.push((
+        mob,
+        DamagePiece {
+            physical: None,
+            custom_armor: false,
+            amount: 1.0,
+            kind: crate::survival::DamageKind::Melee,
+            source: Some(crate::intent::DamageSource::Melee {
+                attacker: second,
+                position: [15.5, 101.0, 8.5],
+                yaw: 0.0,
+                bonus_knockback: 0.0,
+                sweep: false,
+                fire_ticks: 0,
+                bane_ticks: 0,
+            }),
+        },
+    ));
+    let _ = state.commit_merge_effects();
+    assert_eq!(
+        state.hostile.targets[&actor].0.0, second,
+        "damage event wins"
+    );
+    let _ = run_entity_phase(&mut state, true);
+    assert_eq!(
+        state.hostile.targets[&actor].0.0, second,
+        "nearer old target does not override revenge"
+    );
+}
+
+#[test]
+fn sensors_mob_revenge_does_not_rest_without_player_targets() {
+    let (mut state, mob) = resting_mob("minecraft:zombie");
+    state.day_time = 14_000;
+    let actor = state.entities.body(mob).id;
+    let kind = state
+        .registry
+        .entity_types
+        .id_of(&mc_data::Identifier::parse("minecraft:skeleton").unwrap())
+        .unwrap();
+    let attacker = state.spawn_mob(kind, [12.5, 101.0, 8.5], 20.0);
+    crate::hostile::retaliate(&mut state, mob, attacker);
+    crate::hostile::refresh_targets(&mut state);
+    assert!(!can_early_rest(&mut state, mob));
+    let _ = run_entity_phase(&mut state, true);
+    assert_eq!(state.hostile.targets[&actor].0.0, attacker);
 }

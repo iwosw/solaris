@@ -814,6 +814,9 @@ impl TickState {
             );
         }
         crate::entity_loot::accepted_hit(self, slot, piece.source);
+        if let Some(attacker) = crate::plugin::damage_attacker(piece.source) {
+            crate::hostile::retaliate(self, slot, attacker);
+        }
         crate::projectiles::embedded_projectiles::accepted_hit(self, slot, piece.source);
         crate::bees::accepted_hit(self, slot, piece.source);
         crate::enchantment_thorns::accepted_hit(self, slot, piece);

@@ -3,8 +3,8 @@
 **Date:** 2026-10-23
 
 **Status:** Accepted. Layer 1 implemented. Layer 2 (registration through plugins and
-data files) is next. Layer 3 (Wasm capability code) and declarative sensors are
-proposed only.
+data files) is next. Sensors step 1 is implemented. Layer 3 (Wasm capability code)
+and persistent sensor subscriptions are proposed only.
 
 ## Context
 
@@ -194,24 +194,37 @@ Layer 3 lets an addon add custom capability logic in Wasm. The design:
 - Throttling: an owner that exceeds its budget gets fewer events per tick (skipped
   intervals) instead of stalling the tick. Native capabilities keep running.
 
-### Sensors: batched broad-phase first, subscriptions later (proposed)
+### Sensors: batched broad-phase, goal-based retention
 
-This is design only and is not implemented in layer 1. The radius bounds above
-apply.
+Step 1 uses the existing per-tick index, not a new sensor runtime. The radius
+bounds above apply. `TargetGrid::batch` builds immutable candidate slices before
+the worker join, at the largest requested radius in each consumer cell. Empty
+classes allocate nothing. Small target tables are filtered once per cell rather
+than first building a target index. There are no persistent wake subscriptions.
 
-- **Step 1 (measure first).** Batched broad-phase over the existing per-tick
+- **Step 1.** Batched broad-phase over the existing per-tick
   `target_grid::TargetGrid`. For each occupied 16-block cell, build one candidate
   list per target class per tick from the cells within the largest admitted radius
   (`sight_range` ≤ 64 means at most 9×9 cells). Each mob in that cell then makes
-  exactly the same selection as today (`TargetGrid::nearest_within`,
-  `target_grid.rs` ~155-164): exact 3D distance ≤ range, LOS, class chain order,
-  table order on ties. The existing `TargetGrid` equivalence tests remain the
-  correctness fence; batching may change only which candidates are visited, never
-  which one is chosen.
+  exactly the same acquisition selection as before (`TargetGrid::nearest_within`):
+  exact 3D distance ≤ range, caller acceptance, class chain order, table order on
+  ties. Existing LOS checks stay at their original goal-specific stage; visibility
+  is never cached per cell. Seeded batched/unbatched equivalence tests include
+  negative cells, boundary radii, mixed ranges, per-mob visibility predicates and
+  class ties. The fence applies to acquisition, not to intentional retention of
+  a previously chosen target when another candidate becomes nearer.
 - **Target retention by event.** A chosen target stays chosen until an event drops
   it: target died or despawned, target left `sight_range`, or the mob was hurt by
   another attacker (revenge). The retention test is an exact per-tick
   distance/liveness check on one target, not a search.
+  This is transient `HostileState` memory for generic MeleeChase/RangedAttack/Swell
+  goals; native special brains and enderman anger keep their existing owners.
+  Committed damage pushes revenge, excluding creepers and slimes, which lack
+  HurtByTargetGoal. Ranged/fuse executors use the same retained target rather
+  than independently switching to a nearer player. Player eligibility/session
+  changes, no-AI, peaceful and the existing night-only gate also invalidate
+  memory. Player-created golems never retain a player. Missing targets are
+  searched on ordinary decision cadence; same-cell movement needs no wake event.
 - **Persistent wake subscriptions: later option only.** Here mobs with no
   candidate sleep until something wakes them. This is allowed only after a
   dense-combat measurement and a complete list of invalidation sources:
@@ -239,14 +252,19 @@ apply.
     broad-phase saves nothing. Remaining think cost is the AI cadence, which the
     rest/sleep work addresses, not sensors.
   - Dense combat, 20 players against 1000 mobs in about 4×4 chunks: the
-    20-player table is below `MIN_INDEXED` (32), so each think scans it linearly,
-    about 20k distance checks per tick at full cadence. The broad-phase replaces
-    1000 per-mob cell walks with about 16 per-cell walks, but the 20k exact checks
-    (and any LOS rays) remain. The expected gain is small and must be measured
-    before it is claimed. Subscriptions do worse here: every mob has a candidate
-    whose distance changes every tick, so they degrade to per-tick evaluation plus
-    bookkeeping. Their cost is proportional to target movement across cells plus
-    invalidation events, which pays only when targets are sparse and slow.
+    20-player table is below `MIN_INDEXED` (32), so the old path made **no cell
+    walks**: it scanned the table per mob. Batched acquisition performs about
+    16 broad phases, then still up to 20k exact checks. On subsequent ticks,
+    retention replaces those searches with 1000 one-target validations. Quiet
+    empty-table scenes have no broad phases to save. The ignored
+    `sensor_bench_tests::sensors_release_entity_phase_dense_and_quiet` fixture
+    measures the whole in-process entity phase on both revisions, with 120 warmup
+    ticks and three samples of 600 ticks under an exclusive approved window.
+    Debug-only query counters are absent from release timing.
+
+Removal boundary: omit `TargetGrid::batch` to restore unbatched acquisition
+without changing choices. Retention is a separate intentional gameplay change,
+not a claim of equivalence with unconditional nearest-target switching.
 
 ## Consequences
 

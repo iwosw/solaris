@@ -276,3 +276,96 @@ fn bounded_existence_skips_distant_players_and_stops_on_first_hit() {
         "small-table/large-radius fallback also short-circuits"
     );
 }
+
+#[test]
+fn batched_cells_match_unbatched_selection_and_class_ties() {
+    let mut rng = Rng(0x5EED_BA7C);
+    for count in [0, 20, 31, 32, 300, 1500] {
+        let tables: Vec<_> = (0..4)
+            .map(|class| layout(&mut rng, class * 10_000 + 1, count, 128, 4))
+            .collect();
+        let queries: Vec<_> = (0..1000)
+            .map(|_| {
+                (
+                    [
+                        rng.coord(160, 1) + 0.01,
+                        rng.coord(16, 1),
+                        rng.coord(160, 1) + 0.99,
+                    ],
+                    [0.0, 7.5, 16.0, 16.01, 35.0, 64.0][rng.below(6) as usize],
+                )
+            })
+            .collect();
+        let plain: Vec<_> = tables
+            .iter()
+            .map(|table| TargetGrid::indexed(table))
+            .collect();
+        let mut batched: Vec<_> = tables
+            .iter()
+            .map(|table| TargetGrid::indexed(table))
+            .collect();
+        for grid in &mut batched {
+            grid.batch(queries.iter().copied());
+        }
+        for (from, reach) in queries {
+            let mut expected = None;
+            let mut actual = None;
+            for (class, (plain, batched)) in plain.iter().zip(&batched).enumerate() {
+                // Independent per-mob LOS/eligibility predicate, not a cell
+                // visibility cache. Quantized coordinates force distance ties.
+                let visible = |(id, _): &Target| {
+                    (id.0 + from[0].floor() as i32 + class as i32).rem_euclid(3) != 0
+                };
+                plain.consider(&mut expected, from, reach, visible);
+                batched.consider(&mut actual, from, reach, visible);
+            }
+            assert_eq!(
+                actual, expected,
+                "count={count}, from={from:?}, reach={reach}"
+            );
+        }
+    }
+}
+
+#[test]
+fn dense_and_quiet_cells_count_broad_phase_queries() {
+    let players: Vec<_> = (0..20)
+        .map(|id| {
+            (
+                EntityId(id + 1),
+                [f64::from(id % 5) * 12.0, 1.0, f64::from(id / 5) * 12.0],
+            )
+        })
+        .collect();
+    let queries: Vec<_> = (0..1000)
+        .map(|id| {
+            (
+                [
+                    f64::from(id % 32) * 2.0 + 0.5,
+                    1.0,
+                    f64::from(id / 32) * 2.0 + 0.5,
+                ],
+                35.0,
+            )
+        })
+        .collect();
+    let reference = TargetGrid::for_consumers(&players, queries.len());
+    let mut batched = TargetGrid::for_consumers(&players, queries.len());
+    batched.batch(queries.iter().copied());
+    assert_eq!(batched.batch_count(), 16);
+    for &(from, reach) in &queries {
+        assert_eq!(
+            batched.nearest_within(from, reach, |_| true),
+            reference.nearest_within(from, reach, |_| true),
+        );
+    }
+    let mut quiet = TargetGrid::for_consumers(&[], queries.len());
+    quiet.batch(queries.iter().copied());
+    assert_eq!(quiet.batch_count(), 0);
+    assert!(
+        queries
+            .iter()
+            .all(|&(from, reach)| quiet.nearest_within(from, reach, |_| true).is_none())
+    );
+    println!("dense: 1000 exact selections, 16 shared broad phases; quiet: 0 broad phases");
+}

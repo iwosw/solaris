@@ -35,6 +35,18 @@ pub(crate) struct TargetGrid<'a> {
     cells: HashMap<(i32, i32), (u32, u32)>,
     /// Table indices grouped by chunk, ascending inside a chunk.
     members: Vec<u32>,
+    /// Per-tick consumer-cell broad phases; workers only read these slices.
+    batches: HashMap<(i32, i32), Batch>,
+    candidates: Vec<u32>,
+    #[cfg(all(test, debug_assertions))]
+    queries: std::sync::atomic::AtomicUsize,
+}
+
+#[derive(Default)]
+struct Batch {
+    radius: i32,
+    start: usize,
+    len: usize,
 }
 
 fn cell(pos: [f64; 3]) -> (i32, i32) {
@@ -58,6 +70,10 @@ impl<'a> TargetGrid<'a> {
             table,
             cells: HashMap::default(),
             members: Vec::new(),
+            batches: HashMap::default(),
+            candidates: Vec::new(),
+            #[cfg(all(test, debug_assertions))]
+            queries: std::sync::atomic::AtomicUsize::new(0),
         }
     }
 
@@ -101,11 +117,70 @@ impl<'a> TargetGrid<'a> {
             table,
             cells,
             members,
+            batches: HashMap::default(),
+            candidates: Vec::new(),
+            #[cfg(all(test, debug_assertions))]
+            queries: std::sync::atomic::AtomicUsize::new(0),
         }
     }
 
     pub(crate) fn table(&self) -> &'a [Target] {
         self.table
+    }
+
+    /// Build one conservative candidate list per occupied consumer cell.
+    /// Different ranges share the largest cell radius; exact distance and the
+    /// caller's acceptance predicate still run independently for every mob.
+    /// Empty classes do not allocate or walk consumer cells.
+    pub(crate) fn batch(&mut self, queries: impl Iterator<Item = ([f64; 3], f64)>) {
+        if self.table.is_empty() {
+            return;
+        }
+        for (pos, reach) in queries {
+            let radius = ((reach / 16.0).ceil() as i32).max(0);
+            let batch = self.batches.entry(cell(pos)).or_default();
+            batch.radius = batch.radius.max(radius);
+        }
+        for (&(cx, cz), batch) in &mut self.batches {
+            batch.start = self.candidates.len();
+            let radius = batch.radius;
+            let side = 2 * i64::from(radius) + 1;
+            if self.cells.is_empty() || side * side >= self.table.len() as i64 {
+                self.candidates
+                    .extend(
+                        self.table
+                            .iter()
+                            .enumerate()
+                            .filter_map(|(index, (_, pos))| {
+                                let (x, z) = cell(*pos);
+                                ((i64::from(x) - i64::from(cx)).abs() <= i64::from(radius)
+                                    && (i64::from(z) - i64::from(cz)).abs() <= i64::from(radius))
+                                .then_some(index as u32)
+                            }),
+                    );
+            } else {
+                for dz in -radius..=radius {
+                    for dx in -radius..=radius {
+                        if let Some(&(start, len)) = self.cells.get(&(cx + dx, cz + dz)) {
+                            self.candidates.extend_from_slice(
+                                &self.members[start as usize..(start + len) as usize],
+                            );
+                        }
+                    }
+                }
+            }
+            batch.len = self.candidates.len() - batch.start;
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn batch_count(&self) -> usize {
+        self.batches.len()
+    }
+
+    #[cfg(all(test, debug_assertions))]
+    pub(crate) fn query_count(&self) -> usize {
+        self.queries.load(std::sync::atomic::Ordering::Relaxed)
     }
 
     /// Table index and score of the lowest-score target (lowest index among
@@ -117,8 +192,29 @@ impl<'a> TargetGrid<'a> {
         reach: f64,
         mut score: impl FnMut(&Target) -> Option<f64>,
     ) -> Option<(usize, f64)> {
+        if self.table.is_empty() {
+            return None;
+        }
+        #[cfg(all(test, debug_assertions))]
+        self.queries
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let mut best: Option<(usize, f64)> = None;
         let radius = ((reach / 16.0).ceil() as i32).max(0);
+        if let Some(batch) = self.batches.get(&cell(from))
+            && radius <= batch.radius
+        {
+            for &member in &self.candidates[batch.start..batch.start + batch.len] {
+                let index = member as usize;
+                if let Some(value) = score(&self.table[index])
+                    && best.is_none_or(|(at, lowest)| {
+                        value < lowest || (value == lowest && index < at)
+                    })
+                {
+                    best = Some((index, value));
+                }
+            }
+            return best;
+        }
         let side = 2 * i64::from(radius) + 1;
         if self.cells.is_empty() || side * side >= self.table.len() as i64 {
             for (index, target) in self.table.iter().enumerate() {

@@ -49,6 +49,10 @@ pub(crate) mod mining_tests;
 mod entity_phase_tests;
 
 #[cfg(test)]
+#[path = "sensor_bench_tests.rs"]
+mod sensor_bench_tests;
+
+#[cfg(test)]
 #[path = "entity_prephase_tests.rs"]
 mod entity_prephase_tests;
 
@@ -5294,6 +5298,8 @@ struct ReadRow {
     plugin_target: Option<[f64; 3]>,
     leash_follow: bool,
     gold_target: Option<[f64; 3]>,
+    has_retained_target: bool,
+    retain_target: bool,
 }
 
 /// Owned movement write from one worker.
@@ -5305,6 +5311,8 @@ struct MoveWrite {
     air_supply: i32,
     ground: bool,
     horizontal_impulse: [f64; 2],
+    /// Only a newly acquired target needs serial memory writeback.
+    chase_target: crate::target_grid::Nearest,
 }
 
 #[derive(Default)]
@@ -5358,9 +5366,10 @@ fn early_entity_rest(
         return false;
     }
     let body = &view.bodies[slot.0 as usize];
-    if body
-        .hurt_at
-        .is_some_and(|at| view.tick.saturating_sub(at) < 100)
+    if view.hostile.targets.contains_key(&body.id)
+        || body
+            .hurt_at
+            .is_some_and(|at| view.tick.saturating_sub(at) < 100)
     {
         return false;
     }
@@ -5748,6 +5757,7 @@ fn admit_slot(
         if let Some(special) = hint.special {
             let id = view.bodies[slot.0 as usize].id;
             special_idle = targets_empty
+                && !view.hostile.targets.contains_key(&id)
                 && view
                     .hostile
                     .idle_without_targets(id, special, hint.swell_metadata_neutral);
@@ -5889,6 +5899,8 @@ fn read_row(
     // Panic source stays a rare-branch worker read (see `step_entity`).
     let read = ReadRow {
         think,
+        has_retained_target: view.hostile.targets.contains_key(&body.id),
+        retain_target: blueprint.is_some_and(crate::hostile::retains_target),
         enderman_target: rare.enderman_target,
         plugin_target: rare.plugin_target,
         gold_target: rare.gold_target,
@@ -5967,6 +5979,8 @@ fn read_row(
 /// return owned writes applied in slot order afterwards. No locks: the only
 /// synchronization is the scope join.
 fn run_entity_phase(state: &mut TickState, sim: bool) -> Vec<Intent> {
+    #[cfg(all(test, debug_assertions))]
+    sensor_bench_tests::COUNTS.set((0, 0));
     if sim {
         crate::contact_hazards::hurt_by_water(state);
         crate::enderman::tick(state);
@@ -6066,6 +6080,7 @@ fn run_entity_phase(state: &mut TickState, sim: bool) -> Vec<Intent> {
             });
         }
     }
+    crate::hostile::refresh_targets(state);
     let targets_empty = !crate::hostile::has_live_targets(state);
     // Reuse the sensor's current resident table before admission. Any
     // candidate conservatively wakes decision ticks, even out of range or
@@ -6191,11 +6206,55 @@ fn run_entity_phase(state: &mut TickState, sim: bool) -> Vec<Intent> {
     // thinks). Only a class with many consumers pays for an index; the rest
     // scan linearly as before (see target_grid.rs for boundary and fence).
     let grid = crate::target_grid::TargetGrid::for_consumers;
-    let player_grid = grid(&targets, consumers[0]);
-    let piglin_grid = grid(&piglin_targets, consumers[1]);
-    let villager_grid = grid(&villagers, consumers[2]);
-    let golem_grid = grid(&golem_targets, consumers[3]);
-    let zoglin_grid = grid(&zoglin_targets, consumers[4]);
+    let mut player_grid = grid(&targets, consumers[0]);
+    let mut piglin_grid = grid(&piglin_targets, consumers[1]);
+    let mut villager_grid = grid(&villagers, consumers[2]);
+    let mut golem_grid = grid(&golem_targets, consumers[3]);
+    let mut zoglin_grid = grid(&zoglin_targets, consumers[4]);
+    let searches = rows.iter().filter(|row| {
+        row.alive
+            && row.chaser
+            && row.think
+            && !row.breed_ready
+            && !row.standing
+            && row.plugin_target.is_none()
+            && row.panic_multiplier == 0.0
+            && !row.has_retained_target
+    });
+    let query = |row: &ReadRow| {
+        (
+            row.pos,
+            if row.is_enderman {
+                64.0
+            } else {
+                f64::from(row.sight_range)
+            },
+        )
+    };
+    player_grid.batch(
+        searches
+            .clone()
+            .filter(|row| !row.is_iron_golem && !crate::piglin::is_piglin_type(row.type_id))
+            .map(query),
+    );
+    piglin_grid.batch(
+        searches
+            .clone()
+            .filter(|row| crate::piglin::is_piglin_type(row.type_id))
+            .map(query),
+    );
+    villager_grid.batch(
+        searches
+            .clone()
+            .filter(|row| crate::piglin::hunts_villagers_type(row.type_id))
+            .map(query),
+    );
+    golem_grid.batch(searches.clone().filter(|row| row.is_iron_golem).map(query));
+    zoglin_grid.batch(
+        searches
+            .filter(|row| crate::piglin::is_zoglin_type(row.type_id))
+            .map(query),
+    );
     let cows_ref = &cow_cells;
     let scope_start = std::time::Instant::now();
     // Work-stealing over the core's long-lived rayon workers (no threads
@@ -6203,6 +6262,7 @@ fn run_entity_phase(state: &mut TickState, sim: bool) -> Vec<Intent> {
     let ctx = StepCtx {
         rows: rows_ref,
         entities: &state.entities,
+        retained_targets: &state.hostile.targets,
         players: player_grid,
         passive: passive_follow::Context {
             players: grid(&players, temptation_consumers),
@@ -6235,6 +6295,20 @@ fn run_entity_phase(state: &mut TickState, sim: bool) -> Vec<Intent> {
             .collect_into_vec(&mut ordered);
     }
     let scope_time = scope_start.elapsed();
+    #[cfg(all(test, debug_assertions))]
+    {
+        let grids = [
+            &ctx.players,
+            &ctx.piglin_targets,
+            &ctx.villagers,
+            &ctx.golem_targets,
+            &ctx.zoglin_targets,
+        ];
+        sensor_bench_tests::COUNTS.set((
+            grids.iter().map(|grid| grid.query_count()).sum(),
+            grids.iter().map(|grid| grid.batch_count()).sum(),
+        ));
+    }
     let prep_time = scope_start.duration_since(prep_start);
     let commit_start = std::time::Instant::now();
     let resting_count = resting.len();
@@ -6257,6 +6331,12 @@ fn run_entity_phase(state: &mut TickState, sim: bool) -> Vec<Intent> {
         );
     }
     for (write, mut raw) in ordered.drain(..).flatten() {
+        if let Some(target) = write.chase_target {
+            state
+                .hostile
+                .targets
+                .insert(state.entities.body(write.slot).id, target);
+        }
         let attack_cooldown = raw
             .iter()
             .any(|intent| {
@@ -6403,6 +6483,7 @@ struct StepCtx<'a> {
     rows: &'a [ReadRow],
     /// Immutable through the indexed worker join; writes/compaction follow it.
     entities: &'a crate::entities::EntityStore,
+    retained_targets: &'a rustc_hash::FxHashMap<EntityId, (crate::target_grid::Target, f64)>,
     players: crate::target_grid::TargetGrid<'a>,
     passive: passive_follow::Context<'a>,
     dolphin_toys: &'a [[f64; 3]],
@@ -6433,6 +6514,7 @@ fn step_entity(row: ReadRow, ctx: &StepCtx) -> (MoveWrite, Vec<RawIntent>) {
     let registry = ctx.registry;
     let tick = ctx.tick;
     let mut intents = Vec::new();
+    let mut chase_target = None;
     if row.item_entity {
         let sampler = WorkerSampler { block_at, registry };
         let body = crate::item_motion::step(
@@ -6450,6 +6532,7 @@ fn step_entity(row: ReadRow, ctx: &StepCtx) -> (MoveWrite, Vec<RawIntent>) {
         return (
             MoveWrite {
                 slot: row.slot,
+                chase_target: None,
                 pos: [body.position.x, body.position.y, body.position.z],
                 vel: [body.velocity.x, body.velocity.y, body.velocity.z],
                 ground: body.on_ground,
@@ -6465,6 +6548,7 @@ fn step_entity(row: ReadRow, ctx: &StepCtx) -> (MoveWrite, Vec<RawIntent>) {
         return (
             MoveWrite {
                 slot: row.slot,
+                chase_target: None,
                 pos: row.pos,
                 vel: row.vel,
                 ground: row.ground,
@@ -6478,6 +6562,7 @@ fn step_entity(row: ReadRow, ctx: &StepCtx) -> (MoveWrite, Vec<RawIntent>) {
     if row.player {
         return (
             MoveWrite {
+                chase_target: None,
                 slot: row.slot,
                 pos: row.pos,
                 vel: [0.0; 3],
@@ -6540,6 +6625,7 @@ fn step_entity(row: ReadRow, ctx: &StepCtx) -> (MoveWrite, Vec<RawIntent>) {
         {
             return (
                 MoveWrite {
+                    chase_target: None,
                     slot: row.slot,
                     pos: row.pos,
                     vel: [0.0; 3],
@@ -6571,7 +6657,11 @@ fn step_entity(row: ReadRow, ctx: &StepCtx) -> (MoveWrite, Vec<RawIntent>) {
     } else if row.chaser && !row.breed_ready {
         // Goals by priority: MeleeAttack, MeleeChase, Wander. Only chasers
         // need the nearest live player (compact table, no full-row scan).
-        let mut nearest: crate::target_grid::Nearest = None;
+        let mut nearest = if row.has_retained_target {
+            ctx.retained_targets.get(&row.id).copied()
+        } else {
+            None
+        };
         let sight = f64::from(if row.is_enderman {
             64.0
         } else {
@@ -6586,34 +6676,39 @@ fn step_entity(row: ReadRow, ctx: &StepCtx) -> (MoveWrite, Vec<RawIntent>) {
         };
         // Chain order (players, villagers, golem targets, zoglin targets)
         // and table order break distance ties, as one linear scan did.
-        if !golem {
-            players.consider(&mut nearest, row.pos, sight, |(id, _)| {
-                row.enderman_target.is_none_or(|target| target == *id)
-            });
-        }
-        if hunts_villagers {
-            ctx.villagers
-                .consider(&mut nearest, row.pos, sight, |_| true);
-        }
-        if golem {
-            // Vanilla IronGolem.canAttackType: a player-created golem never
-            // targets players, even ones it was hit by. Player creation is
-            // rare cold state; read it only on this branch.
-            let spared = matches!(
-                ctx.entities.row(row.slot).special_mob.as_deref(),
-                Some(crate::special_mobs::Retained::PlayerIronGolem)
-            );
-            ctx.golem_targets
-                .consider(&mut nearest, row.pos, sight, |(id, _)| {
-                    !(spared
-                        && ctx.entities.slot_of(*id).is_some_and(|slot| {
-                            matches!(ctx.entities.body(slot).kind, EntityKind::Player { .. })
-                        }))
+        if nearest.is_none() {
+            if !golem {
+                players.consider(&mut nearest, row.pos, sight, |(id, _)| {
+                    row.enderman_target.is_none_or(|target| target == *id)
                 });
+            }
+            if hunts_villagers {
+                ctx.villagers
+                    .consider(&mut nearest, row.pos, sight, |_| true);
+            }
+            if golem {
+                // Vanilla IronGolem.canAttackType: a player-created golem never
+                // targets players, even ones it was hit by. Player creation is
+                // rare cold state; read it only on this branch.
+                let spared = matches!(
+                    ctx.entities.row(row.slot).special_mob.as_deref(),
+                    Some(crate::special_mobs::Retained::PlayerIronGolem)
+                );
+                ctx.golem_targets
+                    .consider(&mut nearest, row.pos, sight, |(id, _)| {
+                        !(spared
+                            && ctx.entities.slot_of(*id).is_some_and(|slot| {
+                                matches!(ctx.entities.body(slot).kind, EntityKind::Player { .. })
+                            }))
+                    });
+            }
+            if crate::piglin::is_zoglin_type(row.type_id) {
+                ctx.zoglin_targets
+                    .consider(&mut nearest, row.pos, sight, |(id, _)| *id != row.id);
+            }
         }
-        if crate::piglin::is_zoglin_type(row.type_id) {
-            ctx.zoglin_targets
-                .consider(&mut nearest, row.pos, sight, |(id, _)| *id != row.id);
+        if row.retain_target && !row.has_retained_target && (!row.night_aggro || ctx.night) {
+            chase_target = nearest;
         }
         let mut acted = false;
         if let Some(((target, target_pos), dist)) = nearest
@@ -6834,6 +6929,7 @@ fn step_entity(row: ReadRow, ctx: &StepCtx) -> (MoveWrite, Vec<RawIntent>) {
     }
     (
         MoveWrite {
+            chase_target,
             slot: row.slot,
             pos: [
                 motion.body.position.x,

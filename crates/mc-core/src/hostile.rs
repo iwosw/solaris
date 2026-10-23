@@ -11,7 +11,7 @@ use mc_physics::BlockMaterial;
 
 use crate::blueprint::{GoalKind, MobBlueprint};
 use crate::boundary::{EntityDataValue, EntityId, ExplosionEvent};
-use crate::entities::EntitySlot;
+use crate::entities::{EntityKind, EntitySlot};
 use crate::intent::{Footprint, Intent, IntentKind};
 use crate::natural_spawn::Rng;
 use crate::survival::Difficulty;
@@ -78,6 +78,9 @@ struct BowDraw {
 pub struct HostileState {
     fuses: HashMap<EntityId, u32>,
     bows: HashMap<EntityId, BowDraw>,
+    /// Goal-based chase memory only; rebuilt from live rows each tick, never
+    /// persisted or used as a wake subscription.
+    pub(crate) targets: rustc_hash::FxHashMap<EntityId, (crate::target_grid::Target, f64)>,
     pub(crate) native: crate::special_mobs::Runtime,
     pub(crate) events: Vec<crate::boundary::EntityEvent>,
     /// Blasts committed this tick (drained into the change set).
@@ -86,6 +89,100 @@ pub struct HostileState {
     pub(crate) spawned: Vec<EntityId>,
     /// Journaled mobs [`run`] removed (exploded creepers).
     pub(crate) removed: Vec<EntityId>,
+}
+
+/// Native special brains and enderman anger own their target policy already.
+pub(crate) fn retains_target(blueprint: &MobBlueprint) -> bool {
+    !matches!(special_of(blueprint), Some(Special::Native(_)))
+        && blueprint.name != "minecraft:enderman"
+        && (blueprint.has_goal(GoalKind::MeleeChase)
+            || blueprint.has_goal(GoalKind::RangedAttack)
+            || blueprint.has_goal(GoalKind::Swell))
+}
+
+/// Exact one-target validation, including eligibility changes that must not
+/// leave creative, disconnected or dimension-transferred players attackable.
+pub(crate) fn refresh_targets(state: &mut TickState) {
+    let mut targets = std::mem::take(&mut state.hostile.targets);
+    targets.retain(|&actor, ((target, at), dist)| {
+        let Some(slot) = state.entities.slot_of(actor) else {
+            return false;
+        };
+        let EntityKind::Mob { type_id } = state.entities.body(slot).kind else {
+            return false;
+        };
+        let Some(blueprint) = state.registry.blueprint(type_id) else {
+            return false;
+        };
+        if !retains_target(blueprint)
+            || state.entities.row(slot).controls.no_ai
+            || (blueprint.capabilities.night_aggro_only
+                && !crate::natural_spawn::is_night(state.day_time))
+            || (blueprint.category == crate::blueprint::MobCategory::Monster
+                && state.difficulty == Difficulty::Peaceful)
+        {
+            return false;
+        }
+        let Some(victim) = state.entities.slot_of(*target) else {
+            return false;
+        };
+        if actor == *target || state.entities.row(victim).health <= 0.0 {
+            return false;
+        }
+        if matches!(state.entities.body(victim).kind, EntityKind::Player { .. }) {
+            let Some(player) = state.players.get(target) else {
+                return false;
+            };
+            if !admits_target(player)
+                || state.session_locked(player.connection)
+                || matches!(
+                    state.entities.row(slot).special_mob.as_deref(),
+                    Some(crate::special_mobs::Retained::PlayerIronGolem)
+                )
+            {
+                return false;
+            }
+        }
+        *at = state.entities.pos(victim);
+        *dist = crate::target_grid::distance(state.entities.pos(slot), *at);
+        *dist <= f64::from(state.entities.row(slot).sight_range)
+    });
+    state.hostile.targets = targets;
+}
+
+/// The damage commit, not a polling sensor, replaces a goal-based mob's target.
+/// Creepers and slimes do not have vanilla HurtByTargetGoal.
+pub(crate) fn retaliate(state: &mut TickState, victim: EntitySlot, attacker: EntityId) {
+    let body = state.entities.body(victim);
+    let EntityKind::Mob { type_id } = body.kind else {
+        return;
+    };
+    let Some(blueprint) = state.registry.blueprint(type_id) else {
+        return;
+    };
+    if !retains_target(blueprint)
+        || blueprint.has_goal(GoalKind::Swell)
+        || matches!(
+            blueprint.name.as_str(),
+            "minecraft:slime" | "minecraft:magma_cube"
+        )
+    {
+        return;
+    }
+    let Some(target) = state.entities.slot_of(attacker) else {
+        return;
+    };
+    if attacker != body.id
+        && matches!(
+            state.entities.body(target).kind,
+            EntityKind::Player { .. } | EntityKind::Mob { .. }
+        )
+    {
+        state
+            .hostile
+            .targets
+            .insert(body.id, ((attacker, state.entities.pos(target)), 0.0));
+    }
 }
 
 impl HostileState {
@@ -155,13 +252,14 @@ pub(crate) fn run(
         // Targetless no-bow Ranged skips before any slot/ColdRow lookup.
         // Swell never skips here (neutrality needs the row, so `false`
         // defers it to the post-lookup guard); Ranged ignores the flag.
+        let targets_empty = targets.is_empty() && !state.hostile.targets.contains_key(&id);
         if special == Special::Projectile
-            || targets.is_empty() && state.hostile.idle_without_targets(id, special, false)
+            || targets_empty && state.hostile.idle_without_targets(id, special, false)
         {
             continue;
         }
         let active = state.entities.slot_of_any(id).is_some_and(|slot| {
-            if targets.is_empty()
+            if targets_empty
                 && state.hostile.idle_without_targets(
                     id,
                     special,
@@ -246,7 +344,19 @@ fn player_targets(state: &TickState) -> Vec<(EntityId, [f64; 3])> {
     out
 }
 
-fn nearest(targets: &TargetGrid<'_>, from: [f64; 3], reach: f64) -> Option<([f64; 3], f64)> {
+fn nearest(
+    state: &TickState,
+    actor: EntityId,
+    targets: &TargetGrid<'_>,
+    from: [f64; 3],
+    reach: f64,
+) -> Option<([f64; 3], f64)> {
+    if let Some(&((target, _), _)) = state.hostile.targets.get(&actor) {
+        let slot = state.entities.slot_of(target)?;
+        let at = state.entities.pos(slot);
+        let dist = crate::target_grid::distance(from, at);
+        return (dist <= reach).then_some((at, dist));
+    }
     targets
         .nearest_within(from, reach, |_| true)
         .map(|(index, distance)| (targets.table()[index].1, distance))
@@ -323,7 +433,7 @@ fn shoot(state: &mut TickState, id: EntityId, targets: &TargetGrid<'_>) {
     let (reach, height, base_damage) =
         (f64::from(row.attack_reach), body.height, row.attack_damage);
     let pos = state.entities.pos(slot);
-    let Some((target, _)) = nearest(targets, pos, reach) else {
+    let Some((target, _)) = nearest(state, id, targets, pos, reach) else {
         state.hostile.bows.remove(&id);
         return;
     };
@@ -455,11 +565,12 @@ fn swell(
     let pos = state.entities.pos(slot);
     let fuse = state.hostile.fuse(id);
     let eye = [pos[0], pos[1] + height * 0.85, pos[2]];
-    let swelling = nearest(targets, pos, FUSE_KEEP_DISTANCE).is_some_and(|(target, dist)| {
-        dist <= FUSE_KEEP_DISTANCE
-            && (fuse > 0 || dist < start)
-            && sight_clear(state, eye, [target[0], target[1] + PLAYER_EYE, target[2]])
-    });
+    let swelling =
+        nearest(state, id, targets, pos, FUSE_KEEP_DISTANCE).is_some_and(|(target, dist)| {
+            dist <= FUSE_KEEP_DISTANCE
+                && (fuse > 0 || dist < start)
+                && sight_clear(state, eye, [target[0], target[1] + PLAYER_EYE, target[2]])
+        });
     let next = if swelling {
         fuse + 1
     } else {
