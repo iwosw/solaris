@@ -111,3 +111,47 @@ fn full_chunk_batch_matches_scalar_density_bits() {
         }
     }
 }
+
+#[test]
+fn interpolation_cell_reuse_preserves_sparse_cross_cell_batches() {
+    for (width, height) in [(1, 2), (4, 8), (8, 4)] {
+        let runtime = DensityRuntime {
+            nodes: vec![
+                Node::Gradient(-64, 320, -1.0, 1.0),
+                Node::Mapped(Mapped::Cube, 0),
+                Node::Marker(Marker::Interpolated, 1),
+            ],
+            noises: vec![],
+            blended: vec![],
+            fields: HashMap::new(),
+            min_y: -64,
+            height: 384,
+            sea_level: 63,
+            cell_width: width,
+            cell_height: height,
+        };
+        let mut batch = DensitySampler::for_chunk(&runtime, -16, -16);
+        batch.batch_values.resize(runtime.nodes.len(), BatchMemo::default());
+        let mut scalar = DensitySampler::for_chunk(&runtime, -16, -16);
+        for mask in [1, 0b10101010, 0b11011011, 255] {
+            for y in [-64, -57, -1, 0, 7, 8, 63, 319] {
+                let positions = std::array::from_fn(|lane| Position {
+                    x: -17 + lane as i32,
+                    y: y + (lane / 3) as i32,
+                    z: -9 + (lane / 2) as i32,
+                    mode: Mode::Terrain,
+                });
+                let actual = batch.eval_new_batch(2, &positions, mask);
+                for (lane, p) in positions.into_iter().enumerate() {
+                    if mask & (1 << lane) != 0 {
+                        assert_eq!(
+                            actual[lane].to_bits(),
+                            scalar.sample_terrain(2, p.x, p.y, p.z).to_bits(),
+                            "width={width} height={height} mask={mask} lane={lane}",
+                        );
+                    }
+                }
+            }
+        }
+    }
+}

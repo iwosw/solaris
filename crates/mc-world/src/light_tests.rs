@@ -1,5 +1,45 @@
 use super::*;
 
+#[test]
+fn packed_light_population_matches_cell_reads_at_every_palette_width() {
+    use crate::section::{ChunkSection, PackedBitArray};
+    let table = tiny_table();
+    for count in [2_usize, 3, 5, 9, 17, 33, 65, 129, 257, 513] {
+        let bits = (usize::BITS - (count - 1).leading_zeros()) as u8;
+        let palette: Vec<_> = (0..count).map(|id| BlockStateId(id as u32)).collect();
+        let mut indices = PackedBitArray::zeroed(bits, SECTION_VOLUME);
+        for cell in 0..SECTION_VOLUME {
+            indices.set(cell, ((cell * 31 + cell / 7) % count) as u32);
+        }
+        let section = ChunkSection::from_indirect(palette, indices, BlockStateId(0));
+        let mut actual_opacity = vec![0; N_VOL];
+        let mut actual_sky = vec![true; N_VOL];
+        let mut actual_block = vec![0; N_VOL];
+        let mut actual_emitters = Vec::new();
+        populate_indirect_section(
+            2, 1, 368, &section, &table, &mut actual_opacity,
+            &mut actual_sky, &mut actual_block, &mut actual_emitters,
+        );
+        let mut expected_emitters = Vec::new();
+        for y in 0..16 {
+            for z in 0..16 {
+                for x in 0..16 {
+                    let state = section.get(x, y, z);
+                    let idx = grid_idx(32 + x as usize, 368 + y as usize, 16 + z as usize);
+                    assert_eq!(actual_opacity[idx], table.opacity(state.0).unwrap_or(0));
+                    assert_eq!(actual_sky[idx], table.propagates_sky(state.0).unwrap_or(true));
+                    let emission = table.emission(state.0).unwrap_or(0);
+                    assert_eq!(actual_block[idx], emission);
+                    if emission > 0 {
+                        expected_emitters.push(idx as u32);
+                    }
+                }
+            }
+        }
+        assert_eq!(actual_emitters, expected_emitters, "palette length={count}");
+    }
+}
+
 fn extract_centre_reference(sky: &[u8], block: &[u8]) -> ChunkLight {
     let mut out = ChunkLight::zeroed();
     for local_y in 0..WORLD_HEIGHT {

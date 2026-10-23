@@ -126,3 +126,6 @@ fn similarity_snapshot() {
     }
     out.flush().unwrap();
 }
+
+#[path = "work_profile_tests.rs"]
+mod work;

@@ -1343,21 +1343,28 @@ fn populate_indirect_section(
     block_seed: &mut [u8],
     emitters: &mut Vec<u32>,
 ) {
-    for sy in 0..SECTION_DIM {
-        let ly = base_ly + sy;
-        for lz in 0..SECTION_DIM {
-            let gz = cz * SECTION_DIM + lz;
-            for lx in 0..SECTION_DIM {
-                let gx = cx * SECTION_DIM + lx;
-                let idx = grid_idx(gx, ly, gz);
-                let state = section.get(lx as u8, sy as u8, lz as u8);
-                opacity[idx] = table.opacity(state.0).unwrap_or(0);
-                propagates_sky[idx] = table.propagates_sky(state.0).unwrap_or(true);
-                let emit = table.emission(state.0).unwrap_or(0);
-                if emit > 0 {
-                    block_seed[idx] = emit;
-                    emitters.push(idx as u32);
-                }
+    let palette = section.palette().expect("indirect section palette");
+    let indices = section.indices().expect("indirect section indices");
+    let bits = usize::from(indices.bits_per_entry());
+    let entries = 64 / bits;
+    let mask = (1_u64 << bits) - 1;
+    // Decode each packed word once. Calling section.get for all 4096 cells
+    // repeats a runtime quotient/remainder for the same word.
+    for (word_index, &word) in indices.words().iter().enumerate() {
+        let start = word_index * entries;
+        for offset in 0..entries.min(SECTION_VOLUME - start) {
+            let cell = start + offset;
+            let lx = cell % SECTION_DIM;
+            let lz = (cell / SECTION_DIM) % SECTION_DIM;
+            let ly = base_ly + cell / (SECTION_DIM * SECTION_DIM);
+            let idx = grid_idx(cx * SECTION_DIM + lx, ly, cz * SECTION_DIM + lz);
+            let state = palette[((word >> (offset * bits)) & mask) as usize];
+            opacity[idx] = table.opacity(state.0).unwrap_or(0);
+            propagates_sky[idx] = table.propagates_sky(state.0).unwrap_or(true);
+            let emit = table.emission(state.0).unwrap_or(0);
+            if emit > 0 {
+                block_seed[idx] = emit;
+                emitters.push(idx as u32);
             }
         }
     }

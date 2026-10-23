@@ -324,15 +324,30 @@ impl DensitySampler<'_> {
         let width = self.runtime.cell_width;
         let height = self.runtime.cell_height;
         let mut corners = [[0.0; 8]; 8];
+        let mut fractions = [[0.0; 8]; 3];
+        let mut previous: Option<Cell> = None;
         for lane in 0..8 {
             if active & (1 << lane) == 0 {
                 continue;
             }
             let p = positions[lane];
-            let x = p.x.div_euclid(width) * width;
-            let y = p.y.div_euclid(height) * height;
-            let z = p.z.div_euclid(width) * width;
-            let values = if let Some(values) = self.cell(id, x, y, z) {
+            // The production 4x2 tile fits one interpolation cell. Reuse
+            // its integer origin and corners instead of dividing and probing
+            // the node cache eight times; arbitrary batches still cross cells.
+            let cell = previous.filter(|cell| {
+                (p.x.wrapping_sub(cell.x) as u32) < width as u32
+                    && (p.y.wrapping_sub(cell.y) as u32) < height as u32
+                    && (p.z.wrapping_sub(cell.z) as u32) < width as u32
+            });
+            let (x, y, z) = cell.map_or_else(
+                || (
+                    p.x.div_euclid(width) * width,
+                    p.y.div_euclid(height) * height,
+                    p.z.div_euclid(width) * width,
+                ),
+                |cell| (cell.x, cell.y, cell.z),
+            );
+            let values = if let Some(values) = cell.map(|cell| cell.corners).or_else(|| self.cell(id, x, y, z)) {
                 values
             } else {
                 let points = std::array::from_fn(|index| Position {
@@ -366,14 +381,15 @@ impl DensitySampler<'_> {
                 );
                 values
             };
+            previous = Some(Cell { x, y, z, corners: values });
+            fractions[0][lane] = (p.x - x) as f32 / width as f32;
+            fractions[1][lane] = (p.y - y) as f32 / height as f32;
+            fractions[2][lane] = (p.z - z) as f32 / width as f32;
             for corner in 0..8 {
                 corners[corner][lane] = values[corner];
             }
         }
-        let tx = positions.map(|p| p.x.rem_euclid(width) as f32 / width as f32);
-        let ty = positions.map(|p| p.y.rem_euclid(height) as f32 / height as f32);
-        let tz = positions.map(|p| p.z.rem_euclid(width) as f32 / width as f32);
-        interpolate_lanes(&corners, &[tx, ty, tz])
+        interpolate_lanes(&corners, &fractions)
     }
 }
 
