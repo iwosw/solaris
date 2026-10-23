@@ -353,14 +353,14 @@ fn new_liquid(state: &TickState, pos: BlockPos, fluid: Fluid) -> u32 {
 }
 
 /// What flowing into `pos` does: `None` when the cell holds it back.
-enum Flow {
+pub(crate) enum Flow {
     /// Air or the same fluid: write the fluid.
     Open,
     /// A non-colliding block (grass, flowers, torches): washed away.
     Wash(u32),
 }
 
-fn flow_into(state: &TickState, pos: BlockPos, fluid: Fluid) -> Option<Flow> {
+pub(crate) fn flow_into(state: &TickState, pos: BlockPos, fluid: Fluid) -> Option<Flow> {
     let block = state.world.block_at(pos.x, pos.y, pos.z)?;
     let states = &state.registry.states;
     if block == states.air {

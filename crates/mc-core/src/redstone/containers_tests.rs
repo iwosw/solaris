@@ -1270,3 +1270,192 @@ fn reserved_dropper_flint_cannot_eject_but_dispenser_can_wear_without_breaking()
         Some(max - 1)
     );
 }
+
+#[test]
+fn dispenser_places_filled_shulker_and_keeps_blocked_box() {
+    let mut state = state();
+    let target = super::super::offset(HOPPER, (1, 0, 0)).unwrap();
+    place(&mut state, HOPPER, "dispenser", &[("facing", "east")]);
+    let contents = item(&state, "diamond", 17).with_custom_name("cargo");
+    let box_item = item(&state, "blue_shulker_box", 1);
+    let mut fields = stack_to_fields(&state.registry.items, &box_item).unwrap();
+    fields.push((
+        "components".into(),
+        Tag::Compound(vec![(
+            "minecraft:container".into(),
+            Tag::List(ListTag {
+                element_type: tag_type::COMPOUND,
+                elements: vec![Tag::Compound(vec![
+                    ("slot".into(), Tag::Int(26)),
+                    (
+                        "item".into(),
+                        Tag::Compound(stack_to_fields(&state.registry.items, &contents).unwrap()),
+                    ),
+                ])],
+            }),
+        )]),
+    ));
+    let filled = stack_from_fields(&state.registry.items, &fields)
+        .unwrap()
+        .unwrap();
+    set_slot(&mut state, HOPPER, 0, filled.clone());
+    let mut writes = Vec::new();
+    let mut spawned = Vec::new();
+    trigger(&mut state, HOPPER, &mut writes, &mut spawned);
+    assert_eq!(kind(&state, target), Some("blue_shulker_box"));
+    assert_eq!(state.block_entities[&key(target)].slots[26], contents);
+    assert!(state.block_entities[&key(HOPPER)].slots[0].is_empty());
+    assert!(spawned.is_empty());
+    let block = super::super::at(&state, target).unwrap();
+    assert_eq!(super::super::prop(block, "facing"), Some("east"));
+    assert!(
+        state
+            .world
+            .chunk(ChunkPos { x: 0, z: 0 })
+            .unwrap()
+            .block_entities
+            .contains_key(&target)
+    );
+    set_slot(&mut state, HOPPER, 0, filled.clone());
+    trigger(&mut state, HOPPER, &mut writes, &mut spawned);
+    assert_eq!(state.block_entities[&key(HOPPER)].slots[0], filled);
+    assert!(spawned.is_empty());
+}
+
+#[test]
+fn dispenser_equips_empty_mob_armor_slot_once_and_preserves_components() {
+    let mut state = state();
+    place(&mut state, HOPPER, "dispenser", &[("facing", "east")]);
+    let mob = crate::bees::tests::mob(&mut state, "minecraft:zombie", [4.5, 201.0, 3.5]);
+    let slot = state.entities.slot_of(mob).unwrap();
+    Arc::make_mut(&mut state.entities.row_mut(slot).appearance).equipment = Default::default();
+    state.entities.row_mut(slot).loot.can_pick_up_loot = true;
+    let helmet = item(&state, "diamond_helmet", 1).with_custom_name("dispensed");
+    set_slot(&mut state, HOPPER, 0, helmet.clone());
+    let mut spawned = Vec::new();
+    trigger(&mut state, HOPPER, &mut Vec::new(), &mut spawned);
+    assert_eq!(
+        state.entities.row(slot).appearance.equipment[5],
+        Some(helmet.clone())
+    );
+    assert_eq!(state.entities.row(slot).loot.drop_chances[5], 2.0);
+    assert!(state.entities.row(slot).persistent);
+    assert!(state.appearance_changed.contains(&mob));
+    assert!(state.block_entities[&key(HOPPER)].slots[0].is_empty());
+    assert!(spawned.is_empty());
+    set_slot(&mut state, HOPPER, 0, helmet.clone());
+    trigger(&mut state, HOPPER, &mut Vec::new(), &mut spawned);
+    assert_eq!(
+        state.entities.row(slot).appearance.equipment[5],
+        Some(helmet)
+    );
+    assert_eq!(
+        spawned.len(),
+        1,
+        "occupied armor slot ejects instead of replacing"
+    );
+}
+
+#[test]
+fn dispenser_waterlogs_and_drains_without_destroying_container_block() {
+    let mut state = state();
+    let target = super::super::offset(HOPPER, (1, 0, 0)).unwrap();
+    place(&mut state, HOPPER, "dispenser", &[("facing", "east")]);
+    place(&mut state, target, "oak_slab", &[("waterlogged", "false")]);
+    let dry = state.world.block_at(target.x, target.y, target.z).unwrap();
+    let bucket = item(&state, "water_bucket", 1);
+    set_slot(&mut state, HOPPER, 0, bucket);
+    let mut spawned = Vec::new();
+    trigger(&mut state, HOPPER, &mut Vec::new(), &mut spawned);
+    assert_eq!(kind(&state, target), Some("oak_slab"));
+    assert_eq!(
+        super::super::prop(super::super::at(&state, target).unwrap(), "waterlogged"),
+        Some("true")
+    );
+    assert_eq!(
+        state.block_entities[&key(HOPPER)].slots[0],
+        item(&state, "bucket", 1)
+    );
+    trigger(&mut state, HOPPER, &mut Vec::new(), &mut spawned);
+    assert_eq!(
+        state.world.block_at(target.x, target.y, target.z),
+        Some(dry)
+    );
+    assert_eq!(
+        state.block_entities[&key(HOPPER)].slots[0],
+        item(&state, "water_bucket", 1)
+    );
+    assert!(spawned.is_empty());
+}
+
+#[test]
+fn dispenser_water_evaporates_in_nether_but_lava_roundtrips() {
+    let mut state = state();
+    state.dimension = crate::dimensions::Dimension::Nether;
+    let target = super::super::offset(HOPPER, (1, 0, 0)).unwrap();
+    place(&mut state, HOPPER, "dispenser", &[("facing", "east")]);
+    let bucket = item(&state, "water_bucket", 1);
+    set_slot(&mut state, HOPPER, 0, bucket);
+    let mut spawned = Vec::new();
+    trigger(&mut state, HOPPER, &mut Vec::new(), &mut spawned);
+    assert_eq!(
+        state.world.block_at(target.x, target.y, target.z),
+        Some(state.registry.states.air)
+    );
+    assert_eq!(
+        state.block_entities[&key(HOPPER)].slots[0],
+        item(&state, "bucket", 1)
+    );
+    let bucket = item(&state, "lava_bucket", 1);
+    set_slot(&mut state, HOPPER, 0, bucket);
+    trigger(&mut state, HOPPER, &mut Vec::new(), &mut spawned);
+    assert_eq!(
+        state.world.block_at(target.x, target.y, target.z),
+        Some(state.registry.states.lava_levels[0])
+    );
+    trigger(&mut state, HOPPER, &mut Vec::new(), &mut spawned);
+    assert_eq!(
+        state.world.block_at(target.x, target.y, target.z),
+        Some(state.registry.states.air)
+    );
+    assert_eq!(
+        state.block_entities[&key(HOPPER)].slots[0],
+        item(&state, "lava_bucket", 1)
+    );
+    assert!(spawned.is_empty());
+}
+
+#[test]
+fn dispenser_bucket_can_empty_into_an_existing_source() {
+    for fluid in ["water", "lava"] {
+        let mut state = state();
+        let target = super::super::offset(HOPPER, (1, 0, 0)).unwrap();
+        place(&mut state, HOPPER, "dispenser", &[("facing", "east")]);
+        place(&mut state, target, fluid, &[("level", "0")]);
+        let full = item(&state, &format!("{fluid}_bucket"), 1);
+        set_slot(&mut state, HOPPER, 0, full);
+        let mut spawned = Vec::new();
+        trigger(&mut state, HOPPER, &mut Vec::new(), &mut spawned);
+        assert_eq!(kind(&state, target), Some(fluid));
+        assert_eq!(
+            state.block_entities[&key(HOPPER)].slots[0],
+            item(&state, "bucket", 1)
+        );
+        assert!(spawned.is_empty());
+    }
+}
+
+#[test]
+fn dispenser_shulker_refuses_occupied_cell_without_debit_or_ejection() {
+    let mut state = state();
+    place(&mut state, HOPPER, "dispenser", &[("facing", "east")]);
+    crate::bees::tests::mob(&mut state, "minecraft:zombie", [4.5, 201.0, 3.5]);
+    let shulker = item(&state, "shulker_box", 1);
+    set_slot(&mut state, HOPPER, 0, shulker.clone());
+    let mut writes = Vec::new();
+    let mut spawned = Vec::new();
+    trigger(&mut state, HOPPER, &mut writes, &mut spawned);
+    assert_eq!(state.block_entities[&key(HOPPER)].slots[0], shulker);
+    assert!(writes.is_empty());
+    assert!(spawned.is_empty());
+}

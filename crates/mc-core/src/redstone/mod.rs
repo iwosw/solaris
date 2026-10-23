@@ -5,8 +5,11 @@ pub(crate) mod containers;
 pub(crate) mod custody;
 #[cfg(test)]
 mod dirty_signals_tests;
+mod dispenser_blocks;
+mod dispenser_equipment;
 mod entity_query;
 mod piston;
+mod piston_motion;
 mod planning;
 mod rails;
 mod signal;
@@ -36,6 +39,7 @@ pub(crate) struct RedstoneState {
     settled_wires: HashSet<BlockPos>,
     entity_query: entity_query::EntityQuery,
     event_viewers: Vec<crate::boundary::ConnectionId>,
+    piston_entities: Vec<crate::entities::EntitySlot>,
 }
 
 struct WirePass {
@@ -679,8 +683,8 @@ fn tick_cell(
             let read = Read(state);
             let mut plan = planning::Settle::new(&state.registry.blocks, &read);
             match piston::plan_move(&mut plan, pos, block, path == "sticky_piston", powered) {
-                Ok(()) => {
-                    piston::apply_edits(state, writes, spawned, plan.into_edits());
+                Ok(motion) => {
+                    piston::apply_edits(state, writes, spawned, plan.into_edits(), motion);
                 }
                 Err(piston::Refusal::Unloaded(_)) => schedule_cell(state, pos, 1, 0),
                 Err(_) => {}

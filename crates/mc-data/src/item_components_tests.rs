@@ -498,3 +498,18 @@ fn equippable_retains_swap_and_allowed_entity_restrictions() {
         assert_eq!(facts.equippable_allowed_entities, allowed);
     }
 }
+
+#[test]
+fn equippable_retains_dispensing_restriction() {
+    for (component, expected) in [
+        (r#"{"slot":"head"}"#, None),
+        (r#"{"slot":"head","dispensable":false}"#, Some(false)),
+        (r#"{"slot":"head","dispensable":true}"#, Some(true)),
+    ] {
+        let raw: RawItemComponents = serde_json::from_str(&format!(
+            r#"{{"components":{{"minecraft:equippable":{component}}}}}"#
+        ))
+        .unwrap();
+        assert_eq!(raw.into_facts().equippable_dispensable, expected);
+    }
+}

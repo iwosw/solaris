@@ -26,20 +26,20 @@ fn state_with_loot() -> TickState {
 }
 
 fn move_now(s: &mut TickState, pos: BlockPos, powered: bool) -> Result<(), piston::Refusal> {
-    let edits = {
+    let (edits, motion) = {
         let read = Read(s);
         let mut plan = planning::Settle::new(&s.registry.blocks, &read);
         let state = at(s, pos).unwrap();
-        piston::plan_move(
+        let motion = piston::plan_move(
             &mut plan,
             pos,
             state,
             state.block.id.path() == "sticky_piston",
             powered,
         )?;
-        plan.into_edits()
+        (plan.into_edits(), motion)
     };
-    piston::apply_edits(s, &mut Vec::new(), &mut Vec::new(), edits);
+    piston::apply_edits(s, &mut Vec::new(), &mut Vec::new(), edits, motion);
     s.world.fold_overlay();
     Ok(())
 }
@@ -764,5 +764,80 @@ fn mixed_arena_water_is_not_piston_loss_and_pending_overlap_survives_checkpoint(
             "gold_block"
         );
         assert_eq!(name(&restored, BlockPos { x: 20, y: 64, z: 4 }), "water");
+    }
+}
+
+#[test]
+fn piston_sweeps_items_and_mobs_without_tunnelling_through_a_wall() {
+    for wall in [false, true] {
+        let mut s = state();
+        let base = place(&mut s, 4, 200, 4, "piston", &[("facing", "east")]);
+        if wall {
+            put(&mut s, cell(6, 4), "stone");
+        }
+        let item = crate::tick::spawn_item_entity(
+            &mut s,
+            [5.5, 200.0, 4.5],
+            mc_data::ItemStack::new(1, 1),
+        );
+        let mob = crate::bees::tests::mob(&mut s, "minecraft:zombie", [5.5, 200.0, 4.5]);
+        move_now(&mut s, base, true).unwrap();
+        for entity in [item, mob] {
+            let slot = s.entities.slot_of(entity).unwrap();
+            let x = s.entities.pos(slot)[0];
+            if wall {
+                assert!(x <= 6.0 - s.entities.body(slot).half_width + 1.0e-6);
+            } else {
+                assert!(x >= 6.0 + s.entities.body(slot).half_width);
+            }
+            assert!(x > 5.5, "extending head must sweep intersecting body");
+        }
+    }
+}
+
+#[test]
+fn honey_platform_transports_grounded_entities_but_not_distant_bodies() {
+    let mut s = state();
+    let base = place(&mut s, 4, 200, 4, "piston", &[("facing", "east")]);
+    put(&mut s, cell(5, 4), "honey_block");
+    let item =
+        crate::tick::spawn_item_entity(&mut s, [5.5, 200.9375, 4.5], mc_data::ItemStack::new(1, 1));
+    let slot = s.entities.slot_of(item).unwrap();
+    s.entities.set_ground(slot, true);
+    let distant =
+        crate::tick::spawn_item_entity(&mut s, [8.5, 201.0, 4.5], mc_data::ItemStack::new(1, 1));
+    move_now(&mut s, base, true).unwrap();
+    assert!((s.entities.pos(slot)[0] - 6.5).abs() < 1.0e-6);
+    assert_eq!(
+        s.entities.pos(s.entities.slot_of(distant).unwrap()),
+        [8.5, 201.0, 4.5]
+    );
+}
+
+#[test]
+fn slime_push_sets_velocity_and_refused_piston_leaves_entities_untouched() {
+    for blocked in [false, true] {
+        let mut s = state();
+        let base = place(&mut s, 4, 200, 4, "piston", &[("facing", "east")]);
+        put(&mut s, cell(5, 4), "slime_block");
+        if blocked {
+            put(&mut s, cell(6, 4), "obsidian");
+        }
+        let item = crate::tick::spawn_item_entity(
+            &mut s,
+            [6.5, 200.0, 4.5],
+            mc_data::ItemStack::new(1, 1),
+        );
+        let slot = s.entities.slot_of(item).unwrap();
+        let before = (s.entities.pos(slot), s.entities.vel(slot));
+        let result = move_now(&mut s, base, true);
+        if blocked {
+            assert!(result.is_err());
+            assert_eq!((s.entities.pos(slot), s.entities.vel(slot)), before);
+        } else {
+            result.unwrap();
+            assert!(s.entities.pos(slot)[0] >= 7.0 + s.entities.body(slot).half_width);
+            assert_eq!(s.entities.vel(slot)[0], 1.0 / mc_physics::TICK_SECONDS);
+        }
     }
 }

@@ -57,6 +57,12 @@ fn options(row: &ColdRow) -> Options {
     }
 }
 
+/// Dispenser admission uses the stand's slot-disable mask, not player click locks.
+pub(crate) fn can_dispense_equipment(state: &TickState, slot: EntitySlot, index: usize) -> bool {
+    let opts = options(state.entities.row(slot));
+    (2..=5).contains(&index) && !opts.marker && opts.disabled & (1 << (index - 1)) == 0
+}
+
 pub(crate) fn use_on(
     state: &mut TickState,
     actor: EntityId,

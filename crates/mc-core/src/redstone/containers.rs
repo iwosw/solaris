@@ -1187,9 +1187,32 @@ fn nonprojectile(
     let Some(name) = registry.items.name_of(held.item_id).map(|id| id.path()) else {
         return false;
     };
-    let Some(current) = state.world.block_at(target.x, target.y, target.z) else {
-        return false;
-    };
+    if name == "shulker_box" || name.ends_with("_shulker_box") {
+        if super::dispenser_blocks::shulker(state, pos, target, &held, writes) {
+            decrement_stack(
+                &mut state
+                    .block_entities
+                    .get_mut(&key(pos))
+                    .expect("shulker custody")
+                    .slots[index],
+            );
+        }
+        return true;
+    }
+    match super::dispenser_equipment::equip(state, target, &held) {
+        Ok(true) => {
+            decrement_stack(
+                &mut state
+                    .block_entities
+                    .get_mut(&key(pos))
+                    .expect("equipment custody")
+                    .slots[index],
+            );
+            return true;
+        }
+        Err(()) => return true,
+        Ok(false) => {}
+    }
     if name == "tnt" {
         let center = [
             f64::from(target.x) + 0.5,
@@ -1272,37 +1295,21 @@ fn nonprojectile(
         // Optional dispense behavior retains bone meal when it cannot grow.
         return true;
     }
-    let bucket = match name {
-        "water_bucket" | "lava_bucket" => {
-            if current != state.registry.states.air
-                && crate::fluids::fluid_at(&state.registry.states, current).is_none()
-            {
-                return false;
-            }
-            let new = if name == "water_bucket" {
-                state.registry.states.water_levels[0]
-            } else {
-                state.registry.states.lava_levels[0]
-            };
-            item_id(state, "bucket").map(|remainder| (new, remainder))
+    let bucket = super::dispenser_blocks::bucket(state, target, name)
+        .and_then(|plan| item_id(state, plan.remainder).map(|remainder| (plan, remainder)));
+    if let Some((plan, remainder)) = bucket {
+        if crate::plugin_player::protects_cell(state, target) {
+            return true;
         }
-        "bucket" => match crate::fluids::fluid_at(&state.registry.states, current) {
-            Some((fluid, 0)) => item_id(
-                state,
-                if fluid == crate::fluids::Fluid::Water {
-                    "water_bucket"
-                } else {
-                    "lava_bucket"
-                },
-            )
-            .map(|remainder| (state.registry.states.air, remainder)),
-            _ => None,
-        },
-        _ => None,
-    };
-    if let Some((new, remainder)) = bucket {
-        super::set(state, writes, target, new);
-        crate::fluids::schedule(state, &[(target, new)]);
+        if let Some(washed) = plan.washed
+            && !state.pop_block_loot(target, washed, spawned)
+        {
+            return true;
+        }
+        if let Some(new) = plan.new {
+            super::set(state, writes, target, new);
+            crate::fluids::schedule(state, &[(target, new)]);
+        }
         let slot = &mut state
             .block_entities
             .get_mut(&key(pos))

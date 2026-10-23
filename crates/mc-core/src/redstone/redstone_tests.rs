@@ -959,3 +959,40 @@ fn pistons_ignore_power_arriving_through_their_own_face() {
     advance(&mut s, 6);
     assert_eq!(value(&s, piston, "extended"), "false");
 }
+
+#[test]
+fn dispensers_and_droppers_quasi_connect_only_after_update_and_fire_once() {
+    for kind in ["dispenser", "dropper"] {
+        let mut s = state();
+        let machine = place(&mut s, 4, 200, 4, kind, &[("facing", "east")]);
+        containers::register(&mut s, machine);
+        let item = s
+            .registry
+            .items
+            .id_of(&mc_data::Identifier::parse("minecraft:diamond").unwrap())
+            .unwrap();
+        s.block_entities.get_mut(&(4, 200, 4)).unwrap().slots[0] = mc_data::ItemStack::new(item, 3);
+        // Finish initial inventory signal hydration before testing an
+        // intentionally unannounced source change.
+        advance(&mut s, 6);
+        place(&mut s, 4, 202, 4, "redstone_block", &[]);
+        advance(&mut s, 6);
+        assert_eq!(s.block_entities[&(4, 200, 4)].slots[0].count, 3);
+        assert_eq!(value(&s, machine, "triggered"), "false");
+        wake(&mut s, machine);
+        advance(&mut s, 6);
+        assert_eq!(s.block_entities[&(4, 200, 4)].slots[0].count, 2);
+        assert_eq!(value(&s, machine, "triggered"), "true");
+        wake(&mut s, machine);
+        advance(&mut s, 6);
+        assert_eq!(s.block_entities[&(4, 200, 4)].slots[0].count, 2);
+        place(&mut s, 4, 202, 4, "air", &[]);
+        wake(&mut s, machine);
+        advance(&mut s, 2);
+        assert_eq!(value(&s, machine, "triggered"), "false");
+        place(&mut s, 4, 202, 4, "redstone_block", &[]);
+        wake(&mut s, machine);
+        advance(&mut s, 6);
+        assert_eq!(s.block_entities[&(4, 200, 4)].slots[0].count, 1);
+    }
+}

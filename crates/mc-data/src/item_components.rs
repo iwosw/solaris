@@ -261,6 +261,8 @@ pub struct ItemFacts {
     pub equippable_slot: Option<String>,
     /// `None` uses the component codec's default (`true`).
     pub equippable_swappable: Option<bool>,
+    /// `None` uses the equippable codec's default (`true`).
+    pub equippable_dispensable: Option<bool>,
     /// Entity ids or a `#tag`; absent means any entity.
     pub equippable_allowed_entities: Option<Vec<String>>,
     pub weapon: bool,
@@ -493,6 +495,7 @@ impl RawItemComponents {
             consume_effects: consumable.map_or_else(Vec::new, |raw| raw.on_consume_effects),
             tool: tool.map(RawTool::into_facts),
             equippable_swappable: equippable.as_ref().and_then(|raw| raw.swappable),
+            equippable_dispensable: equippable.as_ref().and_then(|raw| raw.dispensable),
             equippable_allowed_entities: equippable
                 .as_mut()
                 .and_then(|raw| raw.allowed_entities.take())
@@ -564,6 +567,7 @@ struct RawEmbeddedItemFacts {
     tool: Option<RawTool>,
     equippable_slot: Option<String>,
     equippable_swappable: Option<bool>,
+    equippable_dispensable: Option<bool>,
     equippable_allowed_entities: Option<RawToolBlocks>,
     #[serde(default)]
     attribute_modifiers: Vec<RawAttributeModifier>,
@@ -613,6 +617,7 @@ impl RawEmbeddedItemFacts {
             consume_effects: self.consume_effects,
             tool: self.tool.map(RawTool::into_facts),
             equippable_swappable: self.equippable_swappable,
+            equippable_dispensable: self.equippable_dispensable,
             equippable_allowed_entities: self
                 .equippable_allowed_entities
                 .map(RawToolBlocks::into_vec),
@@ -710,6 +715,7 @@ impl RawToolBlocks {
 struct RawEquippable {
     slot: String,
     swappable: Option<bool>,
+    dispensable: Option<bool>,
     allowed_entities: Option<RawToolBlocks>,
 }
 

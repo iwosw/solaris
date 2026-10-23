@@ -109,14 +109,28 @@ pub(crate) fn place_from_item(
         .inv
         .iter()
         .find(|claim| claim.owner == intent.actor);
+    let stack = claim
+        .map(|claim| {
+            state
+                .players
+                .get(&claim.owner)
+                .and_then(|player| player.inventory.slots.get(usize::from(claim.slot)))
+                .ok_or_else(|| failure("missing accepted placement stack"))
+        })
+        .transpose()?;
+    let placement = placement_from_stack(state, pos, stack)?;
+    state.merge_shulker_placements.push(placement);
+    Ok(())
+}
+
+pub(crate) fn placement_from_stack(
+    state: &TickState,
+    pos: BlockPos,
+    stack: Option<&ItemStack>,
+) -> Result<Placement, crate::CoreError> {
     let mut slots = vec![ItemStack::EMPTY; 27];
     let mut name = None;
-    if let Some(claim) = claim {
-        let stack = state
-            .players
-            .get(&claim.owner)
-            .and_then(|player| player.inventory.slots.get(usize::from(claim.slot)))
-            .ok_or_else(|| failure("missing accepted placement stack"))?;
+    if let Some(stack) = stack {
         let fields = stack_to_fields(&state.registry.items, stack).map_err(failure)?;
         if let Some(Tag::Compound(components)) = field(&fields, "components") {
             name = component(components, "minecraft:custom_name")?.cloned();
@@ -152,29 +166,30 @@ pub(crate) fn place_from_item(
             }
         }
     }
-    state
-        .merge_shulker_placements
-        .push(Placement { pos, slots, name });
-    Ok(())
+    Ok(Placement { pos, slots, name })
 }
 pub(crate) fn commit_placements(state: &mut TickState) {
     for placement in std::mem::take(&mut state.merge_shulker_placements) {
-        if !at(state, placement.pos) {
-            continue;
-        }
-        state.block_entities.insert(
-            key(placement.pos),
-            BlockEntityState {
-                slots: placement.slots,
-                furnace: None,
-            },
-        );
-        let mut fields = identity(placement.pos);
-        if let Some(name) = placement.name {
-            fields.push(("CustomName".into(), name));
-        }
-        persist_fields(state, placement.pos, fields);
+        commit_placement(state, placement);
     }
+}
+
+pub(crate) fn commit_placement(state: &mut TickState, placement: Placement) {
+    if !at(state, placement.pos) {
+        return;
+    }
+    state.block_entities.insert(
+        key(placement.pos),
+        BlockEntityState {
+            slots: placement.slots,
+            furnace: None,
+        },
+    );
+    let mut fields = identity(placement.pos);
+    if let Some(name) = placement.name {
+        fields.push(("CustomName".into(), name));
+    }
+    persist_fields(state, placement.pos, fields);
 }
 fn identity(pos: BlockPos) -> Vec<(String, Tag)> {
     vec![

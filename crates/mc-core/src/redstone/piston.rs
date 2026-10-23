@@ -32,19 +32,18 @@ pub(super) enum Refusal {
     MissingHead,
 }
 
-/// Plan the extend/retract group for `pos`. Returns `Ok(())` when nothing needs
-/// to change.
+/// Plan the extend/retract group and its entity sweep. `None` means no move.
 pub(super) fn plan_move<R: BlockPlanningRead + ?Sized>(
     world: &mut Settle<'_, R>,
     pos: BlockPos,
     state: &BlockState,
     sticky: bool,
     powered: bool,
-) -> Result<(), Refusal> {
+) -> Result<Option<super::piston_motion::Motion>, Refusal> {
     let facing = block_state_property(state, "facing").ok_or(Refusal::Unsupported)?;
     let extended = block_state_property(state, "extended") == Some("true");
     if powered == extended {
-        return Ok(());
+        return Ok(None);
     }
     let step = facing_delta(facing).ok_or(Refusal::Unsupported)?;
     let head = offset(pos, step).ok_or(Refusal::Unloaded(pos))?;
@@ -65,6 +64,7 @@ pub(super) fn apply_edits(
     writes: &mut Vec<(BlockPos, u32)>,
     spawned: &mut Vec<crate::boundary::EntityId>,
     edits: Vec<super::planning::BlockEdit>,
+    motion: Option<super::piston_motion::Motion>,
 ) {
     // Roll every destroyed block against the preimage before committing any
     // part of the structure. Moving blocks themselves never produce loot.
@@ -99,6 +99,9 @@ pub(super) fn apply_edits(
             }
         }
     }
+    if let Some(motion) = motion {
+        super::piston_motion::apply(state, motion);
+    }
     for edit in &edits {
         crate::plugin_inventories::invalidate_block(state, edit.pos);
     }
@@ -126,15 +129,19 @@ fn plan_extend<R: BlockPlanningRead + ?Sized>(
     base_state: BlockStateId,
     facing: &str,
     sticky: bool,
-) -> Result<(), Refusal> {
-    let structure = resolve(world, pos, None, head, step, true)?;
+) -> Result<Option<super::piston_motion::Motion>, Refusal> {
+    let mut structure = resolve(world, pos, None, head, step, true)?;
     validate(world, pos)?;
     validate(world, head)?;
     let head_state = head_state(world.blocks, facing, sticky).ok_or(Refusal::MissingHead)?;
     publish(world, &structure, step);
     world.plan(pos, base_state);
     world.plan(head, head_state);
-    Ok(())
+    structure.moved.push((pos, head_state));
+    Ok(Some(super::piston_motion::Motion {
+        step,
+        blocks: structure.moved,
+    }))
 }
 
 fn plan_retract<R: BlockPlanningRead + ?Sized>(
@@ -144,11 +151,12 @@ fn plan_retract<R: BlockPlanningRead + ?Sized>(
     step: (i32, i32, i32),
     base_state: BlockStateId,
     sticky: bool,
-) -> Result<(), Refusal> {
+) -> Result<Option<super::piston_motion::Motion>, Refusal> {
     let air = super::planning::air_state_id(world.blocks);
     // Only a real piston head is cleared/pulled: a base flagged extended whose
     // head block is gone must not delete whatever now occupies that position.
     let head_state = world.state_at(head).ok_or(Refusal::Unloaded(head))?;
+    let head_id = head_state.id;
     let head_is_head = head_state.block.id.path() == "piston_head"
         && block_state_property(head_state, "facing").and_then(facing_delta) == Some(step)
         && block_state_property(head_state, "type")
@@ -180,10 +188,19 @@ fn plan_retract<R: BlockPlanningRead + ?Sized>(
     if head_is_head {
         world.plan(head, air);
     }
-    if let Some(structure) = structure {
+    let mut blocks = if let Some(structure) = structure {
         publish(world, &structure, (-step.0, -step.1, -step.2));
+        structure.moved
+    } else {
+        Vec::new()
+    };
+    if head_is_head {
+        blocks.push((head, head_id));
     }
-    Ok(())
+    Ok(Some(super::piston_motion::Motion {
+        step: (-step.0, -step.1, -step.2),
+        blocks,
+    }))
 }
 
 #[derive(Default)]
