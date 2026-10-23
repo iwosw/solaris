@@ -15,6 +15,10 @@ use crate::registry::CoreRegistry;
 use crate::tick::{TickState, run_tick};
 use crate::world::ChunkWorld;
 
+#[cfg(test)]
+#[path = "merge_cost_tests.rs"]
+pub(crate) mod merge_cost_tests;
+
 /// Flat, prelit terrain for tests of gameplay rather than world generation.
 /// Each loader still produces its own owned chunk, but identical columns need
 /// neither repeated terrain routing nor repeated isolated light baking.

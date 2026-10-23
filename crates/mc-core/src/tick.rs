@@ -1393,7 +1393,14 @@ impl TickState {
     /// Merge: sort intents, validate each footprint whole, apply or reject.
     /// Returns accepted count.
     pub fn merge(&mut self, intents: &mut Vec<Intent>) -> usize {
+        #[cfg(test)]
+        let sort_start = crate::horde_bench::merge_cost_tests::start();
         sort_intents(intents);
+        #[cfg(test)]
+        crate::horde_bench::merge_cost_tests::record(sort_start, |probe, ns| {
+            probe.sort_ns += ns;
+            probe.intents += intents.len();
+        });
         let staged = std::mem::take(intents);
         let mut accepted = 0;
         let mut interactions = std::mem::take(&mut self.plugin_interactions);
@@ -1418,10 +1425,14 @@ impl TickState {
                 }
                 continue;
             }
-            if self.footprint_valid(&intent.footprint)
-                && self.kind_valid(intent)
-                && self.apply_intent(intent)
-            {
+            #[cfg(test)]
+            let validation_start = crate::horde_bench::merge_cost_tests::start();
+            let valid = self.footprint_valid(&intent.footprint) && self.kind_valid(intent);
+            #[cfg(test)]
+            crate::horde_bench::merge_cost_tests::record(validation_start, |probe, ns| {
+                probe.validation_ns += ns;
+            });
+            if valid && self.apply_intent(intent) {
                 accepted += 1;
                 crate::block_log::note_merge(self, intent.actor, writes);
                 crate::plugin::enqueue_result(
@@ -1448,6 +1459,11 @@ impl TickState {
                 }
             }
         }
+        #[cfg(test)]
+        crate::horde_bench::merge_cost_tests::record(
+            crate::horde_bench::merge_cost_tests::start(),
+            |probe, _| probe.accepted += accepted,
+        );
         accepted
     }
 
@@ -2812,7 +2828,13 @@ fn run_dimension_tick_inner<'a>(
     crate::conduit::after_blocks(state, &block_writes);
     crate::campfire::run(state, &mut popped_drops);
     let commit_write_start = state.merge_block_writes.len();
+    #[cfg(test)]
+    let effects_start = crate::horde_bench::merge_cost_tests::start();
     let (deaths, mut events, spawned_drops, committed_removals) = state.commit_merge_effects();
+    #[cfg(test)]
+    crate::horde_bench::merge_cost_tests::record(effects_start, |probe, ns| {
+        probe.effects_ns += ns;
+    });
     block_writes.extend_from_slice(&state.merge_block_writes[commit_write_start..]);
     if state.merge_block_writes.len() != commit_write_start {
         state.world.fold_overlay();

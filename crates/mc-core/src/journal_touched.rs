@@ -118,8 +118,14 @@ pub(crate) fn entity_images(
         );
     }
     if touched.len() != owner_count {
+        #[cfg(test)]
+        let sort_start = crate::horde_bench::merge_cost_tests::start();
         touched.sort_unstable();
         touched.dedup();
+        #[cfg(test)]
+        crate::horde_bench::merge_cost_tests::record(sort_start, |probe, ns| {
+            probe.journal_sort_ns += ns;
+        });
     }
     for id in &touched {
         let Some(slot) = state.entities.slot_of_any(*id) else {
@@ -172,8 +178,14 @@ pub(crate) fn entity_images(
                 (previous.as_ref() != Some(&pose)).then_some(id)
             }),
     );
+    #[cfg(test)]
+    let sort_start = crate::horde_bench::merge_cost_tests::start();
     full.sort_unstable();
     full.dedup();
+    #[cfg(test)]
+    crate::horde_bench::merge_cost_tests::record(sort_start, |probe, ns| {
+        probe.journal_sort_ns += ns;
+    });
     let mut hurt: Vec<EntityId> = output
         .changes
         .entity_events
@@ -186,8 +198,14 @@ pub(crate) fn entity_images(
         })
         .filter(|entity| full.binary_search(entity).is_err())
         .collect();
+    #[cfg(test)]
+    let sort_start = crate::horde_bench::merge_cost_tests::start();
     hurt.sort_unstable();
     hurt.dedup();
+    #[cfg(test)]
+    crate::horde_bench::merge_cost_tests::record(sort_start, |probe, ns| {
+        probe.journal_sort_ns += ns;
+    });
     for id in &hurt {
         let Some(slot) = state.entities.slot_of_any(*id) else {
             continue;
@@ -259,8 +277,14 @@ pub(crate) fn entity_images(
     }
     let mut candidates = touched;
     candidates.append(&mut state.journal_scan.clock_recheck);
+    #[cfg(test)]
+    let sort_start = crate::horde_bench::merge_cost_tests::start();
     candidates.sort_unstable();
     candidates.dedup();
+    #[cfg(test)]
+    crate::horde_bench::merge_cost_tests::record(sort_start, |probe, ns| {
+        probe.journal_sort_ns += ns;
+    });
     let mut recheck = std::mem::take(&mut state.journal_scan.clock_recheck);
     for &id in &candidates {
         let Some(slot) = state.entities.slot_of_any(id) else {
