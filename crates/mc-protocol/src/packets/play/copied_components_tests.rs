@@ -419,8 +419,6 @@ const UNSUPPORTED: &[&str] = &[
     "minecraft:wolf/collar",
     "minecraft:wolf/sound_variant",
     "minecraft:wolf/variant",
-    "minecraft:writable_book_content",
-    "minecraft:written_book_content",
     "minecraft:zombie_nautilus/variant",
 ];
 #[test]

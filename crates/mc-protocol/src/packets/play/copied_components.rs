@@ -9,6 +9,7 @@ use mc_data::{Identifier, ItemStack};
 use mc_nbt::{ListTag, Tag, tag_type};
 use std::sync::LazyLock;
 
+mod book;
 mod container;
 mod profile;
 mod templates;
@@ -242,6 +243,7 @@ pub(super) fn encode<B: BufMut>(
                     );
                 }
             }
+            54 | 55 => book::encode(buf, &value, id == 55)?,
             70 => profile::encode(buf, &value)?,
             72 => {
                 let layers = list(&value)?;
@@ -308,6 +310,7 @@ pub(super) fn decode<B: Buf>(
     depth: usize,
 ) -> Result<Option<(String, Tag)>, CodecError> {
     let value = match id {
+        54 | 55 => book::decode(buf, id == 55)?,
         6 | 9 => read_text(buf)?,
         11 => make_list(read_bounded_vec(buf, 256, 1, read_text)?),
         12 => Tag::String(

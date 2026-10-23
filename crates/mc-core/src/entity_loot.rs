@@ -591,6 +591,9 @@ pub(crate) fn commit_death(
     if crate::armor_stand::death(state, slot, &cause, spawned) {
         return;
     }
+    if crate::item_frame::death(state, slot, spawned) {
+        return;
+    }
     let body = state.entities.body(slot);
     let row = state.entities.row(slot);
     let EntityKind::Mob { type_id } = body.kind else {

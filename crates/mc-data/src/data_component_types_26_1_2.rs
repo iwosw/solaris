@@ -26,6 +26,8 @@ pub const ITEM_COMPONENT_CODECS: &[(&str, i32)] = &[
     ("minecraft:bundle_contents", 50),
     ("minecraft:potion_contents", 51),
     ("minecraft:suspicious_stew_effects", 53),
+    ("minecraft:writable_book_content", 54),
+    ("minecraft:written_book_content", 55),
     ("minecraft:trim", 56),
     ("minecraft:ominous_bottle_amplifier", 63),
     ("minecraft:fireworks", 69),

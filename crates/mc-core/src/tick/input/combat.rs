@@ -38,7 +38,9 @@ pub(in crate::tick) fn attack(
     {
         return;
     }
-    if crate::armor_stand::attack(state, entity, *target, changes) {
+    if crate::armor_stand::attack(state, entity, *target, changes)
+        || crate::item_frame::attack(state, entity, *target, changes)
+    {
         return;
     }
     // Melee pipeline: item-data hit from the held stack; armor

@@ -8,6 +8,7 @@ use std::sync::LazyLock;
 
 const BOSS: u8 = 0x01;
 const LEASH: u8 = 0x02;
+const FRAME: u8 = 0x04;
 
 static FLAGS: LazyLock<[u8; ENTITY_TYPE_COUNT]> = LazyLock::new(|| {
     let mut table = [0u8; ENTITY_TYPE_COUNT];
@@ -18,6 +19,7 @@ static FLAGS: LazyLock<[u8; ENTITY_TYPE_COUNT]> = LazyLock::new(|| {
         match contract.name {
             "minecraft:wither" | "minecraft:ender_dragon" => *slot = BOSS,
             "minecraft:leash_knot" => *slot = LEASH,
+            "minecraft:item_frame" | "minecraft:glow_item_frame" => *slot = FRAME,
             _ => {}
         }
     }
@@ -36,4 +38,11 @@ pub(super) fn is_leash_knot(type_id: u32) -> bool {
         .ok()
         .and_then(|id| FLAGS.get(id))
         .is_some_and(|flags| flags & LEASH != 0)
+}
+
+pub(super) fn is_item_frame(type_id: u32) -> bool {
+    usize::try_from(type_id)
+        .ok()
+        .and_then(|id| FLAGS.get(id))
+        .is_some_and(|flags| flags & FRAME != 0)
 }

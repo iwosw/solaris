@@ -1326,10 +1326,12 @@ fn plan_entities(
     viewer.entity_interest = interest;
 }
 
-/// LeashFenceKnotEntity's 26.1.2 add-entity constructor publishes its BlockPos,
-/// not the internal (x+0.5,y+0.375,z+0.5) rendering position.
+/// Local 26.1.2 javap: leash knots and item frames publish their BlockPos,
+/// not the offset internal rendering position.
 fn entity_spawn_position(entity: &EntityView) -> [f64; 3] {
-    if entity_type_flags::is_leash_knot(entity.type_id) {
+    if entity_type_flags::is_leash_knot(entity.type_id)
+        || entity_type_flags::is_item_frame(entity.type_id)
+    {
         entity.position.map(f64::floor)
     } else {
         entity.position

@@ -174,7 +174,17 @@ pub(super) fn comparator_input(state: &TickState, pos: BlockPos, d: (i32, i32, i
     let direct = diode_input(state, back, pos);
     if direct < 15
         && at(state, back).is_some_and(conductor)
-        && let Some(value) = offset(back, d).and_then(|far| analog(state, far))
+        && let Some(value) = offset(back, d).and_then(|far| {
+            analog(state, far).or_else(|| {
+                let face = match d {
+                    (1, 0, 0) => 5,
+                    (-1, 0, 0) => 4,
+                    (0, 0, 1) => 3,
+                    _ => 2,
+                };
+                crate::item_frame::analog_output(state, far, face)
+            })
+        })
     {
         return value;
     }

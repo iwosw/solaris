@@ -235,6 +235,20 @@ pub fn place(
     };
     let path = block.id.path();
     let mut props = blocks.by_id(block.default)?.properties.clone();
+    if matches!(
+        path,
+        "rail" | "powered_rail" | "detector_rail" | "activator_rail"
+    ) {
+        set(
+            &mut props,
+            "shape",
+            if click.facing().axis() == "x" {
+                "east_west"
+            } else {
+                "north_south"
+            },
+        );
+    }
     let has = |name: &str| block.properties.iter().any(|(key, _)| key == name);
     let allows = |name: &str, value: &str| {
         block
@@ -428,7 +442,11 @@ pub fn place(
         );
     }
     if path.ends_with("_door") {
-        set(&mut props, "hinge", door_hinge(click));
+        set(
+            &mut props,
+            "hinge",
+            door_hinge(blocks, target, click, reads.block_at),
+        );
     }
     // A chest beside a single chest of its kind joins it into a double.
     let mut partner = None;
@@ -702,7 +720,14 @@ pub fn support(
     let floor = path.ends_with("_door")
         || matches!(
             path,
-            "torch" | "soul_torch" | "redstone_torch" | "copper_torch" | "snow" | "redstone_wire"
+            "torch"
+                | "soul_torch"
+                | "redstone_torch"
+                | "copper_torch"
+                | "snow"
+                | "redstone_wire"
+                | "repeater"
+                | "comparator"
         )
         || [
             "minecraft:rails",
@@ -886,6 +911,22 @@ pub(crate) fn supported(
     } else {
         SturdyFace::North
     };
+    if at.y < pos.y
+        && blocks.by_id(BlockStateId(state)).is_some_and(|placed| {
+            matches!(
+                placed.block.id.path(),
+                "torch" | "soul_torch" | "redstone_torch" | "copper_torch"
+            )
+        })
+    {
+        return mc_data::block_facts::has_center_sturdy_face(
+            id,
+            &block.block.id,
+            &block.properties,
+            face,
+        ) || block.block.id.path().ends_with("_fence")
+            || block.block.id.path().ends_with("_wall");
+    }
     has_full_sturdy_face(id, &block.block.id, &block.properties, face)
 }
 
@@ -992,9 +1033,54 @@ fn wall_variant<'a>(blocks: &'a BlockRegistry, id: &Identifier) -> Option<&'a Bl
     blocks.block(&Identifier::parse(format!("{}:{wall}", id.namespace())).ok()?)
 }
 
-/// Vanilla `DoorBlock.getHinge` without neighbor doors: the hinge sits on the
-/// side of the door the placer clicked toward.
-fn door_hinge(click: &Click) -> &'static str {
+/// Prefer a neighboring door's opposite hinge, then the obstructed side.
+/// Cursor position breaks ties only when neither neighborhood rule decides.
+fn door_hinge(
+    blocks: &BlockRegistry,
+    target: BlockPos,
+    click: &Click,
+    read: &dyn Fn(BlockPos) -> Option<u32>,
+) -> &'static str {
+    let left = step(target, click.facing().counter_clockwise());
+    let right = step(target, click.facing().clockwise());
+    let door = |pos| {
+        read(pos)
+            .and_then(|id| blocks.by_id(BlockStateId(id)))
+            .is_some_and(|block| {
+                block.block.id.path().ends_with("_door")
+                    && block
+                        .properties
+                        .iter()
+                        .any(|(key, value)| key == "half" && value == "lower")
+            })
+    };
+    match (door(left), door(right)) {
+        (true, false) => return "right",
+        (false, true) => return "left",
+        _ => {}
+    }
+    let obstruction = |pos| {
+        [pos, step(pos, Face::Up)]
+            .into_iter()
+            .filter(|pos| {
+                read(*pos)
+                    .and_then(|id| blocks.by_id(BlockStateId(id)).map(|block| (id, block)))
+                    .is_some_and(|(id, block)| {
+                        mc_data::block_facts::has_full_sturdy_face(
+                            id,
+                            &block.block.id,
+                            &block.properties,
+                            mc_data::block_facts::SturdyFace::Up,
+                        )
+                    })
+            })
+            .count()
+    };
+    match obstruction(left).cmp(&obstruction(right)) {
+        std::cmp::Ordering::Less => return "right",
+        std::cmp::Ordering::Greater => return "left",
+        std::cmp::Ordering::Equal => {}
+    }
     let facing = click.facing().offset();
     let (hit_x, hit_z) = (click.cursor[0], click.cursor[2]);
     let right = (facing[0] < 0 && hit_z < 0.5)

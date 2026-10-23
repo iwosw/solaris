@@ -208,6 +208,76 @@ impl Packet for ServerboundSignUpdate {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ServerboundEditBook {
+    pub slot: i32,
+    pub pages: Vec<String>,
+    pub title: Option<String>,
+}
+impl Packet for ServerboundEditBook {
+    // Local reports/packets.json: edit_book=24. Local javap codec:
+    // VAR_INT, list(100,stringUtf8(1024)), optional(stringUtf8(32)).
+    const ID: i32 = 24;
+    fn encode<B: BufMut>(&self, buf: &mut B) -> Result<(), CodecError> {
+        if self.pages.len() > 100 {
+            return Err(CodecError::NotSupported("too many book pages"));
+        }
+        for (value, max) in self
+            .pages
+            .iter()
+            .map(|page| (page, 1024))
+            .chain(self.title.iter().map(|title| (title, 32)))
+        {
+            let len = value.encode_utf16().count();
+            if len > max {
+                return Err(CodecError::StringTooLong { len, max });
+            }
+        }
+        buf.write_varint(self.slot);
+        write_count(buf, self.pages.len())?;
+        for page in &self.pages {
+            buf.write_string(page, 1024)?;
+        }
+        buf.write_bool(self.title.is_some());
+        if let Some(title) = &self.title {
+            buf.write_string(title, 32)?;
+        }
+        Ok(())
+    }
+    fn decode<B: Buf>(buf: &mut B) -> Result<Self, CodecError> {
+        let slot = buf.read_varint()?;
+        let pages = read_bounded_vec(buf, 100, 1, |buf| buf.read_string(1024))?;
+        let title = if buf.read_bool()? {
+            Some(buf.read_string(32)?)
+        } else {
+            None
+        };
+        Ok(Self { slot, pages, title })
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ClientboundOpenBook {
+    pub hand: InteractionHand,
+}
+impl Packet for ClientboundOpenBook {
+    // Local reports/packets.json: open_book=58; javap writes InteractionHand enum.
+    const ID: i32 = 58;
+    fn encode<B: BufMut>(&self, buf: &mut B) -> Result<(), CodecError> {
+        buf.write_varint(self.hand as i32);
+        Ok(())
+    }
+    fn decode<B: Buf>(buf: &mut B) -> Result<Self, CodecError> {
+        Ok(Self {
+            hand: interaction_hand_from_wire(buf.read_varint()?)?,
+        })
+    }
+}
+
+#[cfg(test)]
+#[path = "book_packet_tests.rs"]
+mod book_tests;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ClientboundCommandSuggestions {
     pub id: i32,
     pub start: i32,

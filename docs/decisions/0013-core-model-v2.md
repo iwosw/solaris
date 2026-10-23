@@ -701,6 +701,16 @@ Tick `t -> t+1`:
    collection does not wait for the player's thrown-item pickup delay.
    Container custody and consumed-item tombstones retain their existing atomic
    tick WAL and native-checkpoint ownership.
+   Ender-chest custody is the player's retained `EnderItems` NBT field, never
+   block-entity storage. A 27-slot menu decodes only on interaction; planned
+   player/cursor and personal-container postimages commit together. Recovery
+   rejects invalid personal slots rather than exposing an empty replacement.
+   Book edits/signatures replace one writable inventory stack through native
+   admission, retaining author, title, literal pages and other components.
+   Frames own their displayed stack and rotation in entity metadata (9/10);
+   checkpoints project vanilla `Item`, `Facing` and `ItemRotation`. Placement,
+   interaction and support-write events drive updates; there is no idle frame
+   scan. The edge alone translates hanging render positions to spawn BlockPos.
    Hopper transfer cooldowns persist as absolute tick deadlines, so the seven
    intervening cooling ticks emit no timer-only opaque WAL images. Native
    checkpoint and portable Anvil export derive a bounded `TransferCooldown`

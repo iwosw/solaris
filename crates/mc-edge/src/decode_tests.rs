@@ -40,6 +40,25 @@ fn decode(id: i32, body: Vec<u8>, state: &mut DecodeState) -> Result<Vec<PlayerI
 }
 
 #[test]
+fn edit_book_wire_reaches_native_input_and_rejects_trailing_bytes() {
+    // Local 26.1.2 packet report + ServerboundEditBookPacket javap:
+    // slot VarInt, bounded page strings, optional title string.
+    let bytes = vec![0, 1, 4, b'p', b'a', b'g', b'e', 1, 1, b'T'];
+    assert_eq!(
+        decode(24, bytes.clone(), &mut state()).unwrap(),
+        vec![PlayerInput::EditBook {
+            connection: conn(),
+            slot: 0,
+            pages: vec!["page".into()],
+            title: Some("T".into()),
+        }]
+    );
+    let mut trailing = bytes;
+    trailing.push(0);
+    assert!(decode(24, trailing, &mut state()).is_err());
+}
+
+#[test]
 fn elytra_start_command_reaches_authoritative_core() {
     // Local 26.1.2 GameProtocols + ServerboundPlayerCommandPacket$Action:
     // packet 0x2A, entity 1, START_FALL_FLYING ordinal 6, data 0.

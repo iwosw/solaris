@@ -167,6 +167,13 @@ pub enum PlayerInput {
     },
     /// Client requests elytra gliding; only the core can admit the transition.
     StartFallFlying { connection: ConnectionId },
+    /// Authoritative edit/sign request for a writable book in a hotbar/offhand slot.
+    EditBook {
+        connection: ConnectionId,
+        slot: i32,
+        pages: Vec<String>,
+        title: Option<String>,
+    },
     /// Text submitted for the sign editor the core opened.
     SignUpdate {
         connection: ConnectionId,
@@ -349,6 +356,7 @@ impl PlayerInput {
             | Self::Sprint { connection, .. }
             | Self::StartFallFlying { connection }
             | Self::SignUpdate { connection, .. }
+            | Self::EditBook { connection, .. }
             | Self::Attack { connection, .. }
             | Self::InteractEntity { connection, .. }
             | Self::InteractEntitySecondary { connection, .. }
@@ -841,6 +849,9 @@ pub enum PlayerChange {
     /// Acknowledge block actions up to this client sequence.
     BlockActionsAcked {
         sequence: i32,
+    },
+    BookOpened {
+        hand: Hand,
     },
     SignEditorOpened {
         position: BlockPos,

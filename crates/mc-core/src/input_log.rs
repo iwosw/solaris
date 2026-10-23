@@ -161,6 +161,7 @@ fn carries_text(input: &PlayerInput) -> bool {
         PlayerInput::Chat { .. }
             | PlayerInput::Command { .. }
             | PlayerInput::SignUpdate { .. }
+            | PlayerInput::EditBook { .. }
             | PlayerInput::RenameItem { .. }
             | PlayerInput::DialogClick { .. }
     )

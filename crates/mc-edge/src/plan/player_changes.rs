@@ -371,6 +371,20 @@ fn plan_change(change: &PlayerChange, viewer: &mut ViewerState, out: &mut Vec<Pl
                 sequence: *sequence,
             },
         ),
+        PlayerChange::BookOpened { hand } => push_reliable(
+            out,
+            conn,
+            &mc_protocol::packets::play::ClientboundOpenBook {
+                hand: match hand {
+                    mc_core::boundary::Hand::Main => {
+                        mc_protocol::packets::play::InteractionHand::MainHand
+                    }
+                    mc_core::boundary::Hand::Off => {
+                        mc_protocol::packets::play::InteractionHand::OffHand
+                    }
+                },
+            },
+        ),
         PlayerChange::SignEditorOpened {
             position,
             front,

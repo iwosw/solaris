@@ -34,6 +34,117 @@ fn cell(blocks: &BlockRegistry, id: u32) -> StairCell {
     };
     StairCell::Stair(StairProperties { facing, top })
 }
+
+fn connection_kind(path: &str) -> Option<u8> {
+    if path.ends_with("_fence") {
+        Some(0)
+    } else if path.ends_with("_wall") {
+        Some(1)
+    } else if path.ends_with("_pane") || path == "glass_pane" || path == "iron_bars" {
+        Some(2)
+    } else {
+        None
+    }
+}
+
+fn connected_state(
+    blocks: &BlockRegistry,
+    pos: BlockPos,
+    id: u32,
+    kind: u8,
+    read: &dyn Fn(BlockPos) -> Option<u32>,
+) -> Option<u32> {
+    use mc_data::block_facts::{SturdyFace, has_full_sturdy_face};
+    let entry = blocks.by_id(BlockStateId(id))?;
+    let mut props = entry.properties.clone();
+    let mut connected = [false; 4];
+    let directions = [Face::North, Face::South, Face::West, Face::East];
+    let above = if kind == 1 {
+        let id = read(step(pos, Face::Up))?;
+        Some((id, blocks.by_id(BlockStateId(id))?))
+    } else {
+        None
+    };
+    let covered = above.is_some_and(|(id, block)| {
+        has_full_sturdy_face(id, &block.block.id, &block.properties, SturdyFace::Down)
+    });
+    for (index, direction) in directions.into_iter().enumerate() {
+        let neighbor_id = read(step(pos, direction))?;
+        let neighbor = blocks.by_id(BlockStateId(neighbor_id))?;
+        let neighbor_path = neighbor.block.id.path();
+        let same = match kind {
+            0 => {
+                connection_kind(neighbor_path) == Some(0)
+                    && (entry.block.id.path() == "nether_brick_fence")
+                        == (neighbor_path == "nether_brick_fence")
+            }
+            1 => connection_kind(neighbor_path) == Some(1),
+            _ => connection_kind(neighbor_path) == Some(2),
+        };
+        let gate = kind < 2
+            && neighbor_path.ends_with("_fence_gate")
+            && neighbor
+                .properties
+                .iter()
+                .find(|(key, _)| key == "facing")
+                .is_some_and(|(_, value)| {
+                    if direction.axis() == "x" {
+                        matches!(value.as_str(), "north" | "south")
+                    } else {
+                        matches!(value.as_str(), "east" | "west")
+                    }
+                });
+        let face = match direction {
+            Face::North => SturdyFace::South,
+            Face::South => SturdyFace::North,
+            Face::West => SturdyFace::East,
+            _ => SturdyFace::West,
+        };
+        connected[index] = same
+            || gate
+            || has_full_sturdy_face(neighbor_id, &neighbor.block.id, &neighbor.properties, face);
+        set(
+            &mut props,
+            direction.name(),
+            if kind == 1 {
+                if !connected[index] {
+                    "none"
+                } else if covered {
+                    "tall"
+                } else {
+                    "low"
+                }
+            } else if connected[index] {
+                "true"
+            } else {
+                "false"
+            },
+        );
+    }
+    if kind == 1 {
+        let straight =
+            connected == [true, true, false, false] || connected == [false, false, true, true];
+        let post_above = above.is_some_and(|(_, block)| {
+            block.block.id.path().ends_with("_wall")
+                && block
+                    .properties
+                    .iter()
+                    .any(|(key, value)| key == "up" && value == "true")
+        });
+        set(
+            &mut props,
+            "up",
+            if !straight || covered || post_above {
+                "true"
+            } else {
+                "false"
+            },
+        );
+    }
+    blocks
+        .by_name_and_props(&entry.block.id, &props)
+        .map(|state| state.0)
+}
 /// Recompute affected corners from the complete after-image. Reads are
 /// collected by the caller into the same intent footprint as occupancy.
 ///
@@ -67,6 +178,7 @@ pub(crate) fn shape_updates(
                 step(*pos, Face::South),
                 step(*pos, Face::West),
                 step(*pos, Face::East),
+                step(*pos, Face::Down),
             ]
         })
         .collect();
@@ -92,6 +204,16 @@ pub(crate) fn shape_updates(
         let Some(id) = read(pos) else {
             continue;
         };
+        if let Some(kind) = blocks
+            .by_id(BlockStateId(id))
+            .and_then(|entry| connection_kind(entry.block.id.path()))
+        {
+            let new = connected_state(blocks, pos, id, kind, &read)?;
+            if new != id {
+                updates.push((pos, new));
+            }
+            continue;
+        }
         let StairCell::Stair(current) = cell(blocks, id) else {
             continue;
         };
@@ -199,9 +321,9 @@ mod tests {
             Some(())
         );
         assert_eq!(writes.len(), 256);
-        // All in-batch cells come from the index, only the four perimeter
-        // strips reach the world. Internal overlaps must not be rescanned.
-        assert_eq!(reads.get(), 64);
+        // The four perimeter strips and lower wall candidates reach the world.
+        // In-batch cells and overlapping candidates are read from the index.
+        assert_eq!(reads.get(), 64 + 256);
     }
 
     #[test]

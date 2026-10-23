@@ -35,6 +35,9 @@ mod entity_type_flags_tests;
 #[path = "plan/entity_interest_tests.rs"]
 mod entity_interest_tests;
 
+#[path = "plan/books_frames_tests.rs"]
+mod books_frames_tests;
+
 fn with_cache<T>(f: impl FnOnce(&ChunkPacketCache) -> T) -> T {
     f(&ChunkPacketCache::new())
 }

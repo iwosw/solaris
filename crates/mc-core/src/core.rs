@@ -549,6 +549,7 @@ fn load_dimension_state(
         if player.dimension != dimension {
             continue;
         }
+        crate::ender_chest::contents(&player.opaque_player_fields, &registry.items)?;
         let uuid = uuid_str.parse::<uuid::Uuid>().map_err(|err| {
             CoreError::Storage(format!(
                 "{}: recovered player UUID {uuid_str}: {err}",
@@ -1470,6 +1471,7 @@ pub(crate) fn restore_entity(
         }
         crate::entity_loot::restore(state, slot);
         crate::armor_stand::restore(state, slot);
+        crate::item_frame::restore(state, slot);
         crate::vehicles::restore(state, slot);
         crate::bees::appearance(state, slot);
         crate::allay::appearance(state, slot);
@@ -2862,6 +2864,7 @@ fn entity_capture_record(
         wire_id: entity_id_int(body.id),
         extra_fields,
     };
+    crate::item_frame::capture(&mut record, &row.appearance);
     if let Some(projectile) = &row.projectile {
         record
             .extra_fields

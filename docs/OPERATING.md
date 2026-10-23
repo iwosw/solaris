@@ -146,7 +146,7 @@ a `Gap` marker, and a crash can lose the unflushed tail. The log contains
 everything players send: text typed into an *unlocked* session (chat, plugin
 commands under other names) is written as sent, so treat the files as
 sensitive. Withheld by marker: `login`/`register`/`changepassword` commands, and
-all text (chat, command, sign, rename, dialog click) of a session the
+all text (chat, command, sign, book edit, rename, dialog click) of a session the
 `require_plugin_login` gate still holds locked. Plugin commands, wall-clock
 reads and live chunk-load timing are not inputs of this log; a world copy taken
 at the log's start checkpoint can be replayed only by the test-only replayer

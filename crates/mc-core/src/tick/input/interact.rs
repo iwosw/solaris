@@ -165,6 +165,7 @@ pub(in crate::tick) fn use_item_on(
     if crate::copper::use_on(state, entity, *hand, *position)
         || crate::spawn_egg::use_on(state, entity, *hand, *position, *face)
         || crate::armor_stand::use_on(state, entity, *hand, *position, *face)
+        || crate::item_frame::use_on(state, entity, *hand, *position, *face)
     {
         return;
     }
@@ -178,6 +179,9 @@ pub(in crate::tick) fn use_item_on(
         return;
     }
     if crate::shelf::use_on(state, entity, *hand, *position, *face, *cursor) {
+        return;
+    }
+    if crate::ender_chest::open(state, entity, *connection, *position, changes) {
         return;
     }
     // Containers open on use: chest/barrel/crafting/furnace family.
@@ -478,7 +482,9 @@ pub(in crate::tick) fn interact_entity(
         return;
     }
     let secondary = matches!(input, PlayerInput::InteractEntitySecondary { .. });
-    if crate::armor_stand::interact(state, entity, *target, *hand, *location) {
+    if crate::armor_stand::interact(state, entity, *target, *hand, *location)
+        || crate::item_frame::interact(state, entity, *target, *hand)
+    {
         crate::plugin::entity_interaction(state, entity, *target, *hand, secondary, None);
         return;
     }
@@ -567,7 +573,9 @@ pub(in crate::tick) fn use_item(
     {
         return;
     }
-    if crate::maps::use_empty(state, entity, *hand, changes) {
+    if crate::maps::use_empty(state, entity, *hand, changes)
+        || crate::books::use_item(state, entity, *hand)
+    {
         return;
     }
     if crate::bottles::use_item(state, entity, *hand, *yaw, *pitch, changes) {

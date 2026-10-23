@@ -105,6 +105,124 @@ impl World {
 }
 
 #[test]
+fn gap_blocks_floor_support_distinguishes_torches_and_diodes() {
+    let world = World::new();
+    let pos = BlockPos { x: 0, y: 2, z: 0 };
+    for name in ["torch", "soul_torch", "redstone_torch", "copper_torch"] {
+        for base in ["oak_fence", "cobblestone_wall"] {
+            let support = world.state(base, &[]);
+            assert!(
+                super::supported(
+                    &world.registry.blocks,
+                    &world.registry.tags,
+                    pos,
+                    world.state(name, &[]),
+                    &|_| Some(support),
+                ),
+                "{name} on {base}"
+            );
+        }
+    }
+    for name in ["repeater", "comparator"] {
+        let state = world.state(name, &[]);
+        assert_eq!(
+            super::support(&world.registry.blocks, &world.registry.tags, pos, state),
+            Some(BlockPos { y: 1, ..pos }),
+        );
+        assert!(!super::supported(
+            &world.registry.blocks,
+            &world.registry.tags,
+            pos,
+            state,
+            &|_| Some(world.registry.states.air),
+        ));
+    }
+}
+
+#[test]
+fn gap_blocks_connections_update_both_neighbors_and_disconnect_after_removal() {
+    let world = World::new();
+    let left = BlockPos { x: 0, y: 1, z: 0 };
+    let right = BlockPos { x: 1, ..left };
+    for (name, connected, disconnected) in [
+        ("oak_fence", "true", "false"),
+        ("glass_pane", "true", "false"),
+        ("cobblestone_wall", "low", "none"),
+    ] {
+        let default = world.state(name, &[]);
+        let mut writes = vec![(right, default)];
+        super::shape_updates(&world.registry.blocks, &mut writes, &|pos| {
+            Some(if pos == left {
+                default
+            } else {
+                world.registry.states.air
+            })
+        })
+        .unwrap();
+        assert!(writes.contains(&(left, world.state(name, &[("east", connected)]))));
+        assert!(writes.contains(&(right, world.state(name, &[("west", connected)]))));
+        let connected_left = world.state(name, &[("east", connected)]);
+        let mut removal = vec![(right, world.registry.states.air)];
+        super::shape_updates(&world.registry.blocks, &mut removal, &|pos| {
+            Some(if pos == left {
+                connected_left
+            } else {
+                world.registry.states.air
+            })
+        })
+        .unwrap();
+        assert!(removal.contains(&(left, world.state(name, &[("east", disconnected)]))));
+    }
+}
+
+#[test]
+fn gap_blocks_door_hinges_pair_and_avoid_obstructions() {
+    let mut world = World::new();
+    let first = world
+        .place("oak_door", (0, 0, 0), Face::Up, 1.0, 0.0)
+        .unwrap();
+    world.extra.extend(first);
+    let second = world
+        .place("oak_door", (-1, 0, 0), Face::Up, 1.0, 0.0)
+        .unwrap();
+    assert!(second.contains(&(
+        (-1, 1, 0),
+        world.state(
+            "oak_door",
+            &[("facing", "south"), ("half", "lower"), ("hinge", "right"),]
+        )
+    )));
+    world.extra.clear();
+    world.extra.insert((-1, 1, 0), world.registry.states.stone);
+    world.extra.insert((-1, 2, 0), world.registry.states.stone);
+    let door = world
+        .place("oak_door", (0, 0, 0), Face::Up, 1.0, 0.0)
+        .unwrap();
+    assert!(door.contains(&(
+        (0, 1, 0),
+        world.state(
+            "oak_door",
+            &[("facing", "south"), ("half", "lower"), ("hinge", "right"),]
+        )
+    )));
+}
+
+#[test]
+fn gap_blocks_isolated_rails_follow_player_axis() {
+    let world = World::new();
+    for name in ["rail", "powered_rail", "detector_rail", "activator_rail"] {
+        for (yaw, shape) in [(0.0, "north_south"), (90.0, "east_west")] {
+            assert!(
+                world
+                    .place(name, (0, 0, 0), Face::Up, 1.0, yaw)
+                    .unwrap()
+                    .contains(&((0, 1, 0), world.state(name, &[("shape", shape)])))
+            );
+        }
+    }
+}
+
+#[test]
 fn logs_follow_the_clicked_face_axis() {
     let mut world = World::new();
     let log = |world: &World, axis| world.state("minecraft:oak_log", &[("axis", axis)]);

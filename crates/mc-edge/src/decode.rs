@@ -295,6 +295,15 @@ pub fn decode_play_frame(
             }
             ClientCommandAction::RequestGameruleValues => {}
         },
+        mc_protocol::packets::play::ServerboundEditBook::ID => {
+            let p = read::<mc_protocol::packets::play::ServerboundEditBook>(body)?;
+            out.push(PlayerInput::EditBook {
+                connection: conn,
+                slot: p.slot,
+                pages: p.pages,
+                title: p.title,
+            });
+        }
         ServerboundSignUpdate::ID => {
             let p = read::<ServerboundSignUpdate>(body)?;
             out.push(PlayerInput::SignUpdate {

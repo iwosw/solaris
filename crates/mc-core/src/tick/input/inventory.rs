@@ -42,6 +42,20 @@ pub(in crate::tick) fn container_click(
     if state.entities.slot_of(entity).is_none() {
         return;
     }
+    if crate::ender_chest::is_open(state, entity) {
+        crate::ender_chest::click(
+            state,
+            entity,
+            *connection,
+            *window,
+            *state_id,
+            *slot,
+            *button,
+            *mode,
+            changes,
+        );
+        return;
+    }
     if crate::vehicles::is_open(state, entity) {
         crate::vehicles::click(
             state, entity, *window, *state_id, *slot, *button, *mode, changes,

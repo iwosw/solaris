@@ -23,7 +23,7 @@ const MAX_WINDOW: u8 = 100;
 #[derive(Debug, Clone, PartialEq)]
 pub struct PlayerState {
     pub connection: ConnectionId,
-    /// Unknown imported player fields retained by runtime and checkpoint captures.
+    /// Retained player root fields, including personal EnderItems owned by ender_chest.
     pub(crate) opaque_player_fields: Vec<u8>,
     pub statistics: mc_data::statistics::PlayerStatistics,
     pub inventory: PlayerInventory,

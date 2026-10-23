@@ -2874,6 +2874,7 @@ fn run_dimension_tick_inner<'a>(
     crate::block_entity_defaults::after_blocks(state, &block_writes);
     crate::trial_spawner::after_blocks(state, &block_writes);
     crate::vault::after_blocks(state, &block_writes);
+    crate::item_frame::blocks_changed(state, &block_writes, &mut popped_drops);
     crate::block_log::after_blocks(state);
     if sim {
         crate::trial_spawner::run(state, &mut block_writes, &mut changes);
@@ -4019,6 +4020,11 @@ pub(crate) fn inventory_transition_refused(
     if let Some(slots) = crate::vehicles::container_slots_for_player(state, entity) {
         return player.inventory_transition_refused(slots);
     }
+    if crate::ender_chest::is_open(state, entity) {
+        return crate::ender_chest::contents(&player.opaque_player_fields, &state.registry.items)
+            .map(|slots| player.inventory_transition_refused(&slots))
+            .unwrap_or_default();
+    }
     let cells = state
         .open_containers
         .get(&entity)
@@ -4930,6 +4936,14 @@ fn apply_inputs<'a>(
                 sprinting,
             } => input::movement::sprint(state, (connection, sprinting)),
             PlayerInput::StartFallFlying { connection } => elytra::start(state, *connection),
+            PlayerInput::EditBook {
+                connection,
+                slot,
+                pages,
+                title,
+            } => {
+                crate::books::edit(state, *connection, *slot, pages, title.as_deref());
+            }
             PlayerInput::SignUpdate {
                 connection,
                 position,

@@ -1170,6 +1170,7 @@ pub(crate) fn player_to_tag(
     items: &mc_data::items::ItemRegistry,
 ) -> Result<mc_nbt::Tag, CoreError> {
     use mc_data::player_nbt::{VanillaPlayer, player_to_fields};
+    crate::ender_chest::contents(&record.opaque_player_fields, items)?;
     let mut opaque_fields = if record.opaque_player_fields.is_empty() {
         Vec::new()
     } else {
@@ -1628,6 +1629,7 @@ pub(crate) fn player_from_tag(
         )
         .map_err(|err| failure("opaque fields", err.to_string()))?;
     }
+    crate::ender_chest::contents(&opaque_player_fields, items)?;
     let mut record = ReplayPlayer {
         opaque_player_fields,
         statistics: match find("SolarisStatistics") {

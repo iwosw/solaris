@@ -89,11 +89,12 @@ mod inventory;
 mod login_flow;
 mod statistics;
 pub use chat_commands::{
-    ClientboundCommandSuggestions, ClientboundCommands, ClientboundSystemChat, ClientboundTabList,
-    CommandArgumentParser, CommandNode, CommandNodeKind, CommandStringKind, CommandSuggestionEntry,
-    ServerboundChangeGameMode, ServerboundChat, ServerboundChatAck, ServerboundChatCommand,
-    ServerboundChunkBatchReceived, ServerboundClientTickEnd, ServerboundCommandSuggestion,
-    ServerboundPlayerLoaded, ServerboundSignUpdate,
+    ClientboundCommandSuggestions, ClientboundCommands, ClientboundOpenBook, ClientboundSystemChat,
+    ClientboundTabList, CommandArgumentParser, CommandNode, CommandNodeKind, CommandStringKind,
+    CommandSuggestionEntry, ServerboundChangeGameMode, ServerboundChat, ServerboundChatAck,
+    ServerboundChatCommand, ServerboundChunkBatchReceived, ServerboundClientTickEnd,
+    ServerboundCommandSuggestion, ServerboundEditBook, ServerboundPlayerLoaded,
+    ServerboundSignUpdate,
 };
 pub use chunks::{
     BlockChangedAck, BlockEntityInfo, BlockUpdate, ChunkHeightmap, ForgetLevelChunk,
