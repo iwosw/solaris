@@ -1963,7 +1963,7 @@ fn give(
     command: &Command,
     changes: &mut ChangeSet,
 ) {
-    let stack = match item.stack(&state.registry.items) {
+    let stack = match item.stack_with(&state.registry.item_rules()) {
         Ok(stack) => stack,
         Err(reason) => {
             error(state, connection, reason);

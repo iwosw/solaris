@@ -1158,7 +1158,7 @@ impl PlayerState {
                 }
             }
             Command::Give { item, count, .. } => {
-                if let Ok(stack) = item.stack(rules.items) {
+                if let Ok(stack) = item.stack_with(rules) {
                     effects.dropped = commands::give(rules, &mut self.inventory, &stack, *count);
                 }
             }

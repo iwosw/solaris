@@ -33,7 +33,11 @@ pub mod boundary;
 mod brewing;
 pub mod build_precommit;
 mod campfire;
+pub(crate) mod carrier_blocks;
+#[cfg(test)]
+mod carrier_blocks_tests;
 mod chests;
+mod chorus;
 mod chunk_loader;
 pub(crate) mod chunk_tickets;
 pub mod combat;
@@ -132,7 +136,6 @@ mod physical_defense;
 mod piglin;
 pub mod placement;
 pub(crate) mod plants;
-mod chorus;
 pub mod player;
 mod plugin;
 #[cfg(test)]
