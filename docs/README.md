@@ -6,6 +6,7 @@ Solaris v0.0.8 is a **draft prerelease** for Minecraft Java 26.1.2. Start with t
 ## Running and extending Solaris
 
 - [Operating guide](OPERATING.md): configuration, content, console, backups and world conversion.
+- [Migration from vanilla or Paper](MIGRATION.md): configuration mapping, offline import, preservation limits and rollback.
 - [Settlements player guide](SETTLEMENTS_GUIDE.md) (English / Русский): `/settlement guide`, villager jobs and membership.
 - [Server-driven dialogs](DIALOGS.md): `show_dialog` UI API and where clicks arrive.
 - [Plugins](PLUGINS.md): Wasmtime package deployment and authoring.
