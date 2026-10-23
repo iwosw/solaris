@@ -75,7 +75,7 @@ impl ClimateImage {
         state.weather = (kind, self.remaining_ticks);
         state.thunder_remaining_ticks = self.thunder_remaining_ticks;
         state.clear_remaining_ticks = self.clear_remaining_ticks;
-        state.thundering = self.thundering || kind == Weather::Thunder;
+        state.thundering = self.thundering;
         state.rain_level = rain_level;
         state.thunder_level = thunder_level;
         state
