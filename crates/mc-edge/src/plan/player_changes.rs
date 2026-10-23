@@ -53,7 +53,7 @@ fn plan_change(change: &PlayerChange, viewer: &mut ViewerState, out: &mut Vec<Pl
                 id: update.id, scale: update.scale, locked: update.locked,
                 decorations: Some(update.markers.iter().map(|d| mc_protocol::packets::play::MapDecoration {
                     kind: d.kind, x: d.x, z: d.z, rotation: d.rotation,
-                    name: d.name.as_ref().map(|name| mc_nbt::Tag::String(name.clone())),
+                    name: d.name.as_ref().map(|name| mc_core::scoreboard::component(name)),
                 }).collect()),
                 rectangle: update.rectangle, colors: update.colors.clone(),
             }),

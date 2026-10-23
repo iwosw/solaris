@@ -1,6 +1,5 @@
 //! Offline Java 1.18+ Anvil admission into an unpublished native database.
 use std::collections::{BTreeMap, BTreeSet};
-use std::io::Write as _;
 use std::path::{Path, PathBuf};
 
 use mc_nbt::Tag;

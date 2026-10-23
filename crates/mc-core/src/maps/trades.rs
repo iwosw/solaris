@@ -99,6 +99,7 @@ fn complete(state: &mut TickState, merchant: EntityId, hit: Option<mc_world::Blo
                 cost_a:ItemStack::new(emerald,spec.price),cost_b:Some(ItemStack::new(compass,1)),result,
                 uses:0,max_uses:12,reward_exp:true,xp:spec.xp,special_price:0,demand:0,price_multiplier:0.2,
             });
+            state.appearance_changed.push(merchant);
         }
     }
     state.maps.attempted_trades.insert((pending.uuid,spec.level));
