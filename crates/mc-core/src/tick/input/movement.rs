@@ -205,11 +205,14 @@ pub(in crate::tick) fn move_input(
             old[1] + fixed.delta.y,
             old[2] + fixed.delta.z,
         ];
-        // Rotation/status and level moves have no downward displacement for
-        // the collision solver to clip. Validate their claimed support rather
-        // than marking a stationary player airborne (and mining five times slower).
+        // A landing that ends exactly on the floor is not clipped by the
+        // collision solver (the client already stopped there), and
+        // rotation/status/level moves have nothing to clip at all. Validate
+        // the claimed support at the final position rather than marking the
+        // player airborne, which would carry fall distance across jumps and
+        // mine five times slower.
         let grounded = fixed.grounded
-            || (*on_ground && displacement[1] == 0.0 && supported(state, slot, fixed_pos));
+            || (*on_ground && displacement[1] <= 0.0 && supported(state, slot, fixed_pos));
         state.entities.set_pos(slot, fixed_pos);
         state.entities.set_rot(slot, *yaw, *pitch);
         state.entities.set_ground(slot, grounded);

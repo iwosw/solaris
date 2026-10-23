@@ -160,6 +160,72 @@ fn ordinary_jump_and_fall_do_not_accumulate_to_a_kick() {
     assert!(!kicked(&changes));
 }
 
+fn grounded_movement(position: [f64; 3]) -> PlayerInput {
+    PlayerInput::Move {
+        connection: ConnectionId(1),
+        position,
+        yaw: 0.0,
+        pitch: 0.0,
+        on_ground: true,
+    }
+}
+
+/// Client-integrated jump (vanilla gravity/drag): up 1.25 blocks, then down
+/// until the client's own collision stops it exactly on the floor.
+fn jump_positions(ground: f64) -> Vec<([f64; 3], bool)> {
+    let mut y = ground;
+    let mut velocity: f64 = 0.42;
+    let mut moves = Vec::new();
+    loop {
+        y += velocity;
+        velocity = (velocity - 0.08) * 0.98;
+        let landed = y <= ground;
+        if landed {
+            y = ground;
+        }
+        moves.push((y, landed));
+        if landed {
+            return moves.into_iter().map(|(y, g)| ([0.0, y, 0.0], g)).collect();
+        }
+    }
+}
+
+#[test]
+fn consecutive_jumps_on_flat_ground_deal_no_fall_damage() {
+    let (mut state, player, pos) = flat_player_fixture();
+    state.max_airtime_ticks = 1000;
+    let slot = state.entities.slot_of(player).unwrap();
+    state.entities.row_mut(slot).protected_until = 0;
+    for jump in 0..5 {
+        for (offset, landed) in jump_positions(pos[1]) {
+            let at = [pos[0], offset[1], pos[2]];
+            let input = if landed {
+                grounded_movement(at)
+            } else {
+                movement(at)
+            };
+            let (_, changes, _) = run_tick(&mut state, &[input]);
+            assert!(!kicked(&changes), "jump {jump}");
+        }
+        assert_eq!(state.players[&player].vitals.health, 20.0, "jump {jump}");
+        assert_eq!(state.players[&player].fall_distance, 0.0, "jump {jump}");
+        assert!(state.entities.ground(slot), "jump {jump} lands grounded");
+    }
+}
+
+#[test]
+fn four_block_fall_landing_exactly_on_the_floor_still_damages() {
+    let (mut state, player, pos) = flat_player_fixture();
+    state.max_airtime_ticks = 1000;
+    let slot = state.entities.slot_of(player).unwrap();
+    state.entities.row_mut(slot).protected_until = 0;
+    state.entities.set_pos(slot, [pos[0], pos[1] + 4.0, pos[2]]);
+    state.entities.set_ground(slot, false);
+    run_tick(&mut state, &[grounded_movement(pos)]);
+    assert_eq!(state.players[&player].vitals.health, 19.0);
+    assert_eq!(state.players[&player].fall_distance, 0.0);
+}
+
 #[test]
 fn permitted_airborne_states_do_not_trip_airtime() {
     for kind in [
