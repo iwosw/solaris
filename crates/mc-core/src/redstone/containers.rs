@@ -111,6 +111,11 @@ fn size(name: &str) -> Option<usize> {
     }
 }
 
+pub(super) fn has_analog_output(name: &str) -> bool {
+    size(name).is_some()
+        || crate::copper::family(name).is_some_and(|(family, _, _)| family == "copper_golem_statue")
+}
+
 fn automated(name: &str) -> bool {
     matches!(name, "hopper" | "dropper" | "dispenser")
 }

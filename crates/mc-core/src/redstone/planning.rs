@@ -1,5 +1,5 @@
 //! Pure, bounded plans over the tick owner's retained world.
-use super::blocks::{HORIZONTAL, NEIGHBOURS, is_air, offset};
+use super::blocks::{HORIZONTAL, NEIGHBOURS, offset};
 use mc_world::{BlockPos, BlockRegistry, BlockState, BlockStateId};
 use std::collections::{HashMap, HashSet, VecDeque};
 
@@ -77,11 +77,7 @@ impl<'a, R: BlockPlanningRead + ?Sized> Settle<'a, R> {
             .is_some_and(|state| state.block.id.path() == "redstone_wire")
     }
     fn conductor(&self, pos: BlockPos) -> bool {
-        self.state_at(pos).is_some_and(|state| {
-            !is_air(state)
-                && !super::reactive(state.block.id.path())
-                && state.block.id.path() != "redstone_wire"
-        })
+        self.state_at(pos).is_some_and(super::conducts)
     }
     fn neighbours(&self, pos: BlockPos) -> impl Iterator<Item = BlockPos> {
         let mut out = [None; 8];
@@ -93,15 +89,15 @@ impl<'a, R: BlockPlanningRead + ?Sized> Settle<'a, R> {
                 out[index * 2] = Some(side);
             }
             if self.conductor(side)
-                && offset(pos, (0, 1, 0))
-                    .is_some_and(|above| self.state_at(above).is_some_and(is_air))
+                && offset(pos, (0, 1, 0)).is_some_and(|above| !self.conductor(above))
             {
                 if let Some(up) = offset(side, (0, 1, 0))
                     && self.dust(up)
                 {
                     out[index * 2 + 1] = Some(up);
                 }
-            } else if let Some(down) = offset(side, (0, -1, 0))
+            } else if !self.conductor(side)
+                && let Some(down) = offset(side, (0, -1, 0))
                 && self.dust(down)
             {
                 out[index * 2 + 1] = Some(down);
@@ -190,10 +186,11 @@ impl<'a, R: BlockPlanningRead + ?Sized> Settle<'a, R> {
                     let shape = if self.dust(n)
                         || self
                             .state_at(n)
-                            .is_some_and(|s| super::connects(s.block.id.path()))
+                            .is_some_and(|s| super::signal::connects(s, *d))
                     {
                         "side"
                     } else if self.conductor(n)
+                        && offset(p, (0, 1, 0)).is_some_and(|above| !self.conductor(above))
                         && offset(n, (0, 1, 0)).is_some_and(|up| self.dust(up))
                     {
                         "up"
@@ -205,6 +202,22 @@ impl<'a, R: BlockPlanningRead + ?Sized> Settle<'a, R> {
                         "none"
                     };
                     *value = shape.into();
+                }
+            }
+            let mut connected = [false; 4];
+            for (index, (name, _)) in HORIZONTAL.iter().enumerate() {
+                connected[index] = props
+                    .iter()
+                    .any(|(key, value)| key == name && value != "none");
+            }
+            let count = connected.iter().filter(|connected| **connected).count();
+            if count <= 1 {
+                for (index, (name, _)) in HORIZONTAL.iter().enumerate() {
+                    if (count == 0 || connected[index ^ 1])
+                        && let Some((_, value)) = props.iter_mut().find(|(key, _)| key == name)
+                    {
+                        *value = "side".into();
+                    }
                 }
             }
             if let Some(new) = self.blocks.by_name_and_props(&state.block.id, &props) {

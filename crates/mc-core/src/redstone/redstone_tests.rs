@@ -1,3 +1,6 @@
+#[path = "gap_tests.rs"]
+mod gap_tests;
+
 #[path = "piston_tests.rs"]
 mod piston_tests;
 

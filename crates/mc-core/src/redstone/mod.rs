@@ -8,6 +8,8 @@ mod dirty_signals_tests;
 mod entity_query;
 mod piston;
 mod planning;
+mod rails;
+mod signal;
 #[cfg(test)]
 #[path = "redstone_tests.rs"]
 mod tests;
@@ -16,7 +18,6 @@ use crate::boundary::{ChunkPos, EntityId};
 use crate::tick::TickState;
 use blocks::offset;
 use blocks::{NEIGHBOURS, facing_delta};
-use mc_physics::mth;
 use mc_world::{BlockPos, BlockRegistry, BlockState, BlockStateId, ScheduledBlockTick};
 use planning::BlockPlanningRead;
 use std::collections::{BTreeMap, HashSet};
@@ -97,6 +98,7 @@ pub(super) fn reactive(path: &str) -> bool {
             | "powered_rail"
             | "detector_rail"
             | "activator_rail"
+            | "rail"
             | "note_block"
             | "jukebox"
             | "sculk_sensor"
@@ -106,10 +108,8 @@ pub(super) fn reactive(path: &str) -> bool {
         || path.ends_with("_fence_gate")
         || path.ends_with("_button")
         || path.ends_with("_pressure_plate")
+        || path.ends_with("lightning_rod")
         || crate::shelf::is_shelf(path)
-}
-pub(super) fn connects(path: &str) -> bool {
-    reactive(path) || matches!(path, "lever" | "redstone_block" | "trapped_chest")
 }
 fn at(state: &TickState, pos: BlockPos) -> Option<&BlockState> {
     state
@@ -117,7 +117,13 @@ fn at(state: &TickState, pos: BlockPos) -> Option<&BlockState> {
         .blocks
         .by_id(BlockStateId(state.world.block_at(pos.x, pos.y, pos.z)?))
 }
+pub(crate) fn conducts(block: &BlockState) -> bool {
+    signal::conductor(block)
+}
 pub(crate) fn output(state: &TickState, source: BlockPos, target: BlockPos) -> u8 {
+    signal::received(state, source, target, true)
+}
+fn weak_output(state: &TickState, source: BlockPos, target: BlockPos) -> u8 {
     let Some(block) = at(state, source) else {
         return 0;
     };
@@ -132,16 +138,11 @@ pub(crate) fn output(state: &TickState, source: BlockPos, target: BlockPos) -> u
             }
         }
         "sculk_sensor" | "calibrated_sculk_sensor" => crate::sculk::signal(state, source, target),
-        "redstone_wire" | "daylight_detector" => prop(block, "power")
+        "redstone_wire" => signal::dust(block, source, target),
+        "daylight_detector" => prop(block, "power")
             .and_then(|p| p.parse().ok())
             .unwrap_or(0),
-        "redstone_torch" | "redstone_wall_torch" => {
-            if prop(block, "lit") == Some("true") {
-                15
-            } else {
-                0
-            }
-        }
+        "redstone_torch" | "redstone_wall_torch" => signal::torch(block, source, target),
         "repeater" | "observer" | "comparator" => {
             // Vanilla diodes face their input; observers face their watched cell.
             let Some(d) = prop(block, "facing").and_then(facing_delta) else {
@@ -159,7 +160,7 @@ pub(crate) fn output(state: &TickState, source: BlockPos, target: BlockPos) -> u
             }
         }
         "trapped_chest" => chest_viewers(state, source),
-        "lever" | "detector_rail" => {
+        _ if matches!(path, "lever" | "detector_rail") || path.ends_with("lightning_rod") => {
             if prop(block, "powered") == Some("true") {
                 15
             } else {
@@ -216,7 +217,7 @@ impl BlockPlanningRead for Read<'_> {
         self.0.world.block_at(pos.x, pos.y, pos.z).map(BlockStateId)
     }
     fn emission(&self, source: BlockPos, target: BlockPos) -> u8 {
-        output(self.0, source, target)
+        signal::received(self.0, source, target, false)
     }
     fn protection_allows(&self, pos: BlockPos) -> bool {
         // Pistons have no player identity: use the same environmental zone
@@ -269,8 +270,9 @@ fn change(
     };
     set(state, writes, pos, new.0);
 }
-fn neighbours(state: &mut TickState, writes: &[(BlockPos, u32)]) {
+pub(crate) fn neighbours(state: &mut TickState, writes: &[(BlockPos, u32)]) {
     for (pos, _) in writes {
+        rails::wake_diagonals(state, *pos);
         for d in std::iter::once((0, 0, 0)).chain(NEIGHBOURS) {
             let Some(cell) = offset(*pos, d) else {
                 continue;
@@ -278,6 +280,23 @@ fn neighbours(state: &mut TickState, writes: &[(BlockPos, u32)]) {
             crate::fire::changed(state, cell);
             crate::tnt::changed(state, cell);
             crate::enchantment_locations::changed(state, cell);
+            if at(state, cell).is_some_and(conducts) {
+                for direction in NEIGHBOURS {
+                    let Some(consumer) = offset(cell, direction) else {
+                        continue;
+                    };
+                    crate::tnt::changed(state, consumer);
+                    if at(state, consumer).is_some_and(|block| {
+                        let path = block.block.id.path();
+                        reactive(path)
+                            && path != "observer"
+                            && !path.ends_with("_button")
+                            && !path.ends_with("lightning_rod")
+                    }) {
+                        schedule_cell(state, consumer, 1, 0);
+                    }
+                }
+            }
             let Some(block) = at(state, cell) else {
                 continue;
             };
@@ -510,6 +529,7 @@ fn tick_cell(
     entity_query: &entity_query::EntityQuery,
 ) {
     let pos = tick.pos;
+    rails::reshape(state, writes, pos);
     let Some(block) = state
         .world
         .block_at(pos.x, pos.y, pos.z)
@@ -561,7 +581,7 @@ fn tick_cell(
                         && output(state, side, pos) > 0
                 });
             let powered = prop(block, "powered") == Some("true");
-            let input = offset(pos, d).map_or(0, |back| output(state, back, pos)) > 0;
+            let input = offset(pos, d).map_or(0, |back| signal::diode_input(state, back, pos)) > 0;
             let delay = prop(block, "delay")
                 .and_then(|p| p.parse::<u64>().ok())
                 .unwrap_or(1)
@@ -573,16 +593,19 @@ fn tick_cell(
                 "locked",
                 if locked { "true" } else { "false" },
             );
-            if !locked && input != powered {
-                if tick.priority == 1 {
+            if !locked {
+                if tick.priority == 1 && (!powered || !input) {
                     change(
                         state,
                         writes,
                         pos,
                         "powered",
-                        if input { "true" } else { "false" },
+                        if powered { "false" } else { "true" },
                     );
-                } else {
+                    if !powered && !input {
+                        schedule_cell(state, pos, delay, 1);
+                    }
+                } else if tick.priority != 1 && input != powered {
                     schedule_cell(state, pos, delay, 1);
                 }
             }
@@ -622,19 +645,14 @@ fn tick_cell(
                 change(state, writes, pos, "powered", "false");
             }
         }
+        _ if path.ends_with("lightning_rod") => {
+            if tick.priority == 4 {
+                change(state, writes, pos, "powered", "false");
+            }
+        }
         "comparator" => comparator_tick(state, writes, pos, tick.priority),
         "daylight_detector" => {
-            let t = state.day_time.rem_euclid(24000);
-            let sunlight = (f64::from(mth::cos(
-                (t as f64 - 6000.0) * std::f64::consts::TAU / 24000.0,
-            )) * 15.0)
-                .round()
-                .clamp(0.0, 15.0) as u8;
-            let level = if prop(block, "inverted") == Some("true") {
-                15 - sunlight
-            } else {
-                sunlight
-            };
+            let level = signal::daylight(state, pos, prop(block, "inverted") == Some("true"));
             change(state, writes, pos, "power", &level.to_string());
             schedule_cell(state, pos, 20, 0);
         }
@@ -807,7 +825,7 @@ fn tick_cell(
             );
         }
         "powered_rail" | "activator_rail" => {
-            let powered = rail_power(state, pos, &mut HashSet::new(), 0);
+            let powered = rails::powered(state, pos);
             change(
                 state,
                 writes,
@@ -984,31 +1002,6 @@ pub(crate) fn ring_bell(
     }
     state.redstone.event_viewers = viewers;
 }
-fn rail_power(state: &TickState, pos: BlockPos, seen: &mut HashSet<BlockPos>, depth: u8) -> bool {
-    if !seen.insert(pos) || depth > 8 {
-        return false;
-    }
-    if power_at(state, pos) > 0 {
-        return true;
-    }
-    let Some(block) = at(state, pos) else {
-        return false;
-    };
-    let shape = prop(block, "shape").unwrap_or("");
-    let axis = if shape.contains("north") || shape.contains("south") {
-        [(0, 0, -1), (0, 0, 1)]
-    } else {
-        [(-1, 0, 0), (1, 0, 0)]
-    };
-    axis.into_iter().any(|d| {
-        [-1, 0, 1].into_iter().any(|dy| {
-            offset(pos, (d.0, dy, d.2)).is_some_and(|n| {
-                at(state, n).is_some_and(|b| b.block.id == block.block.id)
-                    && rail_power(state, n, seen, depth + 1)
-            })
-        })
-    })
-}
 fn comparator_output(state: &TickState, pos: BlockPos) -> u8 {
     let Some(chunk) = state.world.chunk(ChunkPos {
         x: pos.x.div_euclid(16),
@@ -1050,12 +1043,7 @@ fn comparator_tick(
         return;
     };
     let mode = prop(block, "mode") == Some("subtract");
-    let Some(back) = offset(pos, d) else {
-        return;
-    };
-    let main = crate::sculk::comparator(state, back)
-        .or_else(|| crate::jukebox::comparator(state, back))
-        .unwrap_or_else(|| output(state, back, pos).max(containers::signal(state, back)));
+    let main = signal::comparator_input(state, pos, d);
     let sides = if d.0 == 0 {
         [(-1, 0, 0), (1, 0, 0)]
     } else {
@@ -1064,7 +1052,7 @@ fn comparator_tick(
     let side = sides
         .into_iter()
         .filter_map(|d| offset(pos, d))
-        .map(|p| output(state, p, pos))
+        .map(|p| signal::comparator_side(state, p, pos))
         .max()
         .unwrap_or(0);
     let level = if mode {
