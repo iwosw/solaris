@@ -28,6 +28,8 @@ const DEMAND_FPS: u8 = 5;
 const MAX_PART_BYTES: usize = 30_000;
 const MAX_PARTS: u8 = 5;
 const MAX_FRAME_BYTES: usize = 131_072;
+/// The only picture codec: H.264 Annex B, one picture per FRAME (ADR 0018).
+const CODEC_H264: u8 = 1;
 const MAX_FRAME_HEIGHT: u16 = 640;
 const BYTES_PER_SECOND: f64 = 1_048_576.0;
 const BYTES_BURST: f64 = 262_144.0;
@@ -53,6 +55,8 @@ mod server_kind {
     pub const PERMISSION: u8 = 5;
     pub const ACTIVE: u8 = 6;
     pub const AUDIO: u8 = 7;
+    /// To the owner: start a key frame now (a viewer needs a picture to begin from).
+    pub const KEYFRAME_REQUEST: u8 = 8;
 }
 /// `STOP` reasons.
 pub(crate) mod stop {
@@ -240,6 +244,8 @@ pub(crate) enum Message<'a> {
         width: u16,
         height: u16,
         codec: u8,
+        /// 1: a self-contained key frame (SPS/PPS + IDR); 0: a delta needing the previous pictures.
+        key: u8,
         index: u8,
         count: u8,
         data: &'a [u8],
@@ -254,6 +260,8 @@ pub(crate) enum Message<'a> {
         viewer: Uuid,
     },
     Leave(ScreenId),
+    /// A viewer could not decode (or lost) the picture stream and needs a key frame.
+    KeyRequest(ScreenId),
     /// One Opus packet (48 kHz mono, 20 ms) of the shared source's audio.
     AudioPart {
         id: ScreenId,
@@ -279,6 +287,7 @@ pub(crate) fn decode(bytes: &[u8]) -> Option<Message<'_>> {
                 width: reader.u16()?,
                 height: reader.u16()?,
                 codec: reader.u8()?,
+                key: reader.u8()?,
                 index: reader.u8()?,
                 count: reader.u8()?,
                 data: std::mem::take(&mut reader.0),
@@ -303,6 +312,7 @@ pub(crate) fn decode(bytes: &[u8]) -> Option<Message<'_>> {
             seq: reader.u32()?,
             opus: std::mem::take(&mut reader.0),
         },
+        8 => Message::KeyRequest(ScreenId::parse(&mut reader)?),
         _ => return None,
     };
     reader.0.is_empty().then_some(message)
@@ -321,12 +331,12 @@ fn demand(id: &ScreenId, on: bool) -> Bytes {
     body.push(DEMAND_FPS);
     message(server_kind::DEMAND, id, &body)
 }
-fn frame(id: &ScreenId, seq: u32, width: u16, height: u16, codec: u8, data: &[u8]) -> Bytes {
-    let mut body = Vec::with_capacity(9 + data.len());
+fn frame(id: &ScreenId, seq: u32, width: u16, height: u16, (codec, key): (u8, u8), data: &[u8]) -> Bytes {
+    let mut body = Vec::with_capacity(10 + data.len());
     body.extend(seq.to_be_bytes());
     body.extend(width.to_be_bytes());
     body.extend(height.to_be_bytes());
-    body.push(codec);
+    body.extend([codec, key]);
     body.extend(data);
     message(server_kind::FRAME, id, &body)
 }
@@ -349,6 +359,12 @@ impl Effect {
     pub(crate) fn is_media(&self) -> bool {
         matches!(self.payload[1], server_kind::FRAME | server_kind::AUDIO)
     }
+    /// The screen of a droppable video FRAME (its identity follows the version and kind).
+    pub(crate) fn video_screen(&self) -> Option<ScreenId> {
+        (self.payload[1] == server_kind::FRAME)
+            .then(|| ScreenId::parse(&mut Reader(&self.payload[2..])))
+            .flatten()
+    }
 }
 
 /// Block lookup supplied from the published native world: is `pos` a monitor
@@ -370,6 +386,7 @@ struct Partial {
     seq: u32,
     width: u16,
     height: u16,
+    key: bool,
     count: u8,
     next: u8,
     data: Vec<u8>,
@@ -378,6 +395,9 @@ struct Partial {
 struct Open {
     owner: ConnectionId,
     demand: bool,
+    /// A KEYFRAME_REQUEST is outstanding (or DEMAND on just asked for the first picture);
+    /// cleared by the next key frame.
+    key_pending: bool,
     partial: Option<Partial>,
     strikes: u32,
     budget: f64,
@@ -403,6 +423,9 @@ pub(crate) struct Relay {
     grants: HashSet<(ConnectionId, ConnectionId)>,
     /// `(viewer, screen)`: granted viewers currently looking at the screen.
     watching: HashSet<(ConnectionId, ScreenId)>,
+    /// `(viewer, screen)` in `watching` that has not received a key frame yet (or lost
+    /// a picture): deltas are withheld from it until the next key frame.
+    needs_key: HashSet<(ConnectionId, ScreenId)>,
     requests: HashMap<u32, Pending>,
     next_request: u32,
 }
@@ -450,6 +473,7 @@ impl Relay {
             .map(|(_, screen)| *screen)
             .collect();
         self.watching.retain(|(viewer, _)| *viewer != id);
+        self.needs_key.retain(|(viewer, _)| *viewer != id);
         for screen in gone {
             self.sync_demand(&screen, &mut effects);
         }
@@ -475,6 +499,8 @@ impl Relay {
             && open.demand != on
         {
             open.demand = on;
+            // DEMAND on is itself the request for the first (key) picture.
+            open.key_pending = on;
             open.partial = None;
             open.strikes = 0;
             open.audio_strikes = 0;
@@ -512,6 +538,7 @@ impl Relay {
             });
         }
         self.watching.retain(|(_, screen)| screen != id);
+        self.needs_key.retain(|(_, screen)| screen != id);
         self.broadcast_active(id, false, open.owner, effects);
         if self.owned(open.owner).is_empty() {
             self.grants.retain(|(owner, _)| *owner != open.owner);
@@ -575,6 +602,7 @@ impl Relay {
                 width,
                 height,
                 codec,
+                key,
                 index,
                 count,
                 data,
@@ -582,7 +610,7 @@ impl Relay {
                 return self.part(
                     from,
                     id,
-                    (seq, width, height, codec, index, count),
+                    (seq, width, height, (codec, key), index, count),
                     data,
                     now,
                 );
@@ -619,6 +647,7 @@ impl Relay {
                             payload: message(server_kind::STOP, &screen, &[stop::REVOKED]),
                         });
                         self.watching.remove(&(target, screen));
+                        self.needs_key.remove(&(target, screen));
                         self.sync_demand(&screen, &mut effects);
                     }
                 }
@@ -629,9 +658,16 @@ impl Relay {
                     if self.grants.remove(&(owner, from)) {
                         for screen in self.owned(owner) {
                             self.watching.remove(&(from, screen));
+                            self.needs_key.remove(&(from, screen));
                             self.sync_demand(&screen, &mut effects);
                         }
                     }
+                }
+            }
+            Message::KeyRequest(id) => {
+                if self.watching.contains(&(from, id)) {
+                    self.needs_key.insert((from, id));
+                    self.request_key(&id, &mut effects);
                 }
             }
         }
@@ -672,6 +708,7 @@ impl Relay {
             Open {
                 owner,
                 demand: false,
+                key_pending: false,
                 partial: None,
                 strikes: 0,
                 budget: BYTES_BURST,
@@ -733,7 +770,7 @@ impl Relay {
         &mut self,
         from: ConnectionId,
         id: ScreenId,
-        (seq, width, height, codec, index, count): (u32, u16, u16, u8, u8, u8),
+        (seq, width, height, (codec, key), index, count): (u32, u16, u16, (u8, u8), u8, u8),
         data: &[u8],
         now: Instant,
     ) -> Vec<Effect> {
@@ -753,7 +790,8 @@ impl Relay {
             }
             return effects;
         }
-        let valid = codec == 0
+        let valid = codec == CODEC_H264
+            && key <= 1
             && (1..=DEMAND_WIDTH).contains(&width)
             && (1..=MAX_FRAME_HEIGHT).contains(&height)
             && (1..=MAX_PARTS).contains(&count)
@@ -774,6 +812,7 @@ impl Relay {
                 seq,
                 width,
                 height,
+                key: key == 1,
                 count,
                 next: 0,
                 data: Vec::new(),
@@ -785,6 +824,7 @@ impl Relay {
                 && partial.count == count
                 && partial.width == width
                 && partial.height == height
+                && partial.key == (key == 1)
         }) else {
             open.partial = None;
             return effects;
@@ -808,21 +848,73 @@ impl Relay {
         open.updated = now;
         open.budget = (open.budget + elapsed * BYTES_PER_SECOND).min(BYTES_BURST);
         if open.budget < complete.data.len() as f64 {
+            // A dropped picture breaks the delta chain for every viewer: start over from a key frame.
+            self.resync(&id, complete.key, &mut effects);
             return effects;
         }
         open.budget -= complete.data.len() as f64;
-        let payload = frame(&id, seq, width, height, codec, &complete.data);
+        if complete.key {
+            open.key_pending = false;
+        }
+        let payload = frame(&id, seq, width, height, (codec, key), &complete.data);
         let mut viewers: Vec<ConnectionId> = self
             .watching
             .iter()
-            .filter(|(_, screen)| *screen == id)
+            .filter(|(viewer, screen)| {
+                *screen == id && (complete.key || !self.needs_key.contains(&(*viewer, id)))
+            })
             .map(|(viewer, _)| *viewer)
             .collect();
         viewers.sort();
+        if complete.key {
+            // Every watcher gets this picture, so each one has a decodable start now.
+            self.needs_key.retain(|(_, screen)| *screen != id);
+        }
         effects.extend(viewers.into_iter().map(|to| Effect {
             to,
             payload: payload.clone(),
         }));
+        effects
+    }
+
+    /// Ask the owner for a key frame unless one is already on its way (or nobody is demanding).
+    fn request_key(&mut self, id: &ScreenId, effects: &mut Vec<Effect>) {
+        if let Some(open) = self.screens.get_mut(id)
+            && open.demand
+            && !open.key_pending
+        {
+            open.key_pending = true;
+            effects.push(Effect {
+                to: open.owner,
+                payload: message(server_kind::KEYFRAME_REQUEST, id, &[]),
+            });
+        }
+    }
+
+    /// The pictures of `id` can no longer be decoded by any watcher without a new key frame.
+    /// An outstanding request stands unless the dropped picture was the key frame itself.
+    fn resync(&mut self, id: &ScreenId, dropped_key: bool, effects: &mut Vec<Effect>) {
+        let watchers: Vec<(ConnectionId, ScreenId)> = self
+            .watching
+            .iter()
+            .filter(|(_, screen)| screen == id)
+            .copied()
+            .collect();
+        self.needs_key.extend(watchers);
+        if dropped_key && let Some(open) = self.screens.get_mut(id) {
+            open.key_pending = false;
+        }
+        self.request_key(id, effects);
+    }
+
+    /// Delivery dropped a FRAME for `viewer` (its queue was full): it lost a picture, so it
+    /// gets no more deltas until a key frame, which is requested from the owner.
+    pub(crate) fn frame_dropped(&mut self, viewer: ConnectionId, id: ScreenId) -> Vec<Effect> {
+        let mut effects = Vec::new();
+        if self.watching.contains(&(viewer, id)) {
+            self.needs_key.insert((viewer, id));
+            self.request_key(&id, &mut effects);
+        }
         effects
     }
 
@@ -946,8 +1038,13 @@ impl Relay {
                     .is_some_and(|pose| looks_at(pose, &screen));
                 let key = (viewer, screen);
                 if looking {
-                    self.watching.insert(key);
+                    if self.watching.insert(key) {
+                        // A new watcher has no picture to apply deltas to.
+                        self.needs_key.insert(key);
+                        self.request_key(&screen, &mut effects);
+                    }
                 } else if self.watching.remove(&key) {
+                    self.needs_key.remove(&key);
                     effects.push(Effect {
                         to: viewer,
                         payload: message(server_kind::STOP, &screen, &[stop::LOOK_AWAY]),

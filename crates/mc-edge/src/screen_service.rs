@@ -163,13 +163,13 @@ impl Service {
         // and STOP can never be reordered between concurrent callers.
         let mut relay = self.relay.lock();
         let effects = relay.handle(id, message, &world, Instant::now());
-        deliver(server, effects);
+        deliver(server, &mut relay, effects);
     }
 
     fn unregister(&self, server: &EdgeServer, id: ConnectionId) {
         let mut relay = self.relay.lock();
         let effects = relay.unregister(id);
-        deliver(server, effects);
+        deliver(server, &mut relay, effects);
     }
 
     pub(crate) fn tick(&self, server: &EdgeServer, tick: &TickOutput) {
@@ -187,18 +187,21 @@ impl Service {
         };
         let mut relay = self.relay.lock();
         let effects = relay.tick(poses, &world);
-        deliver(server, effects);
+        deliver(server, &mut relay, effects);
     }
 }
 
 /// Delivery on the reliable queue, called with the relay lock held (only
 /// non-blocking `try_send`). A full queue drops a FRAME or AUDIO packet (stale
 /// media is worthless); control messages (DEMAND/STOP/ACTIVE/REQUESTED/PERMISSION/
-/// REFUSED) follow the normal command-queue rule: a full queue retires the
-/// connection. One encoding serves all viewers of the same relayed payload.
-fn deliver(server: &EdgeServer, effects: Vec<Effect>) {
+/// REFUSED/KEYFRAME_REQUEST) follow the normal command-queue rule: a full queue
+/// retires the connection. One encoding serves all viewers of the same relayed payload.
+/// A dropped FRAME breaks that viewer's delta chain, so the relay withholds deltas from it
+/// and asks the owner for a key frame (the resulting effects are delivered too).
+fn deliver(server: &EdgeServer, relay: &mut Relay, effects: Vec<Effect>) {
     let mut last: Option<(*const u8, usize, bytes::Bytes)> = None;
-    for effect in effects {
+    let mut queue: std::collections::VecDeque<Effect> = effects.into();
+    while let Some(effect) = queue.pop_front() {
         let key = (effect.payload.as_ptr(), effect.payload.len());
         let framed = match &last {
             Some((ptr, len, framed)) if (*ptr, *len) == key => framed.clone(),
@@ -215,13 +218,16 @@ fn deliver(server: &EdgeServer, effects: Vec<Effect>) {
         };
         if let Some(handles) = server.connections.get(effect.to)
             && handles.reliable_tx.try_send(framed).is_err()
-            && !effect.is_media()
         {
-            tracing::warn!(
-                connection = effect.to.0,
-                "screen control queue full; connection retired"
-            );
-            server.connections.retire(effect.to);
+            if !effect.is_media() {
+                tracing::warn!(
+                    connection = effect.to.0,
+                    "screen control queue full; connection retired"
+                );
+                server.connections.retire(effect.to);
+            } else if let Some(screen) = effect.video_screen() {
+                queue.extend(relay.frame_dropped(effect.to, screen));
+            }
         }
     }
 }
