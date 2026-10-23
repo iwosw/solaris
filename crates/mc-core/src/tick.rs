@@ -1477,7 +1477,8 @@ impl TickState {
             }
             let item_id = self.entities.body(item_slot).id;
             let collector_id = self.entities.body(collector_slot).id;
-            if self.entity_session_locked(collector_id) {
+            if !self.entities.body(collector_slot).alive || self.entity_session_locked(collector_id)
+            {
                 continue;
             }
             let item_row = self.entities.row(item_slot).clone();

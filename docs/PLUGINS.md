@@ -30,6 +30,10 @@ or precommit declarations. `plugin.wasm` is a WebAssembly **component** for
 `solaris:plugin@0.7.0`, not an unencoded core Wasm module. `config.toml` is
 optional opaque package configuration: the host passes its text to the guest,
 which defines and validates its own settings.
+The host opens configuration relative to the package directory, refuses symlinks
+and non-regular files (including FIFOs), and bounds the bytes actually read by
+`PluginLimits::text_bytes` (8192 by default). Only a missing file means empty
+configuration; unsafe, unreadable, oversized or non-UTF-8 files refuse loading.
 
 ### Native server
 
@@ -336,8 +340,8 @@ player_commands = ["home", "sethome"]
 command_permissions = { home = "solaris.essentials.use", sethome = "solaris.essentials.use" }
 ```
 
-Nodes are enforced only while the deployment names exactly one permission
-provider package:
+Nodes become enforced when the deployment installs one permission provider
+package:
 
 ```toml
 permission_provider = true
@@ -356,9 +360,14 @@ Command admission checks the table on the tick thread before an owned root
 receives an event. A denied root answers `You do not have permission to use this
 plugin command.` and never reaches the guest; operator-only roots keep requiring
 operator level 2 first. A second `permission_provider` package, or a node for a
-root the package does not declare, refuses the deployment. Without a provider,
-node declarations are inert: an operator who never deployed a permission
-authority never has a package silently disabled by metadata it did not opt into.
+root the package does not declare, refuses the deployment. In a deployment that
+has never installed a provider, node declarations are inert. Once managed,
+provider retirement clears grants but keeps gated roots denied until an accepted
+provider publishes again; a guest trap never returns the deployment to unmanaged
+admission. The host's component-reload API stages candidate grants separately,
+rejects manifest-only contract changes before guest execution, and installs the
+staged snapshot only on acceptance. Rejected initialization and old-generation
+shutdown cannot publish to the live table.
 
 `client-presentation.view-marker.position` is optional, display-only geometry:
 a resource-identifier dimension plus finite coordinates within the native

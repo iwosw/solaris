@@ -722,7 +722,6 @@ where
                             ReloadGeneration {
                                 current_tick: tick,
                                 contract: &reload_contract,
-                                permissions: endpoint.command_permissions(),
                             },
                             sessions.as_ref(),
                             &services,
@@ -737,11 +736,31 @@ where
                             hosted: replacement,
                             manifests,
                             batches,
+                            permissions,
                         } = candidate;
                         let loaded_packages = replacement.len();
                         let mut replacement = Some(replacement);
                         let mut replaced = None;
                         match endpoint.commit_reload(&manifests, batches, || {
+                            // No old callback can run after this synchronous
+                            // worker cutover; shutdown must not publish either.
+                            for previous in &mut hosted {
+                                previous.instance.state().set_command_permissions(None);
+                            }
+                            let live_permissions = endpoint.command_permissions();
+                            live_permissions.replace_from(&permissions);
+                            for (candidate, manifest) in replacement
+                                .as_mut()
+                                .expect("candidate generation is present")
+                                .iter_mut()
+                                .zip(&manifests)
+                            {
+                                candidate.instance.state().set_command_permissions(
+                                    manifest
+                                        .is_permission_provider()
+                                        .then(|| Arc::clone(&live_permissions)),
+                                );
+                            }
                             replaced = Some(std::mem::replace(
                                 &mut hosted,
                                 replacement
@@ -872,14 +891,13 @@ struct PluginReloadCandidate<S: HostServices + 'static> {
     hosted: Vec<Hosted<S>>,
     manifests: Vec<ValidatedScriptPluginManifest>,
     batches: Vec<(HostCommandAdmission, mc_script::CommandBatch)>,
+    permissions: Arc<mc_script::ScriptCommandPermissions>,
 }
 
 /// The active generation facts a staged candidate must preserve.
 struct ReloadGeneration<'a> {
     current_tick: u64,
     contract: &'a PluginReloadContract,
-    /// The table a candidate permission provider publishes to while it loads.
-    permissions: Arc<mc_script::ScriptCommandPermissions>,
 }
 
 fn ensure_reload_candidate_memory(
@@ -932,6 +950,27 @@ where
         .flat_map(|package| package.precommit_registrations().iter().cloned())
         .collect::<Vec<_>>();
     precommit_hooks.sort_by(mc_script::precommit::by_roster_order);
+    let mut candidate_contract = PluginReloadContract::from_deployment(
+        &manifests,
+        catalog,
+        precommit_hooks,
+        surface,
+        DeploymentContribution::default(),
+    );
+    // Manifest-only constraints are known before configure/init can execute.
+    if let Some(field) = active.contract.incompatibility(&candidate_contract)
+        && field != PluginReloadContractField::StartupContribution
+    {
+        return Err(PluginReloadError::RestartContractChanged { field });
+    }
+    let permissions = Arc::new(
+        manifests
+            .iter()
+            .find(|manifest| manifest.is_permission_provider())
+            .map_or_else(mc_script::ScriptCommandPermissions::default, |manifest| {
+                mc_script::ScriptCommandPermissions::for_provider(manifest.plugin_id())
+            }),
+    );
 
     let mut hosted = Vec::with_capacity(packages.len());
     let mut batches = Vec::with_capacity(packages.len());
@@ -961,7 +1000,7 @@ where
         if package.manifest().is_permission_provider() {
             instance
                 .state()
-                .set_command_permissions(Some(Arc::clone(&active.permissions)));
+                .set_command_permissions(Some(Arc::clone(&permissions)));
         }
         let subscriptions = package
             .manifest()
@@ -1015,13 +1054,7 @@ where
         });
     }
 
-    let candidate_contract = PluginReloadContract::from_deployment(
-        &manifests,
-        catalog,
-        precommit_hooks,
-        surface,
-        contribution,
-    );
+    candidate_contract.contribution = contribution;
     if let Some(field) = active.contract.incompatibility(&candidate_contract) {
         shutdown_hosts(hosted);
         return Err(PluginReloadError::RestartContractChanged { field });
@@ -1030,12 +1063,14 @@ where
         hosted,
         manifests,
         batches,
+        permissions,
     })
 }
 fn shutdown_hosts<S: HostServices + 'static>(
     mut hosted: Vec<Hosted<S>>,
 ) -> Vec<(String, InstanceDiagnostics)> {
     for candidate in &mut hosted {
+        candidate.instance.state().set_command_permissions(None);
         if let Err(error) = candidate.instance.shutdown() {
             tracing::warn!(plugin = %candidate.id, %error, "shutdown failed");
         }

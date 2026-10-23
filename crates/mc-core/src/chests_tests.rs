@@ -235,6 +235,194 @@ fn contents(drains: &Drains) -> Vec<Option<mc_data::ItemStack>> {
 }
 
 #[test]
+fn integrity_unloaded_double_chest_refuses_pickup_shift_and_drag() {
+    for mode in [
+        ClickMode::Pickup,
+        ClickMode::QuickMove,
+        ClickMode::QuickCraft,
+    ] {
+        let mut rig = Rig::new();
+        // Put the partner across a chunk boundary so only that half unloads.
+        rig.left.x = rig.left.x.div_euclid(16) * 16 + 15;
+        rig.right.x = rig.left.x + 1;
+        let slot = rig.state.entities.slot_of(rig.player).unwrap();
+        rig.state.entities.set_pos(
+            slot,
+            [
+                f64::from(rig.left.x),
+                f64::from(Y + 1),
+                f64::from(rig.left.z) + 2.0,
+            ],
+        );
+        let diamond = item(&rig.state, "minecraft:diamond", 3);
+        rig.double_chest(std::slice::from_ref(&diamond), &[]);
+        rig.open(rig.left);
+        let cursor = item(&rig.state, "minecraft:stone", 2);
+        rig.state
+            .players
+            .get_mut(&rig.player)
+            .unwrap()
+            .open
+            .as_mut()
+            .unwrap()
+            .carried = cursor;
+        let menu = rig.state.players[&rig.player].open.as_ref().unwrap();
+        let window = menu.window;
+        if mode == ClickMode::QuickCraft {
+            for (slot, button) in [(-999, 0), (53, 1)] {
+                let state_id = rig.state.players[&rig.player]
+                    .open
+                    .as_ref()
+                    .unwrap()
+                    .state_id;
+                rig.input(PlayerInput::ContainerClick {
+                    connection: ConnectionId(1),
+                    window,
+                    state_id,
+                    slot,
+                    button,
+                    mode,
+                });
+            }
+        }
+        let chunk = crate::boundary::ChunkPos {
+            x: rig.right.x.div_euclid(16),
+            z: rig.right.z.div_euclid(16),
+        };
+        rig.state.world.finish_inhabited_tick(rig.state.tick + 1);
+        rig.state
+            .world
+            .set_active_chunks(Default::default(), rig.state.tick + 1);
+        // Freeze the inactive inhabited interval, then acknowledge its revision.
+        rig.state.world.capture_dirty(&Default::default());
+        rig.state
+            .world
+            .mark_flushed(&[(chunk, rig.state.world.storage_revision(chunk))]);
+        let mut want = rig.state.desired_chunks();
+        want.remove(&chunk);
+        assert!(rig.state.world.evict_outside(&want).contains(&chunk));
+        assert_eq!(rig.block_at(rig.right), None);
+        let state_id = rig.state.players[&rig.player]
+            .open
+            .as_ref()
+            .unwrap()
+            .state_id;
+        let drains = rig.input(PlayerInput::ContainerClick {
+            connection: ConnectionId(1),
+            window,
+            state_id,
+            slot: if mode == ClickMode::QuickCraft {
+                -999
+            } else {
+                53
+            },
+            button: if mode == ClickMode::QuickCraft { 2 } else { 0 },
+            mode,
+        });
+        assert!(rig.state.players[&rig.player].open.is_none());
+        assert!(!rig.state.open_containers.contains_key(&rig.player));
+        assert!(drains.iter().flat_map(|(_, changes)| changes).any(|change|
+            matches!(change, PlayerChange::MenuClosed { window: closed } if *closed == window)));
+        assert_eq!(rig.storage(rig.left).unwrap()[0], diamond);
+        assert!(
+            rig.storage(rig.right)
+                .unwrap()
+                .iter()
+                .all(mc_data::ItemStack::is_empty)
+        );
+        assert_eq!(
+            rig.state.players[&rig.player]
+                .inventory
+                .slots
+                .iter()
+                .map(|stack| stack.count)
+                .sum::<i32>(),
+            2
+        );
+    }
+}
+
+#[test]
+fn integrity_opening_chest_preserves_window_zero_custody_in_wal_and_checkpoint() {
+    use crate::journal::{JournalWriter, Replay, read_complete_batches_after, replay_batches};
+    for cursor in [false, true] {
+        for full in [false, true] {
+            let mut rig = Rig::new();
+            rig.double_chest(&[], &[]);
+            let diamond = item(&rig.state, "minecraft:diamond", 3);
+            let stone = item(&rig.state, "minecraft:stone", 64);
+            let player = rig.state.players.get_mut(&rig.player).unwrap();
+            if full {
+                player.inventory.slots.fill(stone);
+            }
+            if cursor {
+                player.inventory_menu.carried = diamond.clone();
+            } else {
+                player.inventory_menu.grid[0] = diamond.clone();
+            }
+            let (output, _, _) = run_tick(
+                &mut rig.state,
+                &[PlayerInput::UseItemOn {
+                    connection: ConnectionId(1),
+                    hand: Hand::Main,
+                    position: rig.left,
+                    face: 1,
+                    cursor: [0.5; 3],
+                    sequence: 1,
+                }],
+            );
+            assert!(rig.state.players[&rig.player].open.is_some());
+            let uuid = rig
+                .state
+                .entities
+                .row(rig.state.entities.slot_of(rig.player).unwrap())
+                .uuid
+                .to_string();
+            let record =
+                crate::core::player_record_for(&rig.state, rig.player, output.tick).unwrap();
+            let entries = crate::core::journal_entries_for_tick(&mut rig.state, &output);
+            let dir = tempfile::tempdir().unwrap();
+            let mut writer = JournalWriter::open(dir.path(), 1).unwrap();
+            writer.append(1, output.tick, &entries).unwrap();
+            writer.flush().unwrap();
+            drop(writer);
+            let replay = replay_batches(
+                Replay::default(),
+                &read_complete_batches_after(&dir.path().join("journal"), 0).unwrap(),
+            );
+            let count = |player: &crate::journal::ReplayPlayer| {
+                player
+                    .inventory
+                    .iter()
+                    .chain(std::iter::once(&player.carried))
+                    .chain(player.grid.iter())
+                    .filter(|stack| stack.item_id == diamond.item_id)
+                    .map(|stack| stack.count)
+                    .sum::<i32>()
+            };
+            let dropped: i32 = replay
+                .entities
+                .values()
+                .filter_map(|entity| entity.item.as_ref())
+                .filter(|stack| stack.item_id == diamond.item_id)
+                .map(|stack| stack.count)
+                .sum();
+            assert_eq!(count(&replay.players[&uuid]) + dropped, 3);
+            assert_eq!(dropped, if full { 3 } else { 0 });
+            let config = crate::config::CoreConfig::new(dir.path().join("checkpoint"), 42);
+            let restored = crate::native_checkpoint::tests::roundtrip_player(
+                &config,
+                &uuid,
+                &record,
+                &rig.state.registry.items,
+            )
+            .unwrap();
+            assert_eq!(count(&restored), if full { 0 } else { 3 });
+        }
+    }
+}
+
+#[test]
 fn placing_a_chest_beside_a_chest_forms_a_double_chest() {
     let mut rig = Rig::new();
     let chests = item(&rig.state, "minecraft:chest", 2);

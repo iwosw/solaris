@@ -477,6 +477,8 @@ enum Mode {
     /// `status`, `reset`, `build`, `damage` and `fault` are ordinary commands,
     /// and a chain test gives two deployments of this fixture two roots.
     Precommit,
+    /// Permission lifecycle fault injection; `greeting` selects the scenario.
+    PermissionProbe,
 }
 
 impl Mode {
@@ -516,6 +518,7 @@ impl Mode {
             Some("audit-events") => Mode::AuditEvents,
             Some("loader-live") => Mode::LoaderLive,
             Some("precommit") => Mode::Precommit,
+            Some("permission-probe") => Mode::PermissionProbe,
             _ => Mode::Normal,
         }
     }
@@ -770,8 +773,18 @@ impl Plugin for Hello {
         // The runtime state comes from the same configuration the startup phase
         // read, built here because that phase's store is already gone.
         self.initialize(config, context)?;
+        if self.mode == Mode::PermissionProbe {
+            let grants = if self.greeting.starts_with("allow") {
+                vec!["* *".to_owned()]
+            } else {
+                Vec::new()
+            };
+            let _ = solaris_plugin_sdk::publish_command_permissions(&grants);
+            assert_ne!(self.greeting, "allow-trap-init", "candidate init trap");
+        }
         match self.mode {
             Mode::Normal
+            | Mode::PermissionProbe
             | Mode::Refuse
             | Mode::Burst
             | Mode::Storage
@@ -865,6 +878,10 @@ impl Plugin for Hello {
         _context: &EventContext,
         events: &[Event],
     ) -> Result<Vec<Command>, Failure> {
+        if self.mode == Mode::PermissionProbe {
+            assert_ne!(self.greeting, "deny-trap-event", "provider callback trap");
+            return Ok(Vec::new());
+        }
         if let Some(fixture) = &mut self.world_structure_ops {
             return fixture.on_events(events);
         }
@@ -1300,6 +1317,9 @@ impl Plugin for Hello {
     }
 
     fn shutdown(&mut self) -> Result<(), Failure> {
+        if self.mode == Mode::PermissionProbe && self.greeting == "deny-shutdown-allow" {
+            let _ = solaris_plugin_sdk::publish_command_permissions(&["* *".to_owned()]);
+        }
         log(LogLevel::Info, "hello plugin stopping");
         Ok(())
     }

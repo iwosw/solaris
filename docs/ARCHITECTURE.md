@@ -78,6 +78,15 @@ acknowledged effect is not an fsync promise: an unflushed crash tail can roll
 back consistently. Checkpoint work freezes owned records/immutable chunks and
 runs off-tick. Shutdown requests a final durable checkpoint.
 
+Item custody transitions close/refund window-zero cursor and crafting inputs
+before opening another menu. Block-container clicks refuse and close a menu
+whose loaded storage no longer matches its slot count (including an unavailable
+double-chest half). Pickup commit rechecks collector liveness after damage.
+Partial allay pickups publish the ground-stack remainder as a full entity
+image in the same WAL batch as the allay credit. Dimension-travel wire removals
+become durable tombstones only when the entity is not live in that dimension
+at the journal boundary, preserving same-tick round trips.
+
 Anvil is explicit offline import/export, never a serving fallback or dual-write
 backend. Conversions retain source worlds, require a new destination and emit
 receipts. Offline native backup/restore requires a stopped, exclusively leased

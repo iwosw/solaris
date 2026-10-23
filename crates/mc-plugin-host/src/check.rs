@@ -306,16 +306,114 @@ fn api_text(version: mc_script::ScriptApiVersion) -> String {
     )
 }
 
-/// The package's own `config.toml`, or an empty string when it carries none.
+/// Read only the package's own regular `config.toml`, bounded even if it grows.
+#[cfg(unix)]
 pub(crate) fn read_config(root: &Path, limits: &PluginLimits) -> Result<String, String> {
-    let path = root.join("config.toml");
-    match std::fs::metadata(&path) {
-        Ok(metadata) if metadata.len() > limits.text_bytes as u64 => Err(format!(
-            "config.toml is {} bytes, the bound is {}",
-            metadata.len(),
+    use rustix::fs::{Mode, OFlags, openat};
+
+    // Resolve the package directory once. The descriptor-relative open cannot
+    // escape via a replaced ancestor or a config symlink. NONBLOCK also keeps a
+    // FIFO from stalling the worker before we can reject its file type.
+    let directory = std::fs::File::open(root).map_err(|error| error.to_string())?;
+    let descriptor = match openat(
+        &directory,
+        "config.toml",
+        OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::NONBLOCK | OFlags::CLOEXEC,
+        Mode::empty(),
+    ) {
+        Ok(descriptor) => descriptor,
+        Err(rustix::io::Errno::NOENT) => return Ok(String::new()),
+        Err(error) => return Err(format!("cannot open package config.toml: {error}")),
+    };
+    let file = std::fs::File::from(descriptor);
+    let metadata = file.metadata().map_err(|error| error.to_string())?;
+    if !metadata.is_file() {
+        return Err("config.toml must be a regular file".to_owned());
+    }
+    if metadata.len() > limits.text_bytes as u64 {
+        return Err(format!(
+            "config.toml exceeds the {} byte bound",
             limits.text_bytes
-        )),
-        Ok(_) => std::fs::read_to_string(&path).map_err(|error| error.to_string()),
-        Err(_) => Ok(String::new()),
+        ));
+    }
+    read_config_text(file, limits.text_bytes)
+}
+
+#[cfg(not(unix))]
+pub(crate) fn read_config(_root: &Path, _limits: &PluginLimits) -> Result<String, String> {
+    Err("secure package config.toml reads are unsupported on this platform".to_owned())
+}
+
+#[cfg(unix)]
+fn read_config_text(reader: impl std::io::Read, limit: usize) -> Result<String, String> {
+    use std::io::Read;
+
+    let mut bytes = Vec::new();
+    reader
+        .take((limit as u64).saturating_add(1))
+        .read_to_end(&mut bytes)
+        .map_err(|error| format!("cannot read config.toml: {error}"))?;
+    if bytes.len() > limit {
+        return Err(format!("config.toml exceeds the {limit} byte bound"));
+    }
+    String::from_utf8(bytes).map_err(|error| format!("config.toml is not UTF-8: {error}"))
+}
+
+#[cfg(all(test, unix))]
+mod config_tests {
+    use super::*;
+    use std::os::unix::fs::symlink;
+
+    #[test]
+    fn config_rejects_external_and_dangling_symlinks() {
+        let package = tempfile::tempdir().unwrap();
+        let external = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(external.path(), "secret = 'outside'").unwrap();
+        let config = package.path().join("config.toml");
+        symlink(external.path(), &config).unwrap();
+        assert!(read_config(package.path(), &PluginLimits::default()).is_err());
+        std::fs::remove_file(&config).unwrap();
+        symlink(package.path().join("absent"), &config).unwrap();
+        assert!(read_config(package.path(), &PluginLimits::default()).is_err());
+    }
+
+    #[test]
+    fn config_accepts_only_bounded_regular_utf8_files() {
+        let package = tempfile::tempdir().unwrap();
+        let limits = PluginLimits {
+            text_bytes: 4,
+            ..PluginLimits::default()
+        };
+        assert_eq!(read_config(package.path(), &limits).unwrap(), "");
+        let config = package.path().join("config.toml");
+        std::fs::write(&config, "1234").unwrap();
+        assert_eq!(read_config(package.path(), &limits).unwrap(), "1234");
+        std::fs::write(&config, "12345").unwrap();
+        assert!(read_config(package.path(), &limits).is_err());
+        std::fs::write(&config, [0xff]).unwrap();
+        assert!(read_config(package.path(), &limits).is_err());
+        std::fs::remove_file(&config).unwrap();
+        std::fs::create_dir(&config).unwrap();
+        assert!(read_config(package.path(), &limits).is_err());
+    }
+
+    #[test]
+    fn config_stream_reads_at_most_one_byte_past_the_bound() {
+        let mut stream = std::io::Cursor::new(b"123456789");
+        assert!(read_config_text(&mut stream, 4).is_err());
+        assert_eq!(stream.position(), 5);
+        assert!(read_config_text(std::io::repeat(0), 4).is_err());
+    }
+
+    #[test]
+    fn config_rejects_fifo_without_waiting_for_a_writer() {
+        let package = tempfile::tempdir().unwrap();
+        rustix::fs::mkfifoat(
+            rustix::fs::CWD,
+            package.path().join("config.toml"),
+            rustix::fs::Mode::RUSR | rustix::fs::Mode::WUSR,
+        )
+        .unwrap();
+        assert!(read_config(package.path(), &PluginLimits::default()).is_err());
     }
 }

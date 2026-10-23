@@ -66,6 +66,8 @@ impl std::fmt::Display for ScriptCommandPermissionError {
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 struct PermissionTable {
     provider: Option<String>,
+    /// Once configured, losing the provider must never restore unmanaged access.
+    managed: bool,
     grants: BTreeMap<String, BTreeSet<String>>,
 }
 
@@ -78,16 +80,17 @@ pub struct ScriptCommandPermissions {
 }
 
 impl ScriptCommandPermissions {
-    /// Record which package is the permission provider, or clear the authority.
+    /// Record the current provider, clearing grants when it changes.
     ///
-    /// Unregistering the provider forgets its grants: the deployment no longer
-    /// has a permission authority, so gated roots return to unmanaged behaviour.
+    /// Removing a provider retains managed mode, denying gated roots until an
+    /// accepted replacement publishes again.
     pub(crate) fn set_provider(&self, provider: Option<&str>) {
         let mut table = (**self.table.load()).clone();
         if table.provider.as_deref() == provider {
             return;
         }
         table.provider = provider.map(str::to_owned);
+        table.managed |= provider.is_some();
         table.grants.clear();
         self.table.store(Arc::new(table));
     }
@@ -96,6 +99,20 @@ impl ScriptCommandPermissions {
     #[must_use]
     pub fn provider_deployed(&self) -> bool {
         self.table.load().provider.is_some()
+    }
+
+    /// Create an isolated, initially denying table for a candidate provider.
+    #[must_use]
+    pub fn for_provider(provider: &str) -> Self {
+        let permissions = Self::default();
+        permissions.set_provider(Some(provider));
+        permissions
+    }
+
+    /// Install an accepted generation's snapshot. The host must first validate
+    /// the deployment contract and revoke the old stores' publication handles.
+    pub fn replace_from(&self, candidate: &Self) {
+        self.table.store(candidate.table.load_full());
     }
 
     /// The package id that answers for command permissions, when one is deployed.
@@ -126,6 +143,7 @@ impl ScriptCommandPermissions {
         }
         let table = PermissionTable {
             provider: self.table.load().provider.clone(),
+            managed: true,
             grants,
         };
         self.table.store(Arc::new(table));
@@ -138,12 +156,12 @@ impl ScriptCommandPermissions {
     /// dashed or compact UUID, and the native context writes the dashed form, so
     /// both sides normalize to compact lower-case hex.
     ///
-    /// Unmanaged deployments admit everything: only a deployed provider turns a
-    /// declared node into a requirement.
+    /// Only deployments that have never installed a provider are unmanaged.
+    /// Losing a configured provider denies gated roots.
     #[must_use]
     pub fn allows(&self, uuid: &str, node: &str) -> bool {
         let table = self.table.load();
-        if table.provider.is_none() {
+        if !table.managed {
             return true;
         }
         let Some(identity) = normalize_identity(uuid) else {
@@ -321,7 +339,7 @@ mod tests {
             .unwrap();
         permissions.set_provider(None);
         assert!(!permissions.provider_deployed());
-        assert!(permissions.allows(ALEX, "solaris.essentials.home"));
+        assert!(!permissions.allows(ALEX, "solaris.essentials.home"));
         permissions.set_provider(Some("solaris-permissions"));
         assert!(!permissions.allows(ALEX, "solaris.essentials.home"));
     }

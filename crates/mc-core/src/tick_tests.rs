@@ -27,6 +27,62 @@ mod movement_tests;
 #[path = "tick/statistics_tests.rs"]
 mod statistics_tests;
 
+#[test]
+fn integrity_lethal_damage_rejects_staged_pickup_before_respawn() {
+    let mut state = test_state();
+    let player = join(&mut state, 1, "collector");
+    let player_slot = state.entities.slot_of(player).unwrap();
+    let stone = state
+        .registry
+        .items
+        .id_of(&mc_data::Identifier::parse("minecraft:stone").unwrap())
+        .unwrap();
+    state
+        .players
+        .get_mut(&player)
+        .unwrap()
+        .inventory
+        .slots
+        .fill(mc_data::ItemStack::new(stone, 64));
+    let pos = state.entities.pos(player_slot);
+    let ground = crate::tick::spawn_item_entity(&mut state, pos, mc_data::ItemStack::new(stone, 1));
+    let ground_slot = state.entities.slot_of(ground).unwrap();
+    state.merge_pickups.push((ground_slot, player_slot, 1));
+    state.merge_consumed_items.insert(ground_slot);
+    state.merge_damage.push((
+        player_slot,
+        crate::tick::DamagePiece {
+            amount: 1000.0,
+            kind: crate::survival::DamageKind::Void,
+            source: None,
+            physical: None,
+            custom_armor: false,
+        },
+    ));
+    let (deaths, events, _, removed) = state.commit_merge_effects();
+    assert!(deaths.contains(&player));
+    assert!(state.entities.slot_of(ground).is_some());
+    assert!(!removed.contains(&ground));
+    assert!(!events.iter().any(|event| matches!(event,
+        crate::boundary::EntityEvent::Pickup { item, .. } if *item == ground)));
+    let player = state.players.get_mut(&player).unwrap();
+    assert!(
+        player
+            .inventory
+            .slots
+            .iter()
+            .all(mc_data::ItemStack::is_empty)
+    );
+    player.respawn(pos, 0.0, 0.0, Default::default());
+    assert!(
+        player
+            .inventory
+            .slots
+            .iter()
+            .all(mc_data::ItemStack::is_empty)
+    );
+}
+
 fn test_registry() -> Arc<CoreRegistry> {
     Arc::new(CoreRegistry::load(None).expect("registry loads"))
 }

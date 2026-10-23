@@ -430,3 +430,134 @@ fn a_check_refuses_two_owners_of_the_world_startup_rules() {
     assert!(message.contains("first"), "{message}");
     assert!(message.contains("second"), "{message}");
 }
+
+const PERMISSION_PLAYER: &str = "069a79f4-44e9-4726-a5be-fca90e38aaf5";
+
+fn permission_config(root: &Path, id: &str, scenario: &str) {
+    std::fs::write(
+        root.join(id).join("config.toml"),
+        format!("mode = \"permission-probe\"\ngreeting = \"{scenario}\"\n"),
+    )
+    .unwrap();
+}
+
+fn permission_deployment(root: &Path, scenario: &str) -> mc_plugin_host::PluginHost {
+    write_package(
+        root,
+        "provider",
+        "permission_provider = true\nplayer_commands = [\"perm\"]\nevents = [\"player.joined\"]\n",
+    );
+    permission_config(root, "provider", scenario);
+    write_package(
+        root,
+        "consumer",
+        "player_commands = [\"gated\"]\ncommand_permissions = { gated = \"test.use\" }\n",
+    );
+    start(root, &["consumer", "provider"])
+}
+
+fn permission_denied(host: &mc_plugin_host::PluginHost) -> bool {
+    matches!(
+        host.boundary().prepare_player_command_with_context(
+            ScriptPlayerId::new(1),
+            ScriptPlayerContext::try_new(PERMISSION_PLAYER, "Alex", false, 0.0, 64.0, 0.0).unwrap(),
+            "gated",
+        ),
+        Ok(mc_script::PreparedPlayerCommand::PermissionDenied)
+    )
+}
+
+#[tokio::test]
+async fn permission_failed_provider_candidate_cannot_publish_live_grants() {
+    let root = tempfile::tempdir().unwrap();
+    let host = permission_deployment(root.path(), "deny");
+    assert!(permission_denied(&host));
+    permission_config(root.path(), "provider", "allow-trap-init");
+    assert!(matches!(
+        host.reload(packages(root.path(), &["consumer", "provider"]))
+            .await,
+        Err(PluginReloadError::CandidateSetup { .. })
+    ));
+    assert!(permission_denied(&host), "rejected init must not publish");
+    host.stop();
+}
+
+#[tokio::test]
+async fn permission_rejected_role_escalation_cannot_publish_live_grants() {
+    let root = tempfile::tempdir().unwrap();
+    let host = permission_deployment(root.path(), "deny");
+    write_package(
+        root.path(),
+        "consumer",
+        "permission_provider = true\nplayer_commands = [\"gated\"]\ncommand_permissions = { gated = \"test.use\" }\n",
+    );
+    permission_config(root.path(), "consumer", "allow-trap-init");
+    let result = host
+        .reload(packages(root.path(), &["consumer", "provider"]))
+        .await;
+    assert!(
+        permission_denied(&host),
+        "rejected role change must not publish"
+    );
+    assert!(
+        matches!(
+            result,
+            Err(PluginReloadError::RestartContractChanged { .. })
+        ),
+        "manifest changes must be rejected before guest init: {result:?}"
+    );
+    host.stop();
+}
+
+#[tokio::test]
+async fn permission_old_shutdown_cannot_overwrite_accepted_candidate() {
+    let root = tempfile::tempdir().unwrap();
+    let host = permission_deployment(root.path(), "deny-shutdown-allow");
+    permission_config(root.path(), "provider", "deny");
+    host.reload(packages(root.path(), &["consumer", "provider"]))
+        .await
+        .unwrap();
+    assert!(
+        permission_denied(&host),
+        "old shutdown must lose publication rights"
+    );
+    permission_config(root.path(), "provider", "allow");
+    host.reload(packages(root.path(), &["consumer", "provider"]))
+        .await
+        .unwrap();
+    assert!(
+        !permission_denied(&host),
+        "accepted candidate publishes its snapshot"
+    );
+    host.stop();
+}
+
+#[tokio::test]
+async fn permission_provider_trap_keeps_surviving_commands_denied() {
+    let root = tempfile::tempdir().unwrap();
+    let host = permission_deployment(root.path(), "deny-trap-event");
+    host.boundary()
+        .try_enqueue_event(ScriptEvent::player_joined_with_context(
+            ScriptPlayerId::new(1),
+            ScriptPlayerContext::try_new(PERMISSION_PLAYER, "Alex", false, 0.0, 64.0, 0.0).unwrap(),
+        ))
+        .unwrap();
+    // A refused reload is a FIFO barrier, not a replacement for the retired guest.
+    write_package(root.path(), "consumer", "player_commands = [\"changed\"]\n");
+    assert!(
+        host.reload(packages(root.path(), &["consumer", "provider"]))
+            .await
+            .is_err()
+    );
+    assert!(
+        !host
+            .boundary()
+            .player_command_roots()
+            .contains(&"perm".to_owned())
+    );
+    assert!(
+        permission_denied(&host),
+        "provider retirement must fail closed"
+    );
+    host.stop();
+}

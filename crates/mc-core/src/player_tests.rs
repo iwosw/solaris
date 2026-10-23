@@ -225,6 +225,41 @@ fn closing_the_inventory_returns_grid_and_cursor_without_loss() {
 }
 
 #[test]
+fn integrity_open_menu_refunds_window_zero_custody_once() {
+    let data = Data::new();
+    let rules = data.rules();
+    for full in [false, true] {
+        for cursor in [false, true] {
+            let mut p = player();
+            if full {
+                p.inventory.slots.fill(ItemStack::new(APPLE, 64));
+            }
+            let stack = ItemStack::new(STONE, 3);
+            if cursor {
+                p.inventory_menu.carried = stack;
+            } else {
+                p.inventory_menu.grid[0] = stack;
+            }
+            let effects = p.open_menu(
+                &rules,
+                MenuKind::Chest { rows: 3 },
+                "Chest".into(),
+                &vec![ItemStack::EMPTY; 27],
+            );
+            assert_eq!(total(&p, &effects, STONE), 3);
+            assert!(p.inventory_menu.carried.is_empty());
+            assert!(p.inventory_menu.grid.iter().all(ItemStack::is_empty));
+            assert_eq!(
+                effects.dropped.iter().map(|stack| stack.count).sum::<i32>(),
+                if full { 3 } else { 0 }
+            );
+            let closed = p.close(&rules);
+            assert!(closed.dropped.is_empty());
+        }
+    }
+}
+
+#[test]
 fn death_drops_every_stack_exactly_once() {
     let data = Data::new();
     let rules = data.rules();

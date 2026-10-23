@@ -3,6 +3,86 @@ use crate::bees::tests::{POS, item, joined, mob, place, state};
 use crate::boundary::{ConnectionId, PlayerInput};
 
 #[test]
+fn integrity_partial_allay_pickup_preserves_custody_in_wal_recovery() {
+    use crate::journal::{JournalWriter, Replay, read_complete_batches_after, replay_batches};
+    let mut state = state(None);
+    let (mut output, _, _) = crate::tick::run_tick(&mut state, &[]);
+    let allay = mob(&mut state, "minecraft:allay", [4.5, 201.0, 6.5]);
+    let held = item(&state, "minecraft:stone", 1);
+    let slot = state.entities.slot_of(allay).unwrap();
+    state.entities.row_mut(slot).allay.as_mut().unwrap().held = held;
+    let stack = item(&state, "minecraft:stone", 99);
+    let ground = crate::tick::spawn_item_entity(&mut state, [4.5, 201.0, 6.5], stack);
+    let ground_slot = state.entities.slot_of(ground).unwrap();
+    state.entities.body_mut(ground_slot).pickup_delay = 0;
+    output.changes = Arc::new(ChangeSet {
+        entities_spawned: vec![allay, ground],
+        ..Default::default()
+    });
+    let birth = crate::core::journal_entries_for_tick(&mut state, &output);
+    state.appearance_changed.clear();
+    state.tick = 20;
+    let mut changes = ChangeSet::default();
+    run(&mut state, &mut changes);
+    let row = state.entities.row(ground_slot);
+    assert_eq!(row.item.as_ref().unwrap().count, 35);
+    assert_eq!(
+        state
+            .entities
+            .row(slot)
+            .allay
+            .as_ref()
+            .unwrap()
+            .inventory
+            .count,
+        64
+    );
+    changes.entities_appearance_changed = std::mem::take(&mut state.appearance_changed);
+    output.tick = state.tick;
+    output.changes = Arc::new(changes);
+    let tail = crate::core::journal_entries_for_tick(&mut state, &output);
+    let dir = tempfile::tempdir().unwrap();
+    let mut writer = JournalWriter::open(dir.path(), 1).unwrap();
+    writer.append(1, 1, &birth).unwrap();
+    writer.append(2, 20, &tail).unwrap();
+    writer.flush().unwrap();
+    drop(writer);
+    let replay = replay_batches(
+        Replay::default(),
+        &read_complete_batches_after(&dir.path().join("journal"), 0).unwrap(),
+    );
+    let remaining = replay.entities[&ground.0].item.as_ref().unwrap();
+    let collected = &replay.entities[&allay.0]
+        .state
+        .allay
+        .as_ref()
+        .unwrap()
+        .inventory;
+    assert_eq!(remaining.count + collected.count, 99);
+    assert_eq!(remaining.count, 35);
+    assert_eq!(
+        replay.entities[&ground.0]
+            .appearance
+            .item
+            .as_ref()
+            .unwrap()
+            .count,
+        35
+    );
+    assert_eq!(
+        state
+            .entities
+            .row(ground_slot)
+            .appearance
+            .item
+            .as_ref()
+            .unwrap()
+            .count,
+        35
+    );
+}
+
+#[test]
 fn allay_collects_matching_items_and_delivers_to_player() {
     let mut state = state(None);
     let actor = joined(&mut state);

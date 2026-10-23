@@ -2301,6 +2301,15 @@ fn declared_command_node_gates_admission_through_the_provider_table() {
         admit("delwarp x", false),
         Ok(PreparedPlayerCommand::PermissionDenied)
     ));
+    endpoint.unregister_plugin_routes("solaris-permissions");
+    assert!(matches!(
+        admit("delwarp x", false),
+        Ok(PreparedPlayerCommand::PermissionDenied)
+    ));
+    assert!(matches!(
+        admit("home", false),
+        Ok(PreparedPlayerCommand::Event(_))
+    ));
 }
 
 #[test]

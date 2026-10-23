@@ -565,6 +565,9 @@ pub(crate) fn run(state: &mut TickState, changes: &mut ChangeSet) {
                         if carried.count == 0 {
                             state.entities.remove(item_slot);
                             changes.entities_removed.push(item);
+                        } else {
+                            Arc::make_mut(&mut row.appearance).item = Some(carried.full_stack());
+                            state.appearance_changed.push(item);
                         }
                     }
                 } else if let Some(target) = destination

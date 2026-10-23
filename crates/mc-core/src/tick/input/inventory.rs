@@ -117,6 +117,28 @@ pub(in crate::tick) fn container_click(
     let registry = Arc::clone(&state.registry);
     let rules = registry.item_rules();
     let mut container = container_slots(state, &open_cells);
+    // An open menu retains its original shape, but unloaded double-chest
+    // partners (or missing storage) can shrink the reconstructed backing slice.
+    // Close/refund custody before either click execution or reservation planning.
+    let invalid_window = state
+        .players
+        .get(&entity)
+        .and_then(|player| player.open.as_ref())
+        .filter(|menu| {
+            menu.kind.container_size() != container.len()
+                || open_cells
+                    .iter()
+                    .any(|&(x, y, z)| state.world.block_at(x, y, z).is_none())
+        })
+        .map(|menu| menu.window);
+    if let Some(window) = invalid_window {
+        container_close(state, connection, changes);
+        state.push_player(
+            *connection,
+            crate::boundary::PlayerChange::MenuClosed { window },
+        );
+        return;
+    }
     let guarded = crate::plugin_inventories::has_reservations_for_player(state, entity)
         || open_cells.iter().any(|&(x, y, z)| {
             crate::plugin_inventories::has_reservations_for_block(state, BlockPos { x, y, z })

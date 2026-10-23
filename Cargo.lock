@@ -1601,6 +1601,7 @@ dependencies = [
  "mc-data",
  "mc-script",
  "rand_core 0.6.4",
+ "rustix",
  "serde",
  "serde_json",
  "sha2",

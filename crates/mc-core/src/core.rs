@@ -3408,6 +3408,11 @@ pub(crate) fn journal_entries_for_tick(
     }
     crate::journal_touched::entity_images(state, output, &mut entries);
     for id in &output.changes.entities_removed {
+        // Wire removals include intermediate dimension departures. A same-tick
+        // return has live custody here again and must keep its final image.
+        if state.entities.slot_of(*id).is_some() {
+            continue;
+        }
         entries.push(JournalEntry::RemoveEntity {
             id: entity_id_int(*id),
             tick: output.tick,

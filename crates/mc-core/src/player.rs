@@ -419,7 +419,7 @@ impl PlayerState {
                     .insert(0, PlayerChange::MenuClosed { window });
                 closed
             }
-            None => PlayerEffects::default(),
+            None => self.close(rules),
         };
         self.last_window = self.last_window % MAX_WINDOW + 1;
         let menu = Menu::new(self.last_window, kind);

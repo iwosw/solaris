@@ -10,6 +10,16 @@ Wasmtime worker outside the tick, `mc-script` bounded WIT/DTO admission and
 `mc-loader` wire contracts. There are no region leases in the plugin API,
 independent plugin-storage journal, v1 routing adapters or SIGHUP deployment
 reload. [PLUGINS.md](../PLUGINS.md) is the current deployment contract.
+
+Permission lifecycle security (2026-10-23): once a component permission provider
+has been installed, losing it denies gated command roots rather than reverting
+to unmanaged admission. Reload candidates have a private permission snapshot;
+manifest-only restart constraints are checked before guest execution. Acceptance
+publishes that snapshot and binds only the new provider to live publication;
+retiring stores lose publication rights before shutdown. Configuration is opened
+descriptor-relative to the package directory without following symlinks, accepts
+only regular files, and enforces the text bound on actual reads.
+
 The body below preserves the evolving decision record, including historical
 v1 source paths/commands; present-tense v1 descriptions apply only to their era.
 

@@ -1,6 +1,62 @@
 use super::*;
 
 #[test]
+fn integrity_same_tick_dimension_round_trip_survives_wal_recovery() {
+    let directory = TempWorld::new();
+    let (mut state, _, _) = worlds();
+    let stone = state
+        .registry
+        .items
+        .id_of(&mc_data::Identifier::parse("minecraft:stone").unwrap())
+        .unwrap();
+    let item = crate::tick::spawn_item_entity(
+        &mut state,
+        [8.0, 150.0, 8.0],
+        mc_data::ItemStack::new(stone, 7),
+    );
+    let uuid = state
+        .entities
+        .row(state.entities.slot_of(item).unwrap())
+        .uuid;
+    let inputs = [Dimension::Nether, Dimension::Overworld].map(|dimension| PlayerInput::Command {
+        connection: ConnectionId(1),
+        command: format!("execute in {} run tp {uuid} 8 150 8", dimension.name()),
+        permission_level: 2,
+    });
+    let (output, _, _) = crate::tick::run_tick(&mut state, &inputs);
+    assert_eq!(
+        travel::locate(&state, item).unwrap().0,
+        Dimension::Overworld
+    );
+    assert!(output.changes.entities_removed.contains(&item));
+    assert!(output.changes.entities_spawned.contains(&item));
+    let entries = crate::core::journal_entries_for_tick(&mut state, &output);
+    let mut writer = crate::journal::JournalWriter::open(&directory.0, 1).unwrap();
+    writer.append(1, output.tick, &entries).unwrap();
+    writer.flush().unwrap();
+    drop(writer);
+    let batches =
+        crate::journal::read_complete_batches_after(&directory.0.join("journal"), 0).unwrap();
+    let replay = crate::journal::replay_batches(
+        Default::default(),
+        &journal_for_dimension(&batches, Dimension::Overworld),
+    );
+    assert_eq!(
+        replay
+            .entities
+            .get(&item.0)
+            .and_then(|entity| entity.item.as_ref())
+            .map(|stack| stack.count),
+        Some(7)
+    );
+    let nether = crate::journal::replay_batches(
+        Default::default(),
+        &journal_for_dimension(&batches, Dimension::Nether),
+    );
+    assert!(!nether.entities.contains_key(&item.0));
+}
+
+#[test]
 fn advancement_global_dispatch_mutates_players_in_their_own_dimensions() {
     use mc_data::advancements::{AdvancementDefinition, AdvancementTree, Criterion};
     let (mut state, alice, bob) = worlds();
