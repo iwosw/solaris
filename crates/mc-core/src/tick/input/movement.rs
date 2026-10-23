@@ -183,14 +183,22 @@ pub(in crate::tick) fn move_input(
     let body = state.entities.body(slot);
     let half_width = body.half_width;
     let height = body.height;
-    let resolved = mc_physics::resolve_collision_displacement(
-        &sampler,
-        mc_physics::Vec3::new(old[0], old[1], old[2]),
-        mc_physics::Aabb { half_width, height },
-        mc_physics::Vec3::new(displacement[0], displacement[1], displacement[2]),
-        *on_ground,
-        mc_physics::STEP_HEIGHT,
-    );
+    let spectator = state
+        .players
+        .get(&entity)
+        .is_some_and(|player| player.spectator());
+    let resolved = if spectator {
+        None
+    } else {
+        mc_physics::resolve_collision_displacement(
+            &sampler,
+            mc_physics::Vec3::new(old[0], old[1], old[2]),
+            mc_physics::Aabb { half_width, height },
+            mc_physics::Vec3::new(displacement[0], displacement[1], displacement[2]),
+            *on_ground,
+            mc_physics::STEP_HEIGHT,
+        )
+    };
     let new_pos = if let Some(fixed) = resolved {
         let fixed_pos = [
             old[0] + fixed.delta.x,

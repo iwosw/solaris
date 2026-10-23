@@ -69,15 +69,24 @@ pub(in crate::tick) fn attack(
     let since_reset = (state
         .tick
         .saturating_sub(*state.last_swing.get(&entity).unwrap_or(&0))) as u32;
-    let falling = {
-        let pos = state.entities.pos(actor_slot);
-        let below = state.world.block_at(
+    let falling = state.players[&entity].fall_distance > 0.0;
+    let pos = state.entities.pos(actor_slot);
+    let wet_or_climbing = state
+        .world
+        .block_at(
             pos[0].floor() as i32,
-            pos[1].floor() as i32 - 1,
+            pos[1].floor() as i32,
             pos[2].floor() as i32,
-        );
-        below == Some(state.registry.states.air)
-    };
+        )
+        .and_then(|id| state.registry.blocks.by_id(mc_world::BlockStateId(id)))
+        .is_some_and(|block| {
+            block.block.id.path() == "water"
+                || block
+                    .properties
+                    .iter()
+                    .any(|(name, value)| name == "waterlogged" && value == "true")
+                || crate::statistics::climbable(state, block.block.raw_id)
+        });
     let mace = crate::combat::mace_attack(
         &rules,
         &held,
@@ -99,7 +108,9 @@ pub(in crate::tick) fn attack(
                 crate::effects::EffectId::SlowFalling,
             ]
             .into_iter()
-            .any(|effect| state.players[&entity].active_effects.has(effect)),
+            .any(|effect| state.players[&entity].active_effects.has(effect))
+                || wet_or_climbing
+                || crate::mounts::vehicle(state, entity).is_some(),
             melee_bonus: state.players[&entity].active_effects.melee_bonus(),
             attack_speed_multiplier: {
                 let effects = &state.players[&entity].active_effects;

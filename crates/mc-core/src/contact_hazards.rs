@@ -589,7 +589,7 @@ fn scan_row(state: &mut TickState, scratch: &mut Scratch, intents: &mut Vec<Inte
         && (!state.players.contains_key(&entity)
             || crate::command_rules::boolean(state, "fire_damage"))
     {
-        ignite(state, entity, 160);
+        ignite(state, entity, if lava { 300 } else { 160 });
     }
     // Bank raw absence independently of the live burn clock. A newly
     // ignited body can remain geometrically quiet throughout its burn.

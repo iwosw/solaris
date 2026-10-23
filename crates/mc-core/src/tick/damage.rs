@@ -305,6 +305,7 @@ impl TickState {
                     .unwrap_or(0.0);
                 self.entities.row_mut(slot).health = health;
                 let last = pieces.len() - 1;
+                let last_damage_kind = pieces.last().map(|(piece, _)| piece.kind);
                 for (index, (piece, amounts)) in pieces.into_iter().enumerate() {
                     crate::advancements::damage(
                         self,
@@ -356,6 +357,13 @@ impl TickState {
                                 .and_then(|runtime| runtime.death_graves.clone())
                         };
                     let keep_experience = grave_owner.is_some();
+                    let death_xp = if keep_inventory || keep_experience {
+                        0
+                    } else {
+                        self.players
+                            .get(&id)
+                            .map_or(0, |player| player.vitals.experience.death_drop())
+                    };
                     let rules = self.registry.item_rules();
                     let effects = self
                         .players
@@ -363,6 +371,7 @@ impl TickState {
                         .map(|player| player.die(&rules, keep_inventory, keep_experience))
                         .unwrap_or_default();
                     let pos = self.entities.pos(slot);
+                    crate::experience_orbs::award(self, pos, death_xp, &mut spawned);
                     let mut dropped = effects.dropped;
                     let grave = grave_owner.and_then(|owner| {
                         crate::plugin_graves::bury(self, &owner, pos, &mut dropped)
@@ -382,12 +391,51 @@ impl TickState {
                             self.push_player(connection, player.health_change());
                         }
                         if crate::command_rules::boolean(self, "show_death_messages") {
+                            let name = self.connections.name_of(id).unwrap_or("Player");
+                            let cause = match last_damage_kind {
+                                Some(crate::survival::DamageKind::Void) => {
+                                    "fell out of the world into the void"
+                                }
+                                Some(crate::survival::DamageKind::Fall) => {
+                                    "hit the ground too hard"
+                                }
+                                Some(crate::survival::DamageKind::Drowning) => "drowned",
+                                Some(crate::survival::DamageKind::Starvation) => "starved to death",
+                                Some(crate::survival::DamageKind::Lava) => "tried to swim in lava",
+                                Some(
+                                    crate::survival::DamageKind::OnFire
+                                    | crate::survival::DamageKind::InFire,
+                                ) => "burned to death",
+                                Some(crate::survival::DamageKind::Explosion) => "blew up",
+                                Some(crate::survival::DamageKind::Suffocation) => {
+                                    "suffocated in a wall"
+                                }
+                                Some(crate::survival::DamageKind::Projectile) => "was shot",
+                                Some(crate::survival::DamageKind::Melee) => "was slain",
+                                _ => "died",
+                            };
+                            let message = if let Some(attacker) =
+                                killer.and_then(|killer| self.connections.name_of(killer))
+                            {
+                                format!("{name} {cause} by {attacker}")
+                            } else {
+                                format!("{name} {cause}")
+                            };
                             self.push_player(
                                 connection,
                                 PlayerChange::Died {
-                                    message: "You died".to_owned(),
+                                    message: message.clone(),
                                 },
                             );
+                            for recipient in self.connections.all_connections() {
+                                if recipient != connection {
+                                    self.outbox.entry(recipient).or_default().push(
+                                        PlayerChange::Chat {
+                                            message: message.clone(),
+                                        },
+                                    );
+                                }
+                            }
                         }
                     } else {
                         // Offline/dead-connection victim: drops still spawn
@@ -632,6 +680,28 @@ impl TickState {
         events: &mut Vec<EntityEvent>,
         spawned: &mut Vec<EntityId>,
     ) -> bool {
+        let victim = self.entities.body(slot).id;
+        if piece.kind != crate::survival::DamageKind::Void
+            && self
+                .players
+                .get(&victim)
+                .is_some_and(|player| player.creative() || player.spectator())
+        {
+            return false;
+        }
+        // Recheck current geometry at merge, not just the earlier target search.
+        if let Some(crate::intent::DamageSource::Melee { attacker, .. }) = piece.source
+            && !self.players.contains_key(&attacker)
+            && let Some(actor) = self.entities.slot_of(attacker)
+        {
+            let mut from = self.entities.pos(actor);
+            let mut to = self.entities.pos(slot);
+            from[1] += self.entities.body(actor).height * 0.85;
+            to[1] += self.entities.body(slot).height * 0.85;
+            if !crate::hostile::sight_clear(self, from, to) {
+                return false;
+            }
+        }
         if self.entity_session_locked(self.entities.body(slot).id) {
             return false;
         }
@@ -762,7 +832,8 @@ impl TickState {
             Some(crate::intent::DamageSource::Explosion {
                 source,
                 kill_credit,
-            }) => (kill_credit.map(|(owner, _)| owner), Some(source)),
+                ..
+            }) => (kill_credit.map(|(owner, _)| owner), source),
             None => (None, None),
         };
         // Vanilla broadcasts the damage event only for a fresh hit; a stronger
@@ -840,11 +911,24 @@ impl TickState {
         if piece.amount <= 0.0
             || !matches!(
                 piece.kind,
-                DamageKind::Melee | DamageKind::Projectile | DamageKind::Fireball
+                DamageKind::Melee
+                    | DamageKind::Projectile
+                    | DamageKind::Fireball
+                    | DamageKind::Explosion
             )
             || self.tick < self.entities.row(slot).protected_until
         {
             return false;
+        }
+        if let Some(DamageSource::Projectile { projectile, .. }) = piece.source {
+            let record = self
+                .entities
+                .slot_of(projectile)
+                .and_then(|slot| self.entities.row(slot).projectile.as_deref())
+                .or_else(|| self.projectiles.retired_crossbows.get(&projectile));
+            if record.is_some_and(|record| record.piercing > 0) {
+                return false;
+            }
         }
         let id = self.entities.body(slot).id;
         let rules = self.registry.item_rules();
@@ -869,7 +953,10 @@ impl TickState {
                 },
             ) => ([position[0] - pos[0], position[2] - pos[2]], Some(attacker)),
             Some(DamageSource::Projectile { velocity, .. }) => ([-velocity[0], -velocity[1]], None),
-            None | Some(DamageSource::Explosion { .. }) => return false,
+            Some(DamageSource::Explosion { position, .. }) => {
+                ([position[0] - pos[0], position[2] - pos[2]], None)
+            }
+            None => return false,
         };
         let yaw = f64::from(self.entities.rot(slot)[0]).to_radians();
         if direction[0] * direction[0] + direction[1] * direction[1] < 1.0e-12
@@ -918,6 +1005,23 @@ impl TickState {
                 entity: id,
                 disabled: true,
             });
+        }
+        if let Some(DamageSource::Projectile { projectile, .. }) = piece.source
+            && let Some(arrow) = self.entities.slot_of(projectile)
+            && self
+                .entities
+                .row(arrow)
+                .projectile
+                .as_ref()
+                .is_some_and(|record| record.kind.arrow())
+        {
+            self.projectiles.pending_arrow_removals.remove(&projectile);
+            let velocity = self.entities.vel(arrow).map(|v| v / -200.0);
+            crate::projectiles::set_flight(self, arrow, velocity);
+            if let Some(record) = self.entities.row_mut(arrow).projectile.as_mut() {
+                record.critical = false;
+            }
+            self.appearance_changed.push(projectile);
         }
         if let Some(attacker) = attacker
             && let Some(attacker_slot) = self.entities.slot_of(attacker)

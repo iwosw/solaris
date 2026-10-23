@@ -92,10 +92,10 @@ pub enum DamageSource {
         punch: u32,
         flame: bool,
     },
-    /// Explosion attribution; blast motion and shield semantics remain owned
-    /// by the explosion pipeline rather than ordinary attack knockback.
+    /// Explosion origin and attribution survive removal of the source entity.
     Explosion {
-        source: EntityId,
+        source: Option<EntityId>,
+        position: [f64; 3],
         /// Captured while the living source still exists (creepers leave before merge).
         kill_credit: Option<(EntityId, u32)>,
     },

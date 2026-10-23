@@ -660,6 +660,7 @@ fn fire_crossbow(state: &mut TickState, actor: EntityId, slot: usize, weapon: &I
         let mut record = ProjectileState::new(kind, Some(owner), stack.clone());
         record.pickup = !creative && index == 0;
         record.piercing = level(weapon, "piercing").min(127);
+        record.critical = kind.arrow();
         record.shot_at_angle = kind == ProjectileKind::Firework;
         record.fired_from_weapon = Some(Arc::clone(&shared_weapon));
         let Some(id) = super::launch(state, record, origin, velocity) else {

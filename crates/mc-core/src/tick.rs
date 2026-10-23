@@ -1592,6 +1592,7 @@ impl TickState {
             }
         }
         self.merge_consumed_items.clear();
+        committed_removals.extend(self.projectiles.pending_arrow_removals.drain());
         // Remove committed full pickups (by id: slots may have shifted under
         // partial-pickup writes) and the dead (by id, dead-inclusive: the
         // death flag above set alive=false before this lookup). Highest
@@ -5001,13 +5002,25 @@ pub(crate) fn respawn_player(
         return false;
     }
     let personal = crate::sleep::respawn_position(state, entity);
-    if personal.is_none() && state.dimension != crate::dimensions::Dimension::Overworld {
+    if personal.is_none() {
         if let Some(player) = state.players.get_mut(&entity) {
-            player.respawn_point = None;
+            if player.respawn_point.take().is_some() {
+                state
+                    .outbox
+                    .entry(connection)
+                    .or_default()
+                    .push(PlayerChange::Chat {
+                        message:
+                            "You have no home bed or charged respawn anchor, or it was obstructed"
+                                .to_owned(),
+                    });
+            }
             player.respawn_dimension = crate::dimensions::Dimension::Overworld;
         }
-        state.dimension_respawns.push(entity);
-        return true;
+        if state.dimension != crate::dimensions::Dimension::Overworld {
+            state.dimension_respawns.push(entity);
+            return true;
+        }
     }
     let [yaw, pitch] = crate::sleep::respawn_rotation(state, entity);
     if personal.is_some()
@@ -5036,6 +5049,7 @@ pub(crate) fn respawn_player(
     });
     let (body, row) = state.entities.parts_mut(slot);
     body.alive = true;
+    body.burn_ticks = 0;
     row.health = 20.0;
     row.protected_until = state.tick + crate::entities::SPAWN_INVULNERABLE_TICKS;
     row.embedded_projectile_timers = [0; 2];
@@ -5043,6 +5057,7 @@ pub(crate) fn respawn_player(
     appearance.health = 20.0;
     appearance.arrow_count = 0;
     appearance.stinger_count = 0;
+    appearance.shared_flags &= !1;
     state.appearance_changed.push(entity);
     state.entities.set_pos(slot, position);
     state.entities.set_rot(slot, yaw, pitch);

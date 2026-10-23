@@ -341,8 +341,9 @@ fn hurt_entities(
                 custom_armor: false,
                 amount,
                 kind: DamageKind::Explosion,
-                source: source.map(|source| crate::intent::DamageSource::Explosion {
+                source: Some(crate::intent::DamageSource::Explosion {
                     source,
+                    position: center,
                     kill_credit,
                 }),
             },

@@ -34,6 +34,15 @@ fn entity_type(state: &TickState, name: &str) -> u32 {
 fn zombie_infection_preserves_identity_trade_data_and_prevents_death_drops() {
     let mut state = state();
     state.difficulty = crate::survival::Difficulty::Hard;
+    state
+        .world
+        .ensure_blocking(&[mc_world::ChunkPos { x: 0, z: 0 }]);
+    for x in 0..=1 {
+        for y in 80..=83 {
+            state.world.set_block(x, y, 0, state.registry.states.air);
+        }
+    }
+    state.world.fold_overlay();
     let villager_type = entity_type(&state, "minecraft:villager");
     let zombie_type = entity_type(&state, "minecraft:zombie");
     let villager = state.spawn_mob(villager_type, [0.0, 80.0, 0.0], 20.0);

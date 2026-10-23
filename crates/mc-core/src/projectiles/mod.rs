@@ -224,6 +224,8 @@ pub struct ProjectileRuntime {
     pub(crate) embedded_hits: rustc_hash::FxHashSet<(EntityId, EntityId)>,
     pub(crate) spawned: Vec<EntityId>,
     pub(crate) removed: Vec<EntityId>,
+    /// Entity-hit arrows stay addressable until shield admission can deflect them.
+    pub(crate) pending_arrow_removals: rustc_hash::FxHashSet<EntityId>,
     pub(crate) riptides: HashMap<EntityId, weapons::Riptide>,
     /// Removed projectiles retain launch evidence until same-tick damage admission.
     pub(crate) retired_crossbows: HashMap<EntityId, ProjectileState>,

@@ -864,3 +864,15 @@ fn contact_classifier_micro() {
         }
     }
 }
+
+#[test]
+fn parity_lava_ignites_fifteen_seconds_then_retains_afterburn() {
+    let (mut state, entity, pos) = flat_player_fixture();
+    place(&mut state, pos, "lava", &[("level", "0")]);
+    assert!(sample(&mut state, entity, DamageKind::Lava));
+    let slot = state.entities.slot_of(entity).unwrap();
+    assert_eq!(state.entities.body(slot).burn_ticks, 299);
+    place(&mut state, pos, "air", &[]);
+    sample(&mut state, entity, DamageKind::OnFire);
+    assert_eq!(state.entities.body(slot).burn_ticks, 298);
+}

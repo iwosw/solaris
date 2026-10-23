@@ -304,8 +304,9 @@ pub(super) fn run(
         if gone {
             // Removing the row must not discard actual weapon custody before
             // the lethal-hit hooks run during same-tick damage admission.
-            if record.fired_from_weapon.is_some()
-                && !state.registry.advancements.definitions.is_empty()
+            if record.piercing > 0
+                || (record.fired_from_weapon.is_some()
+                    && !state.registry.advancements.definitions.is_empty())
             {
                 state.projectiles.retired_crossbows.insert(id, *boxed);
             }
@@ -618,7 +619,12 @@ fn step(
                 super::set_flight(state, slot, velocity.map(|v| v * -0.01));
                 return false;
             }
-            if record.piercing == 0 || record.hit.len() > record.piercing as usize {
+            if record.piercing == 0 {
+                state.projectiles.pending_arrow_removals.insert(id);
+                state.entities.set_pos(slot, impact);
+                return false;
+            }
+            if record.hit.len() > record.piercing as usize {
                 return true;
             }
         }

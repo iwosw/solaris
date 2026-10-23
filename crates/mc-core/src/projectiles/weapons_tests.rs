@@ -144,6 +144,7 @@ fn crossbow_loads_once_and_multishot_side_arrows_cannot_duplicate_ammo() {
     assert_eq!(arrows.len(), 3);
     assert_eq!(arrows.iter().filter(|arrow| arrow.pickup).count(), 1);
     assert!(arrows.iter().all(|arrow| arrow.piercing == 2));
+    assert!(arrows.iter().all(|arrow| arrow.critical));
     assert!(arrows.iter().all(|arrow| arrow.fired_from_weapon.is_some()));
     assert!(
         state.players[&actor].inventory.slots[0]
@@ -182,6 +183,7 @@ fn crossbow_fires_full_firework_payload_and_requires_held_rockets() {
     let rocket = projectiles(&state)[0];
     assert_eq!(rocket.kind, ProjectileKind::Firework);
     assert!(rocket.shot_at_angle);
+    assert!(!rocket.critical);
     assert_eq!(state.players[&actor].inventory.slots[OFF_HAND].count, 1);
     assert_eq!(state.players[&actor].inventory.slots[0].damage, Some(3));
     assert_eq!(item_stat(&state, actor, StatType::Used, "crossbow"), 1);

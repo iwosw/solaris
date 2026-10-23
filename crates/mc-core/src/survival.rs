@@ -218,6 +218,7 @@ pub struct Vitals {
     pub air: i32,
     pub experience: Experience,
     regen_timer: u32,
+    peaceful_timer: u32,
 }
 
 impl Default for Vitals {
@@ -230,6 +231,7 @@ impl Default for Vitals {
             air: MAX_AIR,
             experience: Experience::default(),
             regen_timer: 0,
+            peaceful_timer: 0,
         }
     }
 }
@@ -265,6 +267,27 @@ impl Vitals {
             return out;
         }
         let before = (self.health, self.food, self.saturation);
+        // FoodData consumes exhaustion in the survival tick, where difficulty
+        // is authoritative, rather than in individual movement/effect callers.
+        if self.exhaustion >= EXHAUSTION_STEP {
+            self.exhaustion -= EXHAUSTION_STEP;
+            if self.saturation > 0.0 {
+                self.saturation = (self.saturation - 1.0).max(0.0);
+            } else if difficulty != Difficulty::Peaceful {
+                self.food = (self.food - 1).max(0);
+            }
+        }
+        if difficulty == Difficulty::Peaceful {
+            self.peaceful_timer = (self.peaceful_timer + 1) % 20;
+            if self.peaceful_timer.is_multiple_of(10) {
+                self.food = (self.food + 1).min(MAX_FOOD);
+            }
+            if self.peaceful_timer == 0 && natural_regeneration {
+                self.heal(1.0);
+            }
+        } else {
+            self.peaceful_timer = 0;
+        }
         if let Some(amount) = self.tick_regen(difficulty, natural_regeneration) {
             out.damage.push((DamageKind::Starvation, amount));
         }
@@ -318,7 +341,7 @@ impl Vitals {
             }
             return None;
         }
-        if self.food == 0 {
+        if self.food == 0 && difficulty != Difficulty::Peaceful {
             self.regen_timer += 1;
             if self.regen_timer >= HEALTH_TICK_PERIOD {
                 self.regen_timer = 0;
@@ -346,21 +369,12 @@ impl Vitals {
         self.is_dead()
     }
 
-    /// Vanilla `FoodData.addExhaustion`: every 4 points cost one saturation
-    /// point, or one food point once saturation is gone.
+    /// Queue bounded exhaustion; difficulty-aware spending occurs at the next tick.
     pub fn add_exhaustion(&mut self, amount: f32) {
         if !amount.is_finite() || amount <= 0.0 {
             return;
         }
-        self.exhaustion += amount;
-        while self.exhaustion >= EXHAUSTION_STEP {
-            self.exhaustion -= EXHAUSTION_STEP;
-            if self.saturation > 0.0 {
-                self.saturation = (self.saturation - 1.0).max(0.0);
-            } else {
-                self.food = (self.food - 1).max(0);
-            }
-        }
+        self.exhaustion = (self.exhaustion + amount).min(40.0);
     }
 
     #[must_use]
@@ -499,7 +513,7 @@ fn reduce_damage_impl(
     breach: u32,
     physical: bool,
 ) -> f32 {
-    if kind == DamageKind::Void {
+    if matches!(kind, DamageKind::Void | DamageKind::Starvation) {
         return amount.max(0.0);
     }
     let mut stats = ArmorStats {

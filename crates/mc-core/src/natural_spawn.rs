@@ -1060,27 +1060,68 @@ pub(crate) fn spawn_floor(state: &TickState, x: i32, z: i32, category: MobCatego
     (valid && y + 2 < geometry.max_y()).then_some(y + 1)
 }
 
-/// Vanilla `spawnRadius`: players appear within this many blocks of the
-/// world spawn.
-const PLAYER_SPAWN_RADIUS: i32 = 10;
-
-/// Where a fresh or respawning player appears (vanilla
-/// `adjustSpawnLocation`): the first dry, clear surface column within
-/// [`PLAYER_SPAWN_RADIUS`] of the world spawn, in a random order that visits
-/// every column once; the world spawn itself when none is resident.
+/// Choose a dry resident spawn column within the configured radius. Small
+/// squares use a coprime walk; large rules examine resident columns only, never
+/// billions of unloaded positions. This runs on join/respawn, not every tick.
 pub(crate) fn player_spawn(state: &TickState, salt: u64) -> [f64; 3] {
     let spawn = state.world.world_spawn();
-    let side = 2 * PLAYER_SPAWN_RADIUS + 1;
-    let area = (side * side) as u64;
-    // 17 is coprime with 21 * 21, so the walk covers the whole square.
-    const STEP: u64 = 17;
-    let mut rng = Rng((state.world.seed() as u64) ^ salt.wrapping_mul(0xBF58_476D_1CE4_E5B9));
-    let offset = rng.below(area);
-    for i in 0..area {
-        let index = (offset + STEP * i) % area;
-        let x = spawn[0] + (index % side as u64) as i32 - PLAYER_SPAWN_RADIUS;
-        let z = spawn[2] + (index / side as u64) as i32 - PLAYER_SPAWN_RADIUS;
-        if let Some(y) = spawn_floor(state, x, z, MobCategory::Misc) {
+    let radius = i64::from(crate::command_rules::integer(state, "respawn_radius").max(0));
+    let seed = (state.world.seed() as u64) ^ salt.wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    if radius <= 31 {
+        let side = (2 * radius + 1) as u64;
+        let area = side * side;
+        let offset = Rng(seed).below(area);
+        // Preserve the ordinary seed walk where 17 is coprime. For a multiple
+        // of 17, side+1 is always coprime to side².
+        let step = if side.is_multiple_of(17) {
+            side + 1
+        } else {
+            17
+        };
+        for i in 0..area {
+            let index = (offset + step * i) % area;
+            let x = i64::from(spawn[0]) + (index % side) as i64 - radius;
+            let z = i64::from(spawn[2]) + (index / side) as i64 - radius;
+            if let (Ok(x), Ok(z)) = (i32::try_from(x), i32::try_from(z))
+                && let Some(y) = spawn_floor(state, x, z, MobCategory::Misc)
+            {
+                return [f64::from(x) + 0.5, f64::from(y), f64::from(z) + 0.5];
+            }
+        }
+    } else {
+        let mut best: Option<((u64, i32, i32), i32)> = None;
+        for chunk in state.world.chunks() {
+            let x0 = i64::from(chunk.pos.x) * 16;
+            let z0 = i64::from(chunk.pos.z) * 16;
+            let min_x = x0
+                .max(i64::from(spawn[0]) - radius)
+                .max(i64::from(i32::MIN));
+            let max_x = (x0 + 15)
+                .min(i64::from(spawn[0]) + radius)
+                .min(i64::from(i32::MAX));
+            let min_z = z0
+                .max(i64::from(spawn[2]) - radius)
+                .max(i64::from(i32::MIN));
+            let max_z = (z0 + 15)
+                .min(i64::from(spawn[2]) + radius)
+                .min(i64::from(i32::MAX));
+            for x in min_x..=max_x {
+                for z in min_z..=max_z {
+                    let (x, z) = (x as i32, z as i32);
+                    let key = (
+                        Rng(seed ^ u64::from(x as u32) ^ (u64::from(z as u32) << 32)).next(),
+                        x,
+                        z,
+                    );
+                    if best.is_none_or(|(old, _)| key < old)
+                        && let Some(y) = spawn_floor(state, x, z, MobCategory::Misc)
+                    {
+                        best = Some((key, y));
+                    }
+                }
+            }
+        }
+        if let Some(((_, x, z), y)) = best {
             return [f64::from(x) + 0.5, f64::from(y), f64::from(z) + 0.5];
         }
     }

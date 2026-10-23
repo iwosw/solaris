@@ -581,7 +581,7 @@ fn nonpiercing_crossbow_kill_retains_actual_launch_weapon_after_projectile_remov
     crate::tick::run_tick(&mut state, &[]);
     assert!(
         state.entities.slot_of_any(projectile).is_none(),
-        "nonpiercing hit removed the projectile before damage admission"
+        "nonpiercing hit removes the projectile in the damage commit"
     );
     assert!(
         state
@@ -597,12 +597,7 @@ fn nonpiercing_crossbow_kill_retains_actual_launch_weapon_after_projectile_remov
         state.players[&entity].advancement_progress["test:aim"]["done"], true,
         "lethal hits also award hurt criteria and retain removed arrow tags"
     );
-    assert!(
-        state
-            .projectiles
-            .retired_crossbows
-            .contains_key(&projectile)
-    );
+    assert!(state.projectiles.pending_arrow_removals.is_empty());
 }
 
 #[test]

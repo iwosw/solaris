@@ -292,6 +292,18 @@ fn retained_attribute_operations_and_equipment_slot_matching_drive_native_values
         ) > 0.0
     );
 }
+
+fn clear_melee_lane(state: &mut TickState) {
+    state
+        .world
+        .ensure_blocking(&[mc_world::ChunkPos { x: 0, z: 0 }]);
+    for x in 0..=1 {
+        for y in 80..=83 {
+            state.world.set_block(x, y, 0, state.registry.states.air);
+        }
+    }
+    state.world.fold_overlay();
+}
 #[test]
 fn accepted_cave_spider_melee_poisons_by_difficulty_but_blocked_hits_do_not() {
     for (difficulty, expected) in [
@@ -302,6 +314,7 @@ fn accepted_cave_spider_melee_poisons_by_difficulty_but_blocked_hits_do_not() {
     ] {
         let mut state = state();
         state.difficulty = difficulty;
+        clear_melee_lane(&mut state);
         let spider = mob(&mut state, "minecraft:cave_spider", 12.0);
         let cow = mob(&mut state, "minecraft:cow", 10.0);
         let slot = state.entities.slot_of(cow).unwrap();
@@ -365,6 +378,8 @@ fn cave_spider_effect_is_reliable_for_player_and_survives_native_effect_serializ
     state.entities.row_mut(slot).protected_until = 0;
     state.difficulty = Difficulty::Normal;
     let spider = mob(&mut state, "minecraft:cave_spider", 12.0);
+    clear_melee_lane(&mut state);
+    state.entities.set_pos(slot, [0.5, 80.0, 0.5]);
     state.merge_damage.push((
         slot,
         DamagePiece {

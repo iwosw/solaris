@@ -28,6 +28,8 @@ fn saturation_heals_fast_when_food_is_full() {
     assert_eq!(v.health, 10.0);
     ticks(&mut v, 1, Difficulty::Normal);
     assert!((v.health - (10.0 + 5.0 / 6.0)).abs() < 1e-5);
+    assert_eq!(v.saturation, 5.0);
+    ticks(&mut v, 1, Difficulty::Normal);
     assert_eq!(v.saturation, 4.0);
 }
 
@@ -43,6 +45,7 @@ fn food_eighteen_heals_one_point_every_eighty_ticks() {
     assert_eq!(v.health, 10.0);
     ticks(&mut v, 1, Difficulty::Normal);
     assert_eq!(v.health, 11.0);
+    ticks(&mut v, 1, Difficulty::Normal);
     assert_eq!(
         v.food, 17,
         "6 exhaustion costs one food point with no saturation"
@@ -126,8 +129,10 @@ fn exhaustion_spends_saturation_before_food() {
         ..Vitals::default()
     };
     v.add_exhaustion(4.0);
+    ticks(&mut v, 1, Difficulty::Normal);
     assert_eq!((v.food, v.saturation), (20, 0.0));
     v.add_exhaustion(8.5);
+    ticks(&mut v, 2, Difficulty::Normal);
     assert_eq!(v.food, 18);
     assert!((v.exhaustion - 0.5).abs() < 1e-6);
 }
@@ -311,4 +316,45 @@ fn lethal_damage_reports_death_once() {
     assert!(!v.hurt(DamageKind::Melee, 1.0));
     v.respawn();
     assert_eq!(v, Vitals::default());
+}
+
+#[test]
+fn parity_peaceful_food_never_spends_but_recovery_obeys_health_rule() {
+    let mut v = Vitals {
+        health: 10.0,
+        food: 10,
+        saturation: 0.0,
+        ..Vitals::default()
+    };
+    for _ in 0..20 {
+        v.add_exhaustion(4.0);
+        assert!(
+            v.tick(Difficulty::Peaceful, false, true, true, false)
+                .damage
+                .is_empty()
+        );
+    }
+    assert_eq!(v.health, 10.0);
+    assert_eq!(v.food, 12);
+    for _ in 0..20 {
+        v.add_exhaustion(4.0);
+        v.tick(Difficulty::Peaceful, false, true, true, true);
+    }
+    assert_eq!(v.health, 11.0);
+    assert_eq!(v.food, 14);
+}
+
+#[test]
+fn parity_starvation_bypasses_protection_enchantments() {
+    let data = ArmorData::new();
+    let mut armor = ItemStack::new(1, 1);
+    armor.enchantments.push(ItemEnchantment {
+        id: Identifier::parse("minecraft:protection").unwrap(),
+        level: 4,
+    });
+    let armor = std::array::from_fn::<_, 4, _>(|_| armor.clone());
+    assert_eq!(
+        reduce_damage(&data.rules(), &armor, 1.0, DamageKind::Starvation),
+        1.0
+    );
 }

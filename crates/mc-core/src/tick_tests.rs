@@ -14,6 +14,8 @@ use crate::tick::{TickState, run_tick};
 use crate::world::ChunkWorld;
 #[path = "tick/cohort_tests.rs"]
 mod cohort_tests;
+#[path = "tick/combat_parity_tests.rs"]
+mod combat_parity_tests;
 #[path = "tick/craft_stations_tests.rs"]
 mod craft_stations_tests;
 #[path = "effects_trigger_tests.rs"]
