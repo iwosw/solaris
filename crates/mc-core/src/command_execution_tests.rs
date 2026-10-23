@@ -529,6 +529,26 @@ fn security_chat_burst_disconnects_only_the_sender() {
 }
 
 #[test]
+fn security_operator_chat_burst_is_never_kicked() {
+    let (mut state, _, _) = fixture();
+    state.plugin_players.observe_permission(ConnectionId(1), 4);
+    // Far past the u16 counter range: the budget saturates instead of overflowing.
+    let inputs: Vec<_> = (0..4000)
+        .map(|_| PlayerInput::Chat {
+            connection: ConnectionId(1),
+            message: "spam".into(),
+        })
+        .collect();
+    let (_, deliveries, _) = crate::tick::run_tick(&mut state, &inputs);
+    assert!(state.disconnects.is_empty());
+    assert!(!deliveries.iter().any(|(_, changes)| {
+        changes
+            .iter()
+            .any(|change| matches!(change, PlayerChange::Disconnect { .. }))
+    }));
+}
+
+#[test]
 fn security_chat_and_message_aliases_share_the_sender_budget() {
     let (mut state, _, _) = fixture();
     let mut inputs: Vec<_> = (0..6)
@@ -537,17 +557,18 @@ fn security_chat_and_message_aliases_share_the_sender_budget() {
             message: "hello".into(),
         })
         .collect();
+    // Non-operator sender: operators are never kicked for spam.
     for command in [
         "me waves",
         "msg Bob hello",
         "tell Bob hello",
         "w Bob spam",
-        "say spam",
+        "me spam",
     ] {
         inputs.push(PlayerInput::Command {
             connection: ConnectionId(1),
             command: command.into(),
-            permission_level: 2,
+            permission_level: 0,
         });
     }
     let (_, deliveries, _) = crate::tick::run_tick(&mut state, &inputs);

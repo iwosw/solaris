@@ -3,6 +3,7 @@ use crate::tick::TickState;
 
 /// Vanilla's TickThrottler(20, 200), checked before fan-out rather than after it.
 /// The counter travels with the player across respawns/dimensions, but not rejoins.
+/// Like vanilla `detectRateSpam`, operators count but are never kicked.
 pub(in crate::tick) fn admit_communication(
     state: &mut TickState,
     connection: ConnectionId,
@@ -20,8 +21,8 @@ pub(in crate::tick) fn admit_communication(
     let Some(player) = state.players.get_mut(&entity) else {
         return false;
     };
-    player.chat_spam_ticks += 20;
-    if player.chat_spam_ticks < 200 {
+    player.chat_spam_ticks = player.chat_spam_ticks.saturating_add(20);
+    if player.chat_spam_ticks < 200 || state.plugin_players.is_operator(connection) {
         return true;
     }
     // Seal exactly once, including when the sender's queue is already full.
