@@ -76,6 +76,8 @@ const MAX_SUBMIT_SHEDS: u32 = 64;
 /// Per-Play-packet-id token buckets. Paper's packet limiter is permissive for
 /// normal clients; these defaults retain that headroom while bounding one
 /// packet type independently of all other client traffic.
+/// IDs beyond the implemented packet prefix share one bucket, so arbitrary
+/// client-supplied VarInts cannot allocate unlimited buckets or renew the burst.
 #[derive(Debug)]
 struct PacketLimiter {
     rate_per_second: f64,
@@ -100,6 +102,13 @@ impl PacketLimiter {
         if self.rate_per_second == 0.0 || self.burst == 0.0 {
             return true;
         }
+        let packet_id = if (0..=mc_protocol::packets::play::ServerboundCustomClickAction::ID)
+            .contains(&packet_id)
+        {
+            packet_id
+        } else {
+            -1
+        };
         let (tokens, updated) = self.buckets.entry(packet_id).or_insert((self.burst, now));
         *tokens = (*tokens + now.duration_since(*updated).as_secs_f64() * self.rate_per_second)
             .min(self.burst);
@@ -1472,6 +1481,7 @@ pub async fn serve_with_console(
         }
         None
     };
+    let mut accept_retry_at = None;
     loop {
         tokio::select! {
             _ = async { let _ = stop.wait_for(|stopping| *stopping).await; } => {
@@ -1501,8 +1511,8 @@ pub async fn serve_with_console(
                 return Ok(());
             }
             _ = tasks.join_next(), if !tasks.is_empty() => {}
-            accepted = listener.accept() => {
-                let (stream, peer) = accepted?;
+            accepted = accept_with_backoff(|| listener.accept(), &mut accept_retry_at) => {
+                let (stream, peer) = accepted;
                 // Refused before the handshake: the throttle and the per-address
                 // cap answer like an absent listener instead of buffering work.
                 let address = Some(peer.ip());
@@ -1538,6 +1548,34 @@ pub async fn serve_with_console(
                 }
                 Err(error) => anyhow::bail!("edge pump died: {error}"),
             },
+        }
+    }
+}
+
+/// Keep resource exhaustion local to admission. The deadline lives outside the
+/// future so another select branch cannot cancel the backoff and retry early.
+async fn accept_with_backoff<T, F, Fut>(
+    mut accept: F,
+    retry_at: &mut Option<tokio::time::Instant>,
+) -> T
+where
+    F: FnMut() -> Fut,
+    Fut: Future<Output = std::io::Result<T>>,
+{
+    loop {
+        if let Some(deadline) = *retry_at {
+            tokio::time::sleep_until(deadline).await;
+        }
+        match accept().await {
+            Ok(accepted) => {
+                *retry_at = None;
+                return accepted;
+            }
+            Err(error) => {
+                warn!(%error, "socket accept failed; retrying in 100 ms");
+                *retry_at =
+                    Some(tokio::time::Instant::now() + std::time::Duration::from_millis(100));
+            }
         }
     }
 }
@@ -3082,3 +3120,7 @@ mod transfer_tests;
 #[cfg(test)]
 #[path = "server_leave_tests.rs"]
 mod leave_tests;
+
+#[cfg(test)]
+#[path = "server_protocol_admission_tests.rs"]
+mod protocol_admission_tests;

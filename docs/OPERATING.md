@@ -329,11 +329,13 @@ by itself a rendered-edit pass.
 
 ## Packet and movement anti-cheat
 
-Every Play packet id has its own token bucket. The default accepts 500 packets
-per second with an initial burst of 1000 for each id, then sends a clear
-disconnect if one packet type exceeds its bucket. This protects packet floods
-without pooling unrelated normal client traffic; set either packet setting to
-zero only when an upstream boundary owns this protection.
+Play packet IDs in the implemented prefix (`0x00` through `0x44`) have their own
+token buckets. All other IDs share one overflow bucket: changing an unknown ID
+cannot renew its burst or grow per-connection limiter storage beyond 70 buckets.
+The default accepts 500 packets per second with an initial burst of 1000 for each
+bucket, then sends a clear disconnect if a bucket is exceeded. This protects
+packet floods without pooling unrelated normal client traffic; set either packet
+setting to zero only when an upstream boundary owns this protection.
 
 The native tick also tracks survival players who repeatedly report an
 unsupported position without descending. After `max_airtime_ticks` it first
@@ -441,6 +443,9 @@ Connection admission has two optional per-address limits under `[network]`:
 `connection_throttle_ms` (minimum gap between two accepted connections from one
 address) and `max_connections_per_ip` (concurrent cap). Both default to `0`
 (disabled) and a refused connection is closed before the handshake.
+Listener accept failures (including process/system file-descriptor exhaustion)
+are logged and retried after a 100 ms backoff without stopping existing sessions
+or the core. Shutdown remains responsive during that backoff.
 
 ## Announcements, tick control and `/locate`
 
