@@ -369,6 +369,21 @@ pub(crate) fn nether_terrain(
     Ok(terrain)
 }
 
+pub(crate) fn end_terrain(
+    config: &CoreConfig,
+    registry: &CoreRegistry,
+) -> Result<mc_worldgen::end::EndGenerator, CoreError> {
+    let generator =
+        mc_worldgen::end::EndGenerator::try_new(config.seed, Arc::clone(&registry.blocks))
+            .map_err(|err| CoreError::Worldgen(err.to_string()))?;
+    let Some(root) = config.vanilla_data_dir.as_deref() else {
+        return Ok(generator);
+    };
+    generator
+        .with_vanilla_data(root, &registry.blocks)
+        .map_err(|err| CoreError::Worldgen(err.to_string()))
+}
+
 fn load_dimension_state(
     config: &CoreConfig,
     registry: Arc<CoreRegistry>,
@@ -411,10 +426,7 @@ fn load_dimension_state(
     let generator: Arc<dyn ChunkGenerator> = match dimension {
         crate::dimensions::Dimension::Overworld => Arc::new(terrain.expect("overworld terrain")),
         crate::dimensions::Dimension::Nether => Arc::new(nether_terrain(config, &registry)?),
-        crate::dimensions::Dimension::End => Arc::new(
-            mc_worldgen::end::EndGenerator::try_new(config.seed, Arc::clone(&registry.blocks))
-                .map_err(|err| CoreError::Worldgen(err.to_string()))?,
-        ),
+        crate::dimensions::Dimension::End => Arc::new(end_terrain(config, &registry)?),
     };
     let mut world = ChunkWorld::new_native(
         config.seed,
@@ -1488,6 +1500,7 @@ pub(crate) fn restore_entity(
         }
         crate::entity_loot::restore(state, slot);
         crate::armor_stand::restore(state, slot);
+        crate::item_frame::restore(state, slot);
         crate::vehicles::restore(state, slot);
         crate::bees::appearance(state, slot);
         crate::allay::appearance(state, slot);
@@ -2880,6 +2893,7 @@ fn entity_capture_record(
         wire_id: entity_id_int(body.id),
         extra_fields,
     };
+    crate::item_frame::capture(&mut record, &row.appearance);
     if let Some(projectile) = &row.projectile {
         record
             .extra_fields

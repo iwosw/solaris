@@ -1,4 +1,4 @@
-//! Once-only village template inhabitants. Claims outlive entity death and
+//! Once-only structure inhabitants. Claims outlive entity death and
 //! share the entity's journal/checkpoint transaction, so reload cannot duplicate.
 use super::{VillagerKind, VillagerProfession};
 use crate::{
@@ -22,6 +22,63 @@ pub(crate) fn load(state: &mut TickState, chunks: &[ChunkPos], changes: &mut Cha
         let markers = chunk.generated_entities();
         for marker in markers {
             if state.generated_entity_claims.contains(&marker.claim) {
+                continue;
+            }
+            if marker.entity_type == "minecraft:item_frame"
+                && marker.claim.starts_with("minecraft:end_city/ship@")
+                && marker.claim.ends_with("#elytra")
+            {
+                let elytra = state
+                    .registry
+                    .items
+                    .id_of(
+                        &mc_data::Identifier::parse("minecraft:elytra").expect("static identifier"),
+                    )
+                    .expect("vanilla elytra item");
+                let position = crate::boundary::BlockPos {
+                    x: marker.position[0].floor() as i32,
+                    y: marker.position[1].floor() as i32,
+                    z: marker.position[2].floor() as i32,
+                };
+                let face =
+                    [3, 4, 2, 5][((marker.yaw / 90.0).round() as i32).rem_euclid(4) as usize];
+                let Some(id) = crate::item_frame::spawn(
+                    state,
+                    position,
+                    face,
+                    false,
+                    mc_data::ItemStack::new(elytra, 1),
+                ) else {
+                    continue;
+                };
+                let slot = state.entities.slot_of(id).expect("new ship frame");
+                state.entities.set_uuid(slot, generated_uuid(&marker.claim));
+                state.generated_entity_claims.insert(marker.claim.clone());
+                state.new_generated_entity_claims.push(marker.claim);
+                continue;
+            }
+            if marker.entity_type == "minecraft:shulker" {
+                let type_id = state
+                    .registry
+                    .entity_types
+                    .id_of(
+                        &mc_data::Identifier::parse("minecraft:shulker")
+                            .expect("static identifier"),
+                    )
+                    .expect("vanilla shulker type");
+                let health = state
+                    .registry
+                    .blueprint(type_id)
+                    .expect("shulker blueprint")
+                    .params
+                    .max_health;
+                let id = state.spawn_mob(type_id, marker.position, health);
+                let slot = state.entities.slot_of(id).expect("new shulker");
+                state.entities.set_uuid(slot, generated_uuid(&marker.claim));
+                state.entities.row_mut(slot).persistent = true;
+                changes.entities_spawned.push(id);
+                state.generated_entity_claims.insert(marker.claim.clone());
+                state.new_generated_entity_claims.push(marker.claim);
                 continue;
             }
             let Some(kind) = VillagerKind::from_name(&marker.villager_kind) else {

@@ -1,33 +1,45 @@
 use super::{VillagerKind, VillagerProfession, conversion_tests::state, generated};
 use crate::boundary::{ChangeSet, ChunkPos};
 use std::sync::Arc;
-struct MarkerGenerator(mc_worldgen::TerrainGenerator);
+struct MarkerGenerator(mc_worldgen::TerrainGenerator, &'static str);
 impl mc_world::ChunkGenerator for MarkerGenerator {
     fn generate(&self, pos: mc_world::ChunkPos) -> mc_world::Chunk {
         let mut chunk = mc_world::ChunkGenerator::generate(&self.0, pos);
         chunk.set_generated_entities(&[mc_world::GeneratedEntityMarker {
-            claim: "village:0:0:resident:1".into(),
-            entity_type: "minecraft:villager".into(),
+            claim: if self.1 == "minecraft:item_frame" {
+                "minecraft:end_city/ship@0:80:0#elytra"
+            } else {
+                "village:0:0:resident:1"
+            }
+            .into(),
+            entity_type: self.1.into(),
             position: [0.5, 80., 0.5],
-            persistent: false,
+            persistent: self.1 != "minecraft:villager",
             villager_kind: "minecraft:savanna".into(),
             profession: "minecraft:farmer".into(),
             level: 2,
             age: -12000,
-            yaw: 93.,
+            yaw: if self.1 == "minecraft:item_frame" {
+                180.0
+            } else {
+                93.0
+            },
             pitch: 7.,
         }]);
         chunk
     }
 }
 fn fixture() -> crate::tick::TickState {
+    fixture_for("minecraft:villager")
+}
+fn fixture_for(entity_type: &'static str) -> crate::tick::TickState {
     let mut state = state();
     state.world = crate::world::ChunkWorld::new(
         42,
-        Arc::new(MarkerGenerator(mc_worldgen::TerrainGenerator::new(
-            42,
-            Arc::clone(&state.registry.blocks),
-        ))),
+        Arc::new(MarkerGenerator(
+            mc_worldgen::TerrainGenerator::new(42, Arc::clone(&state.registry.blocks)),
+            entity_type,
+        )),
         &state.registry,
         mc_world::BlockStateId(state.registry.states.air),
         [0, 80, 0],
@@ -37,6 +49,10 @@ fn fixture() -> crate::tick::TickState {
     state
         .world
         .ensure_blocking(&[(chunk, 0)].into_iter().collect());
+    if entity_type == "minecraft:item_frame" {
+        state.world.set_block(0, 80, 0, state.registry.states.air);
+        state.world.set_block(0, 80, 1, state.registry.states.stone);
+    }
     state
 }
 
@@ -78,10 +94,101 @@ fn preloaded_village_resident_spawns_once_and_claim_survives_death() {
 }
 
 #[test]
+fn generated_end_city_guard_is_persistent_and_never_reissued_after_death() {
+    let mut state = fixture_for("minecraft:shulker");
+    let mut changes = ChangeSet::default();
+    generated::load(&mut state, &[], &mut changes);
+    assert_eq!(changes.entities_spawned.len(), 1);
+    let slot = state.entities.slot_of(changes.entities_spawned[0]).unwrap();
+    assert!(state.entities.row(slot).persistent);
+    let expected_type = state
+        .registry
+        .entity_types
+        .id_of(&mc_data::Identifier::parse("minecraft:shulker").unwrap())
+        .unwrap();
+    assert!(matches!(state.entities.body(slot).kind,
+        crate::entities::EntityKind::Mob { type_id } if type_id == expected_type));
+    assert_eq!(
+        state.entities.row(slot).uuid,
+        generated::generated_uuid("village:0:0:resident:1")
+    );
+    state.remove_entity(slot);
+    changes.entities_spawned.clear();
+    generated::load(&mut state, &[ChunkPos { x: 0, z: 0 }], &mut changes);
+    assert!(changes.entities_spawned.is_empty());
+    assert_eq!(state.generated_entity_claims.len(), 1);
+}
+
+#[test]
 fn generated_uuid_lookup_and_claim_survive_checkpoint_restart() {
-    let mut source = fixture();
+    checkpoint_roundtrip("minecraft:villager");
+}
+
+#[test]
+fn end_city_guard_claim_and_persistence_survive_checkpoint_restart() {
+    checkpoint_roundtrip("minecraft:shulker");
+}
+
+#[test]
+fn end_ship_elytra_and_claim_survive_checkpoint_restart() {
+    checkpoint_roundtrip("minecraft:item_frame");
+}
+
+#[test]
+fn generated_end_ship_reward_is_obtainable_once() {
+    use crate::boundary::{ConnectionId, PlayerInput};
+    let mut state = fixture_for("minecraft:item_frame");
+    let mut changes = ChangeSet::default();
+    generated::load(&mut state, &[], &mut changes);
+    let frame = state.hostile.spawned[0];
+    crate::tick::run_tick(
+        &mut state,
+        &[PlayerInput::Join {
+            connection: ConnectionId(1),
+            uuid: uuid::Uuid::new_v4(),
+            name: "end-explorer".into(),
+            permission_level: 0,
+        }],
+    );
+    let actor = state.connections.entity_of(ConnectionId(1)).unwrap();
+    let mut drops = ChangeSet::default();
+    assert!(crate::item_frame::attack(
+        &mut state, actor, frame, &mut drops
+    ));
+    assert_eq!(drops.entities_spawned.len(), 1);
+    let dropped = state
+        .entities
+        .row(state.entities.slot_of(drops.entities_spawned[0]).unwrap())
+        .item
+        .as_ref()
+        .unwrap()
+        .full_stack();
+    assert_eq!(
+        state
+            .registry
+            .items
+            .name_of(dropped.item_id)
+            .unwrap()
+            .as_str(),
+        "minecraft:elytra"
+    );
+    assert_eq!(dropped.count, 1);
+    assert!(crate::item_frame::attack(
+        &mut state, actor, frame, &mut drops
+    ));
+    assert!(state.entities.slot_of(frame).is_none());
+    changes.entities_spawned.clear();
+    state.hostile.spawned.clear();
+    generated::load(&mut state, &[ChunkPos { x: 0, z: 0 }], &mut changes);
+    assert!(changes.entities_spawned.is_empty());
+    assert!(state.hostile.spawned.is_empty());
+}
+
+fn checkpoint_roundtrip(entity_type: &'static str) {
+    let mut source = fixture_for(entity_type);
     let mut changes = ChangeSet::default();
     generated::load(&mut source, &[], &mut changes);
+    changes.entities_spawned.append(&mut source.hostile.spawned);
     let id = changes.entities_spawned[0];
     let uuid = source
         .entities
@@ -128,7 +235,7 @@ fn generated_uuid_lookup_and_claim_survive_checkpoint_restart() {
         .unwrap();
     drop(store);
     let recovered = crate::native_checkpoint::recover_offline(&config).unwrap();
-    let mut restored = fixture();
+    let mut restored = fixture_for(entity_type);
     restored.tick = recovered.manifest.tick;
     let replay = &recovered.dimensions[&crate::dimensions::Dimension::Overworld];
     restored.generated_entity_claims = replay.generated_entity_claims.clone();
@@ -142,6 +249,29 @@ fn generated_uuid_lookup_and_claim_survive_checkpoint_restart() {
     assert_eq!(restored.entities.len(), 1);
     let slot = restored.entities.slot_of_uuid(uuid).unwrap();
     assert_eq!(restored.entities.row(slot).uuid, uuid);
+    if entity_type == "minecraft:item_frame" {
+        assert!(restored.entities.row(slot).persistent);
+        assert!(restored.entities.row(slot).controls.no_ai);
+        assert_eq!(
+            restored.entities.body(slot).movement,
+            crate::blueprint::MovementClass::Stationary
+        );
+        assert_eq!(
+            restored.entities.row(slot).appearance.extra,
+            source
+                .entities
+                .row(source.entities.slot_of(id).unwrap())
+                .appearance
+                .extra
+        );
+        assert_eq!(restored.generated_entity_claims.len(), 1);
+        assert!(restored.hostile.spawned.is_empty());
+        return;
+    }
+    if entity_type == "minecraft:shulker" {
+        assert!(restored.entities.row(slot).persistent);
+        return;
+    }
     let original = source
         .entities
         .row(source.entities.slot_of(id).unwrap())

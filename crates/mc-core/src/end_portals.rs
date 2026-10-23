@@ -550,20 +550,36 @@ pub(crate) fn outer_exit(
     writes: &mut Vec<(BlockPos, u32)>,
 ) -> BlockPos {
     let angle = mth::atan2(f64::from(origin.z), f64::from(origin.x));
-    let x = (f64::from(mth::cos(angle)) * 1024.0).floor() as i32;
-    let z = (f64::from(mth::sin(angle)) * 1024.0).floor() as i32;
+    let mut x = (f64::from(mth::cos(angle)) * 1024.0).floor() as i32;
+    let mut z = (f64::from(mth::sin(angle)) * 1024.0).floor() as i32;
     let stone = state_id(state, "minecraft:end_stone", &[]);
-    // The generator can leave this band void. Vanilla creates an End island
-    // when no landing surface is found; never fabricate an invisible floor.
+    let air = state.registry.states.air;
+    // Search the already admitted destination neighbourhood before creating
+    // an emergency island. This bounded search runs only on first gateway use.
     let mut landing = None;
-    for y in (1..=252).rev() {
-        if state.world.block_at(x, y, z).is_some_and(|id| {
-            state.registry.materials.classify(id) == mc_physics::BlockMaterial::Solid
-        }) && named(state, BlockPos { x, y: y + 1, z }, "air")
-            && named(state, BlockPos { x, y: y + 2, z }, "air")
-        {
-            landing = Some(y + 1);
-            break;
+    'search: for radius in 0_i32..=12 {
+        for dx in -radius..=radius {
+            for dz in -radius..=radius {
+                if dx.abs().max(dz.abs()) != radius {
+                    continue;
+                }
+                for y in (1..=237).rev() {
+                    let cell = BlockPos {
+                        x: x + dx,
+                        y,
+                        z: z + dz,
+                    };
+                    if state.world.block_at(cell.x, y, cell.z) == Some(stone)
+                        && state.world.block_at(cell.x, y + 1, cell.z) == Some(air)
+                        && state.world.block_at(cell.x, y + 2, cell.z) == Some(air)
+                    {
+                        x = cell.x;
+                        z = cell.z;
+                        landing = Some(y + 1);
+                        break 'search;
+                    }
+                }
+            }
         }
     }
     let y = landing.unwrap_or(75);

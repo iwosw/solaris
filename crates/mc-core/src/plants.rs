@@ -96,6 +96,7 @@ pub(crate) fn random_growth(state: &TickState, at: BlockPos, id: u32, seed: u64)
         match path {
             "kelp" | "cave_vines" | "weeping_vines" | "twisting_vines" | "vine"
             | "brown_mushroom" | "red_mushroom" => growth::random(read, at, id, seed),
+            "chorus_flower" => crate::chorus::growth(blocks, read, pos, BlockStateId(id), seed),
             "bamboo_sapling" => rules::bamboo_sapling_growth_edits(blocks, read, pos, seed),
             "cactus" | "sugar_cane" | "bamboo" => {
                 rules::vertical_plant_growth_edits(blocks, read, pos, BlockStateId(id), seed)
@@ -180,6 +181,9 @@ pub(crate) fn can_stand(state: &TickState, id: u32, at: BlockPos) -> bool {
     };
     let sand = matches!(support, "sand" | "red_sand" | "suspicious_sand");
     match path {
+        "chorus_flower" | "chorus_plant" => {
+            crate::chorus::supported(state, at, path == "chorus_flower")
+        }
         "wheat"
         | "carrots"
         | "potatoes"
@@ -307,6 +311,10 @@ pub(crate) fn neighbor_updates(
                 writes.push((at, state.registry.states.air));
                 pending.push(at);
             } else if let Some(new) = detached_stem(state, at, id) {
+                state.world.set_block(at.x, at.y, at.z, new);
+                writes.retain(|(pos, _)| *pos != at);
+                writes.push((at, new));
+            } else if let Some(new) = crate::chorus::connections(state, at, id) {
                 state.world.set_block(at.x, at.y, at.z, new);
                 writes.retain(|(pos, _)| *pos != at);
                 writes.push((at, new));

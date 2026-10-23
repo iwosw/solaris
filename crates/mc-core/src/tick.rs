@@ -2860,6 +2860,7 @@ fn run_dimension_tick_inner<'a>(
     crate::block_entity_defaults::after_blocks(state, &block_writes);
     crate::trial_spawner::after_blocks(state, &block_writes);
     crate::vault::after_blocks(state, &block_writes);
+    crate::item_frame::blocks_changed(state, &block_writes, &mut popped_drops);
     crate::block_log::after_blocks(state);
     if sim {
         crate::trial_spawner::run(state, &mut block_writes, &mut changes);

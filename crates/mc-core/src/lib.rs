@@ -10,6 +10,7 @@ mod abstract_sim_tests;
 pub mod advancements;
 pub mod allay;
 mod armor_stand;
+pub(crate) mod item_frame;
 mod beacon;
 #[cfg(test)]
 mod beacon_tests;
@@ -123,6 +124,7 @@ mod physical_defense;
 mod piglin;
 pub mod placement;
 pub(crate) mod plants;
+mod chorus;
 pub mod player;
 mod plugin;
 mod plugin_graves;

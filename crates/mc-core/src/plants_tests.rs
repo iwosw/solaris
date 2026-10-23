@@ -280,3 +280,57 @@ fn native_random_sampler_reaches_extra_plants_and_support_cascade() {
     super::dig(&mut state, 1, Y, 0);
     assert_eq!(at(&state, 1, Y + 1, 0), state.registry.states.air);
 }
+
+#[test]
+fn chorus_extends_branches_stops_and_loses_support() {
+    let (mut state, _) = setup();
+    plant(&mut state, 4, Y, 4, "end_stone", &[]);
+    plant(&mut state, 4, Y + 1, 4, "chorus_flower", &[("age", "0")]);
+    for dy in 1..=4 {
+        let at = pos(4, dy, 4);
+        let id = state.world.block_at(at.x, at.y, at.z).unwrap();
+        let plan = plants::random_growth(&state, at, id, 0).expect("chorus extends");
+        apply(&mut state, plan);
+    }
+    let at = pos(4, 5, 4);
+    let id = state.world.block_at(at.x, at.y, at.z).unwrap();
+    let plan = plants::random_growth(&state, at, id, 0).expect("chorus branches");
+    apply(&mut state, plan);
+    assert_eq!(
+        crate::farming::prop(
+            &state.registry.blocks,
+            super::at(&state, 3, Y + 5, 4),
+            "age"
+        ),
+        Some("1")
+    );
+    plant(&mut state, 8, Y, 8, "end_stone", &[]);
+    plant(&mut state, 8, Y + 1, 8, "chorus_flower", &[("age", "5")]);
+    let dead = super::at(&state, 8, Y + 1, 8);
+    assert!(plants::random_growth(&state, pos(8, 1, 8), dead, 0).is_none());
+    assert!(plants::bonemeal(&state, pos(8, 1, 8), 0).is_none());
+    let air = state.registry.states.air;
+    put(&mut state, 4, Y, 4, air);
+    plants::neighbor_updates(&mut state, pos(4, 0, 4), &mut Vec::new(), &mut Vec::new());
+    for dy in 1..=5 {
+        assert_eq!(super::at(&state, 4, Y + dy, 4), air);
+    }
+    assert_eq!(super::at(&state, 3, Y + 5, 4), air);
+}
+
+#[test]
+fn native_random_sampler_grows_chorus_flowers() {
+    let (mut state, _) = setup();
+    state
+        .gamerules
+        .insert("random_tick_speed".into(), super::FAST.into());
+    plant(&mut state, 4, Y, 4, "end_stone", &[]);
+    plant(&mut state, 4, Y + 1, 4, "chorus_flower", &[("age", "0")]);
+    super::run(&mut state, 20);
+    let id = state
+        .registry
+        .blocks
+        .by_id(mc_world::BlockStateId(at(&state, 4, Y + 1, 4)))
+        .unwrap();
+    assert_eq!(id.block.id.path(), "chorus_plant");
+}
