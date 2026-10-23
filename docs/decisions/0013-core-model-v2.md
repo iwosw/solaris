@@ -994,6 +994,17 @@ AI-due, network-changed, entity-viewer pairs.
   lookup. The exact proof still reads body/effect state and runs a physics
   step per qualifying decision-tick row. Wire marks are a dense per-slot flag,
   not a hash set; a cheaper exact rest certificate remains unestablished.
+  Zombie and zombie-villager decision rest additionally requires an empty
+  resident target table, not just absence of live player targets. Admission
+  reuses the sensor's current resident table, built before row preparation.
+  Any candidate anywhere in either table conservatively disables decision
+  rest; the normal 1/2/4-tick sensor cadence therefore catches same-chunk range
+  crossings, spawn, teleport and dimension arrivals without a new wake index.
+  Occluded candidates also keep sensing live (zombie chase has no sight-ray
+  filter), so breaking a remote wall cannot strand a sleeper. Existing
+  footprint, hurt/fire, fluid/air and exact motion-proof gates are unchanged;
+  golem/zoglin multi-class targeting remains excluded. Removing this extension
+  means excluding zombie types from `MOTION_TARGETLESS_WANDER_REST` again.
 - **Step B (in progress as fanout rounds):** edge work proportional to changes.
   Plan from snapshot `changed` plus chunk-to-viewer subscriptions; encode each
   move once and share bytes across viewers with matching baselines; no

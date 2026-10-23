@@ -1729,13 +1729,11 @@ fn motion_flags_for(
                 );
             if !chaser {
                 flags |= MOTION_WANDER_REST;
-            } else if !matches!(
-                blueprint.name.as_str(),
-                "minecraft:zombie" | "minecraft:zombie_villager" | "minecraft:iron_golem"
-            ) && crate::piglin::name(type_id) != "minecraft:zoglin"
+            } else if blueprint.name != "minecraft:iron_golem"
+                && crate::piglin::name(type_id) != "minecraft:zoglin"
             {
-                // Other chasers only search players. If that whole target
-                // table is empty, they reach the same final wander branch.
+                // Admission checks every applicable target table: players,
+                // and also residents for zombie/zombie-villager chasers.
                 flags |= MOTION_TARGETLESS_WANDER_REST;
             }
         }

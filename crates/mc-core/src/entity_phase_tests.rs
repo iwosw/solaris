@@ -112,15 +112,7 @@ fn pickup_lanes_use_current_liveness_delay_and_post_move_slot_order() {
 }
 
 fn can_early_rest(state: &mut TickState, slot: EntitySlot) -> bool {
-    state.entities.prepare_motion_hints(&state.registry);
-    early_entity_rest(
-        &PrepView::of(state),
-        slot,
-        MOB_FAR_PERIOD as u8,
-        state.entity_phase_revision,
-        true,
-        !crate::hostile::has_live_targets(state),
-    )
+    !phase_admitted(state, slot, MOB_FAR_PERIOD as u8)
 }
 
 #[test]
@@ -724,6 +716,7 @@ fn parallel_row_prep_matches_the_serial_prep_including_rare_fixups() {
         .collect();
     let env = PrepEnv {
         targets_empty: true,
+        villagers_empty: resident_villager_targets(&state.entities).is_empty(),
         unchanged_since: state.entity_phase_revision,
     };
     let mut serial = PrepChunk::default();
@@ -793,6 +786,7 @@ fn parallel_row_prep_algorithm_micro() {
     let periods: Vec<u8> = (0..ROWS).map(|index| [1, 2, 4][index % 3]).collect();
     let env = PrepEnv {
         targets_empty: true,
+        villagers_empty: true,
         unchanged_since: state.entity_phase_revision,
     };
     let mut out = PrepChunk::default();
@@ -890,6 +884,8 @@ fn idle_wander_decision_rest_matches_full_step_for_two_episodes() {
         ("minecraft:skeleton", true),
         ("minecraft:spider", true),
         ("minecraft:creeper", true),
+        ("minecraft:zombie", true),
+        ("minecraft:zombie_villager", true),
     ] {
         let (mut state, slot) = resting_mob(species);
         let _ = run_tick(
@@ -1051,6 +1047,7 @@ fn targetless_chaser_decision_rest_keeps_all_target_classes_live() {
         "minecraft:spider",
         "minecraft:creeper",
         "minecraft:zombie",
+        "minecraft:zombie_villager",
         "minecraft:zoglin",
         "minecraft:iron_golem",
         "minecraft:piglin",
@@ -1066,18 +1063,295 @@ fn targetless_chaser_decision_rest_keeps_all_target_classes_live() {
             .unwrap();
         state.entities.prepare_motion_hints(&state.registry);
         let view = PrepView::of(&state);
-        let player_only = matches!(
+        let targetless_rest = matches!(
             species,
-            "minecraft:skeleton" | "minecraft:spider" | "minecraft:creeper"
+            "minecraft:skeleton"
+                | "minecraft:spider"
+                | "minecraft:creeper"
+                | "minecraft:zombie"
+                | "minecraft:zombie_villager"
         );
         assert_eq!(
             early_entity_rest(&view, slot, 1, state.entity_phase_revision, true, true),
-            player_only,
+            targetless_rest,
             "{species}"
         );
         assert!(
             !early_entity_rest(&view, slot, 1, state.entity_phase_revision, true, false),
             "a live player target wakes {species}"
+        );
+    }
+}
+
+fn idle_zombie() -> (TickState, EntitySlot) {
+    let (mut state, slot) = resting_mob("minecraft:zombie");
+    state.day_time = 14_000;
+    let id = state.entities.body(slot).id;
+    state.tick = (1_u64..120)
+        .find(|&tick| {
+            tick.wrapping_add(id.0 as u64)
+                .is_multiple_of(MOB_FAR_PERIOD)
+                && crate::entity_motion::wander(state.entities.body(slot).movement, id.0, tick, 1.0)
+                    == [0.0; 3]
+        })
+        .unwrap();
+    assert!(can_early_rest(&mut state, slot));
+    assert!(run_entity_phase(&mut state, true).is_empty());
+    assert_eq!(state.entity_phase_scratch.writes.capacity(), 0);
+    (state, slot)
+}
+
+fn phase_admitted(state: &mut TickState, slot: EntitySlot, period: u8) -> bool {
+    state.entities.prepare_motion_hints(&state.registry);
+    admit_slot(
+        &PrepView::of(state),
+        slot.0 as usize,
+        period,
+        &PrepEnv {
+            targets_empty: !crate::hostile::has_live_targets(state),
+            villagers_empty: resident_villager_targets(&state.entities).is_empty(),
+            unchanged_since: state.entity_phase_revision,
+        },
+        &mut Vec::new(),
+        &mut Vec::new(),
+    )
+    .is_some()
+}
+
+fn join_zombie_target(state: &mut TickState, pos: [f64; 3]) -> EntityId {
+    input::session::join(
+        state,
+        (
+            &ConnectionId(996),
+            &uuid::Uuid::from_u128(996),
+            &"zombie-rest-target".to_owned(),
+            &0,
+        ),
+        &mut ChangeSet::default(),
+    );
+    let player = *state.players.keys().next().unwrap();
+    let slot = state.entities.slot_of(player).unwrap();
+    state.entities.set_pos(slot, pos);
+    state.entities.set_ground(slot, true);
+    player
+}
+
+#[test]
+fn zombie_rest_acquires_spawned_player_and_resident_on_normal_decision() {
+    for resident in [false, true] {
+        let (mut state, slot) = idle_zombie();
+        let id = state.entities.body(slot).id;
+        let pos = [9.5, 101.0, 8.5];
+        let target = if resident {
+            let type_id = state
+                .registry
+                .entity_types
+                .id_of(&mc_data::Identifier::parse("minecraft:villager").unwrap())
+                .unwrap();
+            state.spawn_mob(type_id, pos, 20.0)
+        } else {
+            join_zombie_target(&mut state, pos)
+        };
+        // Arrival just after a decision cannot extend the ordinary period.
+        let mut acquired = None;
+        for elapsed in 1..=MOB_FAR_PERIOD {
+            state.tick += 1;
+            let intents = run_entity_phase(&mut state, true);
+            if intents.iter().any(|intent| {
+                intent.actor == id
+                    && matches!(intent.kind, IntentKind::DamageEntity { target: victim, .. } if victim == target)
+            }) {
+                acquired = Some(elapsed);
+                break;
+            }
+        }
+        assert_eq!(acquired, Some(if resident { MOB_FAR_PERIOD } else { 1 }));
+    }
+}
+
+#[test]
+fn zombie_rest_rechecks_same_chunk_range_entry_and_remote_wall_opening() {
+    let (mut state, slot) = idle_zombie();
+    let pos = state.entities.pos(slot);
+    let sight = f64::from(state.entities.row(slot).sight_range);
+    let outside = [pos[0] + sight + 0.25, pos[1], pos[2]];
+    let inside = [pos[0] + sight - 0.25, pos[1], pos[2]];
+    let player = join_zombie_target(&mut state, outside);
+    let player_slot = state.entities.slot_of(player).unwrap();
+    let chunk = state.entities.chunk_of(player_slot);
+    assert!(
+        phase_admitted(&mut state, slot, 1),
+        "conservative wake before range entry"
+    );
+    let _ = run_entity_phase(&mut state, true);
+    assert_eq!(state.entities.pos(slot), pos, "out of sight and idle");
+    state.entities.set_pos(player_slot, inside);
+    assert_eq!(state.entities.chunk_of(player_slot), chunk);
+    state.tick += 1;
+    let _ = run_entity_phase(&mut state, true);
+    assert!(
+        state.entities.pos(slot)[0] > pos[0],
+        "next near-player sensor decision chases"
+    );
+
+    // Occlusion is not a rest dependency, even outside the mob's footprint chunk.
+    state.entities.set_pos(slot, pos);
+    state.entities.set_vel(slot, [0.0; 3]);
+    state.entities.set_ground(slot, true);
+    state.entities.set_pos(player_slot, [18.5, pos[1], pos[2]]);
+    state
+        .world
+        .set_block(17, 102, 8, state.registry.states.stone);
+    state.world.fold_overlay();
+    let eyes = [pos[0], 102.5, pos[2]];
+    let target_eyes = [18.5, 102.5, pos[2]];
+    assert!(!crate::hostile::sight_clear(&state, eyes, target_eyes));
+    assert!(phase_admitted(&mut state, slot, 1));
+    state.world.set_block(17, 102, 8, state.registry.states.air);
+    state.world.fold_overlay();
+    assert!(crate::hostile::sight_clear(&state, eyes, target_eyes));
+    assert!(phase_admitted(&mut state, slot, 1));
+    let _ = run_entity_phase(&mut state, true);
+    assert!(state.entities.pos(slot)[0] > pos[0]);
+}
+
+#[test]
+fn zombie_rest_keeps_daylight_water_and_support_reactions() {
+    let (mut state, slot) = idle_zombie();
+    // Existing daylight processing requires an observer; creative observes
+    // without supplying a chase target.
+    let observer = join_zombie_target(&mut state, [12.5, 101.0, 8.5]);
+    state.players.get_mut(&observer).unwrap().game_mode = crate::commands::GameMode::Creative;
+    assert!(can_early_rest(&mut state, slot));
+    state.gamerules.insert("spawn_mobs".into(), "false".into());
+    state.day_time = 6_000;
+    state.tick = crate::natural_spawn::CYCLE;
+    crate::natural_spawn::run(&mut state, &mut ChangeSet::default());
+    assert!(
+        state.entities.body(slot).burn_ticks > 0,
+        "daylight ignites a rested zombie"
+    );
+    assert!(phase_admitted(&mut state, slot, 1));
+
+    for (water, air) in [(false, 300), (true, 300), (true, 299)] {
+        let (mut state, slot) = idle_zombie();
+        state.entities.body_mut(slot).air_supply = air;
+        if water {
+            for y in 101..=102 {
+                state.world.set_block(8, y, 8, state.registry.states.water);
+            }
+        } else {
+            state.world.set_block(8, 100, 8, state.registry.states.air);
+        }
+        state.world.fold_overlay();
+        if !water || air != 300 {
+            assert!(phase_admitted(&mut state, slot, 1));
+        }
+        let (expected, _) = full_step_without_early_rest(&state, slot);
+        let _ = run_entity_phase(&mut state, true);
+        assert_eq!(state.entities.pos(slot), expected.pos);
+        assert_eq!(state.entities.vel(slot), expected.vel);
+        assert_eq!(state.entities.body(slot).air_supply, expected.air_supply);
+        if water {
+            // The existing generic Walker path replenishes air even in water;
+            // rest must preserve that behavior, including non-no-op recovery.
+            assert_eq!(expected.air_supply, 300);
+        } else {
+            assert!(expected.pos[1] < 101.0, "removed support causes a fall");
+        }
+    }
+}
+
+/// Isolated entity-phase acceptance fixture; no player, night, 300 zombies.
+fn zombie_rest_probe_state() -> TickState {
+    let (mut state, first) = resting_mob("minecraft:zombie");
+    state.entities.remove(first);
+    let chunks: Vec<_> = (0..8)
+        .flat_map(|x| (0..8).map(move |z| ChunkPos { x, z }))
+        .collect();
+    state
+        .world
+        .ensure_blocking(&chunks.iter().map(|&pos| (pos, 0)).collect());
+    state
+        .world
+        .set_active_chunks(chunks.into_iter().collect(), 1);
+    let stone = state.world.block_at(8, 100, 8).unwrap();
+    for x in 0..128 {
+        for z in 0..128 {
+            state.world.set_block(x, 100, z, stone);
+        }
+    }
+    state.world.fold_overlay();
+    state.entity_phase_revision = state.world.revision_now();
+    state.day_time = 14_000;
+    let zombie_type = state
+        .registry
+        .entity_types
+        .id_of(&mc_data::Identifier::parse("minecraft:zombie").unwrap())
+        .unwrap();
+    for index in 0..300 {
+        let pos = [
+            24.5 + f64::from(index % 20) * 4.0,
+            101.0,
+            24.5 + f64::from(index / 20) * 4.0,
+        ];
+        let id = state.spawn_mob(zombie_type, pos, 20.0);
+        let slot = state.entities.slot_of(id).unwrap();
+        state.entities.set_ground(slot, true);
+    }
+    for _ in 0..120 {
+        state.tick += 1;
+        let _ = run_entity_phase(&mut state, true);
+    }
+    state
+}
+
+#[test]
+#[ignore = "release acceptance measurement; requires Main's exclusive perf GO"]
+fn zombie_rest_release_probe_300_zombies_no_player() {
+    let mut state = zombie_rest_probe_state();
+    let mut prepared = 0;
+    let mut decisions = 0;
+    for _ in 0..600 {
+        state.tick += 1;
+        state.entities.prepare_motion_hints(&state.registry);
+        let periods = vec![MOB_FAR_PERIOD as u8; state.entities.len()];
+        let mut out = PrepChunk::default();
+        prepare_rows(
+            &state,
+            &periods,
+            &PrepEnv {
+                targets_empty: true,
+                villagers_empty: true,
+                unchanged_since: state.entity_phase_revision,
+            },
+            false,
+            &mut out,
+        );
+        assert_eq!(out.rows.len() + out.resting.len(), 300);
+        prepared += out.rows.len();
+        decisions += out
+            .rows
+            .iter()
+            .filter(|row| (state.tick.wrapping_add(row.id.0 as u64)).is_multiple_of(MOB_FAR_PERIOD))
+            .count();
+        let _ = run_entity_phase(&mut state, true);
+        assert!(state.entities.slots().all(|slot| {
+            let chunk = state.entities.chunk_of(slot);
+            state.world.is_active_position(chunk.x, chunk.z)
+        }));
+    }
+    eprintln!("ZREST_COUNTS ticks=600 mobs=300 prepared={prepared} decisions={decisions}");
+    for sample in 0..3 {
+        let mut state = zombie_rest_probe_state();
+        let start = std::time::Instant::now();
+        for _ in 0..600 {
+            state.tick += 1;
+            let _ = std::hint::black_box(run_entity_phase(&mut state, true));
+        }
+        eprintln!(
+            "ZREST_TIME sample={sample} entity_phase_600_ticks_ms={:.6}",
+            start.elapsed().as_secs_f64() * 1000.0
         );
     }
 }

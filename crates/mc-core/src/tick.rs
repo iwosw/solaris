@@ -5650,6 +5650,7 @@ impl PrepSummary {
 
 struct PrepEnv {
     targets_empty: bool,
+    villagers_empty: bool,
     unchanged_since: u64,
 }
 
@@ -5666,6 +5667,7 @@ fn admit_slot(
 ) -> Option<(EntitySlot, u16)> {
     let PrepEnv {
         targets_empty,
+        villagers_empty,
         unchanged_since,
     } = *env;
     let slot = EntitySlot(index as u32);
@@ -5690,7 +5692,13 @@ fn admit_slot(
         period,
         unchanged_since,
         special_idle,
-        targets_empty,
+        targets_empty
+            && (villagers_empty
+                || !matches!(
+                    view.bodies[index].kind,
+                    EntityKind::Mob { type_id }
+                        if crate::piglin::hunts_villagers_type(type_id)
+                )),
     ) {
         resting.push(slot);
         return None;
@@ -5988,6 +5996,15 @@ fn run_entity_phase(state: &mut TickState, sim: bool) -> Vec<Intent> {
         }
     }
     let targets_empty = !crate::hostile::has_live_targets(state);
+    // Reuse the sensor's current resident table before admission. Any
+    // candidate conservatively wakes decision ticks, even out of range or
+    // occluded: normal sensor cadence catches same-chunk range crossings,
+    // spawn, teleport and dimension travel without a cached wake dependency.
+    let villagers = if admitted == 0 {
+        Vec::new()
+    } else {
+        resident_villager_targets(&state.entities)
+    };
     rows.reserve(admitted);
     let mut prepared = PrepChunk {
         rows: std::mem::take(&mut rows),
@@ -6001,6 +6018,7 @@ fn run_entity_phase(state: &mut TickState, sim: bool) -> Vec<Intent> {
         &periods,
         &PrepEnv {
             targets_empty,
+            villagers_empty: villagers.is_empty(),
             unchanged_since,
         },
         admitted >= PARALLEL_PREP_MIN,
@@ -6097,7 +6115,6 @@ fn run_entity_phase(state: &mut TickState, sim: bool) -> Vec<Intent> {
     } else {
         Vec::new()
     };
-    let villagers = resident_villager_targets(&state.entities);
     // Chase searches per class this tick (over-counted: not every chaser
     // thinks). Only a class with many consumers pays for an index; the rest
     // scan linearly as before (see target_grid.rs for boundary and fence).
