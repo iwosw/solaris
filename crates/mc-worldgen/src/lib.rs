@@ -117,7 +117,10 @@ pub use terrain::{HeightContextStats, height_context_stats, reset_height_context
 /// offline worldgen upgrade; that preserves their chunks and accepts boundary
 /// seams. The opaque terrain epoch is not a numeric-version selector.
 /// SLOD v1 remains the approximate fp64 distant-terrain program.
-pub const WORLDGEN_REVISION: u32 = 28;
+///
+/// 29: persist native structure starts and generate Overworld structures,
+/// modern jigsaw families, Nether landscapes/resources, and End outer cities.
+pub const WORLDGEN_REVISION: u32 = 29;
 
 /// Crate version, exposed so other crates and the binary can report it.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

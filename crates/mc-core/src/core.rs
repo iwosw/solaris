@@ -341,6 +341,38 @@ pub(crate) fn overworld_terrain(
         )
         .map_err(|error| CoreError::Worldgen(error.to_string()))?;
         terrain = terrain.with_village_plans(Arc::new(plans));
+        for set in ["ancient_cities", "trail_ruins", "trial_chambers"] {
+            let closure = Arc::new(
+                mc_worldgen::village::load_village_closure(
+                    vanilla_data_dir,
+                    &mc_data::Identifier::parse(format!("minecraft:{set}"))
+                        .expect("static structure set"),
+                    &registry.blocks,
+                )
+                .map_err(|error| CoreError::Worldgen(error.to_string()))?,
+            );
+            let decor = Arc::new(
+                mc_worldgen::village::VillageDecor::compile(
+                    vanilla_data_dir,
+                    &closure,
+                    &mc_worldgen::vanilla_features::BlockSemantics::new(
+                        &registry.blocks,
+                        tags.as_ref(),
+                    ),
+                )
+                .map_err(|error| CoreError::Worldgen(error.to_string()))?,
+            );
+            let source = mc_worldgen::village::plan_source::VillagePlanSource::new(
+                closure,
+                decor,
+                config.seed,
+                Arc::clone(&registry.blocks),
+                tags.clone(),
+                tags.clone(),
+            )
+            .map_err(|error| CoreError::Worldgen(error.to_string()))?;
+            terrain = terrain.with_jigsaw_source(Arc::new(source));
+        }
     }
     crate::plugin_startup::apply_worldgen(registry, terrain)
 }

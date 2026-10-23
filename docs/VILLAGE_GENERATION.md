@@ -15,6 +15,57 @@ Village assembly, processors and data loaders remain shared library code in
 Use current source and native-runtime evidence before claiming an integrated
 village capability; do not infer it from the old profile or warning names.
 
+## Modern jigsaw structures
+
+The native overworld startup also loads the `ancient_cities`, `trail_ruins`,
+and `trial_chambers` structure sets from the licensed content cache. Each has
+its own random-spread grid and the structure JSON's three-dimensional biome
+gate. Ancient cities require `deep_dark`; their start is not tested against the
+surface biome.
+
+| Structure | Spacing / separation / salt | Maximum depth | Start height |
+| --- | --- | --- | --- |
+| Ancient city | 24 / 8 / 20083232 | 7 | −27, anchored on `city_anchor` |
+| Trail ruins | 34 / 8 / 83469867 | 7 | surface height −15 |
+| Trial chambers | 34 / 12 / 94251327 | 20 | uniform −40 through −20 |
+
+The shared machinery retains list elements as one assembly bounding box,
+uses the first child's connectors, and places every child in authored order.
+Height providers support constant, uniform and trapezoid sampling with
+dimension-relative anchors. Pool aliases are resolved once per structure;
+random groups keep trial ranged and slow-ranged spawners correlated.
+`block_rot`, `capped` and rule `append_loot` support degradation and trail
+archaeology. Capped processors operate on the complete template before chunk
+clipping, not once per chunk. Single elements place their authored air as well
+as solid blocks. Structure-level liquid settings keep trial chambers from
+waterlogging their authored dry blocks.
+The referenced `sculk_patch` feature uses authored bounded charge/spread
+budgets, the `sculk_replaceable_world_gen` tag, surface veins, catalyst chance,
+and naturally summoning shriekers. This is a surface-bound, wiki-level
+implementation, not a bit-exact vanilla charge-cursor simulation
+([feature contract](https://minecraft.wiki/w/Sculk_Patch)).
+
+Template chests retain their loot table and seed unopened; the native runtime
+materializes them through the shared catalog at first open with player/world
+context. Other authored block-entity NBT, including trial-spawner presets and vault configuration, is retained and
+relocated into generated chunks. Authored entities use the shared generated
+entity marker path. Each source has a bounded start-assembly memo; chunk
+queries enumerate placement-grid cells within a template-derived reach rather
+than scanning every neighbouring chunk.
+Generated village and modern starts persist their actual union bounding box
+and independent locate anchor in the start chunk; unloaded generation lookup
+returns the same structure id, start chunk and three-dimensional anchor.
+
+Focused coverage lives in `terrain/modern_jigsaw_tests.rs` and the processor
+tests. The licensed-cache integration test is explicitly ignored by default
+and must be run with `--ignored`. It searches real seeded biome/height fields,
+checks depth and dimension bounds, repeats generated chunks, and reports
+piece/candidate/template-cell and pasted-block work counts. These checks are not a graphical
+encounter gate or bit-exact vanilla RNG proof. Underground structure density
+adaptation still uses authored template air rather than vanilla's complete
+`beard_box`/`encapsulate` density kernels.
+
+
 ## Vanilla overworld routing
 
 The shared vanilla-like generator loads the 26.1.2 overworld noise settings,
@@ -572,39 +623,22 @@ they are deliberate:
   it was placed, never claiming the bed, workstation or bell next to it. Vanilla's
   POI acquisition, breeding, trading, raids and patrols are outside this page
   entirely.
-- **Non-village structures.** Only the `minecraft:villages` structure set is
-  assembled. The other structure sets in the content cache (ancient cities,
-  mineshafts, ocean monuments, ruined portals, strongholds, mansions, and the
-  rest) are not placed by Solaris, and the data layer only accepts
-  `minecraft:jigsaw` structures driven by `minecraft:random_spread` placement.
-  A structure or placement of another type fails the load by name instead of
-  being approximated.
-- **Start heights other than a constant absolute value.** Only
-  `start_height: {"absolute": n}` is implemented; a structure naming `uniform`,
-  `trapezoid` or a non-absolute anchor fails the closure load by name rather
-  than placing at the wrong Y (those providers also sample the placement random,
-  which the engine does not reproduce).
-- **Vanilla's dimension padding.** `JigsawStructure`'s default `dimension_padding`
-  clamps the growth limit box and rejects a start whose box comes within ten
-  blocks of the world's vertical bounds. Neither is modelled, because a village
-  starts at the world surface and never approaches those bounds; a structure
-  anchored near the world floor or ceiling would grow differently from vanilla.
+- **Non-jigsaw structure algorithms.** This shared implementation accepts
+  `minecraft:jigsaw` structures driven by `minecraft:random_spread`; other
+  structure algorithms belong to their own generation paths.
 - **Other terrain adaptations.** Only `beard_thin` has a version of the
   analogue. `none` needs no behaviour, and `bury`, `beard_box` and
   `encapsulate` have no engine-side analogue; no structure in the villages set
   declares them.
-- **Jigsaw content outside the village closure.** The registry readers load
-  entries by reference and fail closed on anything they reach that is not
-  implemented — other pool element types (`list_pool_element` is refused rather
-  than flattened), processor types, rule tests, height providers, pool aliases,
-  and non-`minecraft` namespaces are rejected by type id and referring entry
-  rather than being skipped.
+- **Unsupported jigsaw content.** Registry readers load entries by reference and
+  fail closed on unsupported processor or predicate types. Supported lists,
+  aliases and variable-height providers are described above; this does not
+  claim arbitrary datapack element compatibility.
 - **Placed features outside the village decor closure.** The feature executor
   implements the feature types, state providers, placement modifiers, block
   predicates and int providers the village pool's `feature_pool_element` entries
   reach. Everything else fails closed at load or compile time, including
   `schedule_tick` on `simple_block`, double plants, and foliage providers that
   can place a state without a `distance` property.
-- **Not claimed.** Vanilla's exact behaviour for structure sets other than
-  `villages`, and the structure-spacing nuances no other set exercises here, are
-  outside this page.
+- **Not claimed.** Bit-exact vanilla RNG, full terrain-adaptation density kernels
+  and live encounter validation are not established by the shared assembly tests.

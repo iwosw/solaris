@@ -1796,8 +1796,11 @@ fn modern_jigsaw_list_places_children_at_one_origin_in_order() {
         y: overlay.position.y + local[1],
         z: overlay.position.z + local[2],
     };
-    let generator = TerrainGenerator::new(4242, blocks).with_village_plans(source);
-    let chunk = generator.generate(ChunkPos { x: position.x.div_euclid(16), z: position.z.div_euclid(16) });
+    let generator = TerrainGenerator::new(4242, blocks).with_jigsaw_source(source);
+    let chunk = generator.generate(ChunkPos {
+        x: position.x.div_euclid(16),
+        z: position.z.div_euclid(16),
+    });
     assert_eq!(
         chunk.get_block(
             position.x.rem_euclid(16) as u8,

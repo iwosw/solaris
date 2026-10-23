@@ -35,6 +35,7 @@ enum CompiledConfiguredFeature {
         prioritize_tip: bool,
     },
     Tree(Box<super::tree::CompiledTree>),
+    SculkPatch(Box<super::sculk::CompiledSculkPatch>),
 }
 
 #[derive(Debug, Clone)]
@@ -62,6 +63,11 @@ impl CompiledPlacedFeature {
     ) -> Result<Self, CompileError> {
         let owner = &spec.feature.id;
         let feature = match &spec.feature.kind {
+            ConfiguredFeatureKind::SculkPatch(spec) => {
+                CompiledConfiguredFeature::SculkPatch(Box::new(
+                    super::sculk::CompiledSculkPatch::compile(semantics, owner, spec)?,
+                ))
+            }
             ConfiguredFeatureKind::SimpleBlock {
                 to_place,
                 schedule_tick,
@@ -195,6 +201,9 @@ impl CompiledPlacedFeature {
         origin: BlockPos,
     ) -> Result<bool, PlaceError> {
         match &self.feature {
+            CompiledConfiguredFeature::SculkPatch(patch) => {
+                Ok(patch.place(level, semantics, random, origin))
+            }
             CompiledConfiguredFeature::SimpleBlock { to_place } => {
                 Ok(self.place_simple_block(level, semantics, random, origin, to_place))
             }

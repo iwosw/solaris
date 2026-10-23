@@ -149,6 +149,19 @@ pub enum ConfiguredFeatureKind {
         prioritize_tip: bool,
     },
     Tree(Box<TreeSpec>),
+    SculkPatch(SculkPatchSpec),
+}
+
+/// Authored sculk charge budget and world-generation growth settings.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SculkPatchSpec {
+    pub charge_count: i32,
+    pub amount_per_charge: i32,
+    pub spread_attempts: i32,
+    pub growth_rounds: i32,
+    pub spread_rounds: i32,
+    pub extra_rare_growths: IntProviderSpec,
+    pub catalyst_chance: f32,
 }
 
 /// `minecraft:tree` configuration, restricted to what the village closure
@@ -536,6 +549,41 @@ impl FeatureClosure {
         )?;
         let config = field_of(value, "config", CONFIGURED_FEATURE, id)?;
         let kind = match type_id.path() {
+            "sculk_patch" => {
+                let bounded = |field, min, max| {
+                    let value = i32_field(config, field, CONFIGURED_FEATURE, id)?;
+                    if !(min..=max).contains(&value) {
+                        return Err(ClosureError::InvalidField {
+                            kind: CONFIGURED_FEATURE,
+                            entry: id.clone(),
+                            field,
+                            value: format!("expected {min}..={max}, got {value}"),
+                        });
+                    }
+                    Ok(value)
+                };
+                let catalyst_chance = f32_field(config, "catalyst_chance", CONFIGURED_FEATURE, id)?;
+                if !(0.0..=1.0).contains(&catalyst_chance) {
+                    return Err(ClosureError::InvalidField {
+                        kind: CONFIGURED_FEATURE,
+                        entry: id.clone(),
+                        field: "catalyst_chance",
+                        value: "expected probability in 0..=1".into(),
+                    });
+                }
+                ConfiguredFeatureKind::SculkPatch(SculkPatchSpec {
+                    charge_count: bounded("charge_count", 1, 32)?,
+                    amount_per_charge: bounded("amount_per_charge", 1, 500)?,
+                    spread_attempts: bounded("spread_attempts", 1, 64)?,
+                    growth_rounds: bounded("growth_rounds", 0, 8)?,
+                    spread_rounds: bounded("spread_rounds", 0, 8)?,
+                    extra_rare_growths: self.parse_int_provider(
+                        id,
+                        field_of(config, "extra_rare_growths", CONFIGURED_FEATURE, id)?,
+                    )?,
+                    catalyst_chance,
+                })
+            }
             "simple_block" => ConfiguredFeatureKind::SimpleBlock {
                 to_place: self.parse_state_provider(
                     id,
