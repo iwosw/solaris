@@ -30,6 +30,7 @@ pub mod backup;
 mod boss_bars;
 pub mod chunks;
 mod command_tree;
+pub mod computer;
 pub mod config;
 pub mod configuration;
 pub mod connection;

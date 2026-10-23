@@ -320,6 +320,7 @@ impl EdgeServer {
         tags: Arc<mc_data::tags::TagsData>,
         cfg: EdgeConfig,
     ) -> anyhow::Result<Self> {
+        cfg.computer.validate()?;
         let dashboard = dashboard_state(&cfg);
         let loader_manifest = loader_manifest(&hub.registry().plugin_client_bundles)?;
         // Any required bundle forces Loader negotiation on every client; a
@@ -478,7 +479,7 @@ impl EdgeServer {
         )
     }
 
-    fn kick(&self, id: ConnectionId, reason: serde_json::Value) -> anyhow::Result<()> {
+    pub(crate) fn kick(&self, id: ConnectionId, reason: serde_json::Value) -> anyhow::Result<()> {
         let fields = reason
             .as_object()
             .expect("disconnect component")
@@ -1905,6 +1906,16 @@ async fn handle_connection(stream: TcpStream, server: Arc<EdgeServer>) -> anyhow
     {
         let _ = handles.reliable_tx.try_send(crate::dh::advertisement()?);
     }
+    let computer = if server.cfg.computer.enabled {
+        Some(crate::computer::Connection::start(
+            Arc::clone(&server),
+            id,
+            entity,
+            peer.parse()?,
+        ))
+    } else {
+        None
+    };
 
     // --- Play: reads and writes progress independently. A writer task owns
     // --- the write half (keepalive, then reliable before world); this task
@@ -1966,6 +1977,24 @@ async fn handle_connection(stream: TcpStream, server: Arc<EdgeServer>) -> anyhow
                     Err(error) => {
                         warn!(%error, connection = id.0, "edge command decode/delivery failed");
                         break 'play_loop "edge-command-error";
+                    }
+                }
+                if let Some(computer) = &computer
+                    && frame.id == mc_protocol::packets::play::ServerboundCustomPayload::ID
+                {
+                    match crate::computer::payload(&frame.body) {
+                        Ok(Some(payload)) => {
+                            if let Err(error) = computer.receive(&payload) {
+                                warn!(%error, connection = id.0, "computer input refused");
+                                break 'play_loop "computer-input";
+                            }
+                            continue;
+                        }
+                        Ok(None) => {}
+                        Err(error) => {
+                            warn!(%error, connection = id.0, "computer packet malformed");
+                            break 'play_loop "computer-decode";
+                        }
                     }
                 }
                 if let Some(dh) = &dh

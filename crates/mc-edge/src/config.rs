@@ -57,6 +57,9 @@ pub struct EdgeConfig {
     /// Optional Distant Horizons protocol-16 service for Java clients.
     #[serde(default)]
     pub distant_horizons: DistantHorizonsSection,
+    /// Opt-in operator-only in-game terminal.
+    #[serde(default)]
+    pub computer: crate::computer::ComputerConfig,
 }
 
 impl Default for EdgeConfig {
@@ -625,6 +628,7 @@ const KNOWN_SECTIONS: &[&str] = &[
     "anti_cheat",
     "lod",
     "distant_horizons",
+    "computer",
 ];
 
 /// Unknown leaf keys (`section.key`) under a known section, depth-first.
@@ -661,6 +665,10 @@ fn unknown_leaves(table: &toml::Table) -> Vec<String> {
         ("proxy", &["mode", "secret"]),
         ("plugins", &["directory"]),
         ("anti_xray", &["overworld", "nether"]),
+        (
+            "computer",
+            &["enabled", "local_only", "command", "working_directory"],
+        ),
         (
             "anti_cheat",
             &[

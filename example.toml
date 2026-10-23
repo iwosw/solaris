@@ -121,3 +121,13 @@ world_dir = "world"
 # backup_dir = "backups"
 # Changing the seed requires a fresh world directory.
 seed = 0
+
+[computer]
+# Right-click iron blocks with the explicitly enabled Fabric computer client.
+# Level-4 operators only. Never expose a privileged host shell.
+enabled = false
+local_only = true
+# Empty = built-in echo. Use a sandboxed, line-oriented agent adapter to opt in:
+command = []
+# working_directory = "/absolute/sandbox/workspace"
+# command = ["/absolute/sandbox-launcher", "/absolute/agent-line-adapter"]
