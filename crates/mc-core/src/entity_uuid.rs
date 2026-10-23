@@ -43,8 +43,11 @@ impl TickState {
 }
 
 /// Load the world's salt from the staged native globals (minting and staging
-/// it for the next checkpoint when the world has none yet: new or pre-salt
-/// worlds) and install it in the root world and every dimension.
+/// it when the world has none yet) and install it in the root world and every
+/// dimension. A fresh world's initial checkpoint persists it before any tick;
+/// a reopened pre-salt world persists it at its next checkpoint, so a crash
+/// before then remints it (later uuids stay unique, only replay of that
+/// first window diverges).
 pub(crate) fn install_salt(root: &mut TickState) -> Result<(), CoreError> {
     let stored = crate::terrain::read_data_field(&root.native_globals, SALT_FIELD)
         .map_err(|error| CoreError::Storage(format!("entity salt: {error}")))?;
