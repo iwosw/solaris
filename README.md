@@ -21,17 +21,29 @@ things the vanilla server is bad at:
 > and plugin development. Not yet a drop-in replacement for a production server.
 > Expect breaking changes between versions.
 
-## Numbers
+## Performance
 
-These measurements use a single host with a frame-pointer release build. The
-server runs on 8 cores and 100 real protocol clients are scripted bots.
+Four reproducible release profiles cover an idle world, exploration and dense
+entity simulation. **Quiet-window measurements are pending**; setup/smoke runs
+are not published as performance results.
 
-| Scenario | Result |
-|---|---|
-| 100 players + ~100,000 mixed mobs (cows, zombies, skeletons, villagers…) | ~16 TPS steady, p50 tick 63 ms |
-| 100 players + 10,000 mobs on **2 cores** | full 20 TPS |
-| 500 players + 500,000 villagers | runs correctly (no desync, no item loss), ~3 TPS |
-| Crash test: SIGKILL during play, 145k-chunk world + 5,000 villagers | reopened with every chunk, entity and villager intact |
+| Profile | Players / bots and entity load | Server RSS peak / steady | MSPT p50 / p95 / p99 / max | TPS |
+|---|---|---|---|---|
+| Idle world | 0 clients, generated Overworld | pending | pending | pending |
+| Exploration | 20 protocol bots exploring fresh terrain | pending | pending | pending |
+| Native-100 | 100 protocol bots + 100,000 mixed mobs | pending | pending | pending |
+| Villager-heavy | 100 protocol bots + 100,000 mixed mobs + 20,000 villagers | pending | pending | pending |
+
+Reference host: **Ryzen 5 7535HS (6 cores / 12 threads), 32 GB RAM, NVMe SSD,
+Ubuntu 26.04.1 / Linux 7.0.0-38**. The server uses four physical cores; bots use
+the other two. Release source: `0a86cfffc173d9fe13e9d0795a6c5494fc33a222`.
+A separate, already measured **single-threaded in-process generator benchmark**
+takes **13.8–17.3 ms/chunk** across three seeds; this excludes lighting, storage
+and networking and is **not server chunk throughput**.
+
+See [full conditions, metric definitions, receipts and one-command
+reproduction](docs/performance/PROFILES.md). Measurements describe the stated
+hardware and workload, not guarantees or vanilla-parity/capacity claims.
 
 ## What works
 
