@@ -571,3 +571,130 @@ fn breeding_without_a_love_cause_does_not_credit_nearby_player() {
         0
     );
 }
+
+#[test]
+fn passive_gap_held_food_lures_without_feeding_in_both_hands() {
+    for hand in [Hand::Main, Hand::Off] {
+        let (mut state, actor, pos) = fixture();
+        let cow = spawn(&mut state, "cow", [pos[0] + 6.0, pos[1], pos[2]]);
+        let wheat = item(&state, "wheat");
+        let player = state.players.get_mut(&actor).unwrap();
+        let index = crate::tick::held_slot_index(player, hand);
+        player.inventory.slots[index] = mc_data::ItemStack::new(wheat, 1);
+        for _ in 0..30 {
+            run_tick(&mut state, &[]);
+        }
+        let slot = state.entities.slot_of(cow).unwrap();
+        assert!(state.entities.pos(slot)[0] < pos[0] + 4.5, "{hand:?}");
+        assert_eq!(state.players[&actor].inventory.slots[index].count, 1);
+        assert_eq!(row(&state, cow).love, 0);
+    }
+}
+
+#[test]
+fn passive_gap_baby_follows_adult_without_food() {
+    let (mut state, _, pos) = fixture();
+    let adult = spawn(&mut state, "cow", pos);
+    let slot = state.entities.slot_of(adult).unwrap();
+    state.entities.row_mut(slot).controls.no_ai = true;
+    let calf = spawn(&mut state, "cow", [pos[0] + 6.0, pos[1], pos[2]]);
+    entity_life::make_child(&mut state, calf);
+    for _ in 0..30 {
+        run_tick(&mut state, &[]);
+    }
+    let slot = state.entities.slot_of(calf).unwrap();
+    assert!(state.entities.pos(slot)[0] < pos[0] + 4.5);
+}
+
+#[test]
+fn passive_gap_horse_donkey_courtship_produces_sterile_mule() {
+    for reverse in [false, true] {
+        let (mut state, actor, pos) = fixture();
+        let species = if reverse {
+            ["donkey", "horse"]
+        } else {
+            ["horse", "donkey"]
+        };
+        let a = spawn(&mut state, species[0], [pos[0], pos[1], pos[2] + 1.0]);
+        let b = spawn(&mut state, species[1], [pos[0] + 1.0, pos[1], pos[2] + 1.0]);
+        for id in [a, b] {
+            let slot = state.entities.slot_of(id).unwrap();
+            state.entities.row_mut(slot).entity_life.tamed = true;
+        }
+        hold(&mut state, actor, "golden_carrot", 2);
+        run_tick(&mut state, &[use_animal(a)]);
+        run_tick(&mut state, &[use_animal(b)]);
+        for _ in 0..90 {
+            run_tick(&mut state, &[]);
+        }
+        let children: Vec<_> = state
+            .entities
+            .slots()
+            .filter(|slot| state.entities.row(*slot).entity_life.child_ticks > 0)
+            .collect();
+        assert_eq!(children.len(), 1);
+        let slot = children[0];
+        let EntityKind::Mob { type_id } = state.entities.body(slot).kind else {
+            panic!("mob child")
+        };
+        assert_eq!(
+            state.registry.blueprint(type_id).unwrap().name,
+            "minecraft:mule"
+        );
+        assert!(!entity_life::can_breed(
+            &state,
+            state.entities.body(slot),
+            state.entities.row(slot)
+        ));
+        assert!(row(&state, a).breed_cooldown > 0);
+        assert!(row(&state, b).breed_cooldown > 0);
+    }
+}
+
+#[test]
+fn passive_gap_breeding_merge_rejects_wrong_child_and_different_species() {
+    let (mut state, _, pos) = fixture();
+    let a = spawn(&mut state, "cow", pos);
+    let b = spawn(&mut state, "sheep", pos);
+    for id in [a, b] {
+        let slot = state.entities.slot_of(id).unwrap();
+        state.entities.row_mut(slot).love = 540;
+    }
+    let cow = state.registry.cow_type_id;
+    assert!(!entity_life::breeding::valid(&state, a, b, cow));
+    assert!(!entity_life::breeding::valid(&state, a, a, cow));
+    let c = spawn(&mut state, "cow", pos);
+    let slot = state.entities.slot_of(c).unwrap();
+    state.entities.row_mut(slot).love = 540;
+    assert!(!entity_life::breeding::valid(
+        &state,
+        a,
+        c,
+        state.registry.zombie_type_id
+    ));
+    assert!(entity_life::breeding::valid(&state, a, c, cow));
+    state.entities.set_pos(slot, [pos[0] + 4.0, pos[1], pos[2]]);
+    assert!(!entity_life::breeding::valid(&state, a, c, cow));
+}
+
+#[test]
+fn passive_gap_temptation_respects_sitting_no_ai_and_spectator() {
+    for mode in 0..3 {
+        let (mut state, actor, pos) = fixture();
+        let cow = spawn(&mut state, "cow", [pos[0] + 6.0, pos[1], pos[2]]);
+        let slot = state.entities.slot_of(cow).unwrap();
+        hold(&mut state, actor, "wheat", 1);
+        match mode {
+            0 => state.entities.row_mut(slot).controls.no_ai = true,
+            1 => state.entities.row_mut(slot).entity_life.sitting = true,
+            _ => {
+                state.players.get_mut(&actor).unwrap().game_mode =
+                    crate::commands::GameMode::Spectator
+            }
+        }
+        for _ in 0..30 {
+            run_tick(&mut state, &[]);
+        }
+        assert!(state.entities.pos(slot)[0] > pos[0] + 4.5, "mode={mode}");
+    }
+}

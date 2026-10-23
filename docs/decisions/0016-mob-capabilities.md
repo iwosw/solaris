@@ -46,14 +46,35 @@ creeper and flies.
 | `aquatic` (`Fish`/`Squid`/`Dolphin`/`Other`) | `entity_motion::step` | cod, salmon, tropical_fish, pufferfish, tadpole; squid, glow_squid; dolphin |
 | `explodes {power, fuse_ticks, griefing}` | `hostile::swell` (the `Swell` goal) | creeper (3.0, 30, true) |
 | params `armor` / `knockback_resistance` | `entity_loot::restore` | zombie family 2.0; iron_golem 1.0, hoglin/zoglin 0.6, ravager 0.75 |
+| `temptable` | `tick::passive_follow` reads the existing resolved `breed_food` and both player hands | built-in breeding animals |
+| `follows_adults` | `tick::passive_follow` queries existing chunk membership for nearby same-blueprint adults | built-in breeding animals |
+| `crossbreed {partner, offspring}` | `entity_life::breeding` resolves reciprocal parent pairs; merge revalidates readiness, distance and child type | horse + donkey -> mule |
 
-Every capability above already had working code. No capability was invented
+The original layer-1 capabilities reused working code. No capability was invented
 without one: there is no `fire_immune`, because `mc-core` never consumed the data
 flag `EntityTypeFlags::FIRE_IMMUNE`. Built-in vanilla behaviour is unchanged.
 The type lists moved, unedited, into one function, `blueprint::vanilla_capabilities`.
 Vanilla blaze, snow golem and strider are also water-sensitive, but they did not
 take water damage before this change. Turning on `hurt_by_water` for them is a
 separate parity change.
+
+Food temptation and juvenile following are native shared capabilities added for
+VC-06. They run on the existing AI decision cadence, below panic, leash and active
+courtship, using immutable player inventory and entity positions. Player searches
+share one target grid; juvenile searches visit only the chunks intersecting an
+eight-block radius and allocate nothing. Sitting, riding and NoAI keep their
+existing suppression. Rest proofs wake on decision ticks when held items or a
+juvenile could create a new target, including within-chunk changes.
+These goals use the existing collision-aware direct steering, not a promise of
+full obstacle navigation. `temptable` needs resolved `breed_food`; it does not
+implicitly inherit food from a custom mob's presentation type.
+
+Crossbreeding is a reciprocal data relation, not a horse type check in the tick.
+Both parents must name each other's blueprint key and the same registered child;
+same-blueprint pairs retain their ordinary `offspring`. Merge checks the pair
+again and refuses self-pairing, an incorrect child, lost eligibility or separation
+of three blocks or more before cooldowns or spawn custody change. Horse/donkey
+rules are assembled once with registry-resolved ids; mule sterility is unchanged.
 
 Logic unique to one boss or special mob stays type-keyed on purpose. This covers
 enderman stare anger and teleport dodging, the dragon fight, the wither, warden,

@@ -138,6 +138,20 @@ pub struct Capabilities {
     pub aquatic: AquaticControl,
     /// Fuse length and blast of the [`GoalKind::Swell`] goal.
     pub explodes: Option<Explosion>,
+    /// Follow players holding a breeding-food stack, without consuming it.
+    pub temptable: bool,
+    /// Juveniles follow nearby adults of their blueprint.
+    pub follows_adults: bool,
+    /// Reciprocal partner/offspring rule for a different blueprint.
+    pub crossbreed: Option<Crossbreed>,
+}
+
+/// Both parents must declare the same offspring and each other's key.
+#[derive(Debug, Clone, Copy, PartialEq, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Crossbreed {
+    pub partner: u32,
+    pub offspring: u32,
 }
 
 /// The blast a [`GoalKind::Swell`] fuse ends in.
@@ -1056,6 +1070,28 @@ pub fn vanilla_blueprints(
     for (_, blueprint) in &mut out {
         vanilla_capabilities(blueprint);
     }
+    let id = |name: &str| {
+        entity_types.id_of(&mc_data::Identifier::parse(name).expect("canonical entity name"))
+    };
+    if let (Some(horse), Some(donkey), Some(mule)) = (
+        id("minecraft:horse"),
+        id("minecraft:donkey"),
+        id("minecraft:mule"),
+    ) {
+        for (key, blueprint) in &mut out {
+            let partner = if *key == horse {
+                Some(donkey)
+            } else if *key == donkey {
+                Some(horse)
+            } else {
+                None
+            };
+            blueprint.capabilities.crossbreed = partner.map(|partner| Crossbreed {
+                partner,
+                offspring: mule,
+            });
+        }
+    }
     out
 }
 
@@ -1132,6 +1168,9 @@ fn vanilla_capabilities(blueprint: &mut MobBlueprint) {
             fuse_ticks: crate::hostile::FUSE_TICKS,
             griefing: true,
         }),
+        temptable: blueprint.has_goal(GoalKind::Breed) && !blueprint.breed_food.is_empty(),
+        follows_adults: blueprint.has_goal(GoalKind::Breed) && blueprint.offspring.is_some(),
+        crossbreed: None,
     };
     blueprint.params.armor = match name {
         "minecraft:zombie"

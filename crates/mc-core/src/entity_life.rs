@@ -12,6 +12,9 @@ use crate::entities::{ColdRow, EntityKind};
 use crate::intent::{Footprint, Intent, IntentKind, InvClaim};
 use crate::tick::{TickState, spawn_item_entity};
 
+#[path = "entity_life_breeding.rs"]
+pub(crate) mod breeding;
+
 pub const CHILD_TICKS: u32 = 24_000;
 pub const LOVE_TICKS: u32 = 600;
 pub const PARENT_COOLDOWN: u32 = 6_000;

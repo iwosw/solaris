@@ -856,6 +856,11 @@ fn full_step_without_early_rest(
         rows: std::slice::from_ref(&row),
         entities: &state.entities,
         players: crate::target_grid::TargetGrid::for_consumers(&targets, 0),
+        passive: passive_follow::Context {
+            players: crate::target_grid::TargetGrid::for_consumers(&targets, 0),
+            states: &state.players,
+            locked: state.require_plugin_login.then_some(&state.locked_sessions),
+        },
         dolphin_toys: &[],
         villagers: crate::target_grid::TargetGrid::for_consumers(&targets, 0),
         golem_targets: crate::target_grid::TargetGrid::for_consumers(&targets, 0),

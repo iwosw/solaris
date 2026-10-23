@@ -38,6 +38,7 @@ mod elytra;
 mod input;
 pub(crate) mod merchant;
 pub(crate) mod mining;
+mod passive_follow;
 mod stations;
 
 #[cfg(test)]
@@ -873,18 +874,11 @@ impl TickState {
                 crate::entity_life::valid(self, intent.actor, plan)
             }
             IntentKind::MountInteract { plan } => crate::mounts::valid(self, intent.actor, plan),
-            IntentKind::Breed { partner, .. } => [intent.actor, *partner].into_iter().all(|id| {
-                self.entities.slot_of(id).is_some_and(|slot| {
-                    crate::entity_life::breed_ready(
-                        self.entities.body(slot),
-                        self.entities.row(slot),
-                    ) && crate::entity_life::can_breed(
-                        self,
-                        self.entities.body(slot),
-                        self.entities.row(slot),
-                    )
-                })
-            }),
+            IntentKind::Breed {
+                partner,
+                child_type,
+                ..
+            } => crate::entity_life::breeding::valid(self, intent.actor, *partner, *child_type),
             _ => true,
         }
     }
@@ -5275,7 +5269,8 @@ struct ReadRow {
     chaser: bool,
     /// Breed goal, eligibility, adulthood, cooldown and love checked once.
     breed_ready: bool,
-    /// Protocol type: partners must share it.
+    temptable: bool,
+    /// Blueprint key used for pair compatibility and following.
     type_id: u32,
     /// Mature item snapshot (item kind, alive, zero pickup delay).
     pickup_ready: bool,
@@ -5361,6 +5356,18 @@ fn early_entity_rest(
         .hurt_at
         .is_some_and(|at| view.tick.saturating_sub(at) < 100)
     {
+        return false;
+    }
+    if motion_thinks(view.tick, flags, period)
+        && let EntityKind::Mob { type_id } = body.kind
+        && view.registry.blueprint(type_id).is_some_and(|blueprint| {
+            (blueprint.capabilities.temptable && view.has_held_items)
+                || (blueprint.capabilities.follows_adults
+                    && !crate::entity_life::adult(view.entities.row(slot)))
+        })
+    {
+        // Player food and adult positions may change inside the same chunk.
+        // Decision ticks must observe them even when geometry is unchanged.
         return false;
     }
     if motion_thinks(view.tick, flags, period) {
@@ -5566,6 +5573,7 @@ fn prepare_rows(
         let mut summary = PrepSummary::default();
         for part in parts {
             summary.has_dolphin |= part.has_dolphin;
+            summary.temptation_consumers += part.temptation_consumers;
             for (total, count) in summary.consumers.iter_mut().zip(part.consumers) {
                 *total += count;
             }
@@ -5597,6 +5605,7 @@ struct PrepView<'a> {
     world: &'a crate::world::ChunkWorld,
     hostile: &'a crate::hostile::HostileState,
     tick: u64,
+    has_held_items: bool,
 }
 
 impl<'a> PrepView<'a> {
@@ -5613,6 +5622,12 @@ impl<'a> PrepView<'a> {
             world: &state.world,
             hostile: &state.hostile,
             tick: state.tick,
+            has_held_items: state.players.values().any(|player| {
+                !player.spectator()
+                    && [Hand::Main, Hand::Off].into_iter().any(|hand| {
+                        !player.inventory.slots[held_slot_index(player, hand)].is_empty()
+                    })
+            }),
         }
     }
 }
@@ -5655,6 +5670,7 @@ struct PrepChunk {
 struct PrepSummary {
     has_dolphin: bool,
     consumers: [usize; 5],
+    temptation_consumers: usize,
     cow_cells: HashMap<(i32, i32), Vec<usize>>,
 }
 
@@ -5662,6 +5678,7 @@ impl PrepSummary {
     fn of(rows: &[ReadRow], base: usize) -> Self {
         let mut summary = Self::default();
         for (offset, row) in rows.iter().enumerate() {
+            summary.temptation_consumers += usize::from(row.temptable && row.alive && row.think);
             summary.has_dolphin |= row.movement == crate::blueprint::MovementClass::Swimmer
                 && crate::dolphin::is_dolphin(row.type_id);
             if row.chaser && row.alive {
@@ -5901,6 +5918,7 @@ fn read_row(
             && row.entity_life.child_ticks == 0
             && row.breed_cooldown == 0
             && row.love > 0,
+        temptable: blueprint.is_some_and(|blueprint| blueprint.capabilities.temptable),
         type_id,
         pickup_ready: item_entity && body.alive && body.pickup_delay == 0,
         item_entity,
@@ -6074,6 +6092,7 @@ fn run_entity_phase(state: &mut TickState, sim: bool) -> Vec<Intent> {
     let PrepSummary {
         has_dolphin,
         consumers,
+        temptation_consumers,
         cow_cells,
     } = std::mem::take(&mut prepared.summary);
     PrepChunk {
@@ -6179,6 +6198,11 @@ fn run_entity_phase(state: &mut TickState, sim: bool) -> Vec<Intent> {
         rows: rows_ref,
         entities: &state.entities,
         players: player_grid,
+        passive: passive_follow::Context {
+            players: grid(&players, temptation_consumers),
+            states: &state.players,
+            locked: state.require_plugin_login.then_some(&state.locked_sessions),
+        },
         dolphin_toys: &dolphin_toys,
         villagers: villager_grid,
         golem_targets: golem_grid,
@@ -6374,6 +6398,7 @@ struct StepCtx<'a> {
     /// Immutable through the indexed worker join; writes/compaction follow it.
     entities: &'a crate::entities::EntityStore,
     players: crate::target_grid::TargetGrid<'a>,
+    passive: passive_follow::Context<'a>,
     dolphin_toys: &'a [[f64; 3]],
     villagers: crate::target_grid::TargetGrid<'a>,
     golem_targets: crate::target_grid::TargetGrid<'a>,
@@ -6658,7 +6683,7 @@ fn step_entity(row: ReadRow, ctx: &StepCtx) -> (MoveWrite, Vec<RawIntent>) {
             }
         }
         if !acted {
-            vel = crate::entity_motion::wander(row.movement, row.id.0, tick, row.speed);
+            vel = passive_follow::idle(row, ctx, &mut look_target);
         }
     } else if row.breed_ready {
         // Goals by priority: Breed, Wander.
@@ -6675,7 +6700,14 @@ fn step_entity(row: ReadRow, ctx: &StepCtx) -> (MoveWrite, Vec<RawIntent>) {
                 };
                 for index in members {
                     let other = &rows[*index];
-                    if other.id == row.id || other.type_id != row.type_id {
+                    if other.id == row.id
+                        || crate::entity_life::breeding::offspring(
+                            registry,
+                            row.type_id,
+                            other.type_id,
+                        )
+                        .is_none()
+                    {
                         continue;
                     }
                     let ox = other.pos[0] - row.pos[0];
@@ -6710,9 +6742,8 @@ fn step_entity(row: ReadRow, ctx: &StepCtx) -> (MoveWrite, Vec<RawIntent>) {
                 && row.id < other.id
                 && row.love <= crate::entity_life::LOVE_TICKS - 60
                 && other.love <= crate::entity_life::LOVE_TICKS - 60
-                && let Some(child_type) = registry
-                    .blueprint(row.type_id)
-                    .and_then(|blueprint| blueprint.offspring)
+                && let Some(child_type) =
+                    crate::entity_life::breeding::offspring(registry, row.type_id, other.type_id)
             {
                 let partner = other.id;
                 intents.push(RawIntent {
@@ -6733,10 +6764,10 @@ fn step_entity(row: ReadRow, ctx: &StepCtx) -> (MoveWrite, Vec<RawIntent>) {
             }
         }
         if !bred {
-            vel = crate::entity_motion::wander(row.movement, row.id.0, tick, row.speed);
+            vel = passive_follow::idle(row, ctx, &mut look_target);
         }
     } else {
-        vel = crate::entity_motion::wander(row.movement, row.id.0, tick, row.speed);
+        vel = passive_follow::idle(row, ctx, &mut look_target);
     }
     if !row.standing
         && crate::dolphin::is_dolphin(row.type_id)
