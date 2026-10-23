@@ -165,6 +165,11 @@ struct Args {
         help = "Login concurrently at the real survival spawn without creative, teleport or inventory assistance"
     )]
     unassisted_login: bool,
+    #[arg(
+        long,
+        help = "Soak only: a bot whose connection drops logs in again instead of ending the run"
+    )]
+    reconnect: bool,
     #[arg(skip)]
     ended: Arc<Mutex<Option<Duration>>>,
     #[arg(
@@ -1511,13 +1516,15 @@ impl Bot {
     }
     async fn initial_play(&mut self, client: &mut Client, vd: i32) -> Result<()> {
         let mut center_received = false;
+        // Cumulative across reconnects: require a teleport of THIS session.
+        let teleports_before = self.metrics.teleports_confirmed;
         loop {
             let frame = client.read_frame().await?;
             center_received |= frame.id == SetCenterChunk::ID;
             self.frame(client, frame, vd, true).await?;
             // The initial center and position are independent Play packets.
             // Wait for both, without assuming which one the server sends first.
-            if center_received && self.metrics.teleports_confirmed > 0 {
+            if center_received && self.metrics.teleports_confirmed > teleports_before {
                 return Ok(());
             }
         }
@@ -3088,6 +3095,17 @@ fn save_report(args: &Args, value: &Value) -> Result<()> {
         .with_context(|| format!("write report {}", args.report.display()))
 }
 
+/// A lost connection (socket error, EOF, or the server's own Disconnect),
+/// as opposed to a decode/invariant failure inside the bot.
+fn is_transport_drop(error: &anyhow::Error) -> bool {
+    error.chain().any(|cause| {
+        cause.downcast_ref::<std::io::Error>().is_some() || {
+            let text = cause.to_string();
+            text == "peer closed" || text.starts_with("server disconnect:")
+        }
+    })
+}
+
 async fn wait_for_login_release(
     gate: &Barrier,
     release: &mut watch::Receiver<Option<u128>>,
@@ -3290,13 +3308,35 @@ async fn run(mut args: Args) -> Result<()> {
                 let mut client = tokio::select! {
                     biased;
                     _ = stop.changed() => return Ok(()),
-                    prepared = tokio::time::timeout(prepare_timeout, bot.prepare(&args, admission)) =>
+                    prepared = tokio::time::timeout(prepare_timeout, bot.prepare(&args, Arc::clone(&admission))) =>
                         prepared.with_context(|| format!("{}s target-window readiness deadline", args.prepare_seconds))??,
                 };
                 bot.publish();
                 let ready_unix_ns = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
                 ready_tx.send(ready_unix_ns).await.context("readiness supervisor closed")?;
-                bot.play(&mut client, &mut stop, args.view_distance as i32).await
+                loop {
+                    let played = bot.play(&mut client, &mut stop, args.view_distance as i32).await;
+                    let Err(error) = played else { return Ok(()) };
+                    // Only a lost connection is retried; decode/invariant
+                    // failures stay fatal so a protocol regression is visible.
+                    if !args.reconnect || *stop.borrow() || !is_transport_drop(&error) {
+                        return Err(error);
+                    }
+                    bot.metrics.disconnects += 1;
+                    if let Some(index) = bot.current_window() {
+                        bot.metrics.windows[index].received.disconnects += 1;
+                    }
+                    bot.publish();
+                    emit(&json!({"event": "bot_reconnect", "bot": bot.index, "error": format!("{error:#}")}))?;
+                    // Chunks seen belong to the dropped connection.
+                    bot.seen.clear();
+                    client = tokio::select! {
+                        biased;
+                        _ = stop.changed() => return Ok(()),
+                        prepared = tokio::time::timeout(prepare_timeout, bot.prepare(&args, Arc::clone(&admission))) =>
+                            prepared.with_context(|| format!("{}s reconnect readiness deadline", args.prepare_seconds))??,
+                    };
+                }
             }.await;
             if result.is_err() {
                 bot.metrics.disconnects += 1;
