@@ -198,19 +198,20 @@ fn channeled_lightning_credits_only_actual_admitted_bolt_victim_to_retained_play
                 0.5
             );
         }
-        if case == "lethal" {
-            assert_eq!(deaths, [victim]);
-            assert!(
-                state.entities.slot_of_any(victim).is_none(),
-                "snapshot survived lethal cleanup"
-            );
-        } else {
-            let slot = state.entities.slot_of(victim).unwrap();
-            assert_eq!(
-                state.entities.row(slot).health,
-                if case == "rejected" { 20.0 } else { 15.0 }
-            );
-        }
+        assert!(deaths.is_empty(), "conversion does not kill the villager");
+        let slot = state.entities.slot_of(victim).unwrap();
+        assert_eq!(
+            entity_name(&state, victim),
+            Some(if case == "rejected" {
+                "minecraft:villager"
+            } else {
+                "minecraft:witch"
+            })
+        );
+        assert_eq!(
+            state.entities.row(slot).health,
+            if case == "rejected" { 20.0 } else { 26.0 }
+        );
         crate::advancements::run(&mut state, &mut crate::boundary::ChangeSet::default());
         assert_eq!(
             state.players[&player]
@@ -686,7 +687,7 @@ fn shulker_fireball_skull_wind_and_spit_deliver_native_special_payloads() {
                     _ => None,
                 })
                 .unwrap();
-            assert!(accepted_hit(&mut state, target, source).is_empty());
+            assert!(accepted_hit(&mut state, target, source, &mut 5.0).is_empty());
             assert_eq!(
                 state
                     .entities
@@ -775,7 +776,7 @@ fn spectral_and_tipped_arrow_payloads_use_native_effects() {
         punch: 0,
         flame: false,
     };
-    assert!(accepted_hit(&mut state, player, source).is_empty());
+    assert!(accepted_hit(&mut state, player, source, &mut 5.0).is_empty());
     assert_eq!(
         state.players[&player]
             .active_effects
@@ -799,7 +800,7 @@ fn spectral_and_tipped_arrow_payloads_use_native_effects() {
         punch: 0,
         flame: false,
     };
-    assert!(accepted_hit(&mut state, player, source).is_empty());
+    assert!(accepted_hit(&mut state, player, source, &mut 5.0).is_empty());
     assert_eq!(
         state.players[&player]
             .active_effects
@@ -1099,7 +1100,7 @@ fn channeling_requires_enchantment_thunder_open_sky_and_accepted_hit() {
             _ => None,
         })
         .unwrap();
-    assert!(accepted_hit(&mut state, target, source).is_empty());
+    assert!(accepted_hit(&mut state, target, source, &mut 5.0).is_empty());
     let lightning = state
         .projectiles
         .spawned
@@ -1147,7 +1148,7 @@ fn refused_arrow_effects_do_not_mutate_victim_and_accepted_instant_payload_retur
         punch: 0,
         flame: false,
     };
-    let extras = accepted_hit(&mut state, player, source);
+    let extras = accepted_hit(&mut state, player, source, &mut 5.0);
     assert_eq!(extras.len(), 1);
     assert_eq!(extras[0].amount, 6.0);
     assert_eq!(extras[0].kind, DamageKind::Magic);
@@ -1250,6 +1251,7 @@ fn tipped_instant_harming_enforces_pvp_but_self_hits_and_healing_remain_admitted
                 punch: 0,
                 flame: false,
             },
+            &mut 5.0,
         );
         assert_eq!(extras.len(), expected, "pvp={pvp} owner={shooter:?}");
         assert!(
@@ -1284,6 +1286,7 @@ fn tipped_instant_harming_enforces_pvp_but_self_hits_and_healing_remain_admitted
             punch: 0,
             flame: false,
         },
+        &mut 5.0,
     );
     assert!(extras.is_empty());
     assert_eq!(
@@ -1457,4 +1460,76 @@ fn trial_breeze_rejects_wind_charge_direct_damage() {
         ));
         assert!(damage_to(&intents, breeze).is_empty());
     }
+}
+
+#[test]
+fn weather_gap_lightning_transforms_charges_and_damages_items_and_turtles() {
+    let (mut state, _) = fixture();
+    let at = [0.5, 201.0, 0.5];
+    let creeper = mob(&mut state, "minecraft:creeper", at);
+    let pig = mob(&mut state, "minecraft:pig", at);
+    let mooshroom = mob(&mut state, "minecraft:mooshroom", at);
+    let turtle = mob(&mut state, "minecraft:turtle", at);
+    let stack = item(&state, "minecraft:stone");
+    let dropped = crate::tick::spawn_item_entity(&mut state, at, stack);
+    let mut intents = bolt_damage(&mut state, None, at);
+    assert_eq!(damage_to(&intents, dropped), [(5.0, DamageKind::Lightning)]);
+    state.merge(&mut intents);
+    let (deaths, _, _, _) = state.commit_merge_effects();
+    assert!(deaths.contains(&turtle));
+    assert!(deaths.contains(&dropped));
+    assert_eq!(entity_name(&state, pig), Some("minecraft:zombified_piglin"));
+    let pig_row = state.entities.row(state.entities.slot_of(pig).unwrap());
+    assert_eq!(
+        pig_row.appearance.equipment[0],
+        Some(item(&state, "minecraft:golden_sword"))
+    );
+    let row = state.entities.row(state.entities.slot_of(creeper).unwrap());
+    assert!(row.entity_life.charged_lightning);
+    assert!(
+        row.appearance
+            .extra
+            .contains(&(17, crate::boundary::EntityDataValue::Boolean(true)))
+    );
+    assert_eq!(row.health, 15.0);
+    let row = state
+        .entities
+        .row(state.entities.slot_of(mooshroom).unwrap());
+    assert!(row.entity_life.brown_mooshroom);
+    assert_eq!(row.health, 20.0);
+    let fields = crate::entity_life::to_fields(
+        &state
+            .entities
+            .row(state.entities.slot_of(creeper).unwrap())
+            .entity_life,
+        0,
+    );
+    assert!(fields.contains(&("powered".into(), mc_nbt::Tag::Byte(1))));
+    let record = mc_data::entity_nbt::VanillaEntity {
+        id: "minecraft:creeper".into(),
+        extra_fields: fields,
+        ..Default::default()
+    };
+    let encoded = mc_data::entity_nbt::entity_to_fields(&state.registry.items, &record).unwrap();
+    let decoded = mc_data::entity_nbt::entity_from_fields(
+        &state.registry.items,
+        Default::default(),
+        &encoded,
+    )
+    .unwrap();
+    assert!(
+        crate::entity_life::from_record(&decoded, false)
+            .0
+            .charged_lightning
+    );
+    assert!(crate::weather::lightning::strike_entity(
+        &mut state, mooshroom
+    ));
+    assert!(
+        !state
+            .entities
+            .row(state.entities.slot_of(mooshroom).unwrap())
+            .entity_life
+            .brown_mooshroom
+    );
 }

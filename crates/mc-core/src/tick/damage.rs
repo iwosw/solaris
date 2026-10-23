@@ -50,7 +50,10 @@ impl TickState {
                 if let Some(source) = piece.source {
                     let target = self.entities.body(*slot).id;
                     projectile_followups.extend(crate::projectiles::payloads::accepted_hit(
-                        self, target, source,
+                        self,
+                        target,
+                        source,
+                        &mut piece.amount,
                     ));
                 }
                 if let Some(crate::intent::DamageSource::Melee {

@@ -35,6 +35,7 @@ pub struct EntityLifeState {
     pub leash: Option<crate::leash::Holder>,
     pub vehicle: Option<Box<crate::vehicles::VehicleState>>,
     pub brown_mooshroom: bool,
+    pub charged_lightning: bool,
     pub stew_effects: Vec<mc_data::item_stack::StewEffect>,
     pub portal: crate::portals::PortalState,
     pub dolphin: Option<crate::dolphin::DolphinState>,
@@ -166,6 +167,14 @@ pub fn restore_appearance(body: &crate::entities::Body, row: &mut ColdRow) {
         appearance.extra.push((
             18,
             crate::boundary::EntityDataValue::VarInt(i32::from(row.entity_life.brown_mooshroom)),
+        ));
+    }
+    if contract.name == "minecraft:creeper" {
+        let appearance = Arc::make_mut(&mut row.appearance);
+        appearance.extra.retain(|(index, _)| *index != 17);
+        appearance.extra.push((
+            17,
+            crate::boundary::EntityDataValue::Boolean(row.entity_life.charged_lightning),
         ));
     }
 }
@@ -788,6 +797,9 @@ pub fn to_fields(life: &EntityLifeState, love: u32) -> Vec<(String, mc_nbt::Tag)
             Tag::Long(life.age_lock.cooldown_until.min(i64::MAX as u64) as i64),
         ),
     ];
+    if life.charged_lightning {
+        fields.push(("powered".into(), Tag::Byte(1)));
+    }
     if life.brown_mooshroom {
         fields.push(("Type".into(), Tag::String("brown".into())));
     }
@@ -854,6 +866,7 @@ pub fn from_record(
             ("InLove", Tag::Int(ticks)) => love = (*ticks).max(0) as u32,
             ("EggLayTime", Tag::Int(ticks)) => life.harvest_ticks = (*ticks).max(0) as u32,
             ("Type", Tag::String(kind)) => life.brown_mooshroom = kind == "brown",
+            ("powered", Tag::Byte(value)) => life.charged_lightning = *value != 0,
             ("Tame", Tag::Byte(tamed)) => life.tamed = *tamed != 0,
             ("Owner", Tag::IntArray(owner)) if owner.len() == 4 => life.tamed = true,
             ("Sitting", Tag::Byte(sitting)) => life.sitting = *sitting != 0,

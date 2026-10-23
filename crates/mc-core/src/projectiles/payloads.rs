@@ -143,6 +143,27 @@ fn targets(state: &TickState, position: [f64; 3], radius: f64) -> Vec<EntityId> 
     ids
 }
 
+fn lightning_targets(state: &TickState, position: [f64; 3]) -> Vec<EntityId> {
+    let mut ids: Vec<_> = state
+        .entities
+        .slots()
+        .filter_map(|slot| {
+            let body = state.entities.body(slot);
+            let pos = state.entities.pos(slot);
+            ((living(state, body.id)
+                || matches!(body.kind, crate::entities::EntityKind::Item { .. }))
+                && body.alive
+                && (pos[0] - position[0]).abs() <= 3.0
+                && (pos[2] - position[2]).abs() <= 3.0
+                && pos[1] >= position[1] - 3.0
+                && pos[1] <= position[1] + 9.0)
+                .then_some(body.id)
+        })
+        .collect();
+    ids.sort_unstable();
+    ids
+}
+
 fn pvp_permitted(state: &TickState, owner: Option<EntityId>, target: EntityId) -> bool {
     owner.is_none_or(|owner| {
         owner == target
@@ -423,6 +444,7 @@ pub(crate) fn accepted_hit(
     state: &mut TickState,
     target: EntityId,
     source: crate::intent::DamageSource,
+    amount: &mut f32,
 ) -> Vec<crate::tick::DamagePiece> {
     let crate::intent::DamageSource::Projectile {
         projectile,
@@ -453,6 +475,12 @@ pub(crate) fn accepted_hit(
             "minecraft:channeled_lightning",
             serde_json::json!({ "victims": [victim] }),
         );
+    }
+    if mc_data::entity_types::entity_type_contract_26_1_2_by_protocol_id(direct_type_id)
+        .is_some_and(|contract| contract.name == "minecraft:lightning_bolt")
+        && crate::weather::lightning::strike_entity(state, target)
+    {
+        *amount = 0.0;
     }
     if let Some((position, owner)) = state
         .projectiles
@@ -1340,15 +1368,21 @@ pub(crate) fn step(
                 && let Some(slot) = state.entities.slot_of(id)
             {
                 let position = state.entities.pos(slot);
+                crate::weather::lightning::strike_blocks(state, position);
                 let owner = owner_id(state, record);
-                for target in targets(state, position, 3.0) {
+                for target in lightning_targets(state, position) {
                     if pvp_permitted(state, owner, target) {
+                        let amount = if entity_name(state, target) == Some("minecraft:turtle") {
+                            f32::MAX
+                        } else {
+                            5.0
+                        };
                         damage(
                             state,
                             intents,
                             id,
                             target,
-                            5.0,
+                            amount,
                             DamageKind::Lightning,
                             owner,
                             [0.0; 3],

@@ -163,6 +163,7 @@ fn retained_burn(
         return;
     }
     let entity = body.id;
+    let water = water || crate::conduit::rain_exposed(state, state.entities.pos(slot));
     let (body, row) = state.entities.parts_mut(slot);
     if water {
         body.burn_ticks = 0;

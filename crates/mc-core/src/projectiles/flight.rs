@@ -619,6 +619,7 @@ fn step(
     if let Some((t, block_position)) = block_hit {
         let impact = std::array::from_fn(|axis| pos[axis] + velocity[axis] * t);
         state.entities.set_pos(slot, impact);
+        crate::weather::lightning::channel_rod(state, record, block_position);
         let owner = super::owner_id(state, record);
         crate::vibration::emit(
             state,

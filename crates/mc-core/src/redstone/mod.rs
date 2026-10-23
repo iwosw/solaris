@@ -539,6 +539,11 @@ fn tick_cell(
     };
     let path = block.block.id.path();
     match path {
+        _ if path.ends_with("lightning_rod") => {
+            if tick.priority == 4 {
+                change(state, writes, pos, "powered", "false");
+            }
+        }
         "redstone_wire" => {
             if wires.settled.contains(&pos) {
                 return;

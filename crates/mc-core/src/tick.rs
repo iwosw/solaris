@@ -441,8 +441,13 @@ pub struct TickState {
     /// World difficulty (commands).
     pub difficulty: crate::survival::Difficulty,
     pub(crate) journaled_difficulty: Option<crate::survival::Difficulty>,
-    /// Active weather + remaining ticks (commands).
+    /// Visible weather target and independent rain-clock duration.
     pub weather: (crate::commands::Weather, i64),
+    pub(crate) thunder_remaining_ticks: i64,
+    pub(crate) clear_remaining_ticks: i64,
+    pub(crate) thundering: bool,
+    /// Reused precipitation worklist; only active resident columns are sampled.
+    pub(crate) weather_chunks: Vec<ChunkPos>,
     /// Retained client fade levels, independent of the target and cycle clock.
     pub(crate) rain_level: f32,
     pub(crate) thunder_level: f32,
@@ -652,6 +657,10 @@ impl TickState {
             difficulty: crate::survival::Difficulty::Easy,
             journaled_difficulty: None,
             weather: (crate::commands::Weather::Clear, 0),
+            thunder_remaining_ticks: 0,
+            clear_remaining_ticks: 0,
+            thundering: false,
+            weather_chunks: Vec::new(),
             rain_level: 0.0,
             thunder_level: 0.0,
             journaled_climate: None,
@@ -2782,6 +2791,7 @@ fn run_dimension_tick_inner<'a>(
     let mut popped_drops = Vec::new();
     pop_unsupported(state, &mut block_writes, &mut popped_drops);
     if sim {
+        crate::weather::settle(state, &mut block_writes);
         // Random ticks: crops, farmland, saplings, grass.
         crate::farming::run(state, &mut block_writes, &mut popped_drops);
         // Due water/lava ticks, then schedule the fluid around every write.

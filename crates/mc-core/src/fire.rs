@@ -321,7 +321,10 @@ pub(crate) fn lava_tick(
 }
 
 fn raining_at(state: &TickState, pos: BlockPos) -> bool {
-    if !state.dimension.has_weather() || state.rain_level <= 0.2 {
+    if !state.dimension.has_weather()
+        || state.rain_level <= 0.2
+        || !crate::weather::rains_at(state, pos)
+    {
         return false;
     }
     // Full sky light can arrive sideways beneath a roof; direct exposure must
@@ -356,7 +359,7 @@ fn spread_enabled(state: &TickState, pos: BlockPos) -> bool {
 }
 
 /// Fire, from fire blocks or lava, never spreads into a protected zone's cells.
-fn spread_into_enabled(state: &TickState, pos: BlockPos) -> bool {
+pub(crate) fn spread_into_enabled(state: &TickState, pos: BlockPos) -> bool {
     spread_enabled(state, pos) && !crate::plugin_player::protects_cell(state, pos)
 }
 

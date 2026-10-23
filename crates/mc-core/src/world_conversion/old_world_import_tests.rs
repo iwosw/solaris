@@ -1503,7 +1503,8 @@ fn java118_old_layout_import_anvil_upgrades_all_records_and_native_readback() {
     let climate = manifest.climate.unwrap();
     assert_eq!(climate.day_time, 18000);
     assert_eq!(climate.weather_kind, 2);
-    assert_eq!(climate.remaining_ticks, 1234);
+    assert_eq!(climate.remaining_ticks, 2345);
+    assert_eq!(climate.thunder_remaining_ticks, 1234);
     assert_eq!(climate.rain_level_bits, 1.0_f32.to_bits());
     assert_eq!(climate.thunder_level_bits, 1.0_f32.to_bits());
     assert!(!climate.advance_time);

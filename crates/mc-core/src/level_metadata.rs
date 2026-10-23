@@ -246,6 +246,9 @@ pub(crate) fn import_tags(
         day_time: 0,
         weather_kind: 0,
         remaining_ticks: 12000,
+        thunder_remaining_ticks: 12000,
+        clear_remaining_ticks: 0,
+        thundering: false,
         rain_level_bits: 0.0_f32.to_bits(),
         thunder_level_bits: 0.0_f32.to_bits(),
         advance_time: manifest
@@ -294,14 +297,15 @@ pub(crate) fn import_tags(
         let clear = integer("clear_weather_time")?;
         let rain = integer("rain_time")?;
         let thunder = integer("thunder_time")?;
-        climate.weather_kind = if thundering { 2 } else { u8::from(raining) };
-        climate.remaining_ticks = if clear > 0 {
-            clear
-        } else if thundering {
-            thunder
+        climate.weather_kind = if raining && thundering {
+            2
         } else {
-            rain
+            u8::from(raining)
         };
+        climate.remaining_ticks = rain;
+        climate.thunder_remaining_ticks = thunder;
+        climate.clear_remaining_ticks = clear;
+        climate.thundering = thundering;
         climate.rain_level_bits = if raining { 1.0_f32 } else { 0.0_f32 }.to_bits();
         climate.thunder_level_bits = if thundering { 1.0_f32 } else { 0.0_f32 }.to_bits();
         present = true;
@@ -488,19 +492,16 @@ pub(crate) fn checkpoint_tags(
         let weather = saved_data_mut(tags, weather_path)?;
         let remaining =
             i32::try_from(climate.remaining_ticks).map_err(|err| failure(weather_path, err))?;
+        let thunder = i32::try_from(climate.thunder_remaining_ticks)
+            .map_err(|err| failure(weather_path, err))?;
+        let clear = i32::try_from(climate.clear_remaining_ticks)
+            .map_err(|err| failure(weather_path, err))?;
         for (key, value) in [
-            (
-                "clear_weather_time",
-                Tag::Int(if climate.weather_kind == 0 {
-                    remaining
-                } else {
-                    0
-                }),
-            ),
+            ("clear_weather_time", Tag::Int(clear)),
             ("rain_time", Tag::Int(remaining)),
-            ("thunder_time", Tag::Int(remaining)),
+            ("thunder_time", Tag::Int(thunder)),
             ("raining", Tag::Byte(i8::from(climate.weather_kind != 0))),
-            ("thundering", Tag::Byte(i8::from(climate.weather_kind == 2))),
+            ("thundering", Tag::Byte(i8::from(climate.thundering))),
         ] {
             put(weather, key, value);
         }
@@ -826,6 +827,9 @@ mod tests {
                 day_time: 18000,
                 weather_kind: 2,
                 remaining_ticks: 1234,
+                thunder_remaining_ticks: 4321,
+                clear_remaining_ticks: 0,
+                thundering: true,
                 rain_level_bits: 1.0_f32.to_bits(),
                 thunder_level_bits: 1.0_f32.to_bits(),
                 advance_time: false,

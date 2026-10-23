@@ -111,10 +111,9 @@ fn frozen_cycle_retains_command_duration_but_both_levels_still_fade() {
 }
 
 #[test]
-fn natural_cycle_only_alternates_old_clear_and_rain_targets() {
+fn natural_cycle_returns_wet_weather_to_clear() {
     let mut state = fixture();
     for (initial, next, range) in [
-        (Weather::Clear, Weather::Rain, 12_000..=24_000),
         (Weather::Rain, Weather::Clear, 12_000..=180_000),
         (Weather::Thunder, Weather::Clear, 12_000..=180_000),
     ] {
@@ -277,6 +276,9 @@ fn real_core_reopen_uses_checkpoint_and_tail_climate_not_the_tick_number() {
             day_time: 123_987,
             weather_kind: 2,
             remaining_ticks: 1_234,
+            thunder_remaining_ticks: 4321,
+            clear_remaining_ticks: 0,
+            thundering: true,
             rain_level_bits: 0.37123457_f32.to_bits(),
             thunder_level_bits: 0.12876543_f32.to_bits(),
             advance_time: false,
@@ -381,5 +383,345 @@ fn frozen_saturated_climate_does_not_rejournal_unchanged_images() {
         !entries
             .iter()
             .any(|entry| matches!(entry, JournalEntry::Climate { .. }))
+    );
+}
+
+#[test]
+fn weather_gap_natural_rain_and_thunder_clocks_are_independent() {
+    let mut state = fixture();
+    state.weather = (Weather::Rain, 100);
+    state.thunder_remaining_ticks = 1;
+    advance_cycle(&mut state);
+    assert_eq!(state.weather, (Weather::Thunder, 99));
+    assert!((3_600..=15_600).contains(&state.thunder_remaining_ticks));
+    state.thunder_remaining_ticks = 1;
+    advance_cycle(&mut state);
+    assert_eq!(state.weather, (Weather::Rain, 98));
+    assert!((12_000..=180_000).contains(&state.thunder_remaining_ticks));
+    state.weather = (Weather::Clear, 100);
+    state.thunder_remaining_ticks = 1;
+    advance_cycle(&mut state);
+    assert!(state.thundering);
+    assert_eq!(state.weather, (Weather::Clear, 99));
+    state.weather.1 = 1;
+    advance_cycle(&mut state);
+    assert_eq!(state.weather.0, Weather::Thunder);
+    assert!((12_000..=24_000).contains(&state.weather.1));
+}
+
+#[test]
+fn weather_gap_rain_extinguishes_burning_entities_but_not_under_roof() {
+    let mut state = precipitation_fixture("minecraft:plains");
+    let mob = state.spawn_mob(state.registry.cow_type_id, [8.5, 200.0, 8.5], 10.0);
+    let slot = state.entities.slot_of(mob).unwrap();
+    crate::contact_hazards::ignite(&mut state, mob, 100);
+    let mut intents = Vec::new();
+    crate::contact_hazards::run(&mut state, &mut intents);
+    assert_eq!(state.entities.body(slot).burn_ticks, 0);
+    state
+        .world
+        .set_block(8, 203, 8, state.registry.states.stone);
+    crate::contact_hazards::ignite(&mut state, mob, 100);
+    crate::contact_hazards::run(&mut state, &mut intents);
+    assert!(state.entities.body(slot).burn_ticks > 0);
+}
+
+struct BiomeGenerator(&'static str, u32);
+
+impl mc_world::ChunkGenerator for BiomeGenerator {
+    fn generate(&self, pos: mc_world::ChunkPos) -> mc_world::Chunk {
+        mc_world::Chunk::empty(
+            pos,
+            mc_world::BlockStateId(self.1),
+            mc_data::Identifier::parse(self.0).unwrap(),
+        )
+    }
+}
+
+fn precipitation_fixture(biome: &'static str) -> TickState {
+    let registry = Arc::new(CoreRegistry::load(None).unwrap());
+    let generator = Arc::new(BiomeGenerator(biome, registry.states.air));
+    let world = ChunkWorld::new(
+        42,
+        generator,
+        &registry,
+        mc_world::BlockStateId(registry.states.air),
+        [8, 65, 8],
+        mc_world::OVERWORLD_GEOMETRY,
+    );
+    let mut state = TickState::new(registry, world, 1, 512);
+    let chunk = crate::boundary::ChunkPos { x: 0, z: 0 };
+    state
+        .world
+        .ensure_blocking(&[(chunk, 0)].into_iter().collect());
+    state
+        .world
+        .set_active_chunks([chunk].into_iter().collect(), 0);
+    state.weather = (Weather::Rain, 1000);
+    for x in 0..16 {
+        for z in 0..16 {
+            state.world.set_block(x, 64, z, state.registry.states.stone);
+        }
+    }
+    state
+}
+
+#[test]
+fn precipitation_samples_accumulate_snow_freeze_water_edges_and_fill_cauldron() {
+    use crate::boundary::BlockPos;
+    for (biome, filled) in [
+        ("minecraft:plains", "minecraft:water_cauldron"),
+        ("minecraft:snowy_plains", "minecraft:powder_snow_cauldron"),
+    ] {
+        let mut state = precipitation_fixture(biome);
+        let mut writes = Vec::new();
+        let pos = BlockPos { x: 8, y: 65, z: 8 };
+        let cauldron = crate::portals::state_id(&state, "minecraft:cauldron", &[]);
+        state.world.set_block(pos.x, pos.y, pos.z, cauldron);
+        for level in 1..=3 {
+            surface::precipitate(&mut state, &mut writes, pos, 0);
+            assert_eq!(
+                state.world.block_at(pos.x, pos.y, pos.z),
+                Some(crate::portals::state_id(
+                    &state,
+                    filled,
+                    &[("level", &level.to_string())]
+                ))
+            );
+        }
+        let full = state.world.block_at(pos.x, pos.y, pos.z);
+        surface::precipitate(&mut state, &mut writes, pos, 0);
+        assert_eq!(state.world.block_at(pos.x, pos.y, pos.z), full);
+    }
+    let mut state = precipitation_fixture("minecraft:snowy_plains");
+    let mut writes = Vec::new();
+    let floor = BlockPos { x: 4, y: 64, z: 4 };
+    surface::precipitate(&mut state, &mut writes, floor, 0);
+    assert_eq!(
+        state.world.block_at(4, 65, 4),
+        Some(crate::portals::state_id(
+            &state,
+            "minecraft:snow",
+            &[("layers", "1")]
+        ))
+    );
+    state
+        .gamerules
+        .insert("max_snow_accumulation_height".into(), "2".into());
+    surface::precipitate(&mut state, &mut writes, BlockPos { y: 65, ..floor }, 0);
+    assert_eq!(
+        state.world.block_at(4, 65, 4),
+        Some(crate::portals::state_id(
+            &state,
+            "minecraft:snow",
+            &[("layers", "2")]
+        ))
+    );
+    let water = BlockPos { x: 6, y: 65, z: 6 };
+    state.world.set_block(6, 65, 6, state.registry.states.water);
+    surface::precipitate(&mut state, &mut writes, water, 0);
+    assert_eq!(
+        state.world.block_at(6, 65, 6),
+        Some(crate::portals::state_id(&state, "minecraft:ice", &[]))
+    );
+}
+
+#[test]
+fn precipitation_respects_dry_biomes_roofs_and_clear_weather() {
+    let mut state = precipitation_fixture("minecraft:desert");
+    let pos = crate::boundary::BlockPos { x: 8, y: 65, z: 8 };
+    assert!(!crate::conduit::rain_exposed(&state, [8.5, 65.0, 8.5]));
+    let cauldron = crate::portals::state_id(&state, "minecraft:cauldron", &[]);
+    state.world.set_block(8, 65, 8, cauldron);
+    surface::precipitate(&mut state, &mut Vec::new(), pos, 0);
+    assert_eq!(state.world.block_at(8, 65, 8), Some(cauldron));
+    let mut state = precipitation_fixture("minecraft:plains");
+    assert!(crate::conduit::rain_exposed(&state, [8.5, 65.0, 8.5]));
+    state.world.set_block(8, 67, 8, state.registry.states.stone);
+    assert!(!crate::conduit::rain_exposed(&state, [8.5, 65.0, 8.5]));
+    assert_eq!(surface::surface(&state, 8, 8).unwrap().y, 67);
+    state.weather = (Weather::Clear, 1000);
+    state.tick = 16;
+    let mut writes = Vec::new();
+    settle(&mut state, &mut writes);
+    assert!(writes.is_empty());
+}
+
+#[test]
+fn natural_storm_scheduler_launches_retained_projectile_only_in_weather_dimension() {
+    let mut state = precipitation_fixture("minecraft:plains");
+    state.weather = (Weather::Thunder, 1000);
+    let tick = (1_u64..100_000)
+        .map(|tick| tick * 16)
+        .find(|tick| {
+            let mut rng = crate::natural_spawn::Rng(42 ^ tick.wrapping_mul(0x9E37_79B9_7F4A_7C15));
+            rng.below(16);
+            rng.below(16);
+            rng.below(100_000) < 16
+        })
+        .unwrap();
+    state.tick = tick;
+    settle(&mut state, &mut Vec::new());
+    assert_eq!(state.projectiles.spawned.len(), 1);
+    let slot = state
+        .entities
+        .slot_of(state.projectiles.spawned[0])
+        .unwrap();
+    assert_eq!(
+        state.entities.row(slot).projectile.as_ref().unwrap().kind,
+        crate::projectiles::ProjectileKind::Lightning
+    );
+    state.dimension = crate::dimensions::Dimension::Nether;
+    settle(&mut state, &mut Vec::new());
+    assert_eq!(state.projectiles.spawned.len(), 1);
+}
+
+#[test]
+fn lightning_ignites_supported_air_and_channels_through_exposed_rods() {
+    let mut state = precipitation_fixture("minecraft:plains");
+    state
+        .gamerules
+        .insert("fire_spread_radius_around_player".into(), "-1".into());
+    state.difficulty = crate::survival::Difficulty::Normal;
+    lightning::strike_blocks(&mut state, [8.5, 65.0, 8.5]);
+    let fire = state.world.block_at(8, 65, 8).unwrap();
+    assert_eq!(
+        state
+            .registry
+            .blocks
+            .by_id(mc_world::BlockStateId(fire))
+            .unwrap()
+            .block
+            .id
+            .path(),
+        "fire"
+    );
+    assert!(!state.merge_block_writes.is_empty());
+    let pos = crate::boundary::BlockPos { x: 4, y: 65, z: 4 };
+    let rod = crate::portals::state_id(&state, "minecraft:lightning_rod", &[("powered", "false")]);
+    state.world.set_block(4, 65, 4, rod);
+    state.weather = (Weather::Thunder, 1000);
+    let mut trident = crate::projectiles::ProjectileState::new(
+        crate::projectiles::ProjectileKind::Trident,
+        None,
+        mc_data::ItemStack::EMPTY,
+    );
+    trident.stack.enchantments.push(mc_data::ItemEnchantment {
+        id: mc_data::Identifier::parse("minecraft:channeling").unwrap(),
+        level: 1,
+    });
+    lightning::channel_rod(&mut state, &trident, pos);
+    assert_eq!(state.projectiles.spawned.len(), 1);
+    lightning::strike_blocks(&mut state, [4.5, 66.0, 4.5]);
+    assert_eq!(
+        state.world.block_at(4, 65, 4),
+        Some(crate::portals::state_id(
+            &state,
+            "minecraft:lightning_rod",
+            &[("powered", "true")]
+        ))
+    );
+    state.world.set_block(4, 67, 4, state.registry.states.stone);
+    lightning::channel_rod(&mut state, &trident, pos);
+    assert_eq!(state.projectiles.spawned.len(), 1);
+    assert_eq!(
+        crate::redstone::output(&state, pos, crate::boundary::BlockPos { x: 5, ..pos }),
+        15
+    );
+    let mut writes = std::mem::take(&mut state.merge_block_writes);
+    for tick in 0..8 {
+        state.tick = tick;
+        crate::redstone::run(&mut state, &mut writes, &mut Vec::new());
+        assert_eq!(
+            crate::redstone::output(&state, pos, crate::boundary::BlockPos { x: 5, ..pos }),
+            15
+        );
+        writes.clear();
+    }
+    state.tick = 8;
+    crate::redstone::run(&mut state, &mut writes, &mut Vec::new());
+    assert_eq!(
+        crate::redstone::output(&state, pos, crate::boundary::BlockPos { x: 5, ..pos }),
+        0
+    );
+}
+
+#[test]
+fn weather_gap_rods_attract_within_128_and_overlay_removal_roofs_are_respected() {
+    let mut state = precipitation_fixture("minecraft:plains");
+    let rod = crate::portals::state_id(&state, "minecraft:lightning_rod", &[("powered", "false")]);
+    let origin = crate::boundary::BlockPos { x: 8, y: 66, z: 8 };
+    let pos = crate::boundary::BlockPos { x: 4, y: 65, z: 4 };
+    state.world.set_block(pos.x, pos.y, pos.z, rod);
+    assert_eq!(
+        lightning::attract(&state, origin),
+        crate::boundary::BlockPos { y: 66, ..pos }
+    );
+    state.world.fold_overlay();
+    assert_eq!(
+        lightning::attract(&state, origin),
+        crate::boundary::BlockPos { y: 66, ..pos }
+    );
+    assert_eq!(
+        lightning::attract(
+            &state,
+            crate::boundary::BlockPos {
+                x: 132,
+                y: 65,
+                z: 4
+            }
+        ),
+        crate::boundary::BlockPos { y: 66, ..pos }
+    );
+    let outside = crate::boundary::BlockPos {
+        x: 133,
+        y: 65,
+        z: 4,
+    };
+    assert_eq!(lightning::attract(&state, outside), outside);
+    state
+        .world
+        .set_block(pos.x, pos.y + 1, pos.z, state.registry.states.stone);
+    assert_eq!(lightning::attract(&state, origin), origin);
+    state
+        .world
+        .set_block(pos.x, pos.y + 1, pos.z, state.registry.states.air);
+    state
+        .world
+        .set_block(pos.x, pos.y, pos.z, state.registry.states.air);
+    assert_eq!(lightning::attract(&state, origin), origin);
+}
+
+#[test]
+#[ignore = "manual approximate weather microbenchmark; ordinary memory-gated lane"]
+fn weather_gap_microbench_precipitation_and_rod_search() {
+    let mut state = precipitation_fixture("minecraft:plains");
+    let mut writes = Vec::new();
+    let origin = crate::boundary::BlockPos { x: 8, y: 66, z: 8 };
+    let rod = crate::portals::state_id(&state, "minecraft:lightning_rod", &[("powered", "false")]);
+    state.world.set_block(4, 65, 4, rod);
+    state.world.fold_overlay();
+    let mut precipitation = Vec::new();
+    let mut attraction = Vec::new();
+    for _ in 0..7 {
+        let start = std::time::Instant::now();
+        for tick in 1..=10_000 {
+            state.tick = tick * 16;
+            settle(&mut state, &mut writes);
+            writes.clear();
+            std::hint::black_box(&state.weather_chunks);
+        }
+        precipitation.push(start.elapsed().as_nanos() / 10_000);
+        let start = std::time::Instant::now();
+        for _ in 0..1_000 {
+            std::hint::black_box(lightning::attract(&state, origin));
+        }
+        attraction.push(start.elapsed().as_nanos() / 1_000);
+    }
+    precipitation.sort_unstable();
+    attraction.sort_unstable();
+    eprintln!(
+        "approximate, contended machine; one active resident chunk; 7 samples; precipitation median={}ns/sample (amortized /16 ticks); rod attraction median={}ns/strike; precipitation samples={precipitation:?}; attraction samples={attraction:?}",
+        precipitation[3], attraction[3]
     );
 }

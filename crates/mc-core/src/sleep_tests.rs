@@ -305,7 +305,10 @@ fn sleeping_is_refused_by_day() {
     assert!(said(&drains, "You can sleep only at night"));
     assert!(rig.state.sleepers.is_empty());
     assert_eq!(rig.pose(rig.player), 0);
-    assert_eq!(rig.state.players[&rig.player].respawn_point, None);
+    assert_eq!(
+        rig.state.players[&rig.player].respawn_point,
+        Some([rig.head.x, rig.head.y, rig.head.z])
+    );
     // The last tick before dusk and the first of dawn are still day.
     rig.state.day_time = 12_540;
     assert!(said(&rig.use_bed(1), "You can sleep only at night"));
@@ -317,7 +320,7 @@ fn sleeping_is_refused_by_day() {
 fn a_thunderstorm_allows_sleeping_by_day() {
     let mut rig = Rig::new();
     rig.state.day_time = DAY;
-    rig.state.weather = (Weather::Thunder, 5_000);
+    crate::weather::set_command(&mut rig.state, Weather::Thunder, Some(5_000));
     let drains = rig.use_bed(1);
     assert!(!said(&drains, "You can sleep only at night"));
     assert!(rig.state.sleepers.contains_key(&rig.player));
@@ -343,7 +346,10 @@ fn sleeping_is_refused_with_a_monster_near() {
         "You may not rest now; there are monsters nearby"
     ));
     assert!(rig.state.sleepers.is_empty());
-    assert_eq!(rig.state.players[&rig.player].respawn_point, None);
+    assert_eq!(
+        rig.state.players[&rig.player].respawn_point,
+        Some([rig.head.x, rig.head.y, rig.head.z])
+    );
     // Out of range (9 blocks away) it no longer matters.
     let slot = rig.state.entities.slot_of(monster).expect("zombie");
     let far = [near[0], near[1], f64::from(rig.head.z) + 9.5];
@@ -455,7 +461,10 @@ fn respawn_uses_the_bed_while_it_stands() {
     assert_eq!(at[1], f64::from(Y + 1));
     assert!((at[0] - (f64::from(head.x) + 0.5)).abs() <= 1.0, "{at:?}");
     assert!((at[2] - (f64::from(head.z) + 0.5)).abs() <= 1.0, "{at:?}");
-    assert_ne!(at[0], f64::from(head.x) + 0.5);
+    assert_ne!(
+        [at[0], at[2]],
+        [f64::from(head.x) + 0.5, f64::from(head.z) + 0.5]
+    );
 
     // Bed gone: the natural spawn.
     let air = rig.state.registry.states.air;
@@ -612,4 +621,61 @@ fn sleep_statistics_only_award_accepted_entry_and_reset_rest_timer() {
             .get_custom(CustomStat::SleepInBed),
         1
     );
+}
+
+#[test]
+fn weather_gap_daytime_bed_sets_spawn_without_awarding_sleep() {
+    let mut rig = Rig::new();
+    rig.state.day_time = DAY;
+    crate::sleep::use_bed(&mut rig.state, rig.player, ConnectionId(1), rig.foot);
+    assert_eq!(
+        rig.state.players[&rig.player].respawn_point,
+        Some([rig.head.x, rig.head.y, rig.head.z])
+    );
+    assert!(rig.state.sleepers.is_empty());
+}
+
+#[test]
+fn weather_gap_sleeping_fits_low_ceiling_and_wakes_at_safe_exit() {
+    let mut rig = Rig::new();
+    rig.state.day_time = NIGHT;
+    let stone = rig.state.registry.states.stone;
+    rig.state
+        .world
+        .set_block(rig.head.x, rig.head.y + 2, rig.head.z, stone);
+    rig.use_bed(1);
+    let slot = rig.state.entities.slot_of(rig.player).unwrap();
+    assert_eq!(rig.state.entities.body(slot).height, 0.2);
+    rig.run(20);
+    assert!(rig.state.sleepers.contains_key(&rig.player));
+    let exit = crate::sleep::respawn_position(&rig.state, rig.player).unwrap();
+    crate::sleep::wake(&mut rig.state, rig.player);
+    assert_eq!(rig.state.entities.pos(slot), exit);
+    assert_eq!(rig.state.entities.body(slot).height, 1.8);
+}
+
+#[test]
+fn weather_gap_bed_exit_includes_foot_perimeter() {
+    let mut rig = Rig::new();
+    rig.state.day_time = NIGHT;
+    rig.use_bed(1);
+    let stone = rig.state.registry.states.stone;
+    for [dx, dz] in [[1, 0], [-1, 0], [0, 1], [0, -1], [0, 0]] {
+        rig.state
+            .world
+            .set_block(rig.head.x + dx, rig.head.y + 1, rig.head.z + dz, stone);
+    }
+    let exit = crate::sleep::respawn_position(&rig.state, rig.player).expect("foot exit");
+    assert!(exit[0] <= f64::from(rig.foot.x) + 0.5 || exit[2] != f64::from(rig.head.z) + 0.5);
+}
+
+#[test]
+fn weather_gap_clear_countdown_survives_sleep() {
+    let mut rig = Rig::new();
+    rig.state.day_time = NIGHT;
+    rig.state.weather = (Weather::Clear, 10_000);
+    rig.use_bed(1);
+    rig.run(99);
+    assert_eq!(rig.state.weather, (Weather::Clear, 9_900));
+    assert!(rig.state.sleepers.is_empty());
 }

@@ -1,8 +1,8 @@
 //! Beds, vanilla `BedBlock.useWithoutItem` + `Player.startSleepInBed`: a
 //! player lies down in a free bed at night (or in a thunderstorm) with no
-//! monster near, which also sets its respawn point. When every player in
-//! the world has slept long enough the night is skipped, the weather
-//! clears and everyone wakes. Respawning uses the bed while it stands.
+//! monster near. A valid bed also sets respawn during daytime. Once the
+//! configured quorum has slept long enough, the night is skipped and rain
+//! clears. Waking and respawning share the bed's safe-exit search.
 
 use std::sync::Arc;
 
@@ -82,6 +82,10 @@ fn set_lying(state: &mut TickState, entity: EntityId, bed: Option<BlockPos>) {
     let Some(slot) = state.entities.slot_of_any(entity) else {
         return;
     };
+    state
+        .entities
+        .set_half_width(slot, if bed.is_some() { 0.1 } else { 0.3 });
+    state.entities.body_mut(slot).height = if bed.is_some() { 0.2 } else { 1.8 };
     let row = state.entities.row_mut(slot);
     let appearance = Arc::make_mut(&mut row.appearance);
     appearance.pose = if bed.is_some() { SLEEPING_POSE } else { 0 };
@@ -133,6 +137,14 @@ pub(crate) fn use_bed(
         say(state, connection, "This bed is occupied");
         return true;
     }
+    let [yaw, _, _] = state.entities.rot(slot);
+    if let Some(player) = state.players.get_mut(&entity) {
+        player.respawn_point = Some([head.x, head.y, head.z]);
+        player.respawn_dimension = state.dimension;
+        player.respawn_forced = false;
+        player.respawn_yaw = yaw;
+        player.respawn_pitch = 0.0;
+    }
     if !can_sleep_now(state) {
         say(state, connection, "You can sleep only at night");
         return true;
@@ -163,11 +175,7 @@ pub(crate) fn use_bed(
         },
     );
     if let Some(player) = state.players.get_mut(&entity) {
-        player.respawn_point = Some([head.x, head.y, head.z]);
-        player.respawn_dimension = state.dimension;
-        player.respawn_forced = false;
-        player.respawn_yaw = yaw;
-        player.respawn_pitch = 0.0;
+        // The spawn was set even if sleeping would have been refused above.
         player
             .statistics
             .increment_custom(mc_data::statistics::CustomStat::SleepInBed, 1);
@@ -188,7 +196,17 @@ pub(crate) fn use_bed(
 
 /// Get `entity` out of its bed (leave-bed command, morning, hit, death).
 pub(crate) fn wake(state: &mut TickState, entity: EntityId) {
-    if state.sleepers.remove(&entity).is_some() {
+    if let Some(sleeper) = state.sleepers.remove(&entity) {
+        if let Some(slot) = state.entities.slot_of(entity) {
+            let [yaw, pitch, _] = state.entities.rot(slot);
+            if let Some(exit) = bed_exit(state, sleeper.bed, yaw) {
+                state.entities.set_pos(slot, exit);
+                state.entities.set_vel(slot, [0.0; 3]);
+                if let Some(connection) = state.connections.entity_connection(entity) {
+                    state.correct_position(connection, exit, yaw, pitch);
+                }
+            }
+        }
         set_lying(state, entity, None);
     }
 }
@@ -240,8 +258,13 @@ pub(crate) fn run(state: &mut TickState) {
         if crate::command_rules::boolean(state, "advance_time") {
             state.day_time = (state.day_time.div_euclid(24_000) + 1) * 24_000;
         }
-        if crate::command_rules::boolean(state, "advance_weather") {
+        if crate::command_rules::boolean(state, "advance_weather")
+            && state.weather.0 != Weather::Clear
+        {
             state.weather = (Weather::Clear, 0);
+            state.thundering = false;
+            state.thunder_remaining_ticks = 0;
+            state.clear_remaining_ticks = 0;
         }
         let sleepers: Vec<EntityId> = state.sleepers.keys().copied().collect();
         for entity in sleepers {
@@ -288,25 +311,61 @@ pub(crate) fn respawn_position_for(
             f64::from(z) + 0.5,
         ]);
     }
-    let solid = |x: i32, y: i32, z: i32| {
-        state.world.block_at(x, y, z).is_none_or(|block| {
-            state.registry.materials.classify(block) == mc_physics::BlockMaterial::Solid
+    bed_exit(state, BlockPos { x, y, z }, player.respawn_yaw)
+}
+
+/// Both bed halves, all perimeter cells and the lower floor tier. The search is
+/// bounded to 36 cells and ordered toward the player's saved facing.
+fn bed_exit(state: &TickState, head: BlockPos, yaw: f32) -> Option<[f64; 3]> {
+    let current = state.world.block_at(head.x, head.y, head.z)?;
+    let foot = crate::placement::other_half(&state.registry.blocks, head, current)
+        .map_or(head, |(other, _)| other);
+    let offsets = [
+        [1, 0],
+        [1, 1],
+        [0, 1],
+        [-1, 1],
+        [-1, 0],
+        [-1, -1],
+        [0, -1],
+        [1, -1],
+    ];
+    let first = (((f64::from(yaw).to_radians() + std::f64::consts::FRAC_PI_2)
+        / std::f64::consts::FRAC_PI_4)
+        .round() as i32)
+        .rem_euclid(8) as usize;
+    let free = |x, y, z| {
+        state.world.block_at(x, y, z).is_some_and(|id| {
+            state.registry.materials.classify(id) == mc_physics::BlockMaterial::Air
+                && state.registry.hazard_flags.get(id as usize) == Some(&0)
         })
     };
-    let free = |x: i32, y: i32, z: i32| !solid(x, y, z) && !solid(x, y + 1, z);
-    [[1, 0], [-1, 0], [0, 1], [0, -1]]
+    for dy in [0, -1] {
+        for anchor in [head, foot] {
+            for index in 0..8 {
+                let [dx, dz] = offsets[(first + index) % 8];
+                let (x, y, z) = (anchor.x + dx, head.y + dy, anchor.z + dz);
+                if free(x, y, z)
+                    && free(x, y + 1, z)
+                    && state.world.block_at(x, y - 1, z).is_some_and(|id| {
+                        state.registry.materials.classify(id) == mc_physics::BlockMaterial::Solid
+                            && state.registry.hazard_flags.get(id as usize) == Some(&0)
+                    })
+                {
+                    return Some([f64::from(x) + 0.5, f64::from(y), f64::from(z) + 0.5]);
+                }
+            }
+        }
+    }
+    [head, foot]
         .into_iter()
-        .map(|[dx, dz]| (x + dx, z + dz))
-        .find(|&(sx, sz)| free(sx, y, sz) && solid(sx, y - 1, sz))
-        .map(|(sx, sz)| [f64::from(sx) + 0.5, f64::from(y), f64::from(sz) + 0.5])
-        .or_else(|| {
-            free(x, y + 1, z).then(|| {
-                [
-                    f64::from(x) + 0.5,
-                    f64::from(y) + BED_TOP,
-                    f64::from(z) + 0.5,
-                ]
-            })
+        .find(|pos| free(pos.x, pos.y + 1, pos.z) && free(pos.x, pos.y + 2, pos.z))
+        .map(|pos| {
+            [
+                f64::from(pos.x) + 0.5,
+                f64::from(pos.y) + BED_TOP,
+                f64::from(pos.z) + 0.5,
+            ]
         })
 }
 

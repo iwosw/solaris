@@ -272,7 +272,7 @@ fn effect_trigger_bogged_arrow_has_poison_payload_and_applies_it_only_after_hit_
         punch: 0,
         flame: false,
     };
-    crate::projectiles::payloads::accepted_hit(&mut state, player, source);
+    crate::projectiles::payloads::accepted_hit(&mut state, player, source, &mut 5.0);
     assert_eq!(
         state.players[&player]
             .active_effects

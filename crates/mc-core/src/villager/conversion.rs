@@ -92,7 +92,7 @@ pub(crate) fn infect(state: &mut TickState, slot: EntitySlot, attacker: Option<E
     true
 }
 
-fn replace_type(state: &mut TickState, slot: EntitySlot, type_id: u32) {
+pub(crate) fn replace_type(state: &mut TickState, slot: EntitySlot, type_id: u32) {
     let blueprint = state
         .registry
         .blueprint(type_id)

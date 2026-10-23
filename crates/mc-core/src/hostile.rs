@@ -561,6 +561,7 @@ fn swell(
         return;
     };
     let row = state.entities.row(slot);
+    let charged = row.entity_life.charged_lightning;
     let (start, height) = (f64::from(row.attack_reach), body.height);
     let pos = state.entities.pos(slot);
     let fuse = state.hostile.fuse(id);
@@ -592,7 +593,7 @@ fn swell(
             seq,
             kind: IntentKind::Explode {
                 center: pos,
-                power: explosion.power,
+                power: explosion.power * if charged { 2.0 } else { 1.0 },
                 mob_grief: Some(if explosion.griefing {
                     crate::command_rules::MobGrief::Creeper
                 } else {

@@ -14,14 +14,29 @@ use crate::world::ChunkWorld;
 const POS: BlockPos = BlockPos { x: 4, y: 201, z: 4 };
 const FLOOR: BlockPos = BlockPos { x: 4, y: 200, z: 4 };
 
+// Fire rain cases require a rainy biome, independent of the terrain seed.
+struct RainyTerrain(mc_worldgen::TerrainGenerator);
+
+impl mc_world::ChunkGenerator for RainyTerrain {
+    fn generate(&self, pos: mc_world::ChunkPos) -> mc_world::Chunk {
+        let mut chunk = self.0.generate(pos);
+        for biome in &mut chunk.biomes {
+            *biome = mc_world::chunk::BiomeSection::filled(
+                Identifier::parse("minecraft:plains").unwrap(),
+            );
+        }
+        chunk
+    }
+}
+
 fn state(dir: Option<std::path::PathBuf>) -> TickState {
     static REGISTRY: LazyLock<Arc<CoreRegistry>> =
         LazyLock::new(|| Arc::new(CoreRegistry::load(None).unwrap()));
     let registry = Arc::clone(&REGISTRY);
-    let generator = Arc::new(mc_worldgen::TerrainGenerator::new(
+    let generator = Arc::new(RainyTerrain(mc_worldgen::TerrainGenerator::new(
         42,
         Arc::clone(&registry.blocks),
-    ));
+    )));
     let mut world = if let Some(dir) = dir {
         let config = crate::CoreConfig::new(dir, 42);
         ChunkWorld::new_native(

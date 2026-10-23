@@ -45,6 +45,11 @@ pub(crate) fn rain_exposed(state: &TickState, pos: [f64; 3]) -> bool {
         return false;
     }
     let [x, y, z] = pos.map(|v| v.floor() as i32);
+    crate::weather::rains_at(state, BlockPos { x, y, z }) && sky_exposed(state, pos)
+}
+
+pub(crate) fn sky_exposed(state: &TickState, pos: [f64; 3]) -> bool {
+    let [x, y, z] = pos.map(|v| v.floor() as i32);
     let Some(chunk) = state.world.chunk(ChunkPos {
         x: x.div_euclid(16),
         z: z.div_euclid(16),
