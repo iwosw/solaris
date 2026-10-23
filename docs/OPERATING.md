@@ -421,12 +421,14 @@ Access lists are vanilla files beside the selected config: `ops.json`,
 <player>|list|reload` and `/banlist players|ips` require operator level 3.
 `whitelist.json` stays a plain vanilla array of `uuid`/`name` rows, so an
 existing file can be dropped in unchanged. The enforcement toggle persists in
-`whitelist.enabled` beside it (`true` or `false`) because Solaris has no
-`server.properties`; `/whitelist on` and `off` rewrite it. An enforced list is
-checked at login after bans and before the player cap, with vanilla's
-`multiplayer.disconnect.not_whitelisted`; operators are not exempt. `/whitelist
-reload` re-reads a hand-edited `whitelist.json`, and `/whitelist add` resolves a
-live or already-known player, or an offline-mode name.
+`whitelist.enabled` beside it (`true` or `false`); `/whitelist on` and `off`
+rewrite it. `[server] whitelist` (or imported `white-list`) initializes this
+state only when the file is absent, so a restart preserves console changes.
+Malformed or unreadable enforcement state refuses startup rather than disabling
+admission. Bans take precedence; operators bypass the whitelist as on vanilla,
+but bypass the player cap only with `bypassesPlayerLimit` in `ops.json`.
+`/whitelist reload` re-reads a hand-edited `whitelist.json`; `/whitelist add`
+resolves a live or already-known player, or an offline-mode name.
 
 `/ban <player> [duration] [reason]` keeps vanilla's argument order and adds one
 optional token: a duration such as `30m`, `2h30m`, `1d` or `1w`. Without it the
@@ -448,6 +450,99 @@ before broadcast, and queued inputs cannot continue broadcasting after the
 sender is disconnected. This protects other players' reliable queues from a
 single sender's burst. Operators share this communication limit; console
 commands are not charged.
+
+### Importing `server.properties`
+
+TOML remains the canonical configuration. Startup reads `server.properties`
+beside the selected `--config` TOML when present. To select another import, set
+`[properties] file = "migration/server.properties"` (relative to the TOML).
+An explicitly selected missing file is an error. The import is never rewritten
+and is not a second live configuration authority: precedence is **explicit TOML
+leaf → imported supported property → Solaris default**. `/whitelist on|off`
+persists access-list state separately, as described above. World paths retain
+their normal process-working-directory semantics.
+
+The reader supports Java properties comments, `=`/`:`/whitespace separators,
+continuations, escaped delimiters and `\\uXXXX` (including surrogate pairs).
+File bytes use Java `Properties.load(InputStream)` Latin-1; use Unicode escapes
+for non-ASCII text. Duplicate property keys use the last value. Every unsupported
+key warns by name, without printing its value; invalid supported values fail
+startup. TOML overrides also warn by key.
+
+| Vanilla property | Solaris TOML key |
+| --- | --- |
+| `motd` | `server.motd` |
+| `max-players` | `server.max_players` |
+| `view-distance`, `simulation-distance` | `server.view_distance`, `server.simulation_distance` |
+| `accepts-transfers`, `pause-when-empty-seconds` | `server.accepts_transfers`, `server.pause_when_empty_seconds` |
+| `white-list` | `server.whitelist` (initial persisted policy) |
+| `enable-command-block` | `server.enable_command_block` |
+| `server-ip`, `server-port` | `network.bind_address`, `network.port` |
+| `online-mode` | `auth.online_mode` |
+| `level-name`, `level-seed` | `data.world_dir`, `data.seed` |
+| `enable-rcon`, `rcon.port`, `rcon.password` | `rcon.enabled`, `rcon.port`, `rcon.password` |
+| `enable-query`, `query.port` | `query.enabled`, `query.port` |
+| `resource-pack`, `resource-pack-sha1` | `resource_pack.url`, `resource_pack.sha1` |
+| `require-resource-pack`, `resource-pack-prompt`, `resource-pack-id` | `resource_pack.required`, `resource_pack.prompt`, `resource_pack.id` |
+
+Empty `server-ip` means `0.0.0.0`. Non-numeric seeds use Java's UTF-16 string
+hash; an empty seed leaves Solaris's default rather than choosing a random seed.
+Importing `level-name` does **not** import Anvil data: migrate the stopped world
+explicitly before serving it. Unsupported gameplay properties do not become
+gamerules; inspect warnings and the [migration guide](MIGRATION.md).
+
+### RCON and UDP Query
+
+Both services are disabled by default. `[rcon] enabled = true` requires a
+nonempty `password`; `port` defaults to `25575`. `bind_address` defaults to
+`127.0.0.1`, deliberately independent of Minecraft's listener. RCON sends its
+password and full level-four console commands **unencrypted**: use a trusted
+network or SSH tunnel, never an exposed Internet listener. `--no-console`
+only disables stdin, not explicitly enabled RCON.
+
+Authenticated RCON commands take the same admin/native console route as stdin,
+serialized with stdin and other RCON clients. Replies contain command feedback;
+native replies wait for the tick's reliable outbox to drain. The console-only
+`backup` command reports admission immediately and logs its eventual result to
+stdout, just as stdin does. Plugin-deferred feedback is not a synchronous RCON
+completion receipt. Framing is bounded to 4096-byte request bodies; output is
+split into UTF-8-safe 4096-byte frames. At most 16 RCON clients are active and
+incomplete/idle reads and writes have a 30-second deadline.
+
+`[query] enabled = true` starts GameSpy4 UDP Query on `network.bind_address`,
+with `query.port = 25565` by default (separate from the TCP port). Basic stat
+reports MOTD, map, player counts and game address; full stat adds version and
+the player roster. Full-stat data is cached for five seconds. Source/session-bound
+challenges expire within 60 seconds; requests are globally bounded to 128/second.
+Query publicly reveals the player roster when enabled. Neither service scans
+the world or adds native per-tick work. Bind failures refuse startup.
+
+### Server-offered vanilla resource packs
+
+Configure `[resource_pack] url`, optional `sha1` (40 hexadecimal digits),
+`required` (default false), `prompt` (a JSON text-component string), and optional
+`id` (UUID). Empty URL disables offering. Only HTTP(S) URLs are accepted; the
+client downloads the ZIP, so serve it from a client-reachable URL. Without an
+explicit ID, the URL determines a stable UUID. Example:
+
+```toml
+[resource_pack]
+url = "https://example.org/server-pack.zip"
+sha1 = ""
+required = true
+prompt = '{"text":"This server uses a custom resource pack."}'
+```
+
+The edge offers the pack during Configuration and waits for the matching
+terminal client status before Finish Configuration. Accept/download progress
+alone does not satisfy a required pack. Decline, invalid URL, download/reload
+failure or discard disconnect a required-pack client; optional failures allow
+joining. Unknown pack IDs and malformed statuses refuse the connection.
+Negotiation is bounded to 120 seconds and 32 packets (the enclosing login
+deadline may be shorter). Required-pack policy trusts the client's protocol
+acknowledgement, not a proof of rendered assets. This is independent of Solaris
+Loader bundle negotiation; it works without a Loader installation.
+
 
 Connection admission has two optional per-address limits under `[network]`:
 `connection_throttle_ms` (minimum gap between two accepted connections from one

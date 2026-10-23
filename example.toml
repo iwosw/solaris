@@ -50,6 +50,31 @@ port = 8080
 # Non-loopback binds additionally require allow_remote = true.
 # allow_remote = false
 
+# server.properties beside this TOML is imported at startup if present.
+# Explicit TOML keys win. See OPERATING.md for the supported-key table.
+# [properties]
+# file = "migration/server.properties"
+
+[rcon]
+# Plaintext level-four console access. Keep loopback and use an SSH tunnel.
+enabled = false
+bind_address = "127.0.0.1"
+port = 25575
+password = ""
+
+[query]
+# GameSpy4 UDP Query exposes the player roster on network.bind_address.
+enabled = false
+port = 25565
+
+[resource_pack]
+# Empty URL disables the vanilla Configuration-phase resource pack offer.
+url = ""
+sha1 = ""
+required = false
+# prompt = '{"text":"Install this server resource pack."}'
+# id = "00000000-0000-3000-8000-000000000001"
+
 [anti_xray]
 # Send ores fully enclosed by solid blocks as plain rock until a neighbouring
 # block is mined. Both default to true; the End has no ores.

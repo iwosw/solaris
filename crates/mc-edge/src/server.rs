@@ -255,6 +255,7 @@ pub struct EdgeServer {
     /// Join-burst recipe packets, built once from the core's recipe list.
     pub recipes: crate::recipes::RecipePackets,
     pub(crate) admin: crate::admin::Admin,
+    pub(crate) console_state: crate::console::ConsoleState,
     stop: tokio::sync::watch::Sender<bool>,
     suggestion_items: Vec<String>,
     suggestion_blocks: Vec<String>,
@@ -356,6 +357,11 @@ impl EdgeServer {
         };
         let recipes = crate::recipes::RecipePackets::new(hub.registry())?;
         let admin = crate::admin::Admin::open(&cfg.server_dir)?;
+        if let Some(enabled) = cfg.server.whitelist
+            && !cfg.server_dir.join("whitelist.enabled").exists()
+        {
+            admin.set_whitelist(enabled)?;
+        }
         let (stop, _) = tokio::sync::watch::channel(false);
         let online_authentication = cfg
             .auth
@@ -403,6 +409,7 @@ impl EdgeServer {
             .transpose()?;
         Ok(Self {
             admin,
+            console_state: Default::default(),
             stop,
             suggestion_items,
             suggestion_blocks,
@@ -462,7 +469,7 @@ impl EdgeServer {
 
     fn feedback(&self, id: ConnectionId, text: &str) -> anyhow::Result<()> {
         if id == mc_core::command_console::CONNECTION {
-            crate::console::print_line(text);
+            self.console_state.feedback(text);
             return Ok(());
         }
         let mut content_nbt = Vec::new();
@@ -1453,7 +1460,9 @@ pub async fn serve_with_console(
     console: bool,
 ) -> anyhow::Result<()> {
     let server = Arc::new(server);
+    let _remote_admin = crate::remote_admin::start(Arc::clone(&server)).await?;
     let mut pump = spawn_pump(Arc::clone(&server))?;
+    server.console_state.running.store(true, Ordering::Relaxed);
     let load_metrics = spawn_load_metrics(&server);
     let mut stop = server.stop.subscribe();
     let addresses = std::sync::Arc::new(crate::conn_limit::AddressLimiter::new(
@@ -1700,6 +1709,7 @@ async fn handle_connection(stream: TcpStream, server: Arc<EdgeServer>) -> anyhow
         &server.tags,
         server.loader_manifest.as_ref(),
         server.loader_required,
+        &server.cfg.resource_pack,
     )
     .await
     {
@@ -2330,6 +2340,7 @@ fn spawn_pump(server: Arc<EdgeServer>) -> anyhow::Result<tokio::task::JoinHandle
             server.tick_stats.record(out.tick);
             let (mut connections, roster) = server.connections.routing_snapshot();
             route_outbox(&server, &mut viewers, &mut connections);
+            server.console_state.drained(out.tick);
             let publish_start = std::time::Instant::now();
             publish_and_route(
                 &server,
@@ -2434,7 +2445,7 @@ fn route_outbox(
     }
     for (connection, changes) in server.hub.try_drain_outbox() {
         if connection == mc_core::command_console::CONNECTION {
-            crate::console::output(&changes);
+            crate::console::output(&server.console_state, &changes);
             continue;
         }
         // Core-ordered kick: stash the reason so the play loop can log

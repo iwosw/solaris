@@ -919,3 +919,7 @@ mod moderation_tests {
 #[cfg(test)]
 #[path = "admin_lock_tests.rs"]
 mod lock_tests;
+
+#[cfg(test)]
+#[path = "access_compat_tests.rs"]
+mod access_compat_tests;

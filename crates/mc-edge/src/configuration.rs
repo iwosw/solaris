@@ -79,6 +79,7 @@ pub async fn handle_configuration(
     tags: &mc_data::tags::TagsData,
     loader_manifest: Option<&mc_loader::LoaderManifest>,
     loader_required: bool,
+    resource_pack: &crate::config::ResourcePackSection,
 ) -> anyhow::Result<ConfigOutcome> {
     // Vanilla publishes feature flags before registry/known-pack negotiation.
     conn.send_packet(&UpdateEnabledFeatures {
@@ -214,6 +215,7 @@ pub async fn handle_configuration(
         }
         _ => None,
     };
+    crate::resource_pack::negotiate(conn, resource_pack, &mut prefs).await?;
 
     // Step 4: tell the client we are done configuring.
     conn.send_packet(&FinishConfiguration).await?;

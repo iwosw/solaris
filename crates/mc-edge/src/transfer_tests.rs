@@ -34,6 +34,7 @@ fn fixture() -> (EdgeServer, std::path::PathBuf) {
         tick_stats: Arc::new(TickStats::new()),
         net_counters: Arc::new(NetCounters::new()),
         admin: crate::admin::Admin::open(&dir).unwrap(),
+        console_state: Default::default(),
         stop: tokio::sync::watch::channel(false).0,
         suggestion_items: vec!["minecraft:stone".into()],
         suggestion_blocks: vec!["minecraft:stone".into()],

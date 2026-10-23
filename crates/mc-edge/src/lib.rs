@@ -61,6 +61,9 @@ pub mod status;
 
 mod conn_limit;
 mod vanilla_items;
+mod server_properties;
+mod resource_pack;
+mod remote_admin;
 
 #[cfg(test)]
 mod plugin_tests;

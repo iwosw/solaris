@@ -7,6 +7,60 @@ use mc_core::boundary::{PlayerChange, PlayerInput};
 use mc_core::command_console::{CONNECTION, ConsoleCommand};
 
 use crate::server::EdgeServer;
+/// Serializes stdin and RCON on the existing console source. Only an active
+/// RCON command retains output, bounded independently of command volume.
+#[derive(Default)]
+pub(crate) struct ConsoleState {
+    serial: tokio::sync::Mutex<()>,
+    response: parking_lot::Mutex<Option<Result<String, &'static str>>>,
+    drained: std::sync::atomic::AtomicU64,
+    ready: tokio::sync::Notify,
+    pub(crate) running: std::sync::atomic::AtomicBool,
+}
+
+impl ConsoleState {
+    pub(crate) fn feedback(&self, message: &str) {
+        if let Some(response) = self.response.lock().as_mut()
+            && let Ok(text) = response
+        {
+            if text.len() + message.len() + 1 <= 1024 * 1024 {
+                text.push_str(message);
+                text.push('\n');
+            } else {
+                *response = Err("RCON output exceeded 1 MiB; full feedback is on stdout");
+            }
+        }
+        print_line(message);
+    }
+
+    pub(crate) fn drained(&self, tick: u64) {
+        self.drained.store(tick, std::sync::atomic::Ordering::Release);
+        self.ready.notify_waiters();
+    }
+    async fn wait_drained(&self, tick: u64) {
+        loop {
+            let ready = self.ready.notified();
+            if self.drained.load(std::sync::atomic::Ordering::Acquire) >= tick { break; }
+            ready.await;
+        }
+    }
+}
+
+struct Capture<'a>(&'a ConsoleState);
+impl Drop for Capture<'_> {
+    fn drop(&mut self) { self.0.response.lock().take(); }
+}
+
+pub(crate) async fn remote(server: &EdgeServer, line: &str) -> anyhow::Result<String> {
+    let _serial = server.console_state.serial.lock().await;
+    let capture = Capture(&server.console_state);
+    *capture.0.response.lock() = Some(Ok(String::new()));
+    if let Some(tick) = execute_inner(server, line).await? {
+        capture.0.wait_drained(tick).await;
+    }
+    capture.0.response.lock().take().unwrap_or_else(|| Ok(String::new()))
+        .map_err(anyhow::Error::msg)
+}
 
 pub(crate) fn spawn(server: Arc<EdgeServer>) -> std::io::Result<tokio::task::JoinHandle<()>> {
     let (sender, mut lines) = tokio::sync::mpsc::channel(16);
@@ -42,14 +96,14 @@ pub(crate) fn spawn(server: Arc<EdgeServer>) -> std::io::Result<tokio::task::Joi
 /// the outcome prints when the copy finishes.
 fn backup(server: &EdgeServer, command: &str) {
     if command != "backup" {
-        print_line("Incorrect argument for command");
+        server.console_state.feedback("Incorrect argument for command");
         return;
     }
     let Some(directory) = server.cfg.data.backup_dir.clone() else {
-        print_line("Backups are disabled: set backup_dir under [data]");
+        server.console_state.feedback("Backups are disabled: set backup_dir under [data]");
         return;
     };
-    print_line("Backing up the world (the server keeps running)");
+    server.console_state.feedback("Backing up the world (the server keeps running)");
     let core = Arc::clone(&server.hub);
     tokio::spawn(async move {
         let started = std::time::Instant::now();
@@ -72,9 +126,20 @@ fn backup(server: &EdgeServer, command: &str) {
 }
 
 pub(crate) async fn execute(server: &EdgeServer, line: &str) -> anyhow::Result<()> {
+    let _serial = server.console_state.serial.lock().await;
+    let tick = execute_inner(server, line).await?;
+    if let Some(tick) = tick
+        && server.console_state.running.load(std::sync::atomic::Ordering::Relaxed)
+    {
+        server.console_state.wait_drained(tick).await;
+    }
+    Ok(())
+}
+
+async fn execute_inner(server: &EdgeServer, line: &str) -> anyhow::Result<Option<u64>> {
     let command = line.trim().trim_start_matches('/');
     if command.is_empty() {
-        return Ok(());
+        return Ok(None);
     }
     if command.split_whitespace().next() == Some("backup")
         && !server
@@ -84,10 +149,10 @@ pub(crate) async fn execute(server: &EdgeServer, line: &str) -> anyhow::Result<(
             .any(|(name, _)| name == "backup")
     {
         backup(server, command);
-        return Ok(());
+        return Ok(None);
     }
     if server.handle_admin_command(CONNECTION, command).await? {
-        return Ok(());
+        return Ok(None);
     }
     let mut published = server.hub.subscribe();
     let (command, completed) = ConsoleCommand::new(command.into());
@@ -102,7 +167,7 @@ pub(crate) async fn execute(server: &EdgeServer, line: &str) -> anyhow::Result<(
         .map_err(|_| anyhow::anyhow!("core stopped before command execution"))?;
     loop {
         match published.recv().await {
-            Ok(output) if output.tick >= completed_tick => return Ok(()),
+            Ok(output) if output.tick >= completed_tick => return Ok(Some(completed_tick)),
             Ok(_) | Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
             Err(tokio::sync::broadcast::error::RecvError::Closed) => {
                 anyhow::bail!("core stopped before command publication");
@@ -156,17 +221,17 @@ fn component_text(component: &mc_nbt::Tag) -> String {
     }
 }
 
-pub(crate) fn output(changes: &[PlayerChange]) {
+pub(crate) fn output(state: &ConsoleState, changes: &[PlayerChange]) {
     for change in changes {
         match change {
-            PlayerChange::Chat { message, .. } => print_line(message),
-            PlayerChange::StyledChat { content, .. } => print_line(&component_text(content)),
-            PlayerChange::Disconnect { reason, .. } => print_line(reason),
+            PlayerChange::Chat { message, .. } => state.feedback(message),
+            PlayerChange::StyledChat { content, .. } => state.feedback(&component_text(content)),
+            PlayerChange::Disconnect { reason, .. } => state.feedback(reason),
             PlayerChange::Title(
                 mc_core::boundary::TitleChange::Title(content)
                 | mc_core::boundary::TitleChange::Subtitle(content)
                 | mc_core::boundary::TitleChange::ActionBar(content),
-            ) => print_line(&component_text(content)),
+            ) => state.feedback(&component_text(content)),
             _ => {}
         }
     }
@@ -174,4 +239,4 @@ pub(crate) fn output(changes: &[PlayerChange]) {
 
 #[cfg(test)]
 #[path = "console_tests.rs"]
-mod tests;
+pub(crate) mod tests;

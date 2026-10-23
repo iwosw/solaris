@@ -54,7 +54,7 @@ async fn vanilla_configuration_completes_with_only_native_optional_bundle() {
     let native_optional = crate::server::loader_manifest(&[]).unwrap();
     let server_task = tokio::spawn(async move {
         let tags = test_tags();
-        super::handle_configuration(&mut server, &data, &tags, native_optional.as_ref(), false)
+        super::handle_configuration(&mut server, &data, &tags, native_optional.as_ref(), false, &Default::default())
             .await
             .unwrap()
     });
@@ -154,7 +154,7 @@ async fn missing_pack_without_sidecar_payloads_fails() {
     assert!(!data.has_full_registry_payloads());
     let server_task = tokio::spawn(async move {
         let tags = test_tags();
-        super::handle_configuration(&mut server, &data, &tags, None, false).await
+        super::handle_configuration(&mut server, &data, &tags, None, false, &Default::default()).await
     });
     // Skip features + known packs advertisements.
     for _ in 0..2 {
@@ -234,7 +234,7 @@ async fn vanilla_client_completes_configuration_with_only_optional_bundles() {
     let manifest = items_bundle(false);
     let server_task = tokio::spawn(async move {
         let tags = test_tags();
-        super::handle_configuration(&mut server, &data, &tags, Some(&manifest), false)
+        super::handle_configuration(&mut server, &data, &tags, Some(&manifest), false, &Default::default())
             .await
             .unwrap()
     });
@@ -286,7 +286,7 @@ async fn loader_hello_before_known_packs_starts_negotiation_of_optional_bundles(
         let tags = test_tags();
         // The client below never acknowledges the manifest; the task is dropped.
         let _ =
-            super::handle_configuration(&mut server, &data, &tags, Some(&manifest), false).await;
+            super::handle_configuration(&mut server, &data, &tags, Some(&manifest), false, &Default::default()).await;
     });
     let _features = client
         .read_frame_in(mc_protocol::State::Configuration)
@@ -355,7 +355,7 @@ async fn required_bundles_skip_the_probe_and_negotiate_with_every_client() {
     let manifest = items_bundle(true);
     let server_task = tokio::spawn(async move {
         let tags = test_tags();
-        let _ = super::handle_configuration(&mut server, &data, &tags, Some(&manifest), true).await;
+        let _ = super::handle_configuration(&mut server, &data, &tags, Some(&manifest), true, &Default::default()).await;
     });
     let _features = client
         .read_frame_in(mc_protocol::State::Configuration)
@@ -372,4 +372,39 @@ async fn required_bundles_skip_the_probe_and_negotiate_with_every_client() {
     );
     drop(client);
     let _ = server_task.await;
+}
+
+#[tokio::test]
+async fn serverops_required_pack_is_loaded_before_finish_configuration() {
+    use mc_protocol::packets::configuration::ServerboundResourcePack;
+    use mc_protocol::packets::resource_pack::ResourcePackPush;
+    use mc_protocol::packets::{ResourcePackAction, ResourcePackStatus};
+    let (mut client, mut server) = loopback_pair().await;
+    let task = tokio::spawn(async move {
+        let pack = crate::config::ResourcePackSection {
+            url: "https://example.org/pack.zip".into(),
+            required: true,
+            ..Default::default()
+        };
+        super::handle_configuration(&mut server, &test_data(), &test_tags(), None, false, &pack).await
+    });
+    let _ = client.read_frame_in(mc_protocol::State::Configuration).await.unwrap();
+    let frame = client.read_frame_in(mc_protocol::State::Configuration).await.unwrap();
+    let packs = ClientboundKnownPacks::decode(&mut frame.body.clone()).unwrap();
+    client.send_packet(&ServerboundKnownPacks { packs: packs.packs }).await.unwrap();
+    let pack = loop {
+        let frame = client.read_frame_in(mc_protocol::State::Configuration).await.unwrap();
+        assert_ne!(frame.id, FinishConfiguration::ID);
+        if frame.id == ResourcePackPush::ID {
+            break ResourcePackPush::decode(&mut frame.body.clone()).unwrap();
+        }
+    };
+    assert!(pack.required);
+    for action in [ResourcePackAction::Accepted, ResourcePackAction::Downloaded, ResourcePackAction::SuccessfullyLoaded] {
+        client.send_packet(&ServerboundResourcePack { status: ResourcePackStatus { id: pack.id, action } }).await.unwrap();
+    }
+    let frame = client.read_frame_in(mc_protocol::State::Configuration).await.unwrap();
+    assert_eq!(frame.id, FinishConfiguration::ID);
+    client.send_packet(&AcknowledgeFinishConfiguration).await.unwrap();
+    assert!(task.await.unwrap().is_ok());
 }

@@ -1,6 +1,6 @@
 use super::*;
 
-fn server(root: &std::path::Path) -> EdgeServer {
+pub(crate) fn server(root: &std::path::Path) -> EdgeServer {
     let mut config = mc_core::CoreConfig::new(root.join("world"), 42);
     config.vanilla_data_dir =
         Some(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data/vanilla"));
@@ -89,4 +89,26 @@ fn console_feedback_keeps_translated_arguments_and_literal_text() {
         component_text(&mc_nbt::Tag::String("saved".into())),
         "saved"
     );
+}
+
+#[test]
+fn serverops_console_capture_is_bounded_and_cancellation_clears_it() {
+    let state = ConsoleState::default();
+    *state.response.lock() = Some(Ok("x".repeat(1024 * 1024)));
+    state.feedback("overflow");
+    assert!(state.response.lock().as_ref().unwrap().is_err());
+    drop(Capture(&state));
+    assert!(state.response.lock().is_none());
+}
+
+#[tokio::test]
+async fn serverops_console_drain_wait_is_event_driven_and_handles_early_delivery() {
+    let state = ConsoleState::default();
+    state.drained(12);
+    state.wait_drained(12).await;
+    let waiting = state.wait_drained(13);
+    tokio::pin!(waiting);
+    assert!(std::future::poll_fn(|cx| std::task::Poll::Ready(waiting.as_mut().poll(cx))).await.is_pending());
+    state.drained(13);
+    waiting.await;
 }

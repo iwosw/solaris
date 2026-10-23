@@ -60,6 +60,15 @@ pub struct EdgeConfig {
     /// Opt-in operator-only in-game terminal.
     #[serde(default)]
     pub computer: crate::computer::ComputerConfig,
+    /// Startup-only import; explicit TOML leaves override imported properties.
+    #[serde(default)]
+    pub properties: PropertiesSection,
+    #[serde(default)]
+    pub rcon: RconSection,
+    #[serde(default)]
+    pub query: QuerySection,
+    #[serde(default)]
+    pub resource_pack: ResourcePackSection,
 }
 
 impl Default for EdgeConfig {
@@ -69,6 +78,49 @@ impl Default for EdgeConfig {
 }
 fn default_server_dir() -> PathBuf {
     PathBuf::from(".")
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct PropertiesSection {
+    pub file: Option<PathBuf>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct RconSection {
+    pub enabled: bool,
+    pub bind_address: String,
+    pub port: u16,
+    pub password: String,
+}
+
+impl Default for RconSection {
+    fn default() -> Self {
+        Self { enabled: false, bind_address: default_bind_address(), port: 25575, password: String::new() }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct QuerySection {
+    pub enabled: bool,
+    pub port: u16,
+}
+
+impl Default for QuerySection {
+    fn default() -> Self { Self { enabled: false, port: 25565 } }
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct ResourcePackSection {
+    pub url: String,
+    pub sha1: String,
+    pub required: bool,
+    /// JSON text component; empty omits the prompt.
+    pub prompt: String,
+    pub id: Option<uuid::Uuid>,
 }
 
 /// `[distant_horizons]`: server-sampled terrain, independent of native `[lod]`.
@@ -123,6 +175,9 @@ pub struct ServerSection {
     /// from a checkpoint (see `docs/OPERATING.md`). Off by default.
     #[serde(default)]
     pub input_log: bool,
+    /// Initial enforcement policy when whitelist.enabled has not been persisted.
+    #[serde(default)]
+    pub whitelist: Option<bool>,
 }
 
 impl Default for ServerSection {
@@ -136,6 +191,7 @@ impl Default for ServerSection {
             accepts_transfers: false,
             pause_when_empty_seconds: default_pause_when_empty_seconds(),
             input_log: false,
+            whitelist: None,
         }
     }
 }
@@ -541,7 +597,7 @@ impl EdgeConfig {
     /// config file lives.
     pub fn load(path: &Path) -> anyhow::Result<Self> {
         let text = std::fs::read_to_string(path)?;
-        Self::from_toml(&text, Some(path))
+        crate::server_properties::load(&text, path)
     }
 
     /// Parse TOML text; `origin` names the file in log lines (or `"config"`).
@@ -599,6 +655,10 @@ impl EdgeConfig {
         if cfg.msmp.enabled && cfg.msmp.bearer_token.is_empty() {
             anyhow::bail!("msmp.enabled = true requires a non-empty msmp.bearer_token");
         }
+        anyhow::ensure!(!cfg.rcon.enabled || !cfg.rcon.password.is_empty(),
+            "rcon.enabled requires a non-empty rcon.password");
+        anyhow::ensure!(!cfg.rcon.password.contains('\0'), "rcon.password cannot contain NUL");
+        crate::resource_pack::validate(&cfg.resource_pack)?;
         anyhow::ensure!(
             (1..=128).contains(&cfg.distant_horizons.radius_chunks),
             "distant_horizons.radius_chunks must be in 1..=128"
@@ -629,6 +689,10 @@ const KNOWN_SECTIONS: &[&str] = &[
     "lod",
     "distant_horizons",
     "computer",
+    "properties",
+    "rcon",
+    "query",
+    "resource_pack",
 ];
 
 /// Unknown leaf keys (`section.key`) under a known section, depth-first.
@@ -646,6 +710,7 @@ fn unknown_leaves(table: &toml::Table) -> Vec<String> {
                 "accepts_transfers",
                 "pause_when_empty_seconds",
                 "input_log",
+                "whitelist",
             ],
         ),
         (
@@ -719,6 +784,10 @@ fn unknown_leaves(table: &toml::Table) -> Vec<String> {
             ],
         ),
         ("distant_horizons", &["enabled", "radius_chunks"]),
+        ("properties", &["file"]),
+        ("rcon", &["enabled", "bind_address", "port", "password"]),
+        ("query", &["enabled", "port"]),
+        ("resource_pack", &["url", "sha1", "required", "prompt", "id"]),
     ];
     for (section, keys) in KNOWN {
         let Some(toml::Value::Table(inner)) = table.get(*section) else {

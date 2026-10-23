@@ -210,7 +210,7 @@ pub fn load_config(cli: &Cli) -> anyhow::Result<crate::config::EdgeConfig> {
         return Ok(crate::config::EdgeConfig::default());
     }
     match std::fs::read_to_string(&cli.config) {
-        Ok(text) => crate::config::EdgeConfig::from_toml(&text, Some(&cli.config)),
+        Ok(text) => crate::server_properties::load(&text, &cli.config),
         Err(error)
             if error.kind() == std::io::ErrorKind::NotFound
                 && matches!(cli.command, Some(Command::Content { .. })) =>
