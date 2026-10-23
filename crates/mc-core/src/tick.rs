@@ -1076,8 +1076,8 @@ impl TickState {
                     );
                     self.merge_broken
                         .push((intent.actor, *pos, broken, drops, xp));
+                    mining::consume(self, intent.actor, *pos, broken);
                 }
-                mining::cancel(self, intent.actor);
                 for (write_pos, write_state) in &intent.footprint.block_write {
                     self.merge_block_writes.push((*write_pos, *write_state));
                 }
@@ -2630,7 +2630,7 @@ fn run_dimension_tick_inner<'a>(
     state
         .merge_block_writes
         .append(&mut state.plugin_block_writes);
-    let deferred = std::mem::take(&mut state.deferred_uses);
+    let mut deferred = std::mem::take(&mut state.deferred_uses);
     // MC-28289: snapshot each player's held main-hand stack BEFORE this
     // tick's inputs run, so the melee path resolves attack_damage /
     // attack_speed from the pre-tick item when a swap+attack share a tick.
@@ -2644,6 +2644,7 @@ fn run_dimension_tick_inner<'a>(
         player.attribute_snapshot_held = Some(held);
     }
     mining::advance(state);
+    mining::take_finished(state, &mut deferred);
     apply_inputs(state, &deferred, &mut intents, &mut changes);
     apply_inputs(state, inputs, &mut intents, &mut changes);
     state.refresh_active_chunks(state.tick + 1);
@@ -3566,6 +3567,7 @@ pub(crate) fn client_build_refused(
                         .block_at(position.x, position.y, position.z)
                         .is_none_or(|current| {
                             !mining::allows(state, entity, *position, current, *action)
+                                && !mining::can_finish(state, entity, *position, current)
                         }))
         }
         PlayerInput::UseItemOn { position, face, .. } => {
@@ -3623,6 +3625,29 @@ pub(crate) fn plan_client_build(
 ) -> Option<Intent> {
     plan_client_build_at(state, entity, input, state.tick, None)
         .filter(|intent| !intent.footprint.block_write.is_empty())
+}
+
+/// Hook planning may approve a started dig before its delayed completion. The
+/// normal commit planner still requires sufficient authoritative progress.
+pub(crate) fn plan_client_build_preview(
+    state: &TickState,
+    entity: EntityId,
+    input: &PlayerInput,
+) -> Option<Intent> {
+    if let PlayerInput::Dig {
+        position,
+        action: DigAction::Finish,
+        ..
+    } = input
+    {
+        let block = state.world.block_at(position.x, position.y, position.z)?;
+        if block != state.registry.states.air && mining::can_finish(state, entity, *position, block)
+        {
+            return Some(plan_break(state, entity, *position, block))
+                .filter(|intent| !intent.footprint.block_write.is_empty());
+        }
+    }
+    plan_client_build(state, entity, input)
 }
 
 pub(crate) fn plan_client_build_at(

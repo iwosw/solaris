@@ -35,11 +35,22 @@ when measured and documented.
 Survival digging is native tick-owned, transient player state: Start selects
 one target and block preimage; server ticks accumulate the authoritative
 hardness/tool/effect progress. Finish is not an independent block edit.
-Direct input and build-hook preview/commit use the same progress admission.
-Cancel, a changed target/preimage, loss of reach, death or dimension travel
-invalidate progress. Missing or negative hardness fails closed in survival;
-creative Start remains instant. Refused finishes acknowledge and repair the
-client prediction without publishing a world mutation.
+Immediate Finish requires 70% progress. An earlier matching Finish occupies
+one separate delayed-destruction slot and completes at 100%, without another
+client packet; Start on another block does not erase that slot. Start credits
+its first tick immediately. Abort, changed preimage, loss of reach, death or
+dimension travel invalidate the delayed target. A committed break consumes
+only matching position/dimension/preimage progress, not a newer target.
+Build-hook preview may approve the pending break early; its single-use
+authorization waits in that same slot, then passes ordinary progress and
+native commit revalidation. Missing or negative hardness fails closed;
+creative Start remains instant. Early finishes acknowledge and repair client
+prediction while awaiting their authoritative completion.
+Zero-vertical movement packets (including rotation/status-only packets) retain
+grounded mining speed only when the collision-shape support probe confirms the
+reported support; an unsupported ground claim still receives the airborne penalty.
+The `solaris::mining` trace target exposes Start/Finish ticks, per-tick credit,
+rate and authoritative grounded state for client timing diagnosis.
 
 Pistons have no player actor. Their atomic move planner uses the existing
 environmental protected-cell policy (also used by fire and explosions), not

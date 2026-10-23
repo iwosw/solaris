@@ -2058,3 +2058,60 @@ async fn interrupted_authorization_reader_does_not_silently_lose_the_build() {
     assert_ack(&changes_for_player(drains));
     assert_eq!(state.players[&actor].inventory.slots[0].count, 2);
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn early_finish_keeps_hook_approval_until_delayed_native_completion() {
+    for decision in [HookDecision::Keep, HookDecision::Cancel] {
+        let (mut state, actor) = fixture(None);
+        state.players.get_mut(&actor).unwrap().game_mode = crate::commands::GameMode::Survival;
+        let stone = block(&state, "stone", &[]);
+        let mut hardness = vec![-1.0; stone as usize + 1];
+        hardness[stone as usize] = 1.5;
+        Arc::make_mut(&mut state.registry).mining =
+            mc_data::block_mining::BlockMiningTable::from_arrays(
+                "fixture",
+                hardness,
+                vec![false; stone as usize + 1],
+            );
+        plant(&mut state, POS, stone);
+        run_tick(
+            &mut state,
+            &[PlayerInput::Dig {
+                connection: CONNECTION,
+                position: POS,
+                action: DigAction::Start,
+                sequence: SEQUENCE - 1,
+            }],
+        );
+        let (gateway, _boundary, mut endpoint) = hooked(&mut state);
+        // Do not use through_host: that helper primes fully elapsed mining.
+        let mut admission = std::pin::pin!(gateway.admit(dig()));
+        pending(admission.as_mut());
+        answer_previews(&mut state);
+        pending(admission.as_mut());
+        let request = take_request(&mut endpoint);
+        request.answer(decision, Vec::new()).unwrap();
+        let admitted = admission.await;
+        if decision == HookDecision::Keep {
+            let authorized = admitted.unwrap();
+            assert!(matches!(authorized, PlayerInput::AuthorizedBuild { .. }));
+            run_tick(&mut state, &[authorized]);
+            assert!(state.players[&actor].delayed_dig.is_some());
+        } else {
+            assert!(admitted.is_err());
+        }
+        assert_eq!(state.world.block_at(POS.x, POS.y, POS.z), Some(stone));
+        for _ in 0..50 {
+            run_tick(&mut state, &[]);
+        }
+        assert_eq!(
+            state.world.block_at(POS.x, POS.y, POS.z),
+            Some(if decision == HookDecision::Keep {
+                state.registry.states.air
+            } else {
+                stone
+            }),
+        );
+        assert!(state.players[&actor].delayed_dig.is_none());
+    }
+}

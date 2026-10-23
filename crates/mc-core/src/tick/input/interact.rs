@@ -31,6 +31,9 @@ pub(in crate::tick) fn dig(
         crate::tick::mining::cancel(state, entity);
     }
     if *action == DigAction::Cancel {
+        if let Some(player) = state.players.get_mut(&entity) {
+            player.delayed_dig = None;
+        }
         return;
     }
     let Some(current) = state.world.block_at(position.x, position.y, position.z) else {
@@ -75,12 +78,20 @@ pub(in crate::tick) fn dig(
     if current == state.registry.states.air {
         return;
     }
+    if *action == DigAction::Finish {
+        crate::tick::mining::trace_finish(state, entity, *position, current);
+    }
     let breaks = crate::tick::mining::allows(state, entity, *position, current, *action);
     if *action == DigAction::Start && !breaks {
         crate::tick::mining::start(state, entity, *position, current);
     }
     if !breaks {
         if *action == DigAction::Finish {
+            crate::tick::mining::delay(state, entity, *position, current, || {
+                crate::tick::mining::PendingFinish::Native {
+                    sequence: *sequence,
+                }
+            });
             changes.blocks.push(crate::boundary::BlockChange {
                 position: *position,
                 state: current,

@@ -74,6 +74,7 @@ pub struct PlayerState {
     pub(crate) awaiting_teleport: Option<i32>,
     /// Connection-local authoritative mining progress; never persisted.
     pub(crate) dig_progress: Option<crate::tick::mining::DigProgress>,
+    pub(crate) delayed_dig: Option<crate::tick::mining::DelayedDig>,
     using: Option<ItemUse>,
     shield_cooldown: u32,
     /// Vanilla item cooldowns are connection-local and reset on rejoin.
@@ -168,6 +169,7 @@ impl PlayerState {
             teleport_id: 0,
             awaiting_teleport: None,
             dig_progress: None,
+            delayed_dig: None,
             using: None,
             shield_cooldown: 0,
             item_cooldowns: std::collections::BTreeMap::new(),
@@ -187,6 +189,7 @@ impl PlayerState {
 
     pub(crate) fn begin_teleport(&mut self) -> i32 {
         self.dig_progress = None;
+        self.delayed_dig = None;
         // ServerGamePacketListenerImpl.teleport wraps before MAX_VALUE.
         self.teleport_id = if self.teleport_id == i32::MAX - 1 {
             0

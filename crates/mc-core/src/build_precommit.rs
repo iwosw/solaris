@@ -497,7 +497,7 @@ fn prepare(state: &TickState, input: PlayerInput) -> PreviewAnswer {
     let Some(player) = state.players.get(&entity) else {
         return PreviewAnswer::Direct(input);
     };
-    let Some(intent) = crate::tick::plan_client_build(state, entity, &input) else {
+    let Some(intent) = crate::tick::plan_client_build_preview(state, entity, &input) else {
         return PreviewAnswer::Direct(input);
     };
     if intent
@@ -631,6 +631,37 @@ pub(crate) fn apply_authorized(
     authorization: &AuthorizedBuild,
     intents: &mut Vec<Intent>,
 ) {
+    let delayed = authorization.inner.lock().as_ref().and_then(|admitted| {
+        if let PlayerInput::Dig {
+            position,
+            action: DigAction::Finish,
+            ..
+        } = admitted.prepared.source
+        {
+            let block = admitted
+                .prepared
+                .intent
+                .footprint
+                .block_expect
+                .iter()
+                .find_map(|(pos, block)| (*pos == position).then_some(*block))?;
+            Some((
+                position,
+                block,
+                BuildResync::for_input(&admitted.prepared.source)?,
+            ))
+        } else {
+            None
+        }
+    });
+    if let Some((position, block, correction)) = delayed
+        && crate::tick::mining::delay(state, authorization.actor, position, block, || {
+            crate::tick::mining::PendingFinish::Authorized(authorization.clone())
+        })
+    {
+        resync(state, &correction);
+        return;
+    }
     let look =
         authorization
             .inner
@@ -751,7 +782,7 @@ pub(crate) fn requires_approval(state: &TickState, input: &PlayerInput) -> bool 
             .entity_of(input.connection())
             .is_some_and(|entity| {
                 crate::tick::client_build_refused(state, entity, input)
-                    || crate::tick::plan_client_build(state, entity, input).is_some()
+                    || crate::tick::plan_client_build_preview(state, entity, input).is_some()
             })
 }
 

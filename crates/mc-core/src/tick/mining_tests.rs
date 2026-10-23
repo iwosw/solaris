@@ -14,6 +14,7 @@ fn setup(name: &str) -> (TickState, EntityId, u32) {
     // Real vanilla hardness, independently supplied rather than bootstrap defaults.
     for (name, speed) in [
         ("stone", 1.5),
+        ("grass_block", 0.6),
         ("obsidian", 50.0),
         ("bedrock", -1.0),
         ("torch", 0.0),
@@ -195,10 +196,19 @@ fn mining_cancel_replacement_reach_teleport_and_packet_spam_invalidate_credit() 
             "spam" => {}
             _ => unreachable!(),
         }
-        assert!(
-            client_build_refused(&state, actor, &input(DigAction::Finish)),
-            "{invalidation}"
-        );
+        if invalidation != "spam" {
+            assert!(
+                client_build_refused(&state, actor, &input(DigAction::Finish)),
+                "{invalidation}"
+            );
+        }
+        assert!(!mining::allows(
+            &state,
+            actor,
+            POS,
+            state.world.block_at(POS.x, POS.y, POS.z).unwrap(),
+            DigAction::Finish
+        ));
         assert!(
             direct(&mut state, DigAction::Finish).0.is_empty(),
             "{invalidation}"
@@ -251,4 +261,238 @@ fn mining_finish_packet_burst_and_tool_switch_do_not_credit_unelapsed_ticks() {
         stone,
         DigAction::Finish
     ));
+}
+
+#[test]
+fn mining_early_finish_completes_without_another_packet() {
+    let (mut state, _, stone) = setup("stone");
+    run_tick(
+        &mut state,
+        &[input(DigAction::Start), input(DigAction::Finish)],
+    );
+    assert_eq!(state.world.block_at(POS.x, POS.y, POS.z), Some(stone));
+    for _ in 0..45 {
+        run_tick(&mut state, &[]);
+    }
+    assert_eq!(
+        state.world.block_at(POS.x, POS.y, POS.z),
+        Some(state.registry.states.air),
+        "an early Finish must remain pending until server progress catches up"
+    );
+}
+
+#[test]
+fn mining_committed_break_preserves_newer_target_in_same_batch() {
+    let (mut state, actor, stone) = setup("stone");
+    let other = BlockPos {
+        x: POS.x + 1,
+        ..POS
+    };
+    state.world.set_block(other.x, other.y, other.z, stone);
+    state.world.fold_overlay();
+    ready_to_finish(&mut state, CONNECTION, POS);
+    run_tick(
+        &mut state,
+        &[
+            input(DigAction::Finish),
+            PlayerInput::Dig {
+                connection: CONNECTION,
+                position: other,
+                action: DigAction::Start,
+                sequence: 2,
+            },
+        ],
+    );
+    assert_eq!(
+        state.world.block_at(POS.x, POS.y, POS.z),
+        Some(state.registry.states.air)
+    );
+    assert!(
+        state.players[&actor].dig_progress.is_some(),
+        "break A consumed Start B"
+    );
+    for _ in 0..45 {
+        run_tick(&mut state, &[]);
+    }
+    run_tick(
+        &mut state,
+        &[PlayerInput::Dig {
+            connection: CONNECTION,
+            position: other,
+            action: DigAction::Finish,
+            sequence: 3,
+        }],
+    );
+    assert_eq!(
+        state.world.block_at(other.x, other.y, other.z),
+        Some(state.registry.states.air)
+    );
+}
+
+#[test]
+fn mining_delayed_finish_survives_new_start_and_waits_for_full_progress() {
+    let (mut state, actor, stone) = setup("stone");
+    let other = BlockPos {
+        x: POS.x + 1,
+        ..POS
+    };
+    state.world.set_block(other.x, other.y, other.z, stone);
+    state.world.fold_overlay();
+    run_tick(
+        &mut state,
+        &[
+            input(DigAction::Start),
+            input(DigAction::Finish),
+            PlayerInput::Dig {
+                connection: CONNECTION,
+                position: other,
+                action: DigAction::Start,
+                sequence: 2,
+            },
+        ],
+    );
+    for _ in 0..32 {
+        run_tick(&mut state, &[]);
+    }
+    assert!(mining::allows(&state, actor, POS, stone, DigAction::Finish));
+    assert_eq!(
+        state.world.block_at(POS.x, POS.y, POS.z),
+        Some(stone),
+        "delayed destruction must wait beyond the immediate 70% threshold"
+    );
+    for _ in 0..15 {
+        run_tick(&mut state, &[]);
+    }
+    assert_eq!(
+        state.world.block_at(POS.x, POS.y, POS.z),
+        Some(state.registry.states.air)
+    );
+    assert!(
+        state.players[&actor].dig_progress.is_some(),
+        "delayed A consumed Start B"
+    );
+    run_tick(
+        &mut state,
+        &[PlayerInput::Dig {
+            connection: CONNECTION,
+            position: other,
+            action: DigAction::Finish,
+            sequence: 3,
+        }],
+    );
+    assert_eq!(
+        state.world.block_at(other.x, other.y, other.z),
+        Some(state.registry.states.air)
+    );
+    assert!(state.players[&actor].delayed_dig.is_none());
+}
+
+#[test]
+fn mining_delayed_finish_aborts_on_cancel_replacement_reach_and_teleport() {
+    for invalidation in ["cancel", "replacement", "reach", "teleport"] {
+        let (mut state, actor, stone) = setup("stone");
+        run_tick(
+            &mut state,
+            &[input(DigAction::Start), input(DigAction::Finish)],
+        );
+        assert!(state.players[&actor].delayed_dig.is_some());
+        match invalidation {
+            "cancel" => {
+                run_tick(&mut state, &[input(DigAction::Cancel)]);
+            }
+            "replacement" => {
+                let obsidian = block(&state, "obsidian", &[]);
+                state.world.set_block(POS.x, POS.y, POS.z, obsidian);
+                mining::advance(&mut state);
+                state.world.set_block(POS.x, POS.y, POS.z, stone);
+            }
+            "reach" => {
+                let slot = state.entities.slot_of(actor).unwrap();
+                state.entities.set_pos(slot, [100.0, 201.0, 100.0]);
+                mining::advance(&mut state);
+                state.entities.set_pos(slot, [8.5, 201.0, 10.5]);
+            }
+            "teleport" => {
+                state.players.get_mut(&actor).unwrap().begin_teleport();
+            }
+            _ => unreachable!(),
+        }
+        for _ in 0..50 {
+            run_tick(&mut state, &[]);
+        }
+        assert_eq!(
+            state.world.block_at(POS.x, POS.y, POS.z),
+            Some(stone),
+            "{invalidation}"
+        );
+        assert!(state.players[&actor].delayed_dig.is_none());
+    }
+}
+
+#[test]
+fn mining_grounded_rotation_status_and_level_move_keep_vanilla_hand_rate() {
+    for packet in ["rotation", "status", "position"] {
+        let (mut state, actor, grass) = setup("grass_block");
+        let stone = block(&state, "stone", &[]);
+        let slot = state.entities.slot_of(actor).unwrap();
+        state.entities.set_pos(slot, [8.5, 201.0, 10.5]);
+        state.entities.set_ground(slot, false);
+        state.world.set_block(8, 200, 10, stone);
+        state.world.fold_overlay();
+        let movement = match packet {
+            "rotation" => PlayerInput::MoveRotation {
+                connection: CONNECTION,
+                yaw: 10.0,
+                pitch: 20.0,
+                on_ground: true,
+            },
+            "status" => PlayerInput::MoveStatus {
+                connection: CONNECTION,
+                on_ground: true,
+            },
+            "position" => PlayerInput::Move {
+                connection: CONNECTION,
+                position: [8.75, 201.0, 10.5],
+                yaw: 10.0,
+                pitch: 20.0,
+                on_ground: true,
+            },
+            _ => unreachable!(),
+        };
+        run_tick(&mut state, &[movement, input(DigAction::Start)]);
+        let rate = crate::effects::mining_progress(&state, actor, grass);
+        assert!(
+            state.entities.ground(slot),
+            "{packet}: on_ground=false, rate={rate}"
+        );
+        assert!(
+            (rate - 1.0 / 18.0).abs() < 0.000001,
+            "{packet}: rate={rate}"
+        );
+        for _ in 0..17 {
+            run_tick(&mut state, &[]);
+        }
+        run_tick(&mut state, &[input(DigAction::Finish)]);
+        assert_eq!(
+            state.world.block_at(POS.x, POS.y, POS.z),
+            Some(state.registry.states.air)
+        );
+    }
+}
+
+#[test]
+fn mining_airborne_ground_claim_does_not_remove_hand_rate_penalty() {
+    let (mut state, actor, grass) = setup("grass_block");
+    let slot = state.entities.slot_of(actor).unwrap();
+    state.entities.set_pos(slot, [8.5, 203.0, 10.5]);
+    state.entities.set_ground(slot, false);
+    run_tick(
+        &mut state,
+        &[PlayerInput::MoveStatus {
+            connection: CONNECTION,
+            on_ground: true,
+        }],
+    );
+    assert!(!state.entities.ground(slot));
+    assert!((crate::effects::mining_progress(&state, actor, grass) - 1.0 / 90.0).abs() < 0.000001);
 }

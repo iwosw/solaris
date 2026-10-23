@@ -6,6 +6,25 @@ use mc_physics::mth;
 
 const FLY_KICK_REASON: &str = "Flying is not enabled on this server";
 
+fn supported(state: &TickState, slot: crate::entities::EntitySlot, position: [f64; 3]) -> bool {
+    let body = state.entities.body(slot);
+    mc_physics::resolve_collision_displacement(
+        &TickSampler {
+            world: &state.world,
+            registry: &state.registry,
+        },
+        mc_physics::Vec3::new(position[0], position[1], position[2]),
+        mc_physics::Aabb {
+            half_width: body.half_width,
+            height: body.height,
+        },
+        mc_physics::Vec3::new(0.0, -0.001, 0.0),
+        false,
+        0.0,
+    )
+    .is_some_and(|resolved| resolved.grounded)
+}
+
 fn air_time_exception(
     state: &TickState,
     entity: crate::boundary::EntityId,
@@ -43,29 +62,13 @@ fn air_time_exception(
                     .any(|(name, value)| name == "waterlogged" && value == "true")
         })
     };
-    let body = state.entities.body(slot);
-    let supported = mc_physics::resolve_collision_displacement(
-        &TickSampler {
-            world: &state.world,
-            registry: &state.registry,
-        },
-        mc_physics::Vec3::new(position[0], position[1], position[2]),
-        mc_physics::Aabb {
-            half_width: body.half_width,
-            height: body.height,
-        },
-        mc_physics::Vec3::new(0.0, -0.001, 0.0),
-        false,
-        0.0,
-    )
-    .is_some_and(|resolved| resolved.grounded);
     water(position[1])
         || water(
             position[1] + crate::tick::player_eye_height(state.entities.row(slot).appearance.pose),
         )
         || at(position[1])
             .is_some_and(|block| crate::statistics::climbable(state, block.block.raw_id))
-        || supported
+        || supported(state, slot, position)
 }
 
 fn exceeds_air_time(
@@ -194,9 +197,14 @@ pub(in crate::tick) fn move_input(
             old[1] + fixed.delta.y,
             old[2] + fixed.delta.z,
         ];
+        // Rotation/status and level moves have no downward displacement for
+        // the collision solver to clip. Validate their claimed support rather
+        // than marking a stationary player airborne (and mining five times slower).
+        let grounded = fixed.grounded
+            || (*on_ground && displacement[1] == 0.0 && supported(state, slot, fixed_pos));
         state.entities.set_pos(slot, fixed_pos);
         state.entities.set_rot(slot, *yaw, *pitch);
-        state.entities.set_ground(slot, fixed.grounded);
+        state.entities.set_ground(slot, grounded);
         fixed_pos
     } else {
         state.entities.set_pos(slot, *position);
