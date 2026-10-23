@@ -91,14 +91,14 @@ viewers exists in the protocol. `mc-edge` (`screen.rs` pure relay state,
 sees only native-Loader clients and refuses everything else.
 
 Play custom payload on both directions, big-endian: `u8 version=1, u8 kind, body`.
-`ScreenId` (15 bytes): `i32 x,y,z` of the min-coordinate anchor block, `u8 side`
+`ScreenId` (16 bytes): `i32 x,y,z` of the min-coordinate anchor block, `u8 side`
 (2 N, 3 S, 4 W, 5 E: the face carrying the screen), `u8 width` (1..=16 blocks,
-extending +X for sides 2/3 and +Z for 4/5, one block high), `u8 dimension`
+extending +X for sides 2/3 and +Z for 4/5), `u8 height` (1..=16, extending +Y), `u8 dimension`
 (`Dimension::ALL` index, must equal the sender's dimension).
 
-Client -> server: `0 OPEN(id)` owner starts (within 8 blocks; every row block must
+Client -> server: `0 OPEN(id)` owner starts (within 8 blocks; every one of the width x height blocks must
 be a monitor, i.e. a `minecraft:black_glazed_terracotta` carrier state whose
-`facing` equals `side`; at most 4 per owner and 128 open screens; one owner per row); `1 CLOSE(id)`;
+`facing` equals `side`; at most 4 per owner and 128 open screens; one owner per rectangle); `1 CLOSE(id)`;
 `2 FRAME_PART(id, u32 seq, u16 w, u16 h, u8 codec=0 JPEG, u8 idx, u8 count, bytes)`
 with every part carrying the full header, <=30000 data bytes per part (the
 serverbound payload limit is 32767), <=5 parts, <=131072 bytes, w<=640, h<=640;
@@ -119,7 +119,7 @@ Permission is per (owner, viewer) and covers all of the owner's open screens;
 it ends on REVOKE/LEAVE, when the owner closes their last screen, or when
 either player disconnects. "Looking" is derived from the published native pose
 only: eye position (feet + 1.62), yaw/pitch, on the face's front side, within
-32 blocks and within 35 degrees plus the row's angular size of its centre; no
+32 blocks and within 35 degrees plus the rectangle's angular size of its centre; no
 occlusion. Reach (8 blocks) applies to OPEN only; a show ends on CLOSE, revoke,
 disconnect, or when its monitor blocks are broken or unloaded (`REFUSED`). Frames are accepted only
 while DEMAND is on, only from the owner, within a 1 MiB/s byte budget (256 KiB

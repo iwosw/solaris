@@ -64,14 +64,15 @@ pub(crate) mod refused {
     pub const REPEAT: u8 = 7;
 }
 
-/// A monitor row: `width` blocks from the min-coordinate anchor along +X
-/// (north/south faces) or +Z (west/east faces), one block high.
+/// A monitor rectangle: `width` blocks from the min-coordinate anchor along +X
+/// (north/south faces) or +Z (west/east faces), `height` blocks along +Y.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) struct ScreenId {
     pub pos: [i32; 3],
     /// Direction id of the face carrying the screen: 2 north, 3 south, 4 west, 5 east.
     pub side: u8,
     pub width: u8,
+    pub height: u8,
     /// `Dimension::ALL` index.
     pub dimension: u8,
 }
@@ -82,10 +83,12 @@ impl ScreenId {
             pos: [reader.i32()?, reader.i32()?, reader.i32()?],
             side: reader.u8()?,
             width: reader.u8()?,
+            height: reader.u8()?,
             dimension: reader.u8()?,
         };
         ((2..=5).contains(&id.side)
             && (1..=MAX_WIDTH_BLOCKS).contains(&id.width)
+            && (1..=MAX_WIDTH_BLOCKS).contains(&id.height)
             && id.dimension < 3)
             .then_some(id)
     }
@@ -93,39 +96,44 @@ impl ScreenId {
         for value in self.pos {
             out.extend(value.to_be_bytes());
         }
-        out.extend([self.side, self.width, self.dimension]);
+        out.extend([self.side, self.width, self.height, self.dimension]);
     }
     fn along_x(&self) -> bool {
         self.side < 4
     }
     pub(crate) fn blocks(&self) -> impl Iterator<Item = [i32; 3]> + '_ {
-        (0..i32::from(self.width)).map(|step| {
-            let [x, y, z] = self.pos;
-            if self.along_x() {
-                [x + step, y, z]
-            } else {
-                [x, y, z + step]
-            }
+        let width = i32::from(self.width);
+        (0..i32::from(self.height)).flat_map(move |dy| {
+            (0..width).map(move |step| {
+                let [x, y, z] = self.pos;
+                if self.along_x() {
+                    [x + step, y + dy, z]
+                } else {
+                    [x, y + dy, z + step]
+                }
+            })
         })
     }
     /// Face centre and outward normal.
     fn face(&self) -> ([f64; 3], [f64; 3]) {
         let [x, y, z] = self.pos.map(f64::from);
         let half = f64::from(self.width) / 2.0;
+        let up = y + f64::from(self.height) / 2.0;
         match self.side {
-            2 => ([x + half, y + 0.5, z], [0.0, 0.0, -1.0]),
-            3 => ([x + half, y + 0.5, z + 1.0], [0.0, 0.0, 1.0]),
-            4 => ([x, y + 0.5, z + half], [-1.0, 0.0, 0.0]),
-            _ => ([x + 1.0, y + 0.5, z + half], [1.0, 0.0, 0.0]),
+            2 => ([x + half, up, z], [0.0, 0.0, -1.0]),
+            3 => ([x + half, up, z + 1.0], [0.0, 0.0, 1.0]),
+            4 => ([x, up, z + half], [-1.0, 0.0, 0.0]),
+            _ => ([x + 1.0, up, z + half], [1.0, 0.0, 0.0]),
         }
     }
-    /// Shortest distance from `eye` to the row's box.
+    /// Shortest distance from `eye` to the rectangle's box.
     fn distance(&self, eye: [f64; 3]) -> f64 {
         let min = self.pos.map(f64::from);
+        let (width, height) = (f64::from(self.width), f64::from(self.height));
         let extent = if self.along_x() {
-            [f64::from(self.width), 1.0, 1.0]
+            [width, height, 1.0]
         } else {
-            [1.0, 1.0, f64::from(self.width)]
+            [1.0, height, width]
         };
         (0..3)
             .map(|axis| {
@@ -181,7 +189,8 @@ pub(crate) fn looks_at(pose: &Pose, screen: &ScreenId) -> bool {
     }
     let to_center = to_eye.map(|value| -value);
     let distance = dot(to_center, to_center).sqrt();
-    let radius = (f64::from(screen.width).powi(2) / 4.0 + 0.25).sqrt();
+    let radius =
+        ((f64::from(screen.width).powi(2) + f64::from(screen.height).powi(2)) / 4.0 + 0.25).sqrt();
     let widen = (radius / distance.max(radius)).asin();
     let cos = dot(pose.direction(), to_center) / distance.max(f64::EPSILON);
     cos.clamp(-1.0, 1.0).acos() <= FOV_HALF_DEGREES.to_radians() + widen
@@ -280,7 +289,7 @@ pub(crate) fn decode(bytes: &[u8]) -> Option<Message<'_>> {
 }
 
 fn message(kind: u8, id: &ScreenId, body: &[u8]) -> Bytes {
-    let mut out = Vec::with_capacity(17 + body.len());
+    let mut out = Vec::with_capacity(18 + body.len());
     out.extend([VERSION, kind]);
     id.write(&mut out);
     out.extend(body);

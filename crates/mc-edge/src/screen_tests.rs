@@ -17,6 +17,7 @@ fn row() -> ScreenId {
         pos: [10, 64, 10],
         side: 3,
         width: 4,
+        height: 2,
         dimension: 0,
     }
 }
@@ -62,7 +63,7 @@ fn granted(viewer: Pose) -> (Relay, Vec<Effect>) {
     open(&mut relay);
     let now = Instant::now();
     let asked = relay.handle(VIEWER, Message::Request(row()), &Monitors(true), now);
-    let request = u32::from_be_bytes(asked[0].payload[17..21].try_into().unwrap());
+    let request = u32::from_be_bytes(asked[0].payload[18..22].try_into().unwrap());
     relay.handle(
         OWNER,
         Message::Answer {
@@ -131,7 +132,7 @@ fn permission_then_looking_drives_demand_and_stop() {
     assert_eq!(kinds(&asked), [(1, 4)], "owner is asked");
     // Nobody is granted yet: looking players do not turn demand on.
     assert!(relay.tick(poses(watching()), &Monitors(true)).is_empty());
-    let request = u32::from_be_bytes(asked[0].payload[17..21].try_into().unwrap());
+    let request = u32::from_be_bytes(asked[0].payload[18..22].try_into().unwrap());
     let answered = relay.handle(
         OWNER,
         Message::Answer {
@@ -142,7 +143,7 @@ fn permission_then_looking_drives_demand_and_stop() {
         Instant::now(),
     );
     assert_eq!(kinds(&answered), [(2, 5)]);
-    assert_eq!(answered[0].payload[17], 1);
+    assert_eq!(answered[0].payload[18], 1);
     assert_eq!(
         kinds(&relay.tick(poses(watching()), &Monitors(true))),
         [(1, 0)]
@@ -157,8 +158,8 @@ fn permission_then_looking_drives_demand_and_stop() {
         [(2, 2), (1, 0)],
         "STOP viewer, DEMAND off owner"
     );
-    assert_eq!(aside[0].payload[17], stop::LOOK_AWAY);
-    assert_eq!(aside[1].payload[17], 0);
+    assert_eq!(aside[0].payload[18], stop::LOOK_AWAY);
+    assert_eq!(aside[1].payload[18], 0);
 }
 
 #[test]
@@ -189,10 +190,10 @@ fn frames_reach_only_looking_granted_viewers_reassembled() {
         "only the granted viewer, never the bystander"
     );
     let payload = &sent[0].payload;
-    assert_eq!(&payload[17..21], 7u32.to_be_bytes());
-    assert_eq!(&payload[21..25], [1, 0x40, 0, 200]);
-    assert_eq!(payload[25], 0);
-    assert_eq!(payload[26..].len(), MAX_PART_BYTES + 4);
+    assert_eq!(&payload[18..22], 7u32.to_be_bytes());
+    assert_eq!(&payload[22..26], [1, 0x40, 0, 200]);
+    assert_eq!(payload[26], 0);
+    assert_eq!(payload[27..].len(), MAX_PART_BYTES + 4);
     // Out-of-order continuation is dropped without a frame.
     assert!(
         relay
@@ -260,7 +261,7 @@ fn revoke_leave_and_disconnects_end_permission() {
         Instant::now(),
     );
     assert_eq!(kinds(&revoked), [(2, 2), (1, 0)]);
-    assert_eq!(revoked[0].payload[17], stop::REVOKED);
+    assert_eq!(revoked[0].payload[18], stop::REVOKED);
     assert!(
         relay.tick(poses(watching()), &Monitors(true)).is_empty(),
         "grant is gone"
@@ -284,7 +285,7 @@ fn revoke_leave_and_disconnects_end_permission() {
     let (mut relay, _) = granted(watching());
     let gone = relay.unregister(OWNER);
     assert_eq!(kinds(&gone), [(2, 2), (2, 6), (3, 6)]);
-    assert_eq!(gone[0].payload[17], stop::OWNER_LEFT);
+    assert_eq!(gone[0].payload[18], stop::OWNER_LEFT);
     assert!(relay.tick(poses(watching()), &Monitors(true)).is_empty());
 
     // Owner closes the capture: grants end with the last screen.
@@ -295,7 +296,7 @@ fn revoke_leave_and_disconnects_end_permission() {
         &Monitors(true),
         Instant::now(),
     );
-    assert_eq!(closed[0].payload[17], stop::OWNER_CLOSED);
+    assert_eq!(closed[0].payload[18], stop::OWNER_CLOSED);
     open(&mut relay);
     assert!(
         relay.tick(poses(watching()), &Monitors(true)).is_empty(),
@@ -307,7 +308,7 @@ fn revoke_leave_and_disconnects_end_permission() {
 fn open_is_validated_and_exclusive() {
     let mut relay = relay();
     let now = Instant::now();
-    let refusal = |effects: Vec<Effect>| (effects[0].payload[1], effects[0].payload[17]);
+    let refusal = |effects: Vec<Effect>| (effects[0].payload[1], effects[0].payload[18]);
     assert_eq!(
         refusal(relay.handle(OWNER, Message::Open(row()), &Monitors(false), now)),
         (3, refused::NOT_MONITOR)
