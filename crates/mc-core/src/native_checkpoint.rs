@@ -698,13 +698,7 @@ pub(crate) fn generator(
             }
             Arc::new(terrain)
         }
-        Dimension::Nether => Arc::new(
-            mc_worldgen::nether::NetherGenerator::try_new(
-                config.seed,
-                Arc::clone(&registry.blocks),
-            )
-            .map_err(|e| CoreError::Worldgen(e.to_string()))?,
-        ),
+        Dimension::Nether => Arc::new(crate::core::nether_terrain(config, registry)?),
         Dimension::End => Arc::new(
             mc_worldgen::end::EndGenerator::try_new(config.seed, Arc::clone(&registry.blocks))
                 .map_err(|e| CoreError::Worldgen(e.to_string()))?,

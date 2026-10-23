@@ -268,6 +268,7 @@ pub struct ProcessorRule {
     /// `position_predicate`, `always_true` when the rule omits it.
     pub position: PosRuleTest,
     pub output_state: BlockStateId,
+    pub append_loot: Option<Identifier>,
 }
 
 impl ProcessorRule {
@@ -297,6 +298,7 @@ impl ProcessorRule {
             location: rule_test(semantics, owner, &spec.location_predicate)?,
             position: pos_rule_test(&spec.position_predicate),
             output_state: semantics.resolve_state(owner, &spec.output_state)?,
+            append_loot: spec.append_loot.clone(),
         })
     }
 }
@@ -363,6 +365,14 @@ impl BlockAgeStates {
 /// One processor of a piece's settings, in application order.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Processor {
+    BlockRot {
+        integrity: f32,
+        rottable_blocks: Option<Identifier>,
+    },
+    Capped {
+        delegate: Box<Processor>,
+        limit: i32,
+    },
     /// `minecraft:rule`.
     Rule { rules: Vec<ProcessorRule> },
     /// `minecraft:block_age`. `mossiness` is the only field the codec carries.
@@ -399,6 +409,17 @@ impl Processor {
         spec: &StructureProcessorSpec,
     ) -> Result<Self, CompileError> {
         Ok(match spec {
+            StructureProcessorSpec::BlockRot {
+                integrity,
+                rottable_blocks,
+            } => Self::BlockRot {
+                integrity: *integrity,
+                rottable_blocks: rottable_blocks.clone(),
+            },
+            StructureProcessorSpec::Capped { delegate, limit } => Self::Capped {
+                delegate: Box::new(Self::from_spec(semantics, owner, delegate)?),
+                limit: *limit,
+            },
             StructureProcessorSpec::Rule { rules } => Self::Rule {
                 rules: rules
                     .iter()
@@ -512,6 +533,20 @@ pub fn process_block(
     reference_pos: BlockPos,
 ) -> Option<PieceBlock> {
     match processor {
+        Processor::Capped { .. } => Some(processed),
+        Processor::BlockRot {
+            integrity,
+            rottable_blocks,
+        } => {
+            if rottable_blocks
+                .as_ref()
+                .is_some_and(|tag| !semantics.in_tag(processed.state, tag))
+            {
+                return Some(processed);
+            }
+            (LegacyRandom::new(get_seed(processed.pos)).next_float() <= *integrity)
+                .then_some(processed)
+        }
         Processor::Rule { rules } => {
             let mut random = LegacyRandom::new(get_seed(processed.pos));
             let loc_state = level.block_state(processed.pos);
@@ -524,9 +559,6 @@ pub fn process_block(
                     reference_pos,
                     &mut random,
                 ) {
-                    // `getOutputTag` is a passthrough block-entity modifier
-                    // (the loader accepts nothing else), so the tag — and with
-                    // it the jigsaw's `final_state` — survives unchanged.
                     return Some(PieceBlock {
                         state: rule.output_state,
                         ..processed
@@ -608,10 +640,9 @@ pub fn process_block(
 /// rotation, mirror) is the caller's; `reference_pos` is the reference the
 /// piece was placed with, which only the position predicates read.
 ///
-/// Vanilla's trailing `finalizeProcessing` pass is a no-op here: every
-/// processor type that can reach this module keeps `StructureProcessor`'s
-/// default implementation, and the one override — `CappedProcessor` — fails
-/// closed in `mc-data`'s loader rather than arriving as a spec.
+/// Capped delegates run after the per-block pass, in deterministic shuffled
+/// order over the entire template (before the chunk clip), so limits are per
+/// piece rather than per chunk.
 #[must_use]
 pub fn apply_processors(
     semantics: &BlockSemantics<'_>,
@@ -620,27 +651,144 @@ pub fn apply_processors(
     processors: &[Processor],
     reference_pos: BlockPos,
 ) -> Vec<PieceBlock> {
-    let mut processed_blocks = Vec::with_capacity(blocks.len());
+    apply_processors_with_loot(semantics, level, blocks, processors, reference_pos).0
+}
+
+pub fn apply_processors_with_loot<'a>(
+    semantics: &BlockSemantics<'_>,
+    level: &dyn ProcessLevel,
+    blocks: &[PieceBlock],
+    processors: &'a [Processor],
+    reference_pos: BlockPos,
+) -> (Vec<PieceBlock>, Vec<(BlockPos, &'a Identifier)>) {
+    if !processors
+        .iter()
+        .any(|processor| matches!(processor, Processor::Capped { .. }))
+    {
+        let mut output = Vec::with_capacity(blocks.len());
+        let mut tables = Vec::new();
+        for original in blocks {
+            let mut current = Some(*original);
+            let mut loot = None;
+            for processor in processors {
+                let Some(block) = current else {
+                    break;
+                };
+                current = process_with_loot(
+                    semantics,
+                    level,
+                    processor,
+                    original,
+                    block,
+                    reference_pos,
+                    &mut loot,
+                );
+            }
+            if let Some(block) = current {
+                if let Some(table) = loot {
+                    tables.push((block.pos, table));
+                }
+                output.push(block);
+            }
+        }
+        return (output, tables);
+    }
+    let mut processed = Vec::with_capacity(blocks.len());
     for original in blocks {
         let mut current = Some(*original);
+        let mut loot = None;
         for processor in processors {
-            let Some(processed) = current else {
+            let Some(block) = current else {
                 break;
             };
-            current = process_block(
+            current = process_with_loot(
                 semantics,
                 level,
                 processor,
                 original,
-                processed,
+                block,
                 reference_pos,
+                &mut loot,
             );
         }
         if let Some(block) = current {
-            processed_blocks.push(block);
+            processed.push((*original, block, loot));
         }
     }
-    processed_blocks
+    for processor in processors {
+        let Processor::Capped { delegate, limit } = processor else {
+            continue;
+        };
+        let mut order: Vec<usize> = (0..processed.len()).collect();
+        let mut random = LegacyRandom::new(get_seed(reference_pos));
+        super::solver::shuffle(&mut order, &mut random);
+        let mut changed = 0;
+        for index in order {
+            if changed >= *limit {
+                break;
+            }
+            let (original, block, loot) = &mut processed[index];
+            let before = *block;
+            if let Some(after) = process_with_loot(
+                semantics,
+                level,
+                delegate,
+                original,
+                before,
+                reference_pos,
+                loot,
+            ) {
+                if after != before {
+                    changed += 1;
+                }
+                *block = after;
+            }
+        }
+    }
+    let mut output = Vec::with_capacity(processed.len());
+    let mut loot = Vec::new();
+    for (_, block, table) in processed {
+        if let Some(table) = table {
+            loot.push((block.pos, table));
+        }
+        output.push(block);
+    }
+    (output, loot)
+}
+
+fn process_with_loot<'a>(
+    semantics: &BlockSemantics<'_>,
+    level: &dyn ProcessLevel,
+    processor: &'a Processor,
+    original: &PieceBlock,
+    processed: PieceBlock,
+    reference: BlockPos,
+    loot: &mut Option<&'a Identifier>,
+) -> Option<PieceBlock> {
+    if let Processor::Rule { rules } = processor {
+        let mut random = LegacyRandom::new(get_seed(processed.pos));
+        let location = level.block_state(processed.pos);
+        for rule in rules {
+            if rule.test(
+                semantics,
+                processed.state,
+                location,
+                processed.pos,
+                reference,
+                &mut random,
+            ) {
+                if let Some(table) = &rule.append_loot {
+                    *loot = Some(table);
+                }
+                return Some(PieceBlock {
+                    state: rule.output_state,
+                    ..processed
+                });
+            }
+        }
+        return Some(processed);
+    }
+    process_block(semantics, level, processor, original, processed, reference)
 }
 
 /// Vanilla `BlockAgeProcessor.processBlock`'s state test and replacement.

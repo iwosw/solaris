@@ -162,6 +162,7 @@ pub(crate) fn synthetic_source_with_template(
     let processor_id = identifier("test:village/processors");
     let structure_id = identifier("test:village_plains");
     let spec = StructureSpec {
+        pool_aliases: Vec::new(),
         id: structure_id.clone(),
         structure_type: identifier("minecraft:jigsaw"),
         biomes: BiomeSet::Biomes(vec![identifier("minecraft:plains")]),
@@ -196,13 +197,13 @@ pub(crate) fn synthetic_source_with_template(
         )],
     };
     let closure = VillageClosure {
+        dimension_bounds: (-64, 320),
         structure_set: identifier("test:villages"),
         placement,
         structures: vec![ClosureStructure {
             id: structure_id,
             weight: 1,
             spec,
-            start_height: 0,
         }],
         pools: BTreeMap::from([(pool_id, pool)]),
         processor_lists: BTreeMap::from([(processor_id, Vec::new())]),
@@ -1022,10 +1023,20 @@ fn village_pieces_place_their_villagers_as_chunk_inhabitants() {
         z: chunk.1,
     });
     let markers = placed.generated_entities();
-    assert_eq!(markers.len(), 2, "villager and zombie villager placed; distant villager clipped");
+    assert_eq!(
+        markers.len(),
+        2,
+        "villager and zombie villager placed; distant villager clipped"
+    );
     let marker = &markers[0];
-    let zombie = markers.iter().find(|marker| marker.entity_type == "minecraft:zombie_villager").unwrap();
-    assert!(zombie.persistent, "template PersistenceRequired survives placement");
+    let zombie = markers
+        .iter()
+        .find(|marker| marker.entity_type == "minecraft:zombie_villager")
+        .unwrap();
+    assert!(
+        zombie.persistent,
+        "template PersistenceRequired survives placement"
+    );
     assert_eq!(marker.entity_type, "minecraft:villager");
     assert_eq!(marker.villager_kind, "desert");
     assert_eq!(marker.profession, "nitwit");
@@ -1717,4 +1728,82 @@ fn rejected_placement_candidates_are_memoized_without_non_candidate_eviction() {
             .is_none()
     );
     assert_eq!(projections.get(), before + 1);
+}
+
+#[test]
+fn modern_jigsaw_list_places_children_at_one_origin_in_order() {
+    let (original, blocks) = synthetic_source(4242);
+    let mut closure = original.closure().clone();
+    let pool = closure.structures[0].spec.start_pool.clone();
+    let first = closure.pools[&pool].elements[0].1.clone();
+    let second_id = identifier("test:list_overlay");
+    let state = marker_state(&blocks);
+    closure.pieces.insert(
+        second_id.clone(),
+        StructureTemplate::new(
+            [3, 4, 3],
+            vec![TemplateBlock {
+                pos: [0, 3, 0],
+                state,
+            }],
+        ),
+    );
+    closure.pools.get_mut(&pool).unwrap().elements = vec![(
+        1,
+        ClosureElement::List {
+            elements: vec![
+                first,
+                ClosureElement::Single {
+                    piece: second_id,
+                    projection: Projection::Rigid,
+                    processors: ProcessorRef::Inline(Vec::new()),
+                    legacy: false,
+                },
+            ],
+            projection: Projection::Rigid,
+        },
+    )];
+    let source = Arc::new(
+        VillagePlanSource::new(
+            Arc::new(closure),
+            Arc::new(VillageDecor::empty()),
+            4242,
+            blocks.clone(),
+            Arc::new(NoTags),
+            Arc::new(AllBiomes),
+        )
+        .unwrap(),
+    );
+    let plain = synthetic_generator(4242, &blocks, None);
+    let start = placement_chunk(&source);
+    let set = plan_set(&source, &plain, start).unwrap();
+    let plan = set
+        .plans()
+        .iter()
+        .find(|plan| plan.start_chunk() == start)
+        .unwrap();
+    assert_eq!(
+        plan.assembly().pieces.len(),
+        1,
+        "a list occupies one collision box"
+    );
+    assert_eq!(plan.pieces().len(), 2, "both children are placed");
+    assert_eq!(plan.pieces()[0].position, plan.pieces()[1].position);
+    let overlay = &plan.pieces()[1];
+    let local = overlay.rotation.transform([0, 3, 0]);
+    let position = BlockPos {
+        x: overlay.position.x + local[0],
+        y: overlay.position.y + local[1],
+        z: overlay.position.z + local[2],
+    };
+    let generator = TerrainGenerator::new(4242, blocks).with_village_plans(source);
+    let chunk = generator.generate(ChunkPos { x: position.x.div_euclid(16), z: position.z.div_euclid(16) });
+    assert_eq!(
+        chunk.get_block(
+            position.x.rem_euclid(16) as u8,
+            position.y,
+            position.z.rem_euclid(16) as u8
+        ),
+        Some(state)
+    );
 }

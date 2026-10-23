@@ -191,6 +191,10 @@ pub enum PlacedElement {
         owner: Identifier,
         projection: Projection,
     },
+    List {
+        elements: Vec<PlacedElement>,
+        projection: Projection,
+    },
 }
 
 impl PlacedElement {
@@ -200,7 +204,19 @@ impl PlacedElement {
     pub fn projection(&self) -> Option<Projection> {
         match self {
             Self::Empty => None,
-            Self::Single { projection, .. } | Self::Feature { projection, .. } => Some(*projection),
+            Self::Single { projection, .. }
+            | Self::Feature { projection, .. }
+            | Self::List { projection, .. } => Some(*projection),
+        }
+    }
+
+    pub fn leaves<'a>(&'a self, out: &mut Vec<&'a Self>) {
+        if let Self::List { elements, .. } = self {
+            for child in elements {
+                child.leaves(out);
+            }
+        } else {
+            out.push(self);
         }
     }
 }
@@ -242,6 +258,8 @@ pub struct VillageAssembly {
     pub pieces: Vec<PlacedPiece>,
     pub junctions: Vec<Junction>,
     pub beard_pieces: Vec<BeardContribution>,
+    /// Deterministic work count: candidate element/rotation pairs examined.
+    pub candidate_attempts: usize,
 }
 
 impl VillageAssembly {
@@ -350,13 +368,31 @@ fn assemble_structure(
     gate: &BiomeGate<'_>,
     free_height: &impl Fn(i32, i32) -> i32,
 ) -> Option<VillageAssembly> {
-    let (mut assembly, mut random) =
-        plan_start(closure, structure, seed, chunk_x, chunk_z, free_height)?;
+    let aliases = sample_aliases(
+        &structure.spec.pool_aliases,
+        &mut LegacyRandom::new(set_large_feature_seed(seed, chunk_x, chunk_z)),
+    );
+    let (mut assembly, mut random) = plan_start(
+        closure,
+        structure,
+        seed,
+        chunk_x,
+        chunk_z,
+        free_height,
+        &aliases,
+    )?;
     let biome = (gate.biome_at)(assembly.origin.x, assembly.origin.y, assembly.origin.z);
     if !(gate.matches)(&assembly.biome_tag, &biome) {
         return None;
     }
-    grow_start(closure, structure, &mut assembly, &mut random, free_height);
+    grow_start(
+        closure,
+        structure,
+        &mut assembly,
+        &mut random,
+        free_height,
+        &aliases,
+    );
     Some(assembly)
 }
 
@@ -370,16 +406,23 @@ fn plan_start(
     chunk_x: i32,
     chunk_z: i32,
     free_height: &impl Fn(i32, i32) -> i32,
+    aliases: &BTreeMap<Identifier, Identifier>,
 ) -> Option<(VillageAssembly, LegacyRandom)> {
     let spec = &structure.spec;
     let mut random = LegacyRandom::new(set_large_feature_seed(seed, chunk_x, chunk_z));
+    let height = sample_start_height(
+        spec.start_height,
+        closure.dimension_bounds.0,
+        closure.dimension_bounds.1,
+        &mut random,
+    );
     let rotation = Rotation::get_random(&mut random);
-    let center_pool = closure.pool(&spec.start_pool)?;
+    let center_pool = closure.pool(aliases.get(&spec.start_pool).unwrap_or(&spec.start_pool))?;
     let center_element = pick_random_template(center_pool, &mut random)?;
     if matches!(center_element, PlacedElement::Empty) {
         return None;
     }
-    let origin = start_origin(chunk_x, chunk_z, structure.start_height, 0);
+    let origin = start_origin(chunk_x, chunk_z, height, 0);
     let anchored = anchor_origin(
         closure,
         &center_element,
@@ -404,6 +447,11 @@ fn plan_start(
     let shift = bottom_y - (center_min.y + ground_level_delta);
     center_min.y += shift;
     center_max.y += shift;
+    if center_min.y < closure.dimension_bounds.0 + spec.dimension_padding.bottom
+        || center_max.y >= closure.dimension_bounds.1 - spec.dimension_padding.top
+    {
+        return None;
+    }
     let center_position = BlockPos {
         x: anchored.x,
         y: anchored.y + shift,
@@ -440,6 +488,7 @@ fn plan_start(
         pieces: vec![center_piece.clone()],
         junctions: Vec::new(),
         beard_pieces: Vec::new(),
+        candidate_attempts: 0,
     };
     // Vanilla's `Beardifier` collects every RIGID piece of the structure start,
     // and the start piece is one of them: the town centre pulls the terrain
@@ -462,6 +511,7 @@ fn grow_start(
     assembly: &mut VillageAssembly,
     random: &mut LegacyRandom,
     free_height: &impl Fn(i32, i32) -> i32,
+    aliases: &BTreeMap<Identifier, Identifier>,
 ) {
     let spec = &structure.spec;
     if spec.size <= 0 {
@@ -474,10 +524,16 @@ fn grow_start(
     let vertical = spec.max_distance_from_center.vertical;
     let limit = Aabb::new(
         f64::from(center_x - horizontal),
-        f64::from(assembly.origin.y - vertical),
+        f64::from(
+            (assembly.origin.y - vertical)
+                .max(closure.dimension_bounds.0 + spec.dimension_padding.bottom),
+        ),
         f64::from(center_z - horizontal),
         f64::from(center_x + horizontal + 1),
-        f64::from(assembly.origin.y + vertical + 1),
+        f64::from(
+            (assembly.origin.y + vertical + 1)
+                .min(closure.dimension_bounds.1 - spec.dimension_padding.top),
+        ),
         f64::from(center_z + horizontal + 1),
     );
     let root = VoxelShape::create(limit).join(
@@ -496,12 +552,14 @@ fn grow_start(
     let mut placer = Placer {
         closure,
         spec,
+        aliases,
         random,
         free_height,
         pieces: &mut assembly.pieces,
         junctions: &mut assembly.junctions,
         beard_pieces: &mut assembly.beard_pieces,
         placing: PriorityQueue::default(),
+        candidate_attempts: &mut assembly.candidate_attempts,
     };
     let context_free: FreeShape = Rc::new(RefCell::new(root));
     placer.grow(&center_piece, &context_free, 0);
@@ -567,12 +625,14 @@ impl PriorityQueue {
 struct Placer<'a> {
     closure: &'a VillageClosure,
     spec: &'a StructureSpec,
+    aliases: &'a BTreeMap<Identifier, Identifier>,
     random: &'a mut LegacyRandom,
     free_height: &'a dyn Fn(i32, i32) -> i32,
     pieces: &'a mut Vec<PlacedPiece>,
     junctions: &'a mut Vec<Junction>,
     beard_pieces: &'a mut Vec<BeardContribution>,
     placing: PriorityQueue,
+    candidate_attempts: &'a mut usize,
 }
 
 impl Placer<'_> {
@@ -600,7 +660,11 @@ impl Placer<'_> {
             };
             let source_jigsaw_local_y = source_jigsaw_pos.y - source_box_y;
             let mut source_jigsaw_base_height = i32::MIN;
-            let Some(target_pool) = self.closure.pool(&source_jigsaw.pool) else {
+            let pool_id = self
+                .aliases
+                .get(&source_jigsaw.pool)
+                .unwrap_or(&source_jigsaw.pool);
+            let Some(target_pool) = self.closure.pool(pool_id) else {
                 continue;
             };
             let fallback = self.closure.pool(&target_pool.fallback);
@@ -635,6 +699,7 @@ impl Placer<'_> {
                     break;
                 }
                 for target_rotation in Rotation::get_shuffled(self.random) {
+                    *self.candidate_attempts += 1;
                     let target_jigsaws = jigsaws_for(
                         &target_element,
                         self.closure,
@@ -868,34 +933,124 @@ fn shuffled_templates(pool: &ClosurePool, random: &mut impl RandomSource) -> Vec
 fn pool_elements(pool: &ClosurePool) -> Vec<PlacedElement> {
     let mut flat = Vec::new();
     for (weight, element) in &pool.elements {
-        let placed = match element {
-            ClosureElement::Empty => PlacedElement::Empty,
-            ClosureElement::Single {
-                piece,
-                projection,
-                processors,
-                legacy,
-            } => PlacedElement::Single {
-                template: piece.clone(),
-                owner: pool.id.clone(),
-                projection: *projection,
-                processors: processors.clone(),
-                legacy: *legacy,
-            },
-            ClosureElement::Feature {
-                placed_feature,
-                projection,
-            } => PlacedElement::Feature {
-                placed_feature: placed_feature.clone(),
-                owner: pool.id.clone(),
-                projection: *projection,
-            },
-        };
+        let placed = placed_element(element, &pool.id);
         for _ in 0..(*weight).max(1) {
             flat.push(placed.clone());
         }
     }
     flat
+}
+
+fn placed_element(element: &ClosureElement, owner: &Identifier) -> PlacedElement {
+    match element {
+        ClosureElement::Empty => PlacedElement::Empty,
+        ClosureElement::Single {
+            piece,
+            projection,
+            processors,
+            legacy,
+        } => PlacedElement::Single {
+            template: piece.clone(),
+            owner: owner.clone(),
+            projection: *projection,
+            processors: processors.clone(),
+            legacy: *legacy,
+        },
+        ClosureElement::Feature {
+            placed_feature,
+            projection,
+        } => PlacedElement::Feature {
+            placed_feature: placed_feature.clone(),
+            owner: owner.clone(),
+            projection: *projection,
+        },
+        ClosureElement::List {
+            elements,
+            projection,
+        } => PlacedElement::List {
+            elements: elements
+                .iter()
+                .map(|element| placed_element(element, owner))
+                .collect(),
+            projection: *projection,
+        },
+    }
+}
+
+/// Resolve vertical anchors against the dimension and sample one start height.
+pub fn sample_start_height(
+    provider: mc_data::village_data::HeightProviderSpec,
+    min_y: i32,
+    max_y: i32,
+    random: &mut impl RandomSource,
+) -> i32 {
+    use mc_data::village_data::{HeightProviderSpec, VerticalAnchor};
+    let resolve = |anchor| match anchor {
+        VerticalAnchor::Absolute(y) => y,
+        VerticalAnchor::AboveBottom(offset) => min_y + offset,
+        VerticalAnchor::BelowTop(offset) => max_y - 1 - offset,
+    };
+    let (min, max, plateau) = match provider {
+        HeightProviderSpec::Constant(anchor) => return resolve(anchor),
+        HeightProviderSpec::Uniform {
+            min_inclusive,
+            max_inclusive,
+        } => (resolve(min_inclusive), resolve(max_inclusive), i32::MAX),
+        HeightProviderSpec::Trapezoid {
+            min_inclusive,
+            max_inclusive,
+            plateau,
+        } => (resolve(min_inclusive), resolve(max_inclusive), plateau),
+    };
+    let range = max - min;
+    if range <= 0 {
+        return min;
+    }
+    if plateau >= range {
+        return min + random.next_int_bounded(range + 1);
+    }
+    let slope = (range - plateau.max(0)) / 2;
+    min + random.next_int_bounded(range - slope + 1) + random.next_int_bounded(slope + 1)
+}
+
+fn sample_aliases(
+    bindings: &[mc_data::village_data::PoolAliasSpec],
+    random: &mut impl RandomSource,
+) -> BTreeMap<Identifier, Identifier> {
+    use mc_data::village_data::PoolAliasSpec;
+    fn choose<'a, T>(entries: &'a [(i32, T)], random: &mut impl RandomSource) -> Option<&'a T> {
+        let total = entries.iter().map(|(weight, _)| *weight).sum::<i32>();
+        if total <= 0 {
+            return None;
+        }
+        let mut choice = random.next_int_bounded(total);
+        for (weight, value) in entries {
+            choice -= weight;
+            if choice < 0 {
+                return Some(value);
+            }
+        }
+        None
+    }
+    let mut aliases = BTreeMap::new();
+    for binding in bindings {
+        match binding {
+            PoolAliasSpec::Direct { alias, target } => {
+                aliases.insert(alias.clone(), target.clone());
+            }
+            PoolAliasSpec::Random { alias, targets } => {
+                if let Some(target) = choose(targets, random) {
+                    aliases.insert(alias.clone(), target.clone());
+                }
+            }
+            PoolAliasSpec::RandomGroup { groups } => {
+                if let Some(group) = choose(groups, random) {
+                    aliases.extend(sample_aliases(group, random));
+                }
+            }
+        }
+    }
+    aliases
 }
 
 /// `JigsawPlacement.getRandomNamedJigsaw`: the anchored origin of the start
@@ -947,6 +1102,9 @@ pub(crate) fn jigsaws_for(
     random: &mut impl RandomSource,
 ) -> Vec<Jigsaw> {
     match element {
+        PlacedElement::List { elements, .. } => elements.first().map_or_else(Vec::new, |first| {
+            jigsaws_for(first, closure, position, rotation, random)
+        }),
         PlacedElement::Single { template, .. } => {
             let Some(template) = closure.piece(template) else {
                 return Vec::new();
@@ -1012,6 +1170,30 @@ fn element_bounds(
     match element {
         PlacedElement::Empty => None,
         PlacedElement::Feature { .. } => Some((position, position)),
+        PlacedElement::List { elements, .. } => {
+            let mut bounds: Option<(BlockPos, BlockPos)> = None;
+            for child in elements {
+                let Some((min, max)) = element_bounds(child, closure, position, rotation) else {
+                    continue;
+                };
+                bounds = Some(match bounds {
+                    None => (min, max),
+                    Some((a, b)) => (
+                        BlockPos {
+                            x: a.x.min(min.x),
+                            y: a.y.min(min.y),
+                            z: a.z.min(min.z),
+                        },
+                        BlockPos {
+                            x: b.x.max(max.x),
+                            y: b.y.max(max.y),
+                            z: b.z.max(max.z),
+                        },
+                    ),
+                });
+            }
+            bounds
+        }
         PlacedElement::Single { template, .. } => {
             piece_bounds(closure.piece(template)?, position, rotation)
         }
@@ -1077,3 +1259,7 @@ fn biomes_tag(structure: &StructureSpec) -> Identifier {
 pub fn placement_seed(seed: i64, chunk_x: i32, chunk_z: i32, salt: i64) -> i64 {
     set_large_feature_with_salt(seed, chunk_x, chunk_z, salt)
 }
+
+#[cfg(test)]
+#[path = "solver_modern_tests.rs"]
+mod modern_tests;

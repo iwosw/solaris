@@ -836,6 +836,7 @@ fn always_true() -> PosRuleTestSpec {
 /// before rule 2's random grass rule.
 fn street_plains_rules(swapped: bool) -> Vec<StructureProcessorSpec> {
     let water_path = ProcessorRuleSpec {
+        append_loot: None,
         input_predicate: RuleTestSpec::BlockMatch {
             block: identifier("minecraft:dirt_path"),
         },
@@ -846,6 +847,7 @@ fn street_plains_rules(swapped: bool) -> Vec<StructureProcessorSpec> {
         output_state: spec("minecraft:oak_planks", &[]),
     };
     let path_to_grass = ProcessorRuleSpec {
+        append_loot: None,
         input_predicate: RuleTestSpec::RandomBlockMatch {
             block: identifier("minecraft:dirt_path"),
             probability: 0.1,
@@ -855,6 +857,7 @@ fn street_plains_rules(swapped: bool) -> Vec<StructureProcessorSpec> {
         output_state: spec("minecraft:grass_block", &[("snowy", "false")]),
     };
     let grass_to_water = ProcessorRuleSpec {
+        append_loot: None,
         input_predicate: RuleTestSpec::BlockMatch {
             block: identifier("minecraft:grass_block"),
         },
@@ -865,6 +868,7 @@ fn street_plains_rules(swapped: bool) -> Vec<StructureProcessorSpec> {
         output_state: spec("minecraft:water", &[("level", "0")]),
     };
     let dirt_to_water = ProcessorRuleSpec {
+        append_loot: None,
         input_predicate: RuleTestSpec::BlockMatch {
             block: identifier("minecraft:dirt"),
         },
@@ -888,6 +892,7 @@ fn street_plains_rules(swapped: bool) -> Vec<StructureProcessorSpec> {
 /// in sequence at one position.
 fn zombie_plains_processors() -> Vec<StructureProcessorSpec> {
     let rule = |input: RuleTestSpec, output: BlockStateSpec| ProcessorRuleSpec {
+        append_loot: None,
         input_predicate: input,
         location_predicate: RuleTestSpec::AlwaysTrue,
         position_predicate: always_true(),
@@ -969,6 +974,7 @@ fn pane_processors() -> Vec<StructureProcessorSpec> {
     vec![StructureProcessorSpec::Rule {
         rules: vec![
             ProcessorRuleSpec {
+                append_loot: None,
                 input_predicate: RuleTestSpec::BlockStateMatch {
                     state: north_south("minecraft:glass_pane"),
                 },
@@ -977,6 +983,7 @@ fn pane_processors() -> Vec<StructureProcessorSpec> {
                 output_state: north_south("minecraft:brown_stained_glass_pane"),
             },
             ProcessorRuleSpec {
+                append_loot: None,
                 input_predicate: RuleTestSpec::BlockStateMatch {
                     state: east_west("minecraft:glass_pane"),
                 },
@@ -1181,6 +1188,7 @@ fn predicates_short_circuit_and_only_reached_ones_draw() {
     }
     let blocks = pieces(12, |_| fixture.state("minecraft:dirt_path", &[]));
     let probe = ProcessorRuleSpec {
+        append_loot: None,
         input_predicate: RuleTestSpec::RandomBlockMatch {
             block: identifier("minecraft:dirt_path"),
             probability: 0.5,
@@ -1195,6 +1203,7 @@ fn predicates_short_circuit_and_only_reached_ones_draw() {
     let no_draw = vec![StructureProcessorSpec::Rule {
         rules: vec![
             ProcessorRuleSpec {
+                append_loot: None,
                 input_predicate: RuleTestSpec::BlockMatch {
                     block: identifier("minecraft:dirt_path"),
                 },
@@ -1212,6 +1221,7 @@ fn predicates_short_circuit_and_only_reached_ones_draw() {
     let one_draw = vec![StructureProcessorSpec::Rule {
         rules: vec![
             ProcessorRuleSpec {
+                append_loot: None,
                 input_predicate: RuleTestSpec::RandomBlockMatch {
                     block: identifier("minecraft:dirt_path"),
                     probability: 1.0,
@@ -1227,6 +1237,7 @@ fn predicates_short_circuit_and_only_reached_ones_draw() {
     }];
     let one_predicate = vec![StructureProcessorSpec::Rule {
         rules: vec![ProcessorRuleSpec {
+            append_loot: None,
             input_predicate: RuleTestSpec::RandomBlockStateMatch {
                 state: spec("minecraft:dirt_path", &[]),
                 probability: 0.5,
@@ -1272,6 +1283,7 @@ fn position_predicates_follow_the_vanilla_reference() {
     let position_rule = |position_predicate: PosRuleTestSpec| {
         vec![StructureProcessorSpec::Rule {
             rules: vec![ProcessorRuleSpec {
+                append_loot: None,
                 input_predicate: RuleTestSpec::AlwaysTrue,
                 location_predicate: RuleTestSpec::AlwaysTrue,
                 position_predicate,
@@ -1809,6 +1821,7 @@ fn unresolvable_states_fail_closed_naming_the_owner() {
     let semantics = fixture.semantics();
     let specs = vec![StructureProcessorSpec::Rule {
         rules: vec![ProcessorRuleSpec {
+            append_loot: None,
             input_predicate: RuleTestSpec::BlockStateMatch {
                 state: spec("minecraft:not_a_block", &[]),
             },
@@ -1829,6 +1842,7 @@ fn unresolvable_states_fail_closed_naming_the_owner() {
     // A property value the block does not have fails closed too.
     let specs = vec![StructureProcessorSpec::Rule {
         rules: vec![ProcessorRuleSpec {
+            append_loot: None,
             input_predicate: RuleTestSpec::AlwaysTrue,
             location_predicate: RuleTestSpec::AlwaysTrue,
             position_predicate: always_true(),
@@ -1839,4 +1853,88 @@ fn unresolvable_states_fail_closed_naming_the_owner() {
         compile_processors(&semantics, &owner(), &specs),
         Err(CompileError::UnknownBlockState { .. })
     ));
+}
+
+#[test]
+fn modern_jigsaw_capped_loot_is_per_template_and_deterministic() {
+    let fixture = Fixture::new();
+    let semantics = BlockSemantics::new(&fixture.blocks, &fixture.tags);
+    let input = pieces(12, |_| fixture.state("minecraft:stone", &[]));
+    let specs = [StructureProcessorSpec::Capped {
+        limit: 3,
+        delegate: Box::new(StructureProcessorSpec::Rule {
+            rules: vec![ProcessorRuleSpec {
+                input_predicate: RuleTestSpec::BlockMatch {
+                    block: identifier("minecraft:stone"),
+                },
+                location_predicate: RuleTestSpec::AlwaysTrue,
+                position_predicate: PosRuleTestSpec::AlwaysTrue,
+                output_state: spec("minecraft:gravel", &[]),
+                append_loot: Some(identifier("minecraft:archaeology/trail_ruins_rare")),
+            }],
+        }),
+    }];
+    let processors = compile_processors(&semantics, &owner(), &specs).unwrap();
+    let run = || {
+        crate::village::processors::apply_processors_with_loot(
+            &semantics,
+            &fixture.level,
+            &input,
+            &processors,
+            BlockPos { x: 0, y: 0, z: 0 },
+        )
+    };
+    let (output, loot) = run();
+    assert_eq!((output.clone(), loot.clone()), run());
+    assert_eq!(loot.len(), 3);
+    assert_eq!(
+        output
+            .iter()
+            .filter(|block| block.state == fixture.state("minecraft:gravel", &[]))
+            .count(),
+        3
+    );
+    assert!(
+        loot.iter()
+            .all(|(_, table)| table.as_str() == "minecraft:archaeology/trail_ruins_rare")
+    );
+}
+
+#[test]
+fn modern_jigsaw_rot_only_removes_tagged_blocks() {
+    let fixture = Fixture::new();
+    let tags = TestTags::new(&[("test:rot", &["minecraft:stone"])]);
+    let semantics = BlockSemantics::new(&fixture.blocks, &tags);
+    let input = pieces(12, |i| {
+        fixture.state(
+            if i % 2 == 0 {
+                "minecraft:stone"
+            } else {
+                "minecraft:gravel"
+            },
+            &[],
+        )
+    });
+    let processors = compile_processors(
+        &semantics,
+        &owner(),
+        &[StructureProcessorSpec::BlockRot {
+            integrity: 0.0,
+            rottable_blocks: Some(identifier("test:rot")),
+        }],
+    )
+    .unwrap();
+    let output = apply_processors(
+        &semantics,
+        &fixture.level,
+        &input,
+        &processors,
+        BlockPos { x: 0, y: 0, z: 0 },
+    );
+    assert_eq!(output.len(), 6);
+    assert!(
+        output
+            .iter()
+            .all(|block| block.state == fixture.state("minecraft:gravel", &[]))
+    );
 }

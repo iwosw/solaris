@@ -192,6 +192,7 @@ fn feature_jigsaws_are_the_synthetic_bottom_connector() {
         projection: mc_data::village_data::Projection::Rigid,
     };
     let closure = crate::village::closure::VillageClosure {
+        dimension_bounds: (-64, 320),
         structure_set: identifier("minecraft:villages"),
         placement: crate::village::placement::RandomSpreadPlacement {
             spacing: 34,
@@ -332,6 +333,7 @@ fn desert_village_assembles_deterministically() {
                 );
             }
             PlacedElement::Empty => panic!("an empty element is never placed"),
+            PlacedElement::List { .. } => panic!("village fixture contains no list elements"),
         }
     }
 
@@ -468,6 +470,7 @@ fn the_start_piece_is_anchored_on_its_named_connector() {
         placement_priority: 0,
     }]);
     let spec = StructureSpec {
+        pool_aliases: Vec::new(),
         id: structure_id.clone(),
         structure_type: identifier("minecraft:jigsaw"),
         biomes: BiomeSet::Biomes(vec![identifier("minecraft:plains")]),
@@ -488,6 +491,7 @@ fn the_start_piece_is_anchored_on_its_named_connector() {
         liquid_settings: LiquidSettings::ApplyWaterlogging,
     };
     let closure = VillageClosure {
+        dimension_bounds: (-64, 320),
         structure_set: identifier("test:villages"),
         // Every chunk is a placement chunk, so the test does not search.
         placement: crate::village::placement::RandomSpreadPlacement {
@@ -500,7 +504,6 @@ fn the_start_piece_is_anchored_on_its_named_connector() {
             id: structure_id.clone(),
             weight: 1,
             spec,
-            start_height: 7,
         }],
         pools: BTreeMap::from([(
             pool_id.clone(),

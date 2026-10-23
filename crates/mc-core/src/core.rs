@@ -345,6 +345,30 @@ pub(crate) fn overworld_terrain(
     crate::plugin_startup::apply_worldgen(registry, terrain)
 }
 
+/// Serving and offline conversion share the same immutable Nether generator.
+pub(crate) fn nether_terrain(
+    config: &CoreConfig,
+    registry: &CoreRegistry,
+) -> Result<mc_worldgen::NetherGenerator, CoreError> {
+    let mut terrain =
+        mc_worldgen::NetherGenerator::try_new(config.seed, Arc::clone(&registry.blocks))
+            .map_err(|error| CoreError::Worldgen(error.to_string()))?;
+    if let Some(root) = config.vanilla_data_dir.as_deref() {
+        terrain
+            .load_vanilla_worldgen(
+                root,
+                Arc::clone(
+                    registry
+                        .worldgen_tags
+                        .as_ref()
+                        .expect("full vanilla registry has worldgen tags"),
+                ),
+            )
+            .map_err(CoreError::Worldgen)?;
+    }
+    Ok(terrain)
+}
+
 fn load_dimension_state(
     config: &CoreConfig,
     registry: Arc<CoreRegistry>,
@@ -386,13 +410,7 @@ fn load_dimension_state(
     };
     let generator: Arc<dyn ChunkGenerator> = match dimension {
         crate::dimensions::Dimension::Overworld => Arc::new(terrain.expect("overworld terrain")),
-        crate::dimensions::Dimension::Nether => Arc::new(
-            mc_worldgen::nether::NetherGenerator::try_new(
-                config.seed,
-                Arc::clone(&registry.blocks),
-            )
-            .map_err(|err| CoreError::Worldgen(err.to_string()))?,
-        ),
+        crate::dimensions::Dimension::Nether => Arc::new(nether_terrain(config, &registry)?),
         crate::dimensions::Dimension::End => Arc::new(
             mc_worldgen::end::EndGenerator::try_new(config.seed, Arc::clone(&registry.blocks))
                 .map_err(|err| CoreError::Worldgen(err.to_string()))?,

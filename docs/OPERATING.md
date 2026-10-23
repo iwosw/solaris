@@ -614,6 +614,32 @@ POIs are read from the loaded chunks within 256 blocks, with vanilla's POI-type
 block lists. The tab-complete structure list comes from the local vanilla data;
 boss-bar id suggestions are empty because the registry lives on the tick thread.
 
+### Nether generation
+
+Fresh Nether chunks use a deterministic three-dimensional cavern field below
+the bedrock roof, with a lava sea below Y=32 and all five Nether biomes. Crimson
+and warped nylium, huge fungi, stems, roots and lights, soul-sand/soil floors,
+and basalt/blackstone surfaces are generated on cave floors rather than on the
+roof heightmap. Density corners are sampled on a fixed 4×8×4 lattice.
+
+With the imported vanilla content cache, Nether quartz/gold and both ancient
+debris passes read the vanilla ore count, height, size and exposure data.
+Ancient debris never replaces an exposed terrain cell. Structure starts use
+the imported random-spread sets: connected Solaris-authored fortress bridges
+and rooms supply blaze spawners, wart gardens and chest loot; bastions use the
+existing jigsaw solver and the imported pools/processors/templates. Nether
+fossils and ruined portals use imported templates. Overlapping pieces and
+fungus caps are clipped into each requested chunk from deterministic halo
+anchors, independently of generation order. Structure searches consume these
+same start decisions.
+
+This is vanilla-like, not an exact-seed terrain/structure oracle. Fortress
+piece diversity and structure-specific natural spawn overrides, and the
+complete ruined-portal terrain/aging processor pass remain incomplete.
+Bastion inhabitants are emitted as persistent generation markers; materializing
+them and activating ordinary spawners belong to the native tick, not to the
+generator. Existing native chunks are not regenerated.
+
 ## Forced chunks and ender-pearl loaders
 
 `/forceload add <x z> [<x z>]`, `/forceload remove <x z> [<x z>]|all` and
