@@ -1,0 +1,8 @@
+name: SolarisBukkitHello
+version: "1.0.0"
+main: example.HelloPlugin
+api-version: "1.21"
+commands:
+  hello:
+    description: Greet the command sender
+    usage: /<command> [words]
