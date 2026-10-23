@@ -1341,7 +1341,7 @@ impl ConnectionRegistry {
         self.inner.lock().admitted.remove(&id);
     }
 
-    fn retire(&self, id: ConnectionId) {
+    pub(crate) fn retire(&self, id: ConnectionId) {
         crate::vanilla_items::unmark(id);
         let mut inner = self.inner.lock();
         inner.handles.remove(&id);

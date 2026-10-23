@@ -13,7 +13,7 @@ use crate::{
     server::EdgeServer,
 };
 
-/// `solaris:monitor` is carried by this vanilla block (core `carrier_block_id`);
+/// `solaris:monitor` is carried by this vanilla block (core `carrier_block_id` confirms);
 /// its `facing` property is the face the screen is on.
 const MONITOR_CARRIER: &str = "minecraft:black_glazed_terracotta";
 
@@ -112,6 +112,11 @@ impl Service {
                 .states
                 .iter()
                 .filter_map(|state| {
+                    server
+                        .hub
+                        .registry()
+                        .carrier_block_id(state.0)
+                        .filter(|id| id.as_str() == "solaris:monitor")?;
                     let facing = server
                         .wire
                         .blocks
@@ -144,15 +149,16 @@ impl Service {
             tick: latest.as_ref(),
             monitors: self.monitors(server),
         };
-        let effects = self
-            .relay
-            .lock()
-            .handle(id, message, &world, Instant::now());
+        // State change and enqueue share one critical section so DEMAND on/off
+        // and STOP can never be reordered between concurrent callers.
+        let mut relay = self.relay.lock();
+        let effects = relay.handle(id, message, &world, Instant::now());
         deliver(server, effects);
     }
 
     fn unregister(&self, server: &EdgeServer, id: ConnectionId) {
-        let effects = self.relay.lock().unregister(id);
+        let mut relay = self.relay.lock();
+        let effects = relay.unregister(id);
         deliver(server, effects);
     }
 
@@ -178,14 +184,17 @@ impl Service {
             tick: Some(tick),
             monitors: self.monitors(server),
         };
-        let effects = self.relay.lock().tick(poses, &world);
+        let mut relay = self.relay.lock();
+        let effects = relay.tick(poses, &world);
         deliver(server, effects);
     }
 }
 
-/// Reliable-queue delivery. A full queue drops the message (a stale frame is
-/// worthless and never disconnects a viewer); one encoding serves all viewers
-/// of the same relayed payload.
+/// Delivery on the reliable queue, called with the relay lock held (only
+/// non-blocking `try_send`). A full queue drops a FRAME (stale video is
+/// worthless); control messages (DEMAND/STOP/ACTIVE/REQUESTED/PERMISSION/
+/// REFUSED) follow the normal command-queue rule: a full queue retires the
+/// connection. One encoding serves all viewers of the same relayed payload.
 fn deliver(server: &EdgeServer, effects: Vec<Effect>) {
     let mut last: Option<(*const u8, usize, bytes::Bytes)> = None;
     for effect in effects {
@@ -203,8 +212,15 @@ fn deliver(server: &EdgeServer, effects: Vec<Effect>) {
                 }
             },
         };
-        if let Some(handles) = server.connections.get(effect.to) {
-            let _ = handles.reliable_tx.try_send(framed);
+        if let Some(handles) = server.connections.get(effect.to)
+            && handles.reliable_tx.try_send(framed).is_err()
+            && !effect.is_frame()
+        {
+            tracing::warn!(
+                connection = effect.to.0,
+                "screen control queue full; connection retired"
+            );
+            server.connections.retire(effect.to);
         }
     }
 }

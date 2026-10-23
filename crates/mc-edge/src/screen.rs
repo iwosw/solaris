@@ -308,6 +308,12 @@ pub(crate) struct Effect {
     pub to: ConnectionId,
     pub payload: Bytes,
 }
+impl Effect {
+    /// Video frames are droppable; everything else is a control message.
+    pub(crate) fn is_frame(&self) -> bool {
+        self.payload[1] == server_kind::FRAME
+    }
+}
 
 /// Block lookup supplied from the published native world: is `pos` a monitor
 /// block whose `facing` is `side` (direction id 2 north, 3 south, 4 west, 5 east)?
