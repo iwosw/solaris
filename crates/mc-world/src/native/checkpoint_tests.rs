@@ -1405,3 +1405,83 @@ fn native_checkpoint_readonly_crash_refuses_export_without_repairing_source() {
     let readonly = NativeReadOnlyStore::open_with_cache(&path, [1; 32], 1024 * 1024).unwrap();
     assert_eq!(readonly.read_checkpoint().unwrap().tick, 7);
 }
+
+/// Village worldgen stores inhabitant markers in chunk extras. A marker with a
+/// repeated field made every checkpoint and generated save of such a chunk
+/// fail `NBT/duplicate_field` (live VPS, 2026-10-23).
+#[test]
+fn generated_entity_markers_pass_checkpoint_and_generated_save() {
+    let directory = tempfile::tempdir().unwrap();
+    let store = NativeStore::create(&directory.path().join("state.redb"), [1; 32]).unwrap();
+    commit(&store, 0, 0, &globals(0), &[], &[]).unwrap();
+    let (blocks, items) = registries();
+    let block = |name: &str| {
+        blocks
+            .block(&mc_data::Identifier::parse(name).unwrap())
+            .unwrap()
+            .default
+    };
+    let marker = crate::GeneratedEntityMarker {
+        claim: "minecraft:village/plains/toolsmith@72:66:8#0".to_owned(),
+        entity_type: "minecraft:villager".to_owned(),
+        position: [72.5, 66.0, 8.5],
+        persistent: true,
+        villager_kind: "plains".to_owned(),
+        profession: "toolsmith".to_owned(),
+        level: 1,
+        age: 0,
+        yaw: 0.0,
+        pitch: 0.0,
+    };
+    let generated = |x| {
+        let mut chunk = Chunk::empty(
+            ChunkPos { x, z: 0 },
+            block("minecraft:air"),
+            mc_data::Identifier::parse("minecraft:plains").unwrap(),
+        );
+        chunk.set_generated_entities(std::slice::from_ref(&marker));
+        chunk
+    };
+    let saved = generated(4);
+    store
+        .fill_generated(0, std::slice::from_ref(&saved), &blocks, &items)
+        .unwrap();
+    let base = generated(5);
+    let mut effective = base.clone();
+    effective
+        .set_block(1, 64, 1, block("minecraft:stone"))
+        .unwrap();
+    store
+        .commit_checkpoint(
+            NativeCheckpoint {
+                tick: 1,
+                previous_tick: 0,
+                chunks: &[NativeChunkSnapshot {
+                    dimension: 0,
+                    base: &base,
+                    effective: &effective,
+                    dirty_sections: None,
+                }],
+                entities: &[],
+                players: &[],
+                globals: &globals(1),
+            },
+            &blocks,
+            &items,
+        )
+        .unwrap();
+    for pos in [saved.pos, base.pos] {
+        let restored = store
+            .read_chunk(
+                0,
+                pos,
+                &blocks,
+                &items,
+                &mc_data::loot::chest_26_1_2::ChestLootCatalog::new(),
+                &NoGeneration,
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(restored.generated_entities(), vec![marker.clone()]);
+    }
+}

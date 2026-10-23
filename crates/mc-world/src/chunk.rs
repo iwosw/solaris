@@ -928,10 +928,6 @@ impl Chunk {
                         Tag::Byte(i8::from(inhabitant.persistent)),
                     ),
                     (
-                        "PersistenceRequired".into(),
-                        Tag::Byte(i8::from(inhabitant.persistent)),
-                    ),
-                    (
                         "VillagerKind".into(),
                         Tag::String(inhabitant.villager_kind.clone()),
                     ),
