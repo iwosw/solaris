@@ -4116,6 +4116,61 @@ fn bounded_gossip_window_reaches_actors_beyond_the_first_priority_prefix() {
     );
 }
 
+#[test]
+fn golem_gossip_summoning_requires_five_recently_sleeping_villagers() {
+    for (count, slept, expected) in [(4, true, 0), (5, false, 0), (5, true, 1)] {
+        let mut state = test_state();
+        state.tick = 1_200;
+        let mut actors = Vec::new();
+        for n in 0..count {
+            let slot = villager(&mut state, [6.5 + f64::from(n % 2), 201.0, 6.5]);
+            let v = state.entities.row_mut(slot).villager.as_mut().unwrap();
+            v.activity = Activity::Meet;
+            v.last_slept = slept.then_some(1_000);
+            v.last_gossip = state.tick;
+            actors.push(slot);
+        }
+        let mut cache = PoiCache::default();
+        cache.refresh(&state);
+        let mut changes = ChangeSet::default();
+        // Try successive bounded decision windows: placement is deterministic,
+        // but the first attempt intersects the summoner's body.
+        for _ in 0..12 {
+            golems(&mut state, &mut cache, &mut changes);
+            state.tick += 100;
+            if !changes.entities_spawned.is_empty() {
+                break;
+            }
+        }
+        assert_eq!(changes.entities_spawned.len(), expected, "{count}, {slept}");
+        if expected != 0 {
+            assert!(actors.iter().all(|&slot| state.entities.row(slot)
+                .villager.as_ref().unwrap().golem_detected_until.is_some()));
+            golems(&mut state, &mut cache, &mut changes);
+            assert_eq!(changes.entities_spawned.len(), 1, "no duplicate summon");
+        }
+    }
+}
+
+#[test]
+fn golem_detection_uses_axis_aligned_range_and_ignores_dead_golems() {
+    for alive in [true, false] {
+        let mut state = test_state();
+        state.tick = 200;
+        let resident = villager(&mut state, [0.5, 201.0, 0.5]);
+        let type_id = state.registry.entity_types
+            .id_of(&mc_data::Identifier::parse("minecraft:iron_golem").unwrap()).unwrap();
+        let id = state.spawn_mob(type_id, [15.5, 201.0, 15.5], 100.0);
+        let slot = state.entities.slot_of(id).unwrap();
+        state.entities.body_mut(slot).alive = alive;
+        let mut cache = PoiCache::default();
+        cache.refresh(&state);
+        golems(&mut state, &mut cache, &mut ChangeSet::default());
+        assert_eq!(state.entities.row(resident).villager.as_ref().unwrap()
+            .golem_detected_until, alive.then_some(799));
+    }
+}
+
 fn motion_geometry_fixture() -> (TickState, EntitySlot, VillagerState) {
     let mut state = test_state();
     let start = [8.5, 201.0, 8.5];

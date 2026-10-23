@@ -272,6 +272,32 @@ fn raids_difficulty_counts_and_omen_bonus_wave() {
         assert_eq!(state.raids.raids[&2].status, "victory");
     }
 }
+
+#[test]
+fn inactive_raid_freezes_wave_clock_and_hides_bar_until_village_reactivates() {
+    let (mut state, player, _) = fixture(None);
+    begin(&mut state, player, 0);
+    let before = state.raids.raids[&2].clone();
+    let player_slot = state.entities.slot_of(player).unwrap();
+    state.entities.set_pos(player_slot, [10_000.0, 201.0, 10_000.0]);
+    state.refresh_active_chunks(state.tick);
+    assert!(!state.world.is_active(0, 0));
+    for _ in 0..400 {
+        assert!(step(&mut state).entities_spawned.is_empty());
+    }
+    let paused = &state.raids.raids[&2];
+    assert_eq!(paused.status, "ongoing");
+    assert_eq!(paused.ticks_active, before.ticks_active);
+    assert_eq!(paused.cooldown_ticks, before.cooldown_ticks);
+    assert_eq!(paused.groups_spawned, 0);
+    assert!(bars(&state).is_empty());
+    state.entities.set_pos(player_slot, [8.5, 201.0, 8.5]);
+    state.refresh_active_chunks(state.tick);
+    assert!(state.world.is_active(0, 0));
+    step(&mut state);
+    assert_eq!(state.raids.raids[&2].cooldown_ticks, before.cooldown_ticks - 1);
+    assert_eq!(bars(&state).len(), 1);
+}
 #[test]
 fn raids_villager_death_loses_and_milk_cancels_omen() {
     let (mut state, player, villager) = fixture(None);

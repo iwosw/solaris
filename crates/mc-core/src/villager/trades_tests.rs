@@ -239,6 +239,21 @@ fn trade_restock_new_day_resets_budget_without_carrying_previous_day_cooldown() 
 }
 
 #[test]
+fn restock_reduces_demand_for_untraded_offers() {
+    let registry = registry();
+    let (mut v, _, _) = fixture(&registry);
+    v.job_site = Some(crate::boundary::BlockPos { x: 0, y: 64, z: 0 });
+    let mut unused = v.offers[0].clone();
+    unused.demand = 6;
+    v.offers.push(unused);
+    v.offers[0].uses = 2;
+    work(&mut v, &registry, 2_000, 2_000);
+    assert_eq!(v.offers[0].demand, 2);
+    assert_eq!(v.offers[1].demand, 4, "unused supply must lower demand");
+    assert_eq!(v.offers[1].uses, 0);
+}
+
+#[test]
 fn trade_levelling_preserves_used_offers_and_unlocks_new_level() {
     let registry = registry();
     let (mut v, mut m, mut i) = fixture(&registry);
