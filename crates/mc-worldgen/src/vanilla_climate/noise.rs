@@ -315,6 +315,9 @@ fn grad(hash: i32, x: f32, y: f32, z: f32) -> f32 {
     g[0] * x + g[1] * y + g[2] * z
 }
 
+#[path = "noise_batch.rs"]
+mod batch;
+
 #[cfg(test)]
 #[path = "noise_tests.rs"]
 mod tests;

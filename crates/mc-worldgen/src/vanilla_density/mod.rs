@@ -277,27 +277,31 @@ impl VanillaDensity {
     /// Chunk output is Y-major, then Z, then X: `(y-min_y)*256 + z*16+x`.
     /// Each interpolated node retains the chunk's shared lattice corners;
     /// flat-cache nodes retain quart-column values across all vertical cells.
+    /// Eight neighbouring columns (4×2) traverse the DAG together. Branch masks
+    /// retain scalar laziness; lane arithmetic preserves scalar fp32 bits.
     pub fn fill_density_chunk(&self, min_x: i32, min_z: i32, output: &mut [f32]) {
         assert_eq!(output.len(), self.height() as usize * 256);
         let mut sampler = DensitySampler::for_chunk(&self.runtime, min_x, min_z);
-        let width = self.runtime.cell_width;
-        let height = self.runtime.cell_height;
         let max_y = self.min_y() + self.height();
+        let height = self.runtime.cell_height;
         for cell_y in (self.min_y().div_euclid(height)..(max_y - 1).div_euclid(height) + 1).rev() {
-            for cell_z in min_z.div_euclid(width)..(min_z + 15).div_euclid(width) + 1 {
-                for cell_x in min_x.div_euclid(width)..(min_x + 15).div_euclid(width) + 1 {
+            // Keep a quart-cell's vertical work together so the scalar and
+            // batched evaluators reuse the same hot interpolation corners.
+            for tile_z in (min_z..min_z + 16).step_by(4) {
+                for tile_x in (min_x..min_x + 16).step_by(4) {
                     for y in (cell_y * height).max(self.min_y())..((cell_y + 1) * height).min(max_y)
                     {
-                        for z in (cell_z * width).max(min_z)..((cell_z + 1) * width).min(min_z + 16)
-                        {
-                            for x in
-                                (cell_x * width).max(min_x)..((cell_x + 1) * width).min(min_x + 16)
-                            {
-                                let index = (y - self.min_y()) as usize * 256
-                                    + (z - min_z) as usize * 16
-                                    + (x - min_x) as usize;
-                                output[index] = sampler.sample_terrain(self.final_density, x, y, z);
-                            }
+                        for z in [tile_z, tile_z + 2] {
+                            let positions = std::array::from_fn(|lane| {
+                                [tile_x + (lane % 4) as i32, y, z + (lane / 4) as i32]
+                            });
+                            let values =
+                                sampler.sample_terrain_batch(self.final_density, positions);
+                            let index = (y - self.min_y()) as usize * 256
+                                + (z - min_z) as usize * 16
+                                + (tile_x - min_x) as usize;
+                            output[index..index + 4].copy_from_slice(&values[..4]);
+                            output[index + 16..index + 20].copy_from_slice(&values[4..]);
                         }
                     }
                 }

@@ -1,6 +1,9 @@
 use super::{Binary, DensityRuntime, Id, Mapped, Marker, Node, Shift, Spline};
 use std::collections::HashMap;
 
+#[path = "batch.rs"]
+mod batch;
+
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 enum Mode {
     Raw,
@@ -137,6 +140,8 @@ pub(crate) struct DensityCounters {
 pub(crate) struct DensitySampler<'a> {
     runtime: &'a DensityRuntime,
     values: Vec<Option<Cached>>,
+    batch_values: Vec<batch::BatchMemo>,
+    batch_epoch: u64,
     cells: Vec<Option<Cell>>,
     chunk: Option<ChunkMemo>,
     pair_memos: Vec<PairMemo>,
@@ -155,6 +160,8 @@ impl<'a> DensitySampler<'a> {
         Self {
             runtime,
             values: vec![None; len],
+            batch_values: Vec::new(),
+            batch_epoch: 0,
             cells: vec![None; len],
             chunk: None,
             pair_memos: vec![PairMemo::default(); len],
@@ -274,6 +281,7 @@ trait Cache {
     }
 }
 impl Cache for DensitySampler<'_> {
+    #[inline]
     fn get(&self, id: Id, position: Position) -> Option<f32> {
         if position.mode != Mode::Raw
             && let Some(chunk) = &self.chunk
@@ -288,6 +296,7 @@ impl Cache for DensitySampler<'_> {
             .filter(|value| value.position == position)
             .map(|value| value.value)
     }
+    #[inline]
     fn put(&mut self, id: Id, position: Position, value: f32) {
         self.values[id] = Some(Cached { position, value });
         if position.mode != Mode::Raw
@@ -301,6 +310,7 @@ impl Cache for DensitySampler<'_> {
             );
         }
     }
+    #[inline]
     fn cell(&self, id: Id, x: i32, y: i32, z: i32) -> Option<[f32; 8]> {
         self.cells[id]
             .filter(|cell| (cell.x, cell.y, cell.z) == (x, y, z))
@@ -309,6 +319,7 @@ impl Cache for DensitySampler<'_> {
     fn put_cell(&mut self, id: Id, cell: Cell) {
         self.cells[id] = Some(cell);
     }
+    #[inline]
     fn corner(&self, id: Id, position: Position) -> Option<f32> {
         self.chunk.as_ref()?.corners.get(
             id,
@@ -319,6 +330,7 @@ impl Cache for DensitySampler<'_> {
             ],
         )
     }
+    #[inline]
     fn put_corner(&mut self, id: Id, position: Position, value: f32) {
         if let Some(chunk) = &mut self.chunk {
             chunk.corners.put(
