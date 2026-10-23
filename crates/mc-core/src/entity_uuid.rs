@@ -44,17 +44,22 @@ impl TickState {
 
 /// Load the world's salt from the staged native globals (minting and staging
 /// it when the world has none yet) and install it in the root world and every
-/// dimension. A fresh world's initial checkpoint persists it before any tick;
-/// a reopened pre-salt world persists it at its next checkpoint, so a crash
-/// before then remints it (later uuids stay unique, only replay of that
-/// first window diverges).
-pub(crate) fn install_salt(root: &mut TickState) -> Result<(), CoreError> {
+/// dimension. Returns whether it was minted: `Core::open` then checkpoints
+/// before any tick so the salt is durable before a uuid derived from it. The
+/// one exception is a reopened world still at tick 0 (fresh import), where the
+/// store refuses a second tick-0 checkpoint; it persists at its first periodic
+/// checkpoint, and a crash before then only remints the salt (uuids stay
+/// unique; replay of that window diverges).
+pub(crate) fn install_salt(root: &mut TickState) -> Result<bool, CoreError> {
     let stored = crate::terrain::read_data_field(&root.native_globals, SALT_FIELD)
         .map_err(|error| CoreError::Storage(format!("entity salt: {error}")))?;
-    let salt = match stored {
-        Some(text) => uuid::Uuid::try_parse(&text).map_err(|error| {
-            CoreError::Storage(format!("entity salt {text:?} is not a uuid: {error}"))
-        })?,
+    let (salt, minted) = match stored {
+        Some(text) => (
+            uuid::Uuid::try_parse(&text).map_err(|error| {
+                CoreError::Storage(format!("entity salt {text:?} is not a uuid: {error}"))
+            })?,
+            false,
+        ),
         None => {
             let salt = uuid::Uuid::new_v4();
             crate::terrain::stage_data_field(
@@ -62,7 +67,7 @@ pub(crate) fn install_salt(root: &mut TickState) -> Result<(), CoreError> {
                 SALT_FIELD,
                 &salt.simple().to_string(),
             )?;
-            salt
+            (salt, true)
         }
     };
     let salt = salt.into_bytes();
@@ -70,5 +75,5 @@ pub(crate) fn install_salt(root: &mut TickState) -> Result<(), CoreError> {
     for child in root.other_dimensions.values_mut() {
         child.entity_salt = salt;
     }
-    Ok(())
+    Ok(minted)
 }

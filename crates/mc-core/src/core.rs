@@ -646,7 +646,7 @@ pub(crate) fn recover_tick_state(
     fresh: bool,
     plugin_runtime: Option<crate::plugin::PluginRuntime>,
     build_queries: Option<crate::build_precommit::PreviewQueries>,
-) -> Result<(TickState, CheckpointManifest), CoreError> {
+) -> Result<(TickState, CheckpointManifest, bool), CoreError> {
     let (root_manifest, mut replays, globals) = if fresh {
         store
             .initialize_dimensions(
@@ -736,7 +736,7 @@ pub(crate) fn recover_tick_state(
             .insert(dimension, Box::new(child));
     }
     tick_state.native_globals = globals;
-    crate::entity_uuid::install_salt(&mut tick_state)?;
+    let salt_minted = crate::entity_uuid::install_salt(&mut tick_state)?;
     crate::settlements::persistence::refuse_legacy_plugin_state(&tick_state)?;
     crate::settlements::persistence::finish_recovery(&mut tick_state)?;
     tick_state.plugin_runtime = plugin_runtime;
@@ -747,7 +747,7 @@ pub(crate) fn recover_tick_state(
         fresh || !root_manifest.domain_versions.contains_key("plugins"),
     )?;
     crate::dimensions::validate_identity(&mut tick_state)?;
-    Ok((tick_state, root_manifest))
+    Ok((tick_state, root_manifest, salt_minted))
 }
 
 impl Core {
@@ -852,7 +852,7 @@ impl Core {
         );
         #[cfg(test)]
         crate::native_checkpoint::tests::register_store(&config, &store)?;
-        let (mut tick_state, mut root_manifest) = recover_tick_state(
+        let (mut tick_state, mut root_manifest, salt_minted) = recover_tick_state(
             &config,
             &registry,
             &store,
@@ -891,10 +891,13 @@ impl Core {
             ),
         ];
         let world_dir = config.world_dir.clone();
-        if fresh {
+        // Fresh worlds, and reopened pre-salt worlds that just minted their
+        // entity salt (see install_salt), checkpoint before any tick.
+        if fresh || (salt_minted && tick_state.tick > 0) {
             let (work_tx, work_rx) = journal_work_channel();
             let (done, _) = std::sync::mpsc::channel();
-            if !start_checkpoint(&mut tick_state, &work_tx, &done, 0) {
+            let tick = if fresh { 0 } else { tick_state.tick };
+            if !start_checkpoint(&mut tick_state, &work_tx, &done, tick) {
                 return Err(CoreError::Storage(
                     "initial native checkpoint capture failed".into(),
                 ));
@@ -902,7 +905,16 @@ impl Core {
             let JournalWork::Checkpoint(job) = work_rx.recv().expect("initial capture") else {
                 unreachable!()
             };
-            let mut writer = JournalWriter::open(&world_dir, config.journal_fsync_every_batches)?;
+            let mut writer = if fresh {
+                JournalWriter::open(&world_dir, config.journal_fsync_every_batches)?
+            } else {
+                JournalWriter::open_recovered(
+                    &world_dir,
+                    config.journal_fsync_every_batches,
+                    root_manifest.tick,
+                    tick_state.tick,
+                )?
+            };
             write_checkpoint(
                 &world_dir,
                 &job,
