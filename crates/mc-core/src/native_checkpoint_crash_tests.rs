@@ -279,6 +279,7 @@ async fn queued_save_requests_keep_one_capture_in_flight_and_both_receive_durabl
                 checkpoint_rx,
                 backup_rx: std::sync::mpsc::channel().1,
                 pause_when_empty_seconds: 0,
+                input_log: None,
                 terrain,
             },
         );

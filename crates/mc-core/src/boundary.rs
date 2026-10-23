@@ -19,15 +19,19 @@ use uuid::Uuid;
 pub type Tick = u64;
 
 /// Network entity id as sent on the wire. Players and mobs share one id space.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
+)]
 pub struct EntityId(pub i32);
 
 /// Player identity for the lifetime of one connection, assigned by the edge.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
+)]
 pub struct ConnectionId(pub u64);
 
 /// One player action decoded by the edge.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum PlayerInput {
     /// Login finished; the core loads or creates the player and answers with
     /// [`PlayerChange::Joined`].
@@ -45,6 +49,7 @@ pub enum PlayerInput {
     LoaderViewRequest {
         connection: ConnectionId,
         owner: String,
+        #[serde(with = "crate::input_log::view_key")]
         request_kind: ScriptClientViewKey,
     },
 
@@ -100,11 +105,15 @@ pub enum PlayerInput {
         action: DigAction,
         sequence: i32,
     },
-    /// Internal FIFO barrier for a read-only before-build preview.
+    /// Internal FIFO barrier for a read-only before-build preview. Not input
+    /// state: the input log omits it.
+    #[serde(skip)]
     BuildPreviewFence {
         fence: crate::build_precommit::PreviewFence,
     },
     /// Edge-resolved before-build approval bound to one frozen native plan.
+    /// The plan is not serializable: the input log records an `Uncovered` marker.
+    #[serde(skip)]
     AuthorizedBuild {
         authorization: crate::build_precommit::AuthorizedBuild,
     },
@@ -277,6 +286,7 @@ pub enum PlayerInput {
     DialogClick {
         connection: ConnectionId,
         id: String,
+        #[serde(with = "crate::input_log::nbt_option")]
         payload: Option<mc_nbt::Tag>,
     },
     /// Trusted stdin source; has op level four and no entity.
@@ -353,13 +363,13 @@ impl PlayerInput {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum Hand {
     Main,
     Off,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum DigAction {
     Start,
     Cancel,
@@ -367,7 +377,7 @@ pub enum DigAction {
 }
 
 /// Vanilla container click modes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum ClickMode {
     Pickup,
     QuickMove,

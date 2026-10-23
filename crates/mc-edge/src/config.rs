@@ -116,6 +116,10 @@ pub struct ServerSection {
     /// keep running, and the first join resumes ticking.
     #[serde(default = "default_pause_when_empty_seconds")]
     pub pause_when_empty_seconds: i32,
+    /// Opt-in per-tick input log under `<world_dir>/input-log/` for replay
+    /// from a checkpoint (see `docs/OPERATING.md`). Off by default.
+    #[serde(default)]
+    pub input_log: bool,
 }
 
 impl Default for ServerSection {
@@ -128,6 +132,7 @@ impl Default for ServerSection {
             simulation_distance: default_simulation_distance(),
             accepts_transfers: false,
             pause_when_empty_seconds: default_pause_when_empty_seconds(),
+            input_log: false,
         }
     }
 }
@@ -636,6 +641,7 @@ fn unknown_leaves(table: &toml::Table) -> Vec<String> {
                 "simulation_distance",
                 "accepts_transfers",
                 "pause_when_empty_seconds",
+                "input_log",
             ],
         ),
         (
@@ -753,6 +759,13 @@ mod tests {
         let negative =
             EdgeConfig::from_toml("[server]\npause_when_empty_seconds = -1\n", None).unwrap();
         assert_eq!(negative.server.pause_when_empty_seconds, -1);
+    }
+
+    #[test]
+    fn input_log_defaults_off_and_parses() {
+        assert!(!EdgeConfig::from_toml("", None).unwrap().server.input_log);
+        let on = EdgeConfig::from_toml("[server]\ninput_log = true\n", None).unwrap();
+        assert!(on.server.input_log);
     }
 
     #[test]

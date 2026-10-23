@@ -159,7 +159,7 @@ fn world_coordinate_to_chunk(value: f64) -> Option<i32> {
     Some((block as i32).div_euclid(16))
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct BlockPos {
     pub x: i32,
     pub y: i32,

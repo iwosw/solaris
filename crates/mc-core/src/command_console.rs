@@ -22,6 +22,20 @@ impl PartialEq for ConsoleCommand {
     }
 }
 
+/// Logged as the command line alone; a deserialized command has no waiter.
+impl serde::Serialize for ConsoleCommand {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&self.command)
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for ConsoleCommand {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        <String as serde::Deserialize>::deserialize(deserializer)
+            .map(|command| Self::new(command).0)
+    }
+}
+
 impl ConsoleCommand {
     pub fn new(command: String) -> (Self, tokio::sync::oneshot::Receiver<u64>) {
         let (sender, receiver) = tokio::sync::oneshot::channel();

@@ -528,7 +528,7 @@ impl ChunkWorld {
         let phase_start = std::env::var_os("MC_CORE_PHASE_LOG")
             .is_some()
             .then(std::time::Instant::now);
-        let loaded = self.admit_ready_limit(want, self.admission_limit());
+        let loaded = self.admit_ready_limit(want, self.admission_limit(), false);
         self.relight_admitted(&loaded, false);
         self.record_admission_cost(admission_start.elapsed().as_micros(), loaded.len());
         if let Some(start) = phase_start
@@ -558,11 +558,19 @@ impl ChunkWorld {
         self.admission_us_per_chunk = (self.admission_us_per_chunk * 3 + sample).div_ceil(4);
     }
 
+    /// Admit loaded chunks strictly in `(priority, position)` order: stop at
+    /// the first wanted chunk whose load has not finished, so the admission
+    /// (and revision stamp) order never depends on worker completion order.
     fn admit_ready(&mut self, want: &HashMap<ChunkPos, i32>) -> Vec<ChunkPos> {
-        self.admit_ready_limit(want, usize::MAX)
+        self.admit_ready_limit(want, usize::MAX, true)
     }
 
-    fn admit_ready_limit(&mut self, want: &HashMap<ChunkPos, i32>, limit: usize) -> Vec<ChunkPos> {
+    fn admit_ready_limit(
+        &mut self,
+        want: &HashMap<ChunkPos, i32>,
+        limit: usize,
+        ordered: bool,
+    ) -> Vec<ChunkPos> {
         self.ready.extend(self.loader.drain());
         // Discard stale results without consuming the admission budget. Do not
         // clear a newer ticket when an older completion finally arrives.
@@ -603,6 +611,8 @@ impl ChunkWorld {
                 self.active_revision += 1;
                 self.bump_revision(*pos);
                 loaded.push(*pos);
+            } else if ordered {
+                break;
             }
         }
         // Ready, running and queued jobs share one bound. Recent hits wait in
@@ -626,19 +636,16 @@ impl ChunkWorld {
     }
 
     /// [`Self::ensure`], then block until wanted chunks are resident or have
-    /// failed closed (initial load and tests; never on the tick). Every round
-    /// first collects all pending loads, so chunks are admitted (and stamped
-    /// with revisions) in `(priority, position)` order, never in worker
-    /// completion order.
+    /// failed closed (initial load and tests; never on the tick). Workers stay
+    /// pipelined: finished loads are collected without waiting and each round
+    /// admits the finished prefix of the wanted set in `(priority, position)`
+    /// order, so stamps never depend on worker completion order. It waits for
+    /// one load only when the next chunk in that order is still running.
     pub fn ensure_blocking(&mut self, want: &HashMap<ChunkPos, i32>) -> Vec<ChunkPos> {
         let mut loaded = Vec::new();
         loop {
-            while self.loader.pending() > 0 {
-                let finished = self.loader.recv();
-                self.ready.push(finished);
-            }
             let round = self.admit_ready(want);
-            let progressed = !round.is_empty() || self.loader.pending() > 0;
+            let admitted = !round.is_empty();
             loaded.extend(round);
             if !want
                 .keys()
@@ -646,7 +653,14 @@ impl ChunkWorld {
             {
                 break;
             }
-            assert!(progressed, "wanted chunks neither loading nor resident");
+            if !admitted {
+                assert!(
+                    self.loader.pending() > 0,
+                    "wanted chunks neither loading nor resident"
+                );
+                let finished = self.loader.recv();
+                self.ready.push(finished);
+            }
         }
         self.relight_admitted(&loaded, true);
         loaded

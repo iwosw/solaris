@@ -18,7 +18,7 @@ use crate::boundary::{BlockPos, ConnectionId, DigAction, Hand, PlayerChange, Pla
 use crate::intent::Intent;
 use crate::tick::TickState;
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
 enum CorrectionTarget {
     Block {
         position: BlockPos,
@@ -40,7 +40,7 @@ pub(crate) enum PlanningPose {
 }
 
 /// A prediction correction, not a mutation. Its cells never enter the tick WAL.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct BuildResync {
     connection: ConnectionId,
     sequence: i32,

@@ -616,33 +616,58 @@ const EPOCH_FIELD: &str = "SolarisTerrainEpoch";
 /// or pre-epoch database): the caller mints a fresh epoch, which
 /// `stage_epoch` records for the next checkpoint.
 fn read_epoch(tick_state: &crate::tick::TickState) -> Option<String> {
-    let record = tick_state.native_globals.get("level_metadata")?;
-    let tag = crate::native_checkpoint::decode_tag(record, "level_metadata").ok()?;
-    let mc_nbt::Tag::Compound(roots) = tag else {
-        return None;
+    read_data_field(&tick_state.native_globals, EPOCH_FIELD)
+        .ok()
+        .flatten()
+        .filter(|epoch| is_epoch(epoch))
+}
+
+/// One unowned string field of `level.dat/Data` in the in-memory globals:
+/// `Ok(None)` when the field (or a record/compound holding it) is absent,
+/// `Err` when something present on its path is undecodable or mistyped.
+pub(crate) fn read_data_field(
+    globals: &std::collections::BTreeMap<String, mc_world::native::NativeDomainRecord>,
+    field: &str,
+) -> Result<Option<String>, String> {
+    let Some(record) = globals.get("level_metadata") else {
+        return Ok(None);
     };
-    let mc_nbt::Tag::Compound(level) = roots
+    let tag = crate::native_checkpoint::decode_tag(record, "level_metadata")
+        .map_err(|error| format!("level_metadata: {error}"))?;
+    let mc_nbt::Tag::Compound(roots) = tag else {
+        return Err("level_metadata is not a compound".to_owned());
+    };
+    let Some(level) = roots
         .iter()
         .find(|(path, _)| path == EPOCH_PATH)
-        .map(|(_, tag)| tag)?
+        .map(|(_, tag)| tag)
     else {
-        return None;
+        return Ok(None);
     };
-    let mc_nbt::Tag::Compound(data) = level
+    let mc_nbt::Tag::Compound(level) = level else {
+        return Err(format!("{EPOCH_PATH} is not a compound"));
+    };
+    let Some(data) = level
         .iter()
         .find(|(key, _)| key == "Data")
-        .map(|(_, tag)| tag)?
+        .map(|(_, tag)| tag)
     else {
-        return None;
+        return Ok(None);
     };
-    let mc_nbt::Tag::String(epoch) = data
+    let mc_nbt::Tag::Compound(data) = data else {
+        return Err(format!("{EPOCH_PATH}/Data is not a compound"));
+    };
+    let Some(value) = data
         .iter()
-        .find(|(key, _)| key == EPOCH_FIELD)
-        .map(|(_, tag)| tag)?
+        .find(|(key, _)| key == field)
+        .map(|(_, tag)| tag)
     else {
-        return None;
+        return Ok(None);
     };
-    is_epoch(epoch).then(|| epoch.clone())
+    let mc_nbt::Tag::String(value) = value else {
+        return Err(format!("{EPOCH_PATH}/Data/{field} is not a string"));
+    };
+    Ok(Some(value.clone()))
 }
 
 /// Stage a freshly minted epoch into the in-memory `level_metadata` image
@@ -655,6 +680,15 @@ pub(crate) fn stage_epoch(
     epoch: &str,
 ) -> Result<(), crate::CoreError> {
     debug_assert!(is_epoch(epoch));
+    stage_data_field(globals, EPOCH_FIELD, epoch)
+}
+
+/// Stage `value` under `level.dat/Data/<field>` (see [`stage_epoch`]).
+pub(crate) fn stage_data_field(
+    globals: &mut std::collections::BTreeMap<String, mc_world::native::NativeDomainRecord>,
+    field: &str,
+    epoch: &str,
+) -> Result<(), crate::CoreError> {
     let record = globals.get("level_metadata").ok_or_else(|| {
         crate::CoreError::Storage("terrain epoch: missing native level metadata record".into())
     })?;
@@ -697,12 +731,12 @@ pub(crate) fn stage_epoch(
         ));
     };
     if data.iter().any(|(key, value)| {
-        key == EPOCH_FIELD && matches!(value, mc_nbt::Tag::String(have) if have == epoch)
+        key == field && matches!(value, mc_nbt::Tag::String(have) if have == epoch)
     }) {
         return Ok(());
     }
-    data.retain(|(key, _)| key != EPOCH_FIELD);
-    data.push((EPOCH_FIELD.into(), mc_nbt::Tag::String(epoch.to_owned())));
+    data.retain(|(key, _)| key != field);
+    data.push((field.into(), mc_nbt::Tag::String(epoch.to_owned())));
     let tick = record.captured_tick;
     globals.insert(
         "level_metadata".into(),

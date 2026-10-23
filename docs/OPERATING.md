@@ -63,6 +63,8 @@ accepts_transfers = false
 # Vanilla `pause-when-empty-seconds`: stop world simulation after this many
 # idle seconds; zero or negative never pauses (vanilla accepts -1).
 pause_when_empty_seconds = 60
+# Opt-in per-tick input log for replay from a checkpoint (default off).
+input_log = false
 
 [network]
 bind_address = "127.0.0.1"
@@ -133,6 +135,22 @@ one checkpoint (vanilla's `autoSave`). The first join resets the countdown and
 resumes continuous ticking, including while only a single player is present;
 the counter counts players in every dimension. Set it to 0 to keep simulating
 an empty server.
+
+`input_log = true` writes, per executed tick, the inputs that tick consumed to
+`<world_dir>/input-log/<start_tick>-<unix_ms>.jsonl` (one file per start): player
+inputs after the drain, synthetic leaves, debug spawns and remote chunk
+tickets, as JSON lines (header, one `Tick` line per non-empty tick, `End` on a
+clean stop). A dedicated writer thread behind a bounded queue flushes without
+fsync, so nothing blocks the tick path; a stalled disk drops records and leaves
+a `Gap` marker, and a crash can lose the unflushed tail. The log contains
+everything players send: text typed into an *unlocked* session (chat, plugin
+commands under other names) is written as sent, so treat the files as
+sensitive. Withheld by marker: `login`/`register`/`changepassword` commands, and
+all text (chat, command, sign, rename, dialog click) of a session the
+`require_plugin_login` gate still holds locked. Plugin commands, wall-clock
+reads and live chunk-load timing are not inputs of this log; a world copy taken
+at the log's start checkpoint can be replayed only by the test-only replayer
+today. Format and limits: `crates/mc-core/src/input_log.rs`.
 
 `/gamerule mob_griefing false` still disables every mob block change at once.
 The `[mob_griefing]` switches narrow that further per behaviour without

@@ -636,6 +636,120 @@ pub(crate) fn recover_dimension_state(
     Ok(state)
 }
 
+/// Recover the three dimension worlds and the global native state from the
+/// store: the checkpoint-recovery half of [`Core::open`], shared with the
+/// input-log replayer. No thread is started.
+pub(crate) fn recover_tick_state(
+    config: &CoreConfig,
+    registry: &Arc<CoreRegistry>,
+    store: &Arc<mc_world::native::NativeStore>,
+    fresh: bool,
+    plugin_runtime: Option<crate::plugin::PluginRuntime>,
+    build_queries: Option<crate::build_precommit::PreviewQueries>,
+) -> Result<(TickState, CheckpointManifest), CoreError> {
+    let (root_manifest, mut replays, globals) = if fresh {
+        store
+            .initialize_dimensions(
+                &crate::native_checkpoint::generation_records(config)?["dimensions"],
+            )
+            .map_err(|e| CoreError::Storage(e.to_string()))?;
+        let mut manifest = CheckpointManifest {
+            domain_versions: crate::native_checkpoint::domain_versions(),
+            ..Default::default()
+        };
+        for dimension in [
+            crate::dimensions::Dimension::Nether,
+            crate::dimensions::Dimension::End,
+        ] {
+            manifest
+                .dimensions
+                .insert(dimension, Box::new(CheckpointManifest::default()));
+        }
+        let mut globals = crate::native_checkpoint::generation_records(config)?;
+        for key in ["level_metadata", "conversion_extras"] {
+            globals.insert(
+                key.into(),
+                crate::native_checkpoint::tag_record(0, &mc_nbt::Tag::Compound(Vec::new()))?,
+            );
+        }
+        globals.insert(
+            "settlement_sequence".into(),
+            crate::native_checkpoint::record(
+                0,
+                serde_json::to_vec(&0u64).map_err(|e| CoreError::Storage(e.to_string()))?,
+            ),
+        );
+        (
+            manifest,
+            [
+                crate::dimensions::Dimension::Overworld,
+                crate::dimensions::Dimension::Nether,
+                crate::dimensions::Dimension::End,
+            ]
+            .into_iter()
+            .map(|dimension| (dimension, Replay::default()))
+            .collect::<std::collections::BTreeMap<_, _>>(),
+            globals,
+        )
+    } else {
+        // Opening the sole writer may repair redb's allocator bookkeeping.
+        // Semantic refusal below never publishes a new checkpoint transaction.
+        let recovered = crate::native_checkpoint::recover_with_reader(
+            config,
+            Arc::clone(registry),
+            store
+                .checkpoint_reader()
+                .map_err(|e| CoreError::Storage(e.to_string()))?,
+        )?;
+        (
+            recovered.manifest,
+            recovered.dimensions,
+            recovered.checkpoint.globals,
+        )
+    };
+    let mut tick_state = load_dimension_state(
+        config,
+        Arc::clone(registry),
+        crate::dimensions::Dimension::Overworld,
+        &root_manifest,
+        replays
+            .remove(&crate::dimensions::Dimension::Overworld)
+            .expect("root replay"),
+        Arc::clone(store),
+        &globals,
+    )?;
+    for dimension in [
+        crate::dimensions::Dimension::Nether,
+        crate::dimensions::Dimension::End,
+    ] {
+        let child = load_dimension_state(
+            config,
+            Arc::clone(registry),
+            dimension,
+            &root_manifest,
+            replays.remove(&dimension).expect("child replay"),
+            Arc::clone(store),
+            &globals,
+        )?;
+        tick_state
+            .other_dimensions
+            .insert(dimension, Box::new(child));
+    }
+    tick_state.native_globals = globals;
+    crate::entity_uuid::install_salt(&mut tick_state)?;
+    crate::settlements::persistence::refuse_legacy_plugin_state(&tick_state)?;
+    crate::settlements::persistence::finish_recovery(&mut tick_state)?;
+    tick_state.plugin_runtime = plugin_runtime;
+    tick_state.build_queries = build_queries;
+    crate::plugin_player::restore(&mut tick_state)?;
+    crate::plugin::validate_startup(
+        &mut tick_state,
+        fresh || !root_manifest.domain_versions.contains_key("plugins"),
+    )?;
+    crate::dimensions::validate_identity(&mut tick_state)?;
+    Ok((tick_state, root_manifest))
+}
+
 impl Core {
     /// Open the world: build registries, recover the journal, spawn the tick
     /// and journal threads.
@@ -738,105 +852,14 @@ impl Core {
         );
         #[cfg(test)]
         crate::native_checkpoint::tests::register_store(&config, &store)?;
-        let (mut root_manifest, mut replays, globals) = if fresh {
-            store
-                .initialize_dimensions(
-                    &crate::native_checkpoint::generation_records(&config)?["dimensions"],
-                )
-                .map_err(|e| CoreError::Storage(e.to_string()))?;
-            let mut manifest = CheckpointManifest {
-                domain_versions: crate::native_checkpoint::domain_versions(),
-                ..Default::default()
-            };
-            for dimension in [
-                crate::dimensions::Dimension::Nether,
-                crate::dimensions::Dimension::End,
-            ] {
-                manifest
-                    .dimensions
-                    .insert(dimension, Box::new(CheckpointManifest::default()));
-            }
-            let mut globals = crate::native_checkpoint::generation_records(&config)?;
-            for key in ["level_metadata", "conversion_extras"] {
-                globals.insert(
-                    key.into(),
-                    crate::native_checkpoint::tag_record(0, &mc_nbt::Tag::Compound(Vec::new()))?,
-                );
-            }
-            globals.insert(
-                "settlement_sequence".into(),
-                crate::native_checkpoint::record(
-                    0,
-                    serde_json::to_vec(&0u64).map_err(|e| CoreError::Storage(e.to_string()))?,
-                ),
-            );
-            (
-                manifest,
-                [
-                    crate::dimensions::Dimension::Overworld,
-                    crate::dimensions::Dimension::Nether,
-                    crate::dimensions::Dimension::End,
-                ]
-                .into_iter()
-                .map(|dimension| (dimension, Replay::default()))
-                .collect::<std::collections::BTreeMap<_, _>>(),
-                globals,
-            )
-        } else {
-            // Opening the sole writer may repair redb's allocator bookkeeping.
-            // Semantic refusal below never publishes a new checkpoint transaction.
-            let recovered = crate::native_checkpoint::recover_with_reader(
-                &config,
-                Arc::clone(&registry),
-                store
-                    .checkpoint_reader()
-                    .map_err(|e| CoreError::Storage(e.to_string()))?,
-            )?;
-            (
-                recovered.manifest,
-                recovered.dimensions,
-                recovered.checkpoint.globals,
-            )
-        };
-        let mut tick_state = load_dimension_state(
+        let (mut tick_state, mut root_manifest) = recover_tick_state(
             &config,
-            Arc::clone(&registry),
-            crate::dimensions::Dimension::Overworld,
-            &root_manifest,
-            replays
-                .remove(&crate::dimensions::Dimension::Overworld)
-                .expect("root replay"),
-            Arc::clone(&store),
-            &globals,
+            &registry,
+            &store,
+            fresh,
+            plugin_runtime,
+            build_queries,
         )?;
-        for dimension in [
-            crate::dimensions::Dimension::Nether,
-            crate::dimensions::Dimension::End,
-        ] {
-            let child = load_dimension_state(
-                &config,
-                Arc::clone(&registry),
-                dimension,
-                &root_manifest,
-                replays.remove(&dimension).expect("child replay"),
-                Arc::clone(&store),
-                &globals,
-            )?;
-            tick_state
-                .other_dimensions
-                .insert(dimension, Box::new(child));
-        }
-        tick_state.native_globals = globals;
-        crate::settlements::persistence::refuse_legacy_plugin_state(&tick_state)?;
-        crate::settlements::persistence::finish_recovery(&mut tick_state)?;
-        tick_state.plugin_runtime = plugin_runtime;
-        tick_state.build_queries = build_queries;
-        crate::plugin_player::restore(&mut tick_state)?;
-        crate::plugin::validate_startup(
-            &mut tick_state,
-            fresh || !root_manifest.domain_versions.contains_key("plugins"),
-        )?;
-        crate::dimensions::validate_identity(&mut tick_state)?;
         let world_spawn = tick_state.world.world_spawn();
         let terrain_epoch = crate::terrain::epoch_for_open(&tick_state)?;
         // Fresh epoch (minted when the stored record had none): stage it in
@@ -943,6 +966,22 @@ impl Core {
         // Only known unlocked sessions pass the edge fence; a connection not
         // processed by the tick yet must never inherit administrative access.
         let unlocked_sessions = Arc::new(parking_lot::RwLock::new(BTreeSet::new()));
+        let input_log = if config.input_log {
+            // Plugin commands and async plugin results enter `run_tick` from
+            // wasm threads and are not logged: say so in the header.
+            let uncovered = tick_state
+                .plugin_runtime
+                .iter()
+                .map(|_| "plugin_runtime".to_owned())
+                .collect();
+            Some(crate::input_log::InputLog::open(
+                &world_dir,
+                tick_state.tick,
+                uncovered,
+            )?)
+        } else {
+            None
+        };
         let channels = TickChannels {
             checkpoint_every: checkpoint_every.max(1),
             pause_when_empty_seconds: config.pause_when_empty_seconds,
@@ -959,6 +998,7 @@ impl Core {
             shutdown_rx,
             checkpoint_rx,
             backup_rx,
+            input_log,
             terrain: [
                 Arc::clone(&terrain[0]),
                 Arc::clone(&terrain[1]),
@@ -1608,6 +1648,8 @@ struct TickChannels {
     /// the tick owner under each source's write lock so edge samplers read
     /// a consistent (snapshot, supplement) bundle plus fence without state.
     terrain: [Arc<crate::terrain::TerrainSource>; 3],
+    /// Opt-in per-tick input log (`CoreConfig::input_log`).
+    input_log: Option<crate::input_log::InputLog>,
 }
 
 /// Online players across every dimension; the empty-server pause counts them.
@@ -1667,21 +1709,32 @@ fn tick_loop(mut state: TickState, mut channels: TickChannels) {
         }
         let mut activity = !inputs.is_empty();
         // Debug/test spawns drain here (bench + tests only).
+        let logging = channels.input_log.is_some();
+        let mut logged_spawns = Vec::new();
         while let Ok(request) = channels.spawn_rx.try_recv() {
+            if logging {
+                logged_spawns.push(crate::input_log::LoggedSpawn::new(&request));
+            }
             apply_spawn_request(&mut state, &request);
             activity = true;
         }
         // Remote tickets drain here; the journal records them each tick.
+        let mut logged_tickets = Vec::new();
         while let Ok(ticket) = channels.ticket_rx.try_recv() {
-            state.tickets.insert(
+            if logging {
+                logged_tickets.push(crate::input_log::LoggedTicket {
+                    owner: ticket.owner.clone(),
+                    x: ticket.chunk.x,
+                    z: ticket.chunk.z,
+                    radius: ticket.radius,
+                });
+            }
+            apply_ticket(
+                &mut state,
                 ticket.owner,
-                (
-                    crate::boundary::ChunkPos {
-                        x: ticket.chunk.x,
-                        z: ticket.chunk.z,
-                    },
-                    ticket.radius as i32,
-                ),
+                ticket.chunk.x,
+                ticket.chunk.z,
+                ticket.radius,
             );
             activity = true;
         }
@@ -1769,7 +1822,16 @@ fn tick_loop(mut state: TickState, mut channels: TickChannels) {
             continue;
         }
         let tick_start = std::time::Instant::now();
+        // Secrets: connections the auth gate holds locked, before and after
+        // this tick (a join locks during it; a plugin unlock lifts it).
+        let mut locked = Vec::new();
+        if logging && state.require_plugin_login {
+            locked = locked_connections(&state, &inputs);
+        }
         let (mut output, drains, times) = run_tick(&mut state, &inputs);
+        if logging && state.require_plugin_login {
+            locked.extend(locked_connections(&state, &inputs));
+        }
         let run_time = tick_start.elapsed();
         // Journal: this tick's entries (blocks + players + entities). `send`
         // blocks while the bounded queue is full (backpressure) and fails
@@ -1781,6 +1843,11 @@ fn tick_loop(mut state: TickState, mut channels: TickChannels) {
         let journal_time = tick_start.elapsed();
         let journal_queue_start = std::time::Instant::now();
         let tick = output.tick;
+        // The input log gets exactly what this tick consumed; the drained
+        // vectors move to the writer thread (no clone, no I/O on this path).
+        if let Some(log) = &mut channels.input_log {
+            log.record(tick, inputs, logged_spawns, logged_tickets, locked);
+        }
         let out_tick = tick;
         let plugin_effects = match crate::plugin::seal_events(&mut state, tick) {
             Ok(active) => active,
@@ -2076,6 +2143,9 @@ fn tick_loop(mut state: TickState, mut channels: TickChannels) {
                 break;
             }
         }
+    }
+    if let Some(log) = channels.input_log.take() {
+        log.finish(state.tick);
     }
 }
 
@@ -2390,8 +2460,31 @@ impl ContainerBench {
     }
 }
 
+/// Insert one remote chunk ticket on the tick thread.
+pub(crate) fn apply_ticket(state: &mut TickState, owner: String, x: i32, z: i32, radius: u32) {
+    state
+        .tickets
+        .insert(owner, (crate::boundary::ChunkPos { x, z }, radius as i32));
+}
+
+/// Connections of `inputs` that any dimension's auth gate holds locked.
+fn locked_connections(state: &TickState, inputs: &[PlayerInput]) -> Vec<ConnectionId> {
+    let mut locked = Vec::new();
+    for input in inputs {
+        let connection = input.connection();
+        if !locked.contains(&connection)
+            && std::iter::once(state)
+                .chain(state.other_dimensions.values().map(|world| &**world))
+                .any(|world| world.session_locked(connection))
+        {
+            locked.push(connection);
+        }
+    }
+    locked
+}
+
 /// Apply one debug spawn request on the tick thread.
-fn apply_spawn_request(state: &mut TickState, request: &SpawnRequest) {
+pub(crate) fn apply_spawn_request(state: &mut TickState, request: &SpawnRequest) {
     let air = state.registry.states.air;
     // Centred on the world spawn, which the spawn finder put on dry land:
     // a fixed origin can sit in ocean under vanilla worldgen.

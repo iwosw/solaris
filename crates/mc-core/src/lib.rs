@@ -91,6 +91,9 @@ pub mod hostile;
 pub mod hot_backup;
 #[cfg(test)]
 mod hot_backup_tests;
+pub(crate) mod input_log;
+#[cfg(test)]
+mod input_log_tests;
 pub mod intent;
 pub mod inventory;
 pub(crate) mod item_hazards;

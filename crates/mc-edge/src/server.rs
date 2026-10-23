@@ -2586,6 +2586,7 @@ pub fn core_config(cfg: &EdgeConfig) -> mc_core::config::CoreConfig {
     core.max_airtime_ticks = cfg.anti_cheat.max_airtime_ticks;
     core.pause_when_empty_seconds =
         u32::try_from(cfg.server.pause_when_empty_seconds.max(0)).unwrap_or(0);
+    core.input_log = cfg.server.input_log;
     core.mob_griefing = mc_core::config::MobGriefingRules {
         creeper_block_damage: cfg.mob_griefing.creeper_block_damage,
         ghast_block_damage: cfg.mob_griefing.ghast_block_damage,

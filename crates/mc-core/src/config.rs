@@ -49,6 +49,9 @@ pub struct CoreConfig {
     pub mob_griefing: MobGriefingRules,
     /// `[block_log]`: attributed block/container history for `/co`.
     pub block_log: crate::block_log::Settings,
+    /// Opt-in per-tick input log under `<world>/input-log/` (replay support;
+    /// see `input_log.rs`). Off by default.
+    pub input_log: bool,
 }
 
 /// Finer block-damage switches under vanilla `mobGriefing` (which stays the
@@ -101,6 +104,7 @@ impl CoreConfig {
             pause_when_empty_seconds: 0,
             mob_griefing: MobGriefingRules::default(),
             block_log: crate::block_log::Settings::default(),
+            input_log: false,
         }
     }
 }

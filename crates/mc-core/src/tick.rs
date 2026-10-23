@@ -354,6 +354,10 @@ pub struct TickState {
     /// dates). Production reads the system clock; deterministic runs inject a
     /// fixed one, so the wall clock is an explicit external input.
     pub(crate) wall_clock: fn() -> i64,
+    /// Secret per-world salt of [`TickState::entity_uuid`]; the world's own is
+    /// installed by `recover_tick_state`. The zero default is for unit-test
+    /// states, which want reproducible ids.
+    pub(crate) entity_salt: [u8; crate::entity_uuid::SALT_LEN],
     pub day_time: i64,
     /// Block edits staged by merge this tick: (pos, new state).
     pub merge_block_writes: Vec<(BlockPos, u32)>,
@@ -600,6 +604,7 @@ impl TickState {
             disconnects: Vec::new(),
             tick: 0,
             wall_clock: crate::advancements::system_unix_seconds,
+            entity_salt: [0; crate::entity_uuid::SALT_LEN],
             day_time: 0,
             merge_block_writes: Vec::new(),
             block_phase_writes: Vec::new(),
