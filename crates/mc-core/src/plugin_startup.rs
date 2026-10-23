@@ -29,8 +29,8 @@ use crate::registry::CoreRegistry;
 ///
 /// This must precede sharing the registry and all native world admission. A
 /// deployment with no configure contribution is valid; a refused or unsupported
-/// contribution is not. Loader block identities have no v2 registry authority
-/// and are refused; physical item mechanics use the native execution validator.
+/// contribution is not. Loader blocks are admitted only as carrier-backed
+/// declarations (ADR 0018, see `carrier_blocks`); physical item mechanics use the native execution validator.
 /// Items must have an owner-authorized client bundle; the network additionally
 /// validates exact item/carrier/name artifact identities before admitting clients.
 pub(crate) fn apply(
@@ -89,6 +89,16 @@ pub(crate) fn apply(
             &registry.items,
         )
         .map_err(|error| CoreError::Registry(error.to_string()))?;
+    let declarations = client_bundles
+        .iter()
+        .filter_map(|bundle| mc_loader::declared_carrier_block(bundle).transpose())
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| CoreError::Registry(error.to_string()))?;
+    registry.carrier_blocks = crate::carrier_blocks::CarrierBlocks::admit(
+        &declarations,
+        &registry.blocks,
+        &registry.item_facts,
+    )?;
     let native_recipes: Vec<mc_data::recipes::work::WorkRecipe> =
         mc_plugin_host::convert_native_work_recipes(
             crate::settlements::startup::OWNER,
@@ -211,6 +221,8 @@ pub(crate) fn world_identity(registry: &CoreRegistry) -> Result<Vec<u8>, CoreErr
         #[serde(skip_serializing_if = "Vec::is_empty")]
         mob_blueprints: Vec<String>,
         ore_profile: &'static str,
+        #[serde(skip_serializing_if = "Vec::is_empty")]
+        carrier_blocks: Vec<String>,
     }
 
     let mut items = registry
@@ -255,6 +267,7 @@ pub(crate) fn world_identity(registry: &CoreRegistry) -> Result<Vec<u8>, CoreErr
             recipes
         },
         block_tools: registry.block_tools.rules().iter().collect(),
+        carrier_blocks: registry.carrier_blocks.identity(),
         mob_blueprints: registry
             .blueprints
             .iter()
@@ -345,14 +358,8 @@ fn validate_client_bundles(bundles: &[ClientBundle]) -> Result<(), CoreError> {
     for bundle in bundles {
         for content in bundle.content() {
             match content {
-                ClientContentKind::Blocks => {
-                    return Err(CoreError::Registry(format!(
-                        "plugin {} bundle {} declares Loader blocks; native v2 block registration is unsupported",
-                        bundle.owner_plugin_id(),
-                        bundle.id()
-                    )));
-                }
-                ClientContentKind::Items
+                ClientContentKind::Blocks
+                | ClientContentKind::Items
                 | ClientContentKind::Views
                 | ClientContentKind::ViewActions
                 | ClientContentKind::Assets

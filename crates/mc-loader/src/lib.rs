@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, LazyLock, OnceLock};
 
 use bytes::BufMut;
-use mc_data::{Identifier, ItemStack};
+use mc_data::Identifier;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -82,12 +82,9 @@ pub struct LoaderBundle {
     /// Immutable artifact bytes verified at startup; never crosses the wire as manifest data.
     #[serde(skip)]
     pub artifact_bytes: Option<Arc<[u8]>>,
-    /// Owner block identity read from the verified artifact; never crosses the wire.
+    /// Carrier-backed custom block this bundle declares; never crosses the wire.
     #[serde(skip)]
-    pub block_id: Option<String>,
-    /// Owner block display name read from the verified artifact; never crosses the wire.
-    #[serde(skip)]
-    pub block_name: Option<String>,
+    pub block: Option<CarrierBlockDeclaration>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -192,18 +189,17 @@ impl LoaderManifest {
                     view_kinds,
                     source_path: Some(bundle.artifact_path().to_path_buf()),
                     artifact_bytes: Some(bundle.artifact_bytes_arc()),
-                    block_id: block.as_ref().map(|block| block.id.clone()),
-                    block_name: block.map(|block| block.name),
+                    block,
                 })
             })
             .collect::<Result<Vec<_>, LoaderHandshakeError>>()?;
         let block_ids = bundles
             .iter()
-            .filter_map(|bundle| bundle.block_id.as_deref())
+            .filter_map(|bundle| bundle.block.as_ref().map(|block| block.id.as_str()))
             .collect::<BTreeSet<_>>();
         let block_count = bundles
             .iter()
-            .filter(|bundle| bundle.block_id.is_some())
+            .filter(|bundle| bundle.block.is_some())
             .count();
         if block_count > MAX_LOADER_BLOCKS {
             return Err(LoaderHandshakeError::ArtifactIndex(format!(
@@ -285,18 +281,6 @@ impl LoaderManifest {
         }
         Ok(payload)
     }
-    fn bundles_for_ack<'a>(
-        &'a self,
-        ack: &'a LoaderClientAck,
-    ) -> impl Iterator<Item = &'a LoaderBundle> {
-        self.bundles.iter().filter(move |bundle| {
-            bundle.loaders.contains(&ack.platform)
-                && ack
-                    .cached_bundles
-                    .iter()
-                    .any(|cache_key| cache_key == &bundle.cache_key)
-        })
-    }
 
     pub fn validate_ack(&self, ack: &LoaderClientAck) -> Result<(), LoaderHandshakeError> {
         if ack.protocol != self.protocol {
@@ -353,132 +337,17 @@ impl LoaderManifest {
         Ok(())
     }
 
+    /// Bind a validated ack. Carrier states are server-dictated (ADR 0018), so
+    /// clients negotiate none.
     pub fn bind_ack(&self, ack: &LoaderClientAck) -> Result<LoaderSession, LoaderHandshakeError> {
         self.validate_ack(ack)?;
-        let block_ids = self
-            .bundles_for_ack(ack)
-            .filter_map(|bundle| bundle.block_id.as_deref())
-            .collect::<BTreeSet<_>>();
-        let mut block_states = BTreeMap::new();
-        let mut block_names = BTreeMap::new();
-        if block_ids.is_empty() && !ack.carrier_block_state_ids.is_empty() {
+        if !ack.carrier_block_state_ids.is_empty() {
             return Err(LoaderHandshakeError::UnexpectedBlockCarrierState);
-        }
-        if !block_ids.is_empty() && ack.carrier_block_state_ids.is_empty() {
-            return Err(LoaderHandshakeError::MissingBlockCarrierState);
-        }
-        let acknowledged_ids = ack
-            .carrier_block_state_ids
-            .keys()
-            .map(String::as_str)
-            .collect::<BTreeSet<_>>();
-        if acknowledged_ids != block_ids {
-            return Err(LoaderHandshakeError::BlockCarrierSetMismatch);
-        }
-        let mut carrier_states = BTreeSet::new();
-        for id in block_ids {
-            let state_id = ack.carrier_block_state_ids[id];
-            if state_id > i32::MAX as u32 || !carrier_states.insert(state_id) {
-                return Err(LoaderHandshakeError::InvalidBlockCarrierState { state_id });
-            }
-            block_states.insert(id.to_owned(), state_id);
-            if let Some(name) = self
-                .bundles_for_ack(ack)
-                .find(|bundle| bundle.block_id.as_deref() == Some(id))
-                .and_then(|bundle| bundle.block_name.as_deref())
-            {
-                block_names.insert(id.to_owned(), name.to_owned());
-            }
         }
         Ok(LoaderSession {
             platform: ack.platform,
             loader_version: ack.loader_version.clone(),
-            block_states,
-            block_names,
         })
-    }
-
-    /// Add Loader-owned blocks to Solaris' canonical server registry.
-    pub fn append_world_block_report(
-        &self,
-        report: &mut Vec<mc_data::blocks::BlockReport>,
-    ) -> Result<Vec<u32>, LoaderHandshakeError> {
-        let block_ids = self
-            .bundles
-            .iter()
-            .filter_map(|bundle| bundle.block_id.as_deref())
-            .collect::<BTreeSet<_>>();
-        let mut next_state_id = report
-            .iter()
-            .try_fold(0_u32, |count, block| {
-                u32::try_from(block.states.len())
-                    .ok()
-                    .and_then(|states| count.checked_add(states))
-            })
-            .ok_or_else(|| {
-                LoaderHandshakeError::ArtifactIndex(
-                    "server block-state registry exceeds u32".to_owned(),
-                )
-            })?;
-        let mut state_ids = Vec::with_capacity(block_ids.len());
-        for block_id in block_ids {
-            let id = Identifier::parse(block_id.to_owned()).map_err(|error| {
-                LoaderHandshakeError::ArtifactIndex(format!(
-                    "invalid Loader block identity {block_id}: {error}"
-                ))
-            })?;
-            report.push(mc_data::blocks::BlockReport {
-                id,
-                properties: BTreeMap::new(),
-                states: vec![mc_data::blocks::BlockStateReport {
-                    id: next_state_id,
-                    default: true,
-                    properties: BTreeMap::new(),
-                }],
-            });
-            state_ids.push(next_state_id);
-            next_state_id = next_state_id.checked_add(1).ok_or_else(|| {
-                LoaderHandshakeError::ArtifactIndex(
-                    "server block-state registry exceeds u32".to_owned(),
-                )
-            })?;
-        }
-        Ok(state_ids)
-    }
-
-    #[must_use]
-    pub fn world_block_item(
-        &self,
-        plugin_id: &str,
-        block_id: &str,
-        count: u8,
-        items: &mc_data::items::ItemRegistry,
-    ) -> Option<ItemStack> {
-        let bundle = self.bundles.iter().find(|bundle| {
-            bundle.owner == plugin_id
-                && bundle.block_id.as_deref() == Some(block_id)
-                && bundle
-                    .permissions
-                    .contains(&LoaderPermission::RegisterBlocks)
-        })?;
-        let name = bundle.block_name.as_deref()?;
-        let carrier_index = self.block_carrier_index(block_id)?;
-        let paper = Identifier::parse("minecraft:paper").ok()?;
-        let paper_id = items.id_of(&paper)?;
-        Some(
-            ItemStack::new(paper_id, i32::from(count))
-                .with_custom_name(name)
-                .with_item_model(loader_block_item_model(carrier_index)),
-        )
-    }
-
-    fn block_carrier_index(&self, block_id: &str) -> Option<usize> {
-        self.bundles
-            .iter()
-            .filter_map(|bundle| bundle.block_id.as_deref())
-            .collect::<BTreeSet<_>>()
-            .into_iter()
-            .position(|candidate| candidate == block_id)
     }
 
     pub fn requested_artifact(
@@ -530,122 +399,36 @@ impl LoaderClientAck {
 pub struct LoaderSession {
     platform: LoaderPlatform,
     loader_version: String,
-    block_states: BTreeMap<String, u32>,
-    block_names: BTreeMap<String, String>,
 }
 
-/// One authoritative Loader block state in Solaris' server-owned state space.
+/// One carrier-backed custom block a verified bundle index declares (ADR 0018).
 ///
-/// Its id comes from Solaris' canonical registry. It is never a client runtime
-/// id.
+/// `carrier` is a vanilla block id naming Solaris' reserved carrier states and
+/// `drop_item` the owner's custom item; core validates both against its
+/// registries. Clients read the same fields from the artifact index.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct LoaderWorldBlockState {
-    owner_block_id: String,
-    item_name: String,
-    item_model: Identifier,
-    canonical_state_id: mc_world::BlockStateId,
+pub struct CarrierBlockDeclaration {
+    pub id: String,
+    pub name: String,
+    pub model: String,
+    pub carrier: String,
+    pub drop_item: String,
 }
 
-/// Connection-scoped projection from the server-owned Loader state to the
-/// carrier state negotiated by this exact client.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct LoaderBlockProjection {
-    world_states: BTreeMap<mc_world::BlockStateId, LoaderWorldBlockState>,
-    carrier_states: BTreeMap<mc_world::BlockStateId, mc_world::BlockStateId>,
-}
-
-impl LoaderBlockProjection {
-    #[must_use]
-    pub fn canonical_state_for_item_model(
-        &self,
-        item_model: &Identifier,
-    ) -> Option<mc_world::BlockStateId> {
-        self.world_states
-            .values()
-            .find(|state| &state.item_model == item_model)
-            .map(|state| state.canonical_state_id)
+/// The carrier-backed block declared by one script bundle's verified artifact.
+pub fn declared_carrier_block(
+    bundle: &mc_script::ClientBundle,
+) -> Result<Option<CarrierBlockDeclaration>, LoaderHandshakeError> {
+    if !bundle
+        .content()
+        .contains(&mc_script::ClientContentKind::Blocks)
+    {
+        return Ok(None);
     }
-
-    pub fn item_stack_for_state(
-        &self,
-        items: &mc_data::items::ItemRegistry,
-        state: mc_world::BlockStateId,
-        count: i32,
-    ) -> Option<ItemStack> {
-        let world_state = self.world_states.get(&state)?;
-        let paper = Identifier::parse("minecraft:paper").expect("static paper item id");
-        let paper_id = items.id_of(&paper)?;
-        Some(
-            ItemStack::new(paper_id, count)
-                .with_custom_name(&world_state.item_name)
-                .with_item_model(world_state.item_model.clone()),
-        )
-    }
-
-    /// Test fixture for consumers' unit tests (one projected carrier state).
-    #[doc(hidden)]
-    #[must_use]
-    pub fn for_test(canonical_state_id: u32, carrier_state_id: u32) -> Self {
-        let canonical_state_id = mc_world::BlockStateId(canonical_state_id);
-        Self {
-            world_states: BTreeMap::from([(
-                canonical_state_id,
-                LoaderWorldBlockState {
-                    owner_block_id: "example:test_block".to_owned(),
-                    item_name: "Test Block".to_owned(),
-                    item_model: loader_block_item_model(0),
-                    canonical_state_id,
-                },
-            )]),
-            carrier_states: BTreeMap::from([(
-                canonical_state_id,
-                mc_world::BlockStateId(carrier_state_id),
-            )]),
-        }
-    }
-
-    #[cfg(test)]
-    #[must_use]
-    pub fn world_state(
-        &self,
-        canonical_state_id: mc_world::BlockStateId,
-    ) -> Option<&LoaderWorldBlockState> {
-        self.world_states.get(&canonical_state_id)
-    }
-
-    #[must_use]
-    pub fn project(&self, state: mc_world::BlockStateId) -> mc_world::BlockStateId {
-        self.carrier_states.get(&state).copied().unwrap_or(state)
-    }
-}
-
-#[must_use]
-pub fn loader_block_item_model(index: usize) -> Identifier {
-    let path = if index == 0 {
-        "loader_block".to_owned()
-    } else {
-        format!("loader_block_{index}")
-    };
-    Identifier::parse(format!("solaris_loader:{path}")).expect("valid Loader block item model")
-}
-
-#[must_use]
-pub fn is_loader_block_item_model(model: &Identifier) -> bool {
-    (0..MAX_LOADER_BLOCKS).any(|index| loader_block_item_model(index) == *model)
-}
-
-impl LoaderWorldBlockState {
-    #[cfg(test)]
-    #[must_use]
-    pub fn owner_block_id(&self) -> &str {
-        &self.owner_block_id
-    }
-
-    #[cfg(test)]
-    #[must_use]
-    pub const fn canonical_state_id(&self) -> mc_world::BlockStateId {
-        self.canonical_state_id
-    }
+    let index = read_declared_index(bundle)?.ok_or_else(|| {
+        LoaderHandshakeError::ArtifactIndex("block bundle has no index".to_owned())
+    })?;
+    verify_declared_block(&index, bundle.owner_plugin_id()).map(Some)
 }
 
 impl LoaderSession {
@@ -657,42 +440,6 @@ impl LoaderSession {
     #[must_use]
     pub fn loader_version(&self) -> &str {
         &self.loader_version
-    }
-
-    #[must_use]
-    pub fn block_state_id(&self, owner_block_id: &str) -> Option<u32> {
-        self.block_states.get(owner_block_id).copied()
-    }
-
-    #[must_use]
-    pub fn block_projection(
-        &self,
-        blocks: &mc_world::BlockRegistry,
-    ) -> Option<LoaderBlockProjection> {
-        let mut world_states = BTreeMap::new();
-        let mut carrier_states = BTreeMap::new();
-        for (index, (owner_block_id, carrier_state_id)) in self.block_states.iter().enumerate() {
-            let item_name = self.block_names.get(owner_block_id)?;
-            let owner_id = Identifier::parse(owner_block_id.clone()).ok()?;
-            let canonical_state_id = blocks.block(&owner_id)?.default;
-            world_states.insert(
-                canonical_state_id,
-                LoaderWorldBlockState {
-                    owner_block_id: owner_block_id.clone(),
-                    item_name: item_name.clone(),
-                    item_model: loader_block_item_model(index),
-                    canonical_state_id,
-                },
-            );
-            carrier_states.insert(
-                canonical_state_id,
-                mc_world::BlockStateId(*carrier_state_id),
-            );
-        }
-        (!world_states.is_empty()).then_some(LoaderBlockProjection {
-            world_states,
-            carrier_states,
-        })
     }
 }
 
@@ -724,18 +471,14 @@ struct LoaderArtifactBlock {
     id: String,
     model: String,
     name: String,
+    carrier: String,
+    drop_item: String,
 }
 
 #[derive(Deserialize)]
 struct LoaderArtifactItem {
     id: String,
     base_item: String,
-    name: String,
-}
-
-#[derive(Debug)]
-struct VerifiedLoaderBlock {
-    id: String,
     name: String,
 }
 
@@ -762,24 +505,29 @@ fn read_declared_index(
 fn verify_declared_block(
     index: &LoaderArtifactIndex,
     owner: &str,
-) -> Result<VerifiedLoaderBlock, LoaderHandshakeError> {
+) -> Result<CarrierBlockDeclaration, LoaderHandshakeError> {
     let [block] = index.blocks.as_slice() else {
         return Err(LoaderHandshakeError::ArtifactIndex(
             "block bundle must declare exactly one block identity".to_owned(),
         ));
     };
     require_owned_block_id(&block.id, owner)?;
+    require_owned_block_id(&block.drop_item, owner)?;
     if block.model.is_empty()
         || block.name.is_empty()
         || block.name.len() > MAX_LOADER_BLOCK_NAME_BYTES
+        || Identifier::parse(block.carrier.clone()).is_err()
     {
         return Err(LoaderHandshakeError::ArtifactIndex(format!(
-            "Loader block model must be non-empty and name must contain 1..={MAX_LOADER_BLOCK_NAME_BYTES} bytes"
+            "Loader block model and carrier must be valid and name must contain 1..={MAX_LOADER_BLOCK_NAME_BYTES} bytes"
         )));
     }
-    Ok(VerifiedLoaderBlock {
+    Ok(CarrierBlockDeclaration {
         id: block.id.clone(),
         name: block.name.clone(),
+        model: block.model.clone(),
+        carrier: block.carrier.clone(),
+        drop_item: block.drop_item.clone(),
     })
 }
 
@@ -1200,14 +948,8 @@ pub enum LoaderHandshakeError {
     ArtifactUnavailable { cache_key: String },
     #[error("loader artifact index is invalid: {0}")]
     ArtifactIndex(String),
-    #[error("client omitted the Loader block carrier state")]
-    MissingBlockCarrierState,
-    #[error("client reported a Loader block carrier state without an acknowledged block")]
+    #[error("client reported a Loader block carrier state; carriers are server-dictated")]
     UnexpectedBlockCarrierState,
-    #[error("client reported invalid Loader block carrier state {state_id}")]
-    InvalidBlockCarrierState { state_id: u32 },
-    #[error("client Loader block carrier identities do not match the manifest")]
-    BlockCarrierSetMismatch,
 }
 
 #[must_use]
@@ -1378,8 +1120,7 @@ mod tests {
                 view_kinds: Vec::new(),
                 source_path: None,
                 artifact_bytes: None,
-                block_id: None,
-                block_name: None,
+                block: None,
             }],
         }
     }
@@ -1504,167 +1245,24 @@ mod tests {
     }
 
     #[test]
-    fn acknowledged_carrier_state_binds_only_to_the_verified_owner_block_identity() {
-        let mut manifest = manifest();
-        manifest.bundles[0].block_id = Some("example:ruby_block".to_owned());
-        manifest.bundles[0].block_name = Some("Ruby Block".to_owned());
+    fn client_may_not_negotiate_block_carrier_states() {
+        let manifest = manifest();
         let mut ack = LoaderClientAck {
             protocol: LOADER_PROTOCOL_VERSION,
             platform: LoaderPlatform::Fabric,
             loader_version: "26.1.2".to_owned(),
             accepted_permissions: manifest.bundles[0].permissions.clone(),
             cached_bundles: vec![manifest.bundles[0].cache_key.clone()],
-            carrier_block_state_ids: BTreeMap::from([("example:ruby_block".to_owned(), 321)]),
+            carrier_block_state_ids: BTreeMap::new(),
         };
-
         let session = manifest.bind_ack(&ack).unwrap();
         assert_eq!(session.platform(), LoaderPlatform::Fabric);
         assert_eq!(session.loader_version(), "26.1.2");
-        assert_eq!(session.block_state_id("example:ruby_block"), Some(321));
-        assert_eq!(session.block_state_id("other:ruby_block"), None);
-        let mut report = vec![mc_data::blocks::BlockReport {
-            id: Identifier::parse("minecraft:air").unwrap(),
-            properties: BTreeMap::new(),
-            states: vec![mc_data::blocks::BlockStateReport {
-                id: 0,
-                default: true,
-                properties: BTreeMap::new(),
-            }],
-        }];
-        assert_eq!(
-            manifest.append_world_block_report(&mut report).unwrap(),
-            vec![1]
-        );
-        let blocks = mc_world::BlockRegistry::from_report(&report).unwrap();
-        let projection = session.block_projection(&blocks).unwrap();
-        let world_state = projection.world_state(mc_world::BlockStateId(1)).unwrap();
-        assert_eq!(world_state.owner_block_id(), "example:ruby_block");
-        assert_eq!(world_state.canonical_state_id(), mc_world::BlockStateId(1));
-        assert_eq!(
-            projection.project(mc_world::BlockStateId(1)),
-            mc_world::BlockStateId(321)
-        );
-        assert_eq!(
-            projection.project(mc_world::BlockStateId(42)),
-            mc_world::BlockStateId(42)
-        );
-        let items = mc_data::items::ItemRegistry::from_report(&[mc_data::items::ItemReport {
-            id: Identifier::parse("minecraft:paper").unwrap(),
-            protocol_id: 777,
-        }]);
-        assert_eq!(
-            manifest.world_block_item("example", "example:ruby_block", 3, &items),
-            Some(
-                ItemStack::new(777, 3)
-                    .with_custom_name("Ruby Block")
-                    .with_item_model(Identifier::parse("solaris_loader:loader_block").unwrap())
-            )
-        );
-        assert_eq!(
-            manifest.world_block_item("other", "example:ruby_block", 1, &items),
-            None
-        );
-        let mut missing_permission = manifest.clone();
-        missing_permission.bundles[0]
-            .permissions
-            .retain(|permission| *permission != LoaderPermission::RegisterBlocks);
-        assert_eq!(
-            missing_permission.world_block_item("example", "example:ruby_block", 1, &items),
-            None
-        );
-
-        ack.carrier_block_state_ids.clear();
+        ack.carrier_block_state_ids
+            .insert("example:ruby_block".to_owned(), 321);
         assert_eq!(
             manifest.bind_ack(&ack),
-            Err(LoaderHandshakeError::MissingBlockCarrierState)
-        );
-    }
-
-    #[test]
-    fn multiple_carriers_bind_project_and_present_by_exact_owner_identity() {
-        let mut manifest = manifest();
-        manifest.bundles[0].block_id = Some("example:ruby_block".to_owned());
-        manifest.bundles[0].block_name = Some("Ruby Block".to_owned());
-        let mut second = manifest.bundles[0].clone();
-        second.owner = "other".to_owned();
-        second.id = "sapphire-content".to_owned();
-        second.cache_key = format!("other:sapphire-content/1/{}", "b".repeat(64));
-        second.sha256 = "b".repeat(64);
-        second.block_id = Some("other:sapphire_block".to_owned());
-        second.block_name = Some("Sapphire Block".to_owned());
-        manifest.bundles.push(second);
-        let ack = LoaderClientAck {
-            protocol: LOADER_PROTOCOL_VERSION,
-            platform: LoaderPlatform::NeoForge,
-            loader_version: "26.1.2".to_owned(),
-            accepted_permissions: manifest.bundles[0].permissions.clone(),
-            cached_bundles: manifest
-                .bundles
-                .iter()
-                .map(|bundle| bundle.cache_key.clone())
-                .collect(),
-            carrier_block_state_ids: BTreeMap::from([
-                ("example:ruby_block".to_owned(), 321),
-                ("other:sapphire_block".to_owned(), 654),
-            ]),
-        };
-
-        let session = manifest.bind_ack(&ack).unwrap();
-        let mut report = vec![mc_data::blocks::BlockReport {
-            id: Identifier::parse("minecraft:air").unwrap(),
-            properties: BTreeMap::new(),
-            states: vec![mc_data::blocks::BlockStateReport {
-                id: 0,
-                default: true,
-                properties: BTreeMap::new(),
-            }],
-        }];
-        assert_eq!(
-            manifest.append_world_block_report(&mut report).unwrap(),
-            vec![1, 2]
-        );
-        let blocks = mc_world::BlockRegistry::from_report(&report).unwrap();
-        let projection = session.block_projection(&blocks).unwrap();
-        assert_eq!(
-            projection.project(mc_world::BlockStateId(1)),
-            mc_world::BlockStateId(321)
-        );
-        assert_eq!(
-            projection.project(mc_world::BlockStateId(2)),
-            mc_world::BlockStateId(654)
-        );
-        assert_eq!(
-            projection.canonical_state_for_item_model(&loader_block_item_model(1)),
-            Some(mc_world::BlockStateId(2))
-        );
-        let items = mc_data::items::ItemRegistry::from_report(&[mc_data::items::ItemReport {
-            id: Identifier::parse("minecraft:paper").unwrap(),
-            protocol_id: 777,
-        }]);
-        assert_eq!(
-            manifest
-                .world_block_item("other", "other:sapphire_block", 1, &items)
-                .unwrap()
-                .item_model
-                .as_deref(),
-            Some(&loader_block_item_model(1))
-        );
-
-        let mut incomplete = ack.clone();
-        incomplete
-            .carrier_block_state_ids
-            .remove("other:sapphire_block");
-        assert_eq!(
-            manifest.bind_ack(&incomplete),
-            Err(LoaderHandshakeError::BlockCarrierSetMismatch)
-        );
-        let mut duplicate = ack;
-        duplicate
-            .carrier_block_state_ids
-            .insert("other:sapphire_block".to_owned(), 321);
-        assert_eq!(
-            manifest.bind_ack(&duplicate),
-            Err(LoaderHandshakeError::InvalidBlockCarrierState { state_id: 321 })
+            Err(LoaderHandshakeError::UnexpectedBlockCarrierState)
         );
     }
 
@@ -1682,7 +1280,7 @@ mod tests {
             .unwrap();
         archive
             .write_all(
-                br#"{"schema":2,"screens":[{"id":"example:showcase","title":"Showcase","widgets":[]}],"blocks":[{"id":"example:ruby_block","model":"example:block/ruby_block","name":"Ruby Block"}],"items":[],"assets":[]}"#,
+                br#"{"schema":2,"screens":[{"id":"example:showcase","title":"Showcase","widgets":[]}],"blocks":[{"id":"example:ruby_block","model":"example:block/ruby_block","name":"Ruby Block","carrier":"minecraft:black_glazed_terracotta","drop_item":"example:ruby_block"}],"items":[],"assets":[]}"#,
             )
             .unwrap();
         archive.finish().unwrap();

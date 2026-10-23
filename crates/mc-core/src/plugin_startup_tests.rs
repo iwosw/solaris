@@ -261,18 +261,17 @@ fn unavailable_tree_biome_fails_before_generation() {
 }
 
 #[test]
-fn client_blocks_and_missing_content_permission_are_not_silently_accepted() {
+fn client_blocks_need_permission_and_a_valid_carrier_declaration() {
     let blocks = bundle(
         "example",
         vec![ClientContentKind::Blocks],
         vec![ClientPermission::RegisterBlocks],
     );
-    assert!(
-        validate_client_bundles(&[blocks])
-            .unwrap_err()
-            .to_string()
-            .contains("blocks")
-    );
+    validate_client_bundles(std::slice::from_ref(&blocks)).unwrap();
+    // The fixture artifact carries no carrier block index: unsupported shape.
+    assert!(mc_loader::declared_carrier_block(&blocks).is_err());
+    let unpermitted = bundle("example", vec![ClientContentKind::Blocks], Vec::new());
+    assert!(validate_client_bundles(&[unpermitted]).is_err());
     let sounds = bundle("example", vec![ClientContentKind::Sounds], Vec::new());
     assert!(validate_client_bundles(&[sounds]).is_err());
 }

@@ -3555,6 +3555,16 @@ fn plan_placement_click(
     click: crate::placement::Click,
 ) -> Option<Intent> {
     let item_block = block_for_item(state, held)?;
+    // A reserved carrier block is only ever placed by its own custom item.
+    if state.registry.carrier_blocks.reserves(&item_block.id)
+        && !state
+            .registry
+            .item_facts
+            .custom_for_stack(held, &state.registry.items)
+            .is_some_and(|custom| state.registry.carrier_blocks.is_block_item(&custom.id))
+    {
+        return None;
+    }
     if crate::command_blocks::is_block(item_block.id.path())
         && !crate::command_blocks::can_place(state, entity)
     {

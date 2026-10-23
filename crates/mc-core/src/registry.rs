@@ -133,6 +133,8 @@ pub struct CoreRegistry {
     pub(crate) plugin_crafting_recipes: Vec<mc_data::recipes::Recipe>,
     /// Plugin-authored block-tool rules admitted against the block registry.
     pub(crate) block_tools: crate::block_tools::BlockToolTable,
+    /// Plugin Loader blocks stored on reserved vanilla carrier states (ADR 0018).
+    pub(crate) carrier_blocks: crate::carrier_blocks::CarrierBlocks,
 }
 
 impl std::fmt::Debug for CoreRegistry {
@@ -159,6 +161,12 @@ impl CoreRegistry {
     #[must_use]
     pub fn block_tool_rule_count(&self) -> usize {
         self.block_tools.rules().len()
+    }
+
+    /// The plugin Loader block stored on `state`, if it is a reserved carrier state.
+    #[must_use]
+    pub fn carrier_block_id(&self, state: u32) -> Option<&Identifier> {
+        self.carrier_blocks.for_state(state).map(|block| &block.id)
     }
 
     /// Borrow all canonical custom item definitions from the admitted facts.
@@ -504,6 +512,7 @@ impl CoreRegistry {
             plugin_work_recipe_ids: Vec::new(),
             plugin_crafting_recipes: Vec::new(),
             block_tools: crate::block_tools::BlockToolTable::default(),
+            carrier_blocks: crate::carrier_blocks::CarrierBlocks::default(),
         })
     }
 

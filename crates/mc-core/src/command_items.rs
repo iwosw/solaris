@@ -53,6 +53,17 @@ impl ItemArgument {
         mc_data::item_nbt::stack_from_component_patch(items, &self.item, &self.components)
             .map_err(|error| error.to_string())
     }
+    /// Like [`Self::stack`], but a plain installed custom item id resolves to its
+    /// carrier stack (item model + name), so `give` can hand out plugin items.
+    pub fn stack_with(&self, rules: &ItemRules<'_>) -> Result<ItemStack, String> {
+        if self.components.is_empty()
+            && let Some(stack) =
+                crate::carrier_blocks::custom_stack(rules.facts, rules.items, &self.item)
+        {
+            return Ok(stack);
+        }
+        self.stack(rules.items)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]

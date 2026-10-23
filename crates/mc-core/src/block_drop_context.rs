@@ -133,6 +133,14 @@ pub(crate) fn reject(state: &mut TickState, pos: BlockPos, error: crate::CoreErr
         error.to_string(),
     );
 }
+/// A reserved carrier state drops its custom item, never the carrier's loot.
+fn carrier_drop(state: &TickState, block: u32) -> Option<Vec<mc_data::ItemStack>> {
+    state
+        .registry
+        .carrier_blocks
+        .drop_for_state(block, &state.registry.item_facts, &state.registry.items)
+        .map(|stack| vec![stack])
+}
 
 pub(crate) fn explosion_drops(
     state: &TickState,
@@ -141,6 +149,9 @@ pub(crate) fn explosion_drops(
     radius: Option<f32>,
     seed: u64,
 ) -> Result<Vec<mc_data::ItemStack>, crate::CoreError> {
+    if let Some(drops) = carrier_drop(state, block) {
+        return Ok(drops);
+    }
     let entity = capture(state, pos, block)?;
     crate::block_drops::explosion_drops(
         &crate::block_drops::BlockDropRules {
@@ -173,6 +184,9 @@ pub(crate) fn roll(
     tool: &mc_data::ItemStack,
     seed: u64,
 ) -> Result<Vec<mc_data::ItemStack>, crate::CoreError> {
+    if let Some(drops) = carrier_drop(state, block) {
+        return Ok(drops);
+    }
     let entity = capture(state, pos, block)?;
     crate::block_drops::block_drops(
         &crate::block_drops::BlockDropRules {

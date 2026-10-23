@@ -126,3 +126,28 @@ while DEMAND is on, only from the owner, within a 1 MiB/s byte budget (256 KiB
 burst); overflow frames are dropped, malformed or repeated unsolicited frames
 close the screen. A viewer's full reliable queue drops the frame, never the
 connection.
+
+## Monitor block (carrier-backed custom block)
+
+Core admits one narrow Loader block shape; every other `blocks` shape is refused
+at startup. A bundle with `content = [.., "blocks", ..]` and `register_blocks`
+declares exactly one index entry
+`{"id","name","model","carrier","drop_item"}` (all five keys, owner-namespaced
+`id`/`drop_item`). `carrier` must be a core-reserved vanilla block (today only
+`minecraft:black_glazed_terracotta`: full cube, horizontal `facing`, no block
+entity, never generated) and `drop_item` an installed custom item whose carrier
+item is that block. The world, WAL and native store persist only the carrier's
+four `facing` states, so storage and vanilla clients are unchanged (they see
+black glazed terracotta); a carrier state *is* the custom block. Placing the
+custom item places the carrier state with vanilla facing (screen toward the
+placer); the plain carrier item can no longer be placed; breaking or exploding
+it drops the custom item (none in creative). Carrier states are server-dictated:
+the old per-client `carrier_block_state_ids` negotiation and its dead
+projection/report code are removed (a non-empty ack field is refused).
+`solaris:monitor` is shipped by the first-party `computer` package. Rows of
+adjacent monitors are a client rule, not core state.
+
+Desktop input limits: with Wayland RemoteDesktop, pointer motion maps to the
+captured stream, but buttons and keys are seat-wide (no target window), so the
+native client fails closed when the pointer is over the game or the game has
+focus. Windows uses window-targeted `PostMessage`.
