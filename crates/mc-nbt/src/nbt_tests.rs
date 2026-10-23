@@ -555,7 +555,7 @@ fn compound_capacity_growth_is_charged_before_reserve() {
     let mut entries = Vec::new();
     ensure_budgeted_compound_capacity(&mut entries, &mut budget).unwrap();
     let initial_capacity = entries.capacity();
-    assert!(initial_capacity >= COMPOUND_RESERVE_CHUNK);
+    assert_eq!(initial_capacity, compound_capacity(1));
     while entries.len() < initial_capacity {
         entries.push((String::new(), Tag::Byte(0)));
     }
@@ -647,7 +647,9 @@ fn document_preflight_rejects_compound_allocation_expansion_atomically() {
         "records".into(),
         Tag::List(ListTag {
             element_type: tag_type::COMPOUND,
-            elements: (0..20_000)
+            // Tiny compounds now reserve four entries, not 64. Use enough
+            // records to exceed the unchanged document allocation budget.
+            elements: (0..400_000)
                 .map(|_| Tag::Compound(vec![(String::new(), Tag::Byte(1))]))
                 .collect(),
         }),

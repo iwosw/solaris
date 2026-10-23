@@ -373,6 +373,23 @@ pub struct StructureSpec {
     pub dimension_padding: DimensionPadding,
     /// `liquid_settings`, `apply_waterlogging` by default.
     pub liquid_settings: LiquidSettings,
+    pub pool_aliases: Vec<PoolAliasSpec>,
+}
+
+/// Pool substitutions sampled once per structure, including correlated groups.
+#[derive(Debug, Clone, PartialEq)]
+pub enum PoolAliasSpec {
+    Direct {
+        alias: Identifier,
+        target: Identifier,
+    },
+    Random {
+        alias: Identifier,
+        targets: Vec<(i32, Identifier)>,
+    },
+    RandomGroup {
+        groups: Vec<(i32, Vec<PoolAliasSpec>)>,
+    },
 }
 
 /// `StructureTemplatePool.Projection`.
@@ -498,13 +515,20 @@ pub struct ProcessorRuleSpec {
     /// `position_predicate`, `always_true` by default.
     pub position_predicate: PosRuleTestSpec,
     pub output_state: BlockStateSpec,
+    pub append_loot: Option<Identifier>,
 }
 
-/// One processor of a processor list. `block_ignore`, `block_rot`, `nop`,
-/// `blackstone_replace`, `lava_submerged_block` and `capped` are not
-/// implemented and fail closed.
+/// Processor types supported by the shared jigsaw template pipeline.
 #[derive(Debug, Clone, PartialEq)]
 pub enum StructureProcessorSpec {
+    BlockRot {
+        integrity: f32,
+        rottable_blocks: Option<Identifier>,
+    },
+    Capped {
+        delegate: Box<StructureProcessorSpec>,
+        limit: i32,
+    },
     Rule {
         rules: Vec<ProcessorRuleSpec>,
     },
@@ -831,18 +855,6 @@ fn parse_structure(id: &Identifier, value: &Value) -> Result<StructureSpec, Vill
             referrer: id.clone(),
         });
     }
-    // Pool aliases rewrite which pool an element resolves to; ignoring them
-    // would silently place the wrong pieces.
-    if let Some(aliases) = value.get("pool_aliases")
-        && !aliases.as_array().is_some_and(Vec::is_empty)
-    {
-        return Err(VillageDataError::UnsupportedField {
-            kind: STRUCTURE,
-            entry: id.clone(),
-            field: "pool_aliases",
-            value: aliases.to_string(),
-        });
-    }
     let terrain_adaptation = optional_enum_field(
         value,
         "terrain_adaptation",
@@ -877,6 +889,23 @@ fn parse_structure(id: &Identifier, value: &Value) -> Result<StructureSpec, Vill
     Ok(StructureSpec {
         id: id.clone(),
         structure_type,
+        pool_aliases: value
+            .get("pool_aliases")
+            .map(|aliases| {
+                aliases
+                    .as_array()
+                    .ok_or_else(|| VillageDataError::InvalidField {
+                        kind: STRUCTURE,
+                        entry: id.clone(),
+                        field: "pool_aliases",
+                        value: aliases.to_string(),
+                    })?
+                    .iter()
+                    .map(|alias| parse_pool_alias(id, alias))
+                    .collect()
+            })
+            .transpose()?
+            .unwrap_or_default(),
         biomes: parse_biome_set(id, field_of(value, "biomes", STRUCTURE, id)?)?,
         spawn_overrides: parse_spawn_overrides(
             id,
@@ -907,6 +936,50 @@ fn parse_structure(id: &Identifier, value: &Value) -> Result<StructureSpec, Vill
             LIQUID_SETTINGS,
             LiquidSettings::ApplyWaterlogging,
         )?,
+    })
+}
+
+fn parse_pool_alias(id: &Identifier, value: &Value) -> Result<PoolAliasSpec, VillageDataError> {
+    let type_id = parse_id(id, field_str(value, "type", STRUCTURE, id)?)?;
+    let weight = |entry: &Value| ranged_i32_field(entry, "weight", STRUCTURE, id, 1, i32::MAX);
+    Ok(match type_id.path() {
+        "direct" => PoolAliasSpec::Direct {
+            alias: parse_id(id, field_str(value, "alias", STRUCTURE, id)?)?,
+            target: parse_id(id, field_str(value, "target", STRUCTURE, id)?)?,
+        },
+        "random" => PoolAliasSpec::Random {
+            alias: parse_id(id, field_str(value, "alias", STRUCTURE, id)?)?,
+            targets: field_array(value, "targets", STRUCTURE, id)?
+                .iter()
+                .map(|entry| {
+                    Ok((
+                        weight(entry)?,
+                        parse_id(id, field_str(entry, "data", STRUCTURE, id)?)?,
+                    ))
+                })
+                .collect::<Result<_, VillageDataError>>()?,
+        },
+        "random_group" => PoolAliasSpec::RandomGroup {
+            groups: field_array(value, "groups", STRUCTURE, id)?
+                .iter()
+                .map(|entry| {
+                    Ok((
+                        weight(entry)?,
+                        field_array(entry, "data", STRUCTURE, id)?
+                            .iter()
+                            .map(|alias| parse_pool_alias(id, alias))
+                            .collect::<Result<_, _>>()?,
+                    ))
+                })
+                .collect::<Result<_, VillageDataError>>()?,
+        },
+        _ => {
+            return Err(VillageDataError::UnsupportedType {
+                kind: STRUCTURE,
+                type_id,
+                referrer: id.clone(),
+            });
+        }
     })
 }
 
@@ -1319,6 +1392,28 @@ fn parse_processor(
         field_str(value, "processor_type", PROCESSOR, referrer)?,
     )?;
     Ok(match type_id.path() {
+        "block_rot" => StructureProcessorSpec::BlockRot {
+            integrity: optional_ranged_f32_field(
+                value,
+                "integrity",
+                PROCESSOR,
+                referrer,
+                0.0,
+                1.0,
+                1.0,
+            )?,
+            rottable_blocks: value
+                .get("rottable_blocks")
+                .map(|tag| parse_hashed_tag(referrer, tag))
+                .transpose()?,
+        },
+        "capped" => StructureProcessorSpec::Capped {
+            delegate: Box::new(parse_processor(
+                referrer,
+                field_of(value, "delegate", PROCESSOR, referrer)?,
+            )?),
+            limit: ranged_i32_field(value, "limit", PROCESSOR, referrer, 0, i32::MAX)?,
+        },
         "rule" => {
             let entries = field_array(value, "rules", PROCESSOR, referrer)?;
             let mut rules = Vec::with_capacity(entries.len());
@@ -1363,12 +1458,15 @@ fn parse_processor_rule(
     referrer: &Identifier,
     value: &Value,
 ) -> Result<ProcessorRuleSpec, VillageDataError> {
-    // The only block entity modifier this layer accepts is vanilla's default;
-    // `append_loot`, `append_static` and `clear` change item NBT and are not
-    // implemented.
+    let mut append_loot = None;
     if let Some(modifier) = value.get("block_entity_modifier") {
         let type_id = parse_id(referrer, field_str(modifier, "type", PROCESSOR, referrer)?)?;
-        if type_id.path() != "passthrough" {
+        if type_id.path() == "append_loot" {
+            append_loot = Some(parse_id(
+                referrer,
+                field_str(modifier, "loot_table", PROCESSOR, referrer)?,
+            )?);
+        } else if type_id.path() != "passthrough" {
             return Err(VillageDataError::UnsupportedType {
                 kind: PROCESSOR,
                 type_id,
@@ -1377,6 +1475,7 @@ fn parse_processor_rule(
         }
     }
     Ok(ProcessorRuleSpec {
+        append_loot,
         input_predicate: parse_rule_test(
             referrer,
             field_of(value, "input_predicate", PROCESSOR, referrer)?,

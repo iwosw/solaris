@@ -521,8 +521,7 @@ impl StructureTemplate {
         let size = expect_int_triplet(path, require(compound, path, "size")?, "size")?;
         // Multi-palette templates (notably shipwrecks) share block indices.
         // Select the first authored material variant; layout is unchanged.
-        let palette_tag = if let Some((_, tag)) = compound.iter().find(|(key, _)| key == "palette")
-        {
+        let palette_tag = if let Some((_, tag)) = compound.iter().find(|(key, _)| key == "palette") {
             tag
         } else {
             expect_list(path, require(compound, path, "palettes")?, "palettes")?

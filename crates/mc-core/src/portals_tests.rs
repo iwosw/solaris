@@ -573,6 +573,27 @@ fn end_platform_cleared_and_exit_uses_valid_personal_spawn() {
 }
 
 #[test]
+fn gateway_prefers_nearby_outer_land_over_an_emergency_island() {
+    let registry = Arc::new(crate::registry::CoreRegistry::load(None).unwrap());
+    let mut state = local(Dimension::End, registry);
+    load(&mut state, [1024.0, 75.0, 0.0], 1);
+    let stone = state_id(&state, "minecraft:end_stone", &[]);
+    state.world.set_block(1028, 66, 2, stone);
+    let mut writes = Vec::new();
+    let exit =
+        crate::end_portals::outer_exit(&mut state, BlockPos { x: 96, y: 75, z: 0 }, &mut writes);
+    assert_eq!(
+        exit,
+        BlockPos {
+            x: 1028,
+            y: 67,
+            z: 2
+        }
+    );
+    assert!(writes.is_empty(), "natural terrain must not be overwritten");
+}
+
+#[test]
 fn generated_gateway_pair_nbt_and_cooldown_are_retained() {
     let registry = Arc::new(crate::registry::CoreRegistry::load(None).unwrap());
     let mut state = local(Dimension::End, registry);

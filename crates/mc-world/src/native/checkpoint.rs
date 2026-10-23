@@ -289,14 +289,17 @@ fn validate_globals(
         return Err(failure("settlement_sequence", "missing sequence row"));
     }
     let mut map_rows = 0;
+    let mut next_map_id = 0_i64;
     for (key, record) in globals {
         let Some(suffix) = key.strip_prefix("map/") else {
             continue;
         };
-        if suffix.is_empty()
-            || (suffix.len() > 1 && suffix.starts_with('0'))
+        let id = suffix
+            .parse::<i32>()
+            .map_err(|_| failure("global", "non-canonical map row key"))?;
+        if id < 0
             || !suffix.bytes().all(|byte| byte.is_ascii_digit())
-            || suffix.parse::<i32>().is_err()
+            || (suffix.len() > 1 && suffix.starts_with('0'))
         {
             return Err(failure("global", "non-canonical map row key"));
         }
@@ -306,23 +309,31 @@ fn validate_globals(
         }
         json(key, record)?;
         map_rows += 1;
+        next_map_id = next_map_id.max(i64::from(id) + 1);
     }
     if let Some(record) = globals.get("map_sequence") {
         validate_envelope(record)?;
         if record.captured_tick != tick {
             return Err(failure("map_sequence", "capture tick mismatch"));
         }
-        let value: serde_json::Value = serde_json::from_slice(&record.payload)
+        let next: i64 = serde_json::from_slice(&record.payload)
             .map_err(|error| failure("map_sequence", error))?;
-        if !value.as_i64().is_some_and(|next| (0..=i64::from(i32::MAX) + 1).contains(&next)) {
-            return Err(failure("map_sequence", "expected nonnegative map sequence"));
+        if !(next_map_id..=i64::from(i32::MAX) + 1).contains(&next) {
+            return Err(failure("map_sequence", "invalid next map id"));
         }
     } else if map_rows != 0 {
         return Err(failure("map_sequence", "missing sequence row"));
     }
-    let map_sequence_rows = usize::from(globals.contains_key("map_sequence"));
     let sequence_rows = usize::from(globals.contains_key("settlement_sequence"));
-    if globals.len() != DOMAINS.len() + plugin_domains.len() + settlement_rows + sequence_rows + map_rows + map_sequence_rows {
+    let map_sequence_rows = usize::from(globals.contains_key("map_sequence"));
+    if globals.len()
+        != DOMAINS.len()
+            + plugin_domains.len()
+            + settlement_rows
+            + sequence_rows
+            + map_rows
+            + map_sequence_rows
+    {
         return Err(failure("global", "unknown or missing required domain"));
     }
     for key in DOMAINS.iter().chain(plugin_domains) {

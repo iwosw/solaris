@@ -127,15 +127,18 @@ impl mc_world::ChunkGenerator for ExplorerWorld {
         _: (i32, i32),
     ) -> Vec<mc_world::chunk::GeneratedStructureSite> {
         self.gate.lock().recv().unwrap();
-        vec![mc_world::chunk::GeneratedStructureSite {
-            structure: mc_data::Identifier::parse("minecraft:monument").unwrap(),
-            position: mc_world::BlockPos {
-                x: 328,
-                y: 64,
-                z: 8,
-            },
-            start_chunk: (20, 0),
-        }]
+        ["minecraft:monument", "minecraft:trial_chambers"]
+            .into_iter()
+            .map(|name| mc_world::chunk::GeneratedStructureSite {
+                structure: mc_data::Identifier::parse(name).unwrap(),
+                position: mc_world::BlockPos {
+                    x: 328,
+                    y: 64,
+                    z: 8,
+                },
+                start_chunk: (20, 0),
+            })
+            .collect()
     }
 }
 fn explorer_fixture() -> (TickState, std::sync::mpsc::Sender<()>) {
@@ -287,10 +290,10 @@ fn saved_maps_cartography_clone_scale_lock_consumes_one_and_cancels_without_ids(
     ] {
         let mut state = test_state();
         let actor = join(&mut state, 1, "cartographer");
-        let original = state
-            .maps
-            .allocate(SavedMap::new([0, 0], 0, Dimension::Overworld).unwrap())
-            .unwrap();
+        let mut map = SavedMap::new([0, 0], 0, Dimension::Overworld).unwrap();
+        map.tracking = false;
+        map.unlimited_tracking = true;
+        let original = state.maps.allocate(map).unwrap();
         let map_item = crate::maps::filled_map(&state, original).unwrap();
         let input = state
             .registry
@@ -311,7 +314,34 @@ fn saved_maps_cartography_clone_scale_lock_consumes_one_and_cancels_without_ids(
         let window = menu.window;
         let revision = menu.state_id;
         let mut changes = ChangeSet::default();
-        // Refused stale client revisions cannot allocate a map or debit input.
+        // Wrong windows cannot allocate a map or debit input.
+        crate::maps::cartography::click(
+            &mut state,
+            actor,
+            (
+                window.wrapping_add(1),
+                revision,
+                2,
+                0,
+                crate::boundary::ClickMode::Pickup,
+            ),
+            &mut changes,
+        );
+        assert_eq!(state.maps.next_id, 1);
+        assert_eq!(
+            state.players[&actor].open.as_ref().unwrap().grid[1].count,
+            3
+        );
+        assert!(
+            state.players[&actor]
+                .open
+                .as_ref()
+                .unwrap()
+                .carried
+                .is_empty()
+        );
+        // Like other vanilla menus, a stale revision executes against current
+        // server state and resynchronizes, rather than refusing the take.
         crate::maps::cartography::click(
             &mut state,
             actor,
@@ -324,14 +354,6 @@ fn saved_maps_cartography_clone_scale_lock_consumes_one_and_cancels_without_ids(
             ),
             &mut changes,
         );
-        assert_eq!(state.maps.next_id, 1);
-        let revision = state.players[&actor].open.as_ref().unwrap().state_id;
-        crate::maps::cartography::click(
-            &mut state,
-            actor,
-            (window, revision, 2, 0, crate::boundary::ClickMode::Pickup),
-            &mut changes,
-        );
         let menu = state.players[&actor].open.as_ref().unwrap();
         assert_eq!(menu.carried.count, count);
         assert_eq!(menu.grid[1].count, 2);
@@ -340,6 +362,95 @@ fn saved_maps_cartography_clone_scale_lock_consumes_one_and_cancels_without_ids(
         assert_eq!(id, if new_map { 1 } else { 0 });
         assert_eq!(state.maps.records[&id].locked, locked);
         assert_eq!(state.maps.records[&id].scale, scale);
+        assert!(!state.maps.records[&id].tracking);
+        assert!(state.maps.records[&id].unlimited_tracking);
         assert_eq!(state.maps.next_id, if new_map { 2 } else { 1 });
     }
+}
+
+#[test]
+fn saved_maps_cartographer_offer_and_map_share_replayed_wal_commit() {
+    use crate::journal::{JournalWriter, Replay, read_complete_batches_after, replay_batches};
+    let (mut state, gate) = explorer_fixture();
+    let type_id = state
+        .registry
+        .entity_types
+        .id_of(&mc_data::Identifier::parse("minecraft:villager").unwrap())
+        .unwrap();
+    let merchant = state.spawn_mob(type_id, [2.0, 81.0, 0.0], 20.0);
+    let slot = state.entities.slot_of(merchant).unwrap();
+    let row = state.entities.row_mut(slot);
+    let uuid = row.uuid;
+    let villager = row.villager.as_mut().unwrap();
+    villager.data.profession = crate::villager::VillagerProfession::Cartographer;
+    villager.data.level = 3;
+    villager.xp = 70;
+    villager.offers.clear();
+    state.maps.attempted_trades.insert((uuid, 2));
+    let checkpoint_tick = state.tick;
+    let root = tempfile::tempdir().unwrap();
+    let mut writer = JournalWriter::open(root.path(), 1).unwrap();
+    let (birth, _, _) = run_tick(&mut state, &[]);
+    let birth_entries = crate::core::journal_entries_for_tick(&mut state, &birth);
+    writer
+        .append(birth.tick, birth.tick, &birth_entries)
+        .unwrap();
+    assert!(crate::maps::trades::before_open(
+        &mut state,
+        merchant,
+        ConnectionId(1),
+        Hand::Main
+    ));
+    assert!(crate::maps::trades::before_open(
+        &mut state,
+        merchant,
+        ConnectionId(2),
+        Hand::Main
+    ));
+    assert_eq!(state.maps.pending_trades.len(), 1);
+    gate.send(()).unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    while !state.maps.pending_trades.is_empty() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "merchant map worker did not complete"
+        );
+        crate::command_locate::drain(&mut state);
+        std::thread::yield_now();
+    }
+    assert!(state.appearance_changed.contains(&merchant));
+    let (output, _, _) = run_tick(&mut state, &[]);
+    let entries = crate::core::journal_entries_for_tick(&mut state, &output);
+    writer.append(output.tick, output.tick, &entries).unwrap();
+    writer.flush().unwrap();
+    drop(writer);
+    let batches =
+        read_complete_batches_after(&root.path().join("journal"), checkpoint_tick).unwrap();
+    let replay = replay_batches(
+        Replay {
+            tick: checkpoint_tick,
+            ..Default::default()
+        },
+        &batches,
+    );
+    let villager = replay.entities[&merchant.0].villager.as_ref().unwrap();
+    let offers: Vec<_> = villager
+        .offers
+        .iter()
+        .filter_map(|offer| map_id(&offer.result))
+        .collect();
+    assert_eq!(offers, [0]);
+    assert_eq!(
+        replay.saved_maps[&offers[0]].destination,
+        Some([328, 64, 8])
+    );
+    state.maps.attempted_trades.clear();
+    state.maps.attempted_trades.insert((uuid, 2));
+    assert!(!crate::maps::trades::before_open(
+        &mut state,
+        merchant,
+        ConnectionId(1),
+        Hand::Main
+    ));
+    assert_eq!(state.maps.next_id, 1);
 }

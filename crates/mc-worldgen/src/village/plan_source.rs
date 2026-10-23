@@ -445,6 +445,7 @@ pub struct VillagePlanSource {
     block_tags: Arc<dyn BlockTagIndex + Send + Sync>,
     biome_tags: Arc<dyn BiomeTagIndex + Send + Sync>,
     assemblies: Mutex<AssemblyCache>,
+    neighbourhood_radius: i32,
 }
 
 /// How many start chunks' assemblies the memo keeps. Placement puts a village
@@ -534,6 +535,22 @@ impl VillagePlanSource {
         block_tags: Arc<dyn BlockTagIndex + Send + Sync>,
         biome_tags: Arc<dyn BiomeTagIndex + Send + Sync>,
     ) -> Result<Self, PieceError> {
+        // A named start connector can offset the start by a full template width.
+        // Scan placement cells, not every chunk, even for large underground starts.
+        let width = closure
+            .pieces
+            .values()
+            .map(|piece| piece.size()[0].max(piece.size()[2]))
+            .max()
+            .unwrap_or(0);
+        let reach = closure
+            .structures
+            .iter()
+            .map(|structure| structure.spec.max_distance_from_center.horizontal)
+            .max()
+            .unwrap_or(0);
+        let neighbourhood_radius =
+            ((reach + 2 * width + 12 + 15) / 16).max(NEIGHBOURHOOD_CHUNK_RADIUS);
         let source = Self {
             closure,
             decor,
@@ -542,6 +559,7 @@ impl VillagePlanSource {
             block_tags,
             biome_tags,
             assemblies: Mutex::new(AssemblyCache::new()),
+            neighbourhood_radius,
         };
         source.validate()?;
         Ok(source)
@@ -565,6 +583,12 @@ impl VillagePlanSource {
         self.seed
     }
 
+    /// Conservative start-chunk radius covering every piece and terrain effect.
+    #[must_use]
+    pub const fn neighbourhood_chunk_radius(&self) -> i32 {
+        self.neighbourhood_radius
+    }
+
     /// Every plan whose affected box reaches into `(chunk_x, chunk_z)`, in
     /// ascending start-chunk order, or `None` when no village reaches it.
     ///
@@ -581,10 +605,20 @@ impl VillagePlanSource {
         biome_at: &dyn Fn(i32, i32, i32) -> Identifier,
     ) -> Option<VillagePlanSet> {
         let mut plans = Vec::new();
-        for offset_z in -NEIGHBOURHOOD_CHUNK_RADIUS..=NEIGHBOURHOOD_CHUNK_RADIUS {
-            for offset_x in -NEIGHBOURHOOD_CHUNK_RADIUS..=NEIGHBOURHOOD_CHUNK_RADIUS {
-                let start_x = chunk_x + offset_x;
-                let start_z = chunk_z + offset_z;
+        let radius = self.neighbourhood_radius;
+        let placement = self.closure.placement;
+        let spacing = placement.spacing;
+        for grid_z in
+            (chunk_z - radius).div_euclid(spacing)..=(chunk_z + radius).div_euclid(spacing)
+        {
+            for grid_x in
+                (chunk_x - radius).div_euclid(spacing)..=(chunk_x + radius).div_euclid(spacing)
+            {
+                let (start_x, start_z) =
+                    placement.potential_chunk(self.seed, grid_x * spacing, grid_z * spacing);
+                if (start_x - chunk_x).abs() > radius || (start_z - chunk_z).abs() > radius {
+                    continue;
+                }
                 let Some(plan) = self.plan_for_start_chunk(start_x, start_z, free_height, biome_at)
                 else {
                     continue;
@@ -652,6 +686,45 @@ impl VillagePlanSource {
                 sites.push(plan.site());
             }
         }
+        sites
+    }
+
+    /// Enumerate authored structure starts without materializing per-piece placement plans.
+    pub fn structure_sites_in_region(
+        &self,
+        min_chunk: (i32, i32),
+        max_chunk: (i32, i32),
+        free_height: &dyn Fn(i32, i32) -> i32,
+        biome_at: &dyn Fn(i32, i32, i32) -> Identifier,
+    ) -> Vec<mc_world::chunk::GeneratedStructureSite> {
+        let mut sites = Vec::new();
+        if min_chunk.0 > max_chunk.0 || min_chunk.1 > max_chunk.1 {
+            return sites;
+        }
+        let spacing = self.closure.placement.spacing;
+        for gz in min_chunk.1.div_euclid(spacing)..=max_chunk.1.div_euclid(spacing) {
+            for gx in min_chunk.0.div_euclid(spacing)..=max_chunk.0.div_euclid(spacing) {
+                let (x, z) =
+                    self.closure
+                        .placement
+                        .potential_chunk(self.seed, gx * spacing, gz * spacing);
+                if x < min_chunk.0 || x > max_chunk.0 || z < min_chunk.1 || z > max_chunk.1 {
+                    continue;
+                }
+                if let Some(assembly) =
+                    self.assembly_for(x, z, free_height, biome_at, |tag, biome| {
+                        self.biome_tags.biome_in_tag(tag, biome)
+                    })
+                {
+                    sites.push(mc_world::chunk::GeneratedStructureSite {
+                        structure: assembly.structure.clone(),
+                        start_chunk: assembly.chunk,
+                        position: assembly.origin,
+                    });
+                }
+            }
+        }
+        sites.sort_by_key(|site| site.start_chunk);
         sites
     }
 
@@ -774,61 +847,72 @@ impl VillagePlanSource {
                 None => (piece.bounds_min, piece.bounds_max),
                 Some((min, max)) => (min_of(min, piece.bounds_min), max_of(max, piece.bounds_max)),
             });
-            if piece.projection == Projection::Rigid
-                && let PlacedElement::Single { template, .. } = &piece.element
-            {
-                for jigsaw in self.closure.piece(template)?.jigsaws() {
-                    if jigsaw.name.as_str() != "minecraft:building_entrance" {
-                        continue;
-                    }
-                    let local = piece.rotation.transform(jigsaw.pos);
-                    let [dx, _, dz] = piece.rotation.rotate_face(jigsaw.front).step();
-                    let cap = BlockPos {
-                        x: piece.position.x + local[0],
-                        y: piece.position.y + local[1] - 1,
-                        z: piece.position.z + local[2],
-                    };
-                    entrance_terrain_caps.push(cap);
-                    entrance_terrain_caps.push(BlockPos {
-                        x: cap.x + dx,
-                        z: cap.z + dz,
-                        ..cap
-                    });
-                }
-            }
-            let element = match &piece.element {
-                PlacedElement::Single {
-                    template,
-                    owner,
-                    processors,
-                    legacy,
-                    ..
-                } => PlanElement::Single {
-                    template: template.clone(),
-                    kind: element_kind(*legacy),
-                    processors: self.element_processors(processors, owner),
-                    owner: owner.clone(),
-                    projection: piece.projection,
-                },
-                PlacedElement::Feature {
-                    placed_feature,
-                    owner,
-                    ..
-                } => PlanElement::Feature {
-                    placed_feature: placed_feature.clone(),
-                    owner: owner.clone(),
-                },
-                PlacedElement::Empty => continue,
+            let element = &piece.element;
+            let mut children = Vec::new();
+            let leaves = if matches!(element, PlacedElement::List { .. }) {
+                element.leaves(&mut children);
+                children.as_slice()
+            } else {
+                std::slice::from_ref(&element)
             };
-            pieces.push(PlanPiece {
-                element,
-                position: piece.position,
-                reference_pos,
-                rotation: piece.rotation,
-                depth: piece.depth,
-                bounds_min: piece.bounds_min,
-                bounds_max: piece.bounds_max,
-            });
+            for &leaf in leaves {
+                if piece.projection == Projection::Rigid
+                    && let PlacedElement::Single { template, .. } = leaf
+                {
+                    for jigsaw in self.closure.piece(template)?.jigsaws() {
+                        if jigsaw.name.as_str() != "minecraft:building_entrance" {
+                            continue;
+                        }
+                        let local = piece.rotation.transform(jigsaw.pos);
+                        let [dx, _, dz] = piece.rotation.rotate_face(jigsaw.front).step();
+                        let cap = BlockPos {
+                            x: piece.position.x + local[0],
+                            y: piece.position.y + local[1] - 1,
+                            z: piece.position.z + local[2],
+                        };
+                        entrance_terrain_caps.push(cap);
+                        entrance_terrain_caps.push(BlockPos {
+                            x: cap.x + dx,
+                            z: cap.z + dz,
+                            ..cap
+                        });
+                    }
+                }
+                let element = match leaf {
+                    PlacedElement::Single {
+                        template,
+                        owner,
+                        processors,
+                        legacy,
+                        ..
+                    } => PlanElement::Single {
+                        template: template.clone(),
+                        kind: element_kind(*legacy),
+                        processors: self.element_processors(processors, owner),
+                        owner: owner.clone(),
+                        projection: piece.projection,
+                    },
+                    PlacedElement::Feature {
+                        placed_feature,
+                        owner,
+                        ..
+                    } => PlanElement::Feature {
+                        placed_feature: placed_feature.clone(),
+                        owner: owner.clone(),
+                    },
+                    PlacedElement::Empty => continue,
+                    PlacedElement::List { .. } => unreachable!("leaves contain no lists"),
+                };
+                pieces.push(PlanPiece {
+                    element,
+                    position: piece.position,
+                    reference_pos,
+                    rotation: piece.rotation,
+                    depth: piece.depth,
+                    bounds_min: piece.bounds_min,
+                    bounds_max: piece.bounds_max,
+                });
+            }
         }
         // The region the plan reaches: the pieces themselves, unioned with the
         // beard-filled boxes. The pieces are what decides whether a chunk
@@ -918,17 +1002,22 @@ impl VillagePlanSource {
             .map_or(air, |block| block.default);
         for pool in self.closure.pools.values() {
             for (_, element) in &pool.elements {
-                match element {
-                    ClosureElement::Empty => {}
-                    ClosureElement::Feature { placed_feature, .. } => {
-                        assert!(
-                            self.decor.feature(&pool.id, placed_feature).is_some(),
-                            "feature element {placed_feature} of pool {} was not compiled",
-                            pool.id
-                        );
-                    }
-                    ClosureElement::Single { processors, .. } => {
-                        self.element_processors(processors, &pool.id);
+                let mut leaves = Vec::new();
+                element.leaves(&mut leaves);
+                for element in leaves {
+                    match element {
+                        ClosureElement::Empty => {}
+                        ClosureElement::List { .. } => unreachable!("leaves contain no lists"),
+                        ClosureElement::Feature { placed_feature, .. } => {
+                            assert!(
+                                self.decor.feature(&pool.id, placed_feature).is_some(),
+                                "feature element {placed_feature} of pool {} was not compiled",
+                                pool.id
+                            );
+                        }
+                        ClosureElement::Single { processors, .. } => {
+                            self.element_processors(processors, &pool.id);
+                        }
                     }
                 }
             }
@@ -940,42 +1029,48 @@ impl VillagePlanSource {
             let mut writer = ProbePieceWriter { level_state };
             for pool in self.closure.pools.values() {
                 for (_, element) in &pool.elements {
-                    let ClosureElement::Single {
-                        piece,
-                        projection,
-                        processors,
-                        legacy,
-                    } = element
-                    else {
-                        continue;
-                    };
-                    let Some(template) = self.closure.piece(piece) else {
-                        continue;
-                    };
-                    for rotation in [
-                        Rotation::None,
-                        Rotation::Clockwise90,
-                        Rotation::Clockwise180,
-                        Rotation::CounterClockwise90,
-                    ] {
-                        let settings = PieceSettings {
-                            position: BlockPos { x: 0, y: 0, z: 0 },
-                            reference_pos: BlockPos { x: 0, y: 0, z: 0 },
-                            rotation,
-                            mirror: Mirror::None,
-                            projection: *projection,
-                            element: element_kind(*legacy),
-                            processors: &self.element_processors(processors, &pool.id),
-                            owner: &pool.id,
-                            clip: None,
+                    let mut leaves = Vec::new();
+                    element.leaves(&mut leaves);
+                    for element in leaves {
+                        let ClosureElement::Single {
+                            piece,
+                            projection,
+                            processors,
+                            legacy,
+                        } = element
+                        else {
+                            continue;
                         };
-                        place_piece(
-                            &semantics,
-                            template,
-                            &settings,
-                            &mut writer,
-                            Some(&mut probe_random),
-                        )?;
+                        let Some(template) = self.closure.piece(piece) else {
+                            continue;
+                        };
+                        for rotation in [
+                            Rotation::None,
+                            Rotation::Clockwise90,
+                            Rotation::Clockwise180,
+                            Rotation::CounterClockwise90,
+                        ] {
+                            let settings = PieceSettings {
+                                liquid_settings:
+                                    mc_data::village_data::LiquidSettings::ApplyWaterlogging,
+                                position: BlockPos { x: 0, y: 0, z: 0 },
+                                reference_pos: BlockPos { x: 0, y: 0, z: 0 },
+                                rotation,
+                                mirror: Mirror::None,
+                                projection: *projection,
+                                element: element_kind(*legacy),
+                                processors: &self.element_processors(processors, &pool.id),
+                                owner: &pool.id,
+                                clip: None,
+                            };
+                            place_piece(
+                                &semantics,
+                                template,
+                                &settings,
+                                &mut writer,
+                                Some(&mut probe_random),
+                            )?;
+                        }
                     }
                 }
             }
@@ -1076,6 +1171,14 @@ impl VillagePlanSource {
                     );
                 }
             }
+            let liquid_settings = self
+                .closure
+                .structures
+                .iter()
+                .find(|entry| &entry.id == structure)
+                .expect("assembly structure belongs to its closure")
+                .spec
+                .liquid_settings;
             // A plan that can draw nothing never touches the stream, so a source
             // whose decor carries no stream for this structure (a closure built
             // without the worldgen cache) can still place it.
@@ -1132,6 +1235,7 @@ impl VillagePlanSource {
                             continue;
                         };
                         let settings = PieceSettings {
+                            liquid_settings,
                             position: piece.position,
                             reference_pos: piece.reference_pos,
                             rotation: piece.rotation,
@@ -1179,7 +1283,9 @@ impl VillagePlanSource {
             }
         }
         if !inhabitants.is_empty() {
-            chunk.set_generated_entities(&inhabitants);
+            let mut previous = chunk.generated_entities();
+            previous.extend(inhabitants);
+            chunk.set_generated_entities(&previous);
         }
         Ok(placed)
     }

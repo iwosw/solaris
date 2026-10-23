@@ -7,13 +7,11 @@
 //! metadata is engine-side), and the walk between them is here: a pool names
 //! pieces, a piece's jigsaw blocks name the pools they connect to, a pool names
 //! its fallback, and every pool element names its processor list. Nothing
-//! outside that closure is read, and `list_pool_element` — which vanilla places
-//! by placing each of its children — is refused rather than silently flattened,
-//! because the village pools do not reach it and a silent flatten would change
-//! placement.
+//! outside that closure is read. List elements retain their child ordering:
+//! the first child provides connectors and all children are placed together.
 
 use std::collections::{BTreeMap, VecDeque};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use mc_data::village_data::{
     PlacementSpec, PoolElementSpec, RandomSpreadType, StructureProcessorSpec, TemplatePoolSpec,
@@ -31,13 +29,6 @@ pub struct ClosureStructure {
     pub id: Identifier,
     pub weight: u32,
     pub spec: mc_data::village_data::StructureSpec,
-    /// `start_height` resolved to an absolute block Y.
-    ///
-    /// Only `Constant`/`Absolute` is accepted ([`ClosureError::UnsupportedStartHeight`]):
-    /// the other providers sample the growth random, and the solver has no
-    /// height-provider sampler, so a structure carrying one must fail the load
-    /// rather than place at Y 0 with a shifted stream.
-    pub start_height: i32,
 }
 
 /// One pool element the engine can place.
@@ -53,6 +44,10 @@ pub enum ClosureElement {
         /// `BlockIgnoreProcessor.STRUCTURE_AND_AIR` last), so the kind is
         /// carried, never assumed.
         legacy: bool,
+    },
+    List {
+        elements: Vec<ClosureElement>,
+        projection: mc_data::village_data::Projection,
     },
     Feature {
         placed_feature: Identifier,
@@ -81,6 +76,8 @@ pub struct ClosurePool {
 #[derive(Debug, Clone)]
 pub struct VillageClosure {
     pub structure_set: Identifier,
+    /// Dimension minimum Y and exclusive maximum Y for height anchors/padding.
+    pub dimension_bounds: (i32, i32),
     pub placement: crate::village::placement::RandomSpreadPlacement,
     pub structures: Vec<ClosureStructure>,
     pub pools: BTreeMap<Identifier, ClosurePool>,
@@ -114,25 +111,6 @@ pub enum ClosureError {
     Template(#[from] crate::structures::StructureError),
     #[error(transparent)]
     ResourcePath(#[from] mc_data::ResourcePathError),
-    #[error("missing structure piece {piece} referenced by {referrer} at {path}")]
-    MissingPiece {
-        piece: Identifier,
-        referrer: Identifier,
-        path: PathBuf,
-    },
-    #[error(
-        "unsupported template pool element in {pool}: vanilla places a list element by placing \\
-         each of its children, which the engine does not implement"
-    )]
-    UnsupportedListElement { pool: Identifier },
-    #[error(
-        "structure {structure} declares a start_height provider the engine does not sample: \\
-         {provider}; only a constant absolute height is implemented"
-    )]
-    UnsupportedStartHeight {
-        structure: Identifier,
-        provider: String,
-    },
 }
 
 /// Load and walk the closure from a vanilla content cache root (the directory
@@ -145,25 +123,23 @@ pub fn load_village_closure(
     let cache_root = cache_root.as_ref();
     let loader = VillageDataLoader::new(cache_root.join("data").join("minecraft").join("worldgen"));
     let set = loader.load_structure_set(structure_set)?;
+    load_jigsaw_closure(cache_root, structure_set, set, registry)
+}
+
+pub fn load_jigsaw_closure(
+    cache_root: &Path,
+    structure_set: &Identifier,
+    set: mc_data::village_data::StructureSetSpec,
+    registry: &BlockRegistry,
+) -> Result<VillageClosure, ClosureError> {
+    let loader = VillageDataLoader::new(cache_root.join("data").join("minecraft").join("worldgen"));
     let mut structures = Vec::with_capacity(set.structures.len());
     for entry in &set.structures {
         let spec = loader.load_structure(&entry.structure)?;
-        let start_height = match &spec.start_height {
-            mc_data::village_data::HeightProviderSpec::Constant(
-                mc_data::village_data::VerticalAnchor::Absolute(value),
-            ) => *value,
-            other => {
-                return Err(ClosureError::UnsupportedStartHeight {
-                    structure: entry.structure.clone(),
-                    provider: format!("{other:?}"),
-                });
-            }
-        };
         structures.push(ClosureStructure {
             id: entry.structure.clone(),
             weight: u32::try_from(entry.weight).unwrap_or(1),
             spec,
-            start_height,
         });
     }
 
@@ -175,50 +151,34 @@ pub fn load_village_closure(
         .iter()
         .map(|structure| (structure.spec.start_pool.clone(), structure.id.clone()))
         .collect();
+    for structure in &structures {
+        queue_alias_targets(&structure.spec.pool_aliases, &structure.id, &mut queue);
+    }
 
     while let Some((pool_id, _referrer)) = queue.pop_front() {
+        if structures
+            .iter()
+            .any(|structure| alias_defined(&structure.spec.pool_aliases, &pool_id))
+        {
+            continue;
+        }
         if pools.contains_key(&pool_id) {
             continue;
         }
         let spec: TemplatePoolSpec = loader.load_template_pool(&pool_id)?;
         let mut elements = Vec::with_capacity(spec.elements.len());
         for entry in &spec.elements {
-            let element = match &entry.element {
-                PoolElementSpec::Empty => ClosureElement::Empty,
-                PoolElementSpec::Single(single) | PoolElementSpec::LegacySingle(single) => {
-                    let legacy = matches!(&entry.element, PoolElementSpec::LegacySingle(_));
-                    load_processors(&loader, &single.processors, &mut processor_lists)?;
-                    if !pieces.contains_key(&single.location) {
-                        let template =
-                            load_piece(cache_root, &single.location, &pool_id, registry)?;
-                        for jigsaw in template.jigsaws() {
-                            queue.push_back((jigsaw.pool.clone(), single.location.clone()));
-                        }
-                        pieces.insert(single.location.clone(), template);
-                    }
-                    ClosureElement::Single {
-                        piece: single.location.clone(),
-                        projection: single.projection,
-                        processors: single.processors.clone(),
-                        legacy,
-                    }
-                }
-                PoolElementSpec::Feature {
-                    feature,
-                    projection,
-                } => {
-                    if !placed_features.contains(feature) {
-                        placed_features.push(feature.clone());
-                    }
-                    ClosureElement::Feature {
-                        placed_feature: feature.clone(),
-                        projection: *projection,
-                    }
-                }
-                PoolElementSpec::List { .. } => {
-                    return Err(ClosureError::UnsupportedListElement { pool: pool_id });
-                }
-            };
+            let element = load_element(
+                &entry.element,
+                &pool_id,
+                cache_root,
+                registry,
+                &loader,
+                &mut processor_lists,
+                &mut pieces,
+                &mut placed_features,
+                &mut queue,
+            )?;
             elements.push((u32::try_from(entry.weight).unwrap_or(1), element));
         }
         if !pools.contains_key(&spec.fallback) {
@@ -248,6 +208,7 @@ pub fn load_village_closure(
     placed_features.sort();
     Ok(VillageClosure {
         structure_set: structure_set.clone(),
+        dimension_bounds: (-64, 320),
         placement: crate::village::placement::RandomSpreadPlacement {
             spacing,
             separation,
@@ -272,18 +233,167 @@ fn max_size_of(
     elements: &[(u32, ClosureElement)],
     pieces: &BTreeMap<Identifier, StructureTemplate>,
 ) -> i32 {
-    let mut max = 0;
-    for (_, element) in elements {
-        let height = match element {
-            ClosureElement::Empty => continue,
-            ClosureElement::Feature { .. } => 1,
-            ClosureElement::Single { piece, .. } => {
-                pieces.get(piece).map_or(1, |template| template.size()[1])
-            }
-        };
-        max = max.max(height);
+    elements
+        .iter()
+        .map(|(_, element)| element_height(element, pieces))
+        .max()
+        .unwrap_or(0)
+}
+
+fn element_height(
+    element: &ClosureElement,
+    pieces: &BTreeMap<Identifier, StructureTemplate>,
+) -> i32 {
+    match element {
+        ClosureElement::Empty => 0,
+        ClosureElement::Feature { .. } => 1,
+        ClosureElement::Single { piece, .. } => {
+            pieces.get(piece).map_or(1, |template| template.size()[1])
+        }
+        ClosureElement::List { elements, .. } => elements
+            .iter()
+            .map(|element| element_height(element, pieces))
+            .max()
+            .unwrap_or(0),
     }
-    max
+}
+
+fn alias_defined(aliases: &[mc_data::village_data::PoolAliasSpec], id: &Identifier) -> bool {
+    use mc_data::village_data::PoolAliasSpec;
+    aliases.iter().any(|binding| match binding {
+        PoolAliasSpec::Direct { alias, .. } | PoolAliasSpec::Random { alias, .. } => alias == id,
+        PoolAliasSpec::RandomGroup { groups } => {
+            groups.iter().any(|(_, group)| alias_defined(group, id))
+        }
+    })
+}
+
+fn queue_alias_targets(
+    aliases: &[mc_data::village_data::PoolAliasSpec],
+    owner: &Identifier,
+    queue: &mut VecDeque<(Identifier, Identifier)>,
+) {
+    use mc_data::village_data::PoolAliasSpec;
+    for alias in aliases {
+        match alias {
+            PoolAliasSpec::Direct { target, .. } => {
+                queue.push_back((target.clone(), owner.clone()))
+            }
+            PoolAliasSpec::Random { targets, .. } => queue.extend(
+                targets
+                    .iter()
+                    .map(|(_, target)| (target.clone(), owner.clone())),
+            ),
+            PoolAliasSpec::RandomGroup { groups } => {
+                for (_, aliases) in groups {
+                    queue_alias_targets(aliases, owner, queue);
+                }
+            }
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn load_element(
+    element: &PoolElementSpec,
+    owner: &Identifier,
+    cache_root: &Path,
+    registry: &BlockRegistry,
+    loader: &VillageDataLoader,
+    processor_lists: &mut BTreeMap<Identifier, Vec<StructureProcessorSpec>>,
+    pieces: &mut BTreeMap<Identifier, StructureTemplate>,
+    placed_features: &mut Vec<Identifier>,
+    queue: &mut VecDeque<(Identifier, Identifier)>,
+) -> Result<ClosureElement, ClosureError> {
+    Ok(match element {
+        PoolElementSpec::Empty => ClosureElement::Empty,
+        PoolElementSpec::Single(single) | PoolElementSpec::LegacySingle(single) => {
+            load_processors(loader, &single.processors, processor_lists)?;
+            if !pieces.contains_key(&single.location) {
+                let template = load_piece(cache_root, &single.location, owner, registry)?;
+                queue.extend(
+                    template
+                        .jigsaws()
+                        .iter()
+                        .map(|jigsaw| (jigsaw.pool.clone(), single.location.clone())),
+                );
+                pieces.insert(single.location.clone(), template);
+            }
+            ClosureElement::Single {
+                piece: single.location.clone(),
+                projection: single.projection,
+                processors: single.processors.clone(),
+                legacy: matches!(element, PoolElementSpec::LegacySingle(_)),
+            }
+        }
+        PoolElementSpec::Feature {
+            feature,
+            projection,
+        } => {
+            if !placed_features.contains(feature) {
+                placed_features.push(feature.clone());
+            }
+            ClosureElement::Feature {
+                placed_feature: feature.clone(),
+                projection: *projection,
+            }
+        }
+        PoolElementSpec::List {
+            elements,
+            projection,
+        } => ClosureElement::List {
+            elements: elements
+                .iter()
+                .map(|child| {
+                    let mut child = load_element(
+                        child,
+                        owner,
+                        cache_root,
+                        registry,
+                        loader,
+                        processor_lists,
+                        pieces,
+                        placed_features,
+                        queue,
+                    )?;
+                    child.set_projection(*projection);
+                    Ok(child)
+                })
+                .collect::<Result<_, ClosureError>>()?,
+            projection: *projection,
+        },
+    })
+}
+
+impl ClosureElement {
+    fn set_projection(&mut self, value: mc_data::village_data::Projection) {
+        match self {
+            Self::Single { projection, .. } | Self::Feature { projection, .. } => {
+                *projection = value
+            }
+            Self::List {
+                elements,
+                projection,
+            } => {
+                *projection = value;
+                for child in elements {
+                    child.set_projection(value);
+                }
+            }
+            Self::Empty => {}
+        }
+    }
+
+    /// Ordered terminal children used for validation and template placement.
+    pub fn leaves<'a>(&'a self, out: &mut Vec<&'a Self>) {
+        if let Self::List { elements, .. } = self {
+            for child in elements {
+                child.leaves(out);
+            }
+        } else {
+            out.push(self);
+        }
+    }
 }
 
 fn load_processors(
@@ -315,12 +425,21 @@ fn load_piece(
     let mut resource = ResourcePath::from_identifier_path(piece)?;
     resource.set_extension("nbt")?;
     let path = resource.lexical_under(&root);
-    if !path.is_file() {
-        return Err(ClosureError::MissingPiece {
-            piece: piece.clone(),
-            referrer: referrer.clone(),
-            path,
-        });
+    match StructureTemplate::from_nbt_file(&path, registry) {
+        Ok(template) => Ok(template),
+        Err(crate::structures::StructureError::Io { source, .. })
+            if source.kind() == std::io::ErrorKind::NotFound =>
+        {
+            // Vanilla getOrCreate uses a zero-sized template for absent
+            // resources. The closure caches it, so each id is reported once.
+            tracing::warn!(template = %piece, referrer = %referrer,
+                "missing jigsaw template; using vanilla empty-template semantics");
+            Ok(StructureTemplate::new([0; 3], Vec::new()))
+        }
+        Err(error) => Err(error.into()),
     }
-    Ok(StructureTemplate::from_nbt_file(&path, registry)?)
 }
+
+#[cfg(test)]
+#[path = "closure_tests.rs"]
+mod tests;

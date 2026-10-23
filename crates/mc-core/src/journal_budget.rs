@@ -482,8 +482,25 @@ fn entry_heap(entry: &JournalEntry) -> usize {
         E::Scoreboard { value } => scoreboard_heap(value),
         E::SavedMap { value, .. } => {
             value.colors.capacity()
-                + value.banners.len() * std::mem::size_of::<crate::maps::Banner>()
-                + value.decorations.len() * std::mem::size_of::<crate::maps::Decoration>()
+                + value.original_nbt.capacity()
+                + value.banners.capacity() * std::mem::size_of::<crate::maps::Banner>()
+                + value
+                    .banners
+                    .iter()
+                    .map(|banner| {
+                        banner.color.capacity() + banner.name.as_ref().map_or(0, String::capacity)
+                    })
+                    .sum::<usize>()
+                + value
+                    .decorations
+                    .iter()
+                    .map(|(key, decoration)| {
+                        key.capacity()
+                            + std::mem::size_of::<crate::maps::Decoration>()
+                            + decoration.kind.capacity()
+                            + decoration.name.as_ref().map_or(0, String::capacity)
+                    })
+                    .sum::<usize>()
         }
         E::Bossbars { value } => bossbars_heap(value),
         E::Dimension { entries, .. } => {

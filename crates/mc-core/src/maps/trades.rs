@@ -265,6 +265,7 @@ fn complete(state: &mut TickState, merchant: EntityId, hit: Option<mc_world::Blo
                     demand: 0,
                     price_multiplier: 0.2,
                 });
+            state.appearance_changed.push(merchant);
         }
     }
     state

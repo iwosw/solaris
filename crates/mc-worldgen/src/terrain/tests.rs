@@ -1460,7 +1460,9 @@ fn biome_surface_rules_are_visibly_distinct() {
     let cases = [
         ("minecraft:plains", BlockStateId(4), BlockStateId(3)),
         ("minecraft:birch_forest", BlockStateId(4), BlockStateId(3)),
-        ("minecraft:badlands", BlockStateId(34), BlockStateId(34)),
+        // This minimal registry has no terracotta; its badlands fill falls
+        // back to stone. Full-cache terracotta bands have environment tests.
+        ("minecraft:badlands", BlockStateId(34), BlockStateId(2)),
         ("minecraft:desert", BlockStateId(14), BlockStateId(14)),
         ("minecraft:jagged_peaks", BlockStateId(35), BlockStateId(2)),
         ("minecraft:snowy_plains", BlockStateId(37), BlockStateId(3)),

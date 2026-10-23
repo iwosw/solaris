@@ -315,6 +315,8 @@ pub struct TerrainGenerator {
     /// no village pieces.
     village_plans: Option<Arc<VillagePlanSource>>,
     overworld_structures: Option<crate::overworld_structures::OverworldStructures>,
+    /// Other jigsaw structures retain their own placement grids and biome gates.
+    jigsaw_sources: Vec<Arc<VillagePlanSource>>,
     decorations: DecorationBlocks,
     tree_rules: HashMap<Identifier, TreeRule>,
     clay_rule: ClayRule,
@@ -997,6 +999,7 @@ impl TerrainGenerator {
             ore_generation_profile: "vanilla",
             village_plans: None,
             overworld_structures: None,
+            jigsaw_sources: Vec::new(),
             decorations: DecorationBlocks::new(registry.as_ref()),
             tree_rules: HashMap::new(),
             clay_rule: ClayRule::default(),
@@ -1016,6 +1019,12 @@ impl TerrainGenerator {
     #[must_use]
     pub fn with_village_plans(mut self, source: Arc<VillagePlanSource>) -> Self {
         self.village_plans = Some(source);
+        self
+    }
+
+    #[must_use]
+    pub fn with_jigsaw_source(mut self, source: Arc<VillagePlanSource>) -> Self {
+        self.jigsaw_sources.push(source);
         self
     }
 
@@ -2103,6 +2112,28 @@ impl TerrainGenerator {
         }
     }
 
+    fn apply_jigsaw_structures(&self, chunk: &mut Chunk) {
+        let surface = |x, z| self.first_free_height(x, z);
+        let biome = |x, y, z| self.noise_biome(x, y, z);
+        let mut touched = [false; 256];
+        for source in &self.jigsaw_sources {
+            let Some(plans) = source.plans_for_chunk(chunk.pos.x, chunk.pos.z, &surface, &biome)
+            else {
+                continue;
+            };
+            source
+                .write_plans(chunk, &plans, &mut touched, &surface, self.air)
+                .expect("jigsaw source validated at construction");
+        }
+        for z in 0..16u8 {
+            for x in 0..16u8 {
+                if touched[z as usize * 16 + x as usize] {
+                    self.refresh_structure_column(chunk, x, z);
+                }
+            }
+        }
+    }
+
     fn apply_decorations(
         &self,
         chunk: &mut Chunk,
@@ -2699,7 +2730,7 @@ impl ChunkGenerator for TerrainGenerator {
         min: (i32, i32),
         max: (i32, i32),
     ) -> Vec<mc_world::chunk::GeneratedStructureSite> {
-        self.overworld_structures
+        let mut sites = self.overworld_structures
             .as_ref()
             .map_or_else(Vec::new, |structures| {
                 structures.sites(
@@ -2708,7 +2739,13 @@ impl ChunkGenerator for TerrainGenerator {
                     |x, z| self.surface_height(x, z),
                     |x, y, z| self.noise_biome(x, y, z),
                 )
-            })
+            });
+        let surface = |x, z| self.first_free_height(x, z);
+        let biome = |x, y, z| self.noise_biome(x, y, z);
+        for source in &self.jigsaw_sources {
+            sites.extend(source.structure_sites_in_region(min, max, &surface, &biome));
+        }
+        sites
     }
 
     fn noise_biome(&self, world_x: i32, y: i32, world_z: i32) -> Option<Identifier> {
@@ -2907,6 +2944,7 @@ impl ChunkGenerator for TerrainGenerator {
                 self.apply_village_pieces(&mut chunk, plans, &mut heights);
             }
         }
+        self.apply_jigsaw_structures(&mut chunk);
         #[cfg(test)]
         stage_clock.end(4);
         {
@@ -2962,3 +3000,7 @@ mod profile_tests;
 #[cfg(test)]
 #[path = "terrain/environment_tests.rs"]
 mod environment_tests;
+
+#[cfg(test)]
+#[path = "terrain/modern_jigsaw_tests.rs"]
+mod modern_jigsaw_tests;

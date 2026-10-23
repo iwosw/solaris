@@ -60,7 +60,10 @@ fn output(state: &TickState, actor: EntityId) -> Option<(ItemStack, Option<Saved
             Some(next)
         }
         "minecraft:paper" if !map.locked && map.scale < 4 && map.decorations.is_empty() => {
-            Some(SavedMap::new(map.center, map.scale + 1, map.dimension).ok()?)
+            let mut next = SavedMap::new(map.center, map.scale + 1, map.dimension).ok()?;
+            next.tracking = map.tracking;
+            next.unlimited_tracking = map.unlimited_tracking;
+            Some(next)
         }
         _ => return None,
     };

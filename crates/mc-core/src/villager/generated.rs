@@ -24,6 +24,39 @@ pub(crate) fn load(state: &mut TickState, chunks: &[ChunkPos], changes: &mut Cha
             if state.generated_entity_claims.contains(&marker.claim) {
                 continue;
             }
+            if marker.entity_type == "minecraft:item_frame"
+                && marker.claim.starts_with("minecraft:end_city/ship@")
+                && marker.claim.ends_with("#elytra")
+            {
+                let elytra = state
+                    .registry
+                    .items
+                    .id_of(
+                        &mc_data::Identifier::parse("minecraft:elytra").expect("static identifier"),
+                    )
+                    .expect("vanilla elytra item");
+                let position = crate::boundary::BlockPos {
+                    x: marker.position[0].floor() as i32,
+                    y: marker.position[1].floor() as i32,
+                    z: marker.position[2].floor() as i32,
+                };
+                let face =
+                    [3, 4, 2, 5][((marker.yaw / 90.0).round() as i32).rem_euclid(4) as usize];
+                let Some(id) = crate::item_frame::spawn(
+                    state,
+                    position,
+                    face,
+                    false,
+                    mc_data::ItemStack::new(elytra, 1),
+                ) else {
+                    continue;
+                };
+                let slot = state.entities.slot_of(id).expect("new ship frame");
+                state.entities.set_uuid(slot, generated_uuid(&marker.claim));
+                state.generated_entity_claims.insert(marker.claim.clone());
+                state.new_generated_entity_claims.push(marker.claim);
+                continue;
+            }
             let Some(type_id) = mc_data::Identifier::parse(&marker.entity_type)
                 .ok()
                 .and_then(|id| state.registry.entity_types.id_of(&id))

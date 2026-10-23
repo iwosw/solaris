@@ -5,9 +5,9 @@
 //! the origin island. Deterministic from seed and world coordinates;
 //! independent of chunk generation order.
 //!
-//! Single-biome (`minecraft:the_end`) for now, chorus-free: no chorus plants,
-//! end cities, or gateway portals. The v2 core owns the independent End world,
-//! command travel and dimension-specific respawn rules.
+//! Outer islands retain the central void moat, chorus vegetation and bounded
+//! purpur city/ship landmarks. Native tick admission owns their inhabitants
+//! and reward custody; the core independently owns gateways and the boss fight.
 
 use mc_data::Identifier;
 use mc_world::{BlockRegistry, BlockStateId, Chunk, ChunkGenerator, ChunkGeometry, ChunkPos};
@@ -15,6 +15,13 @@ use mc_world::{BlockRegistry, BlockStateId, Chunk, ChunkGenerator, ChunkGeometry
 use super::noise::fbm_2d;
 use std::f64::consts::PI;
 use std::sync::Arc;
+
+#[path = "end/cities.rs"]
+mod cities;
+#[path = "end/gateways.rs"]
+mod gateways;
+#[path = "end/outer.rs"]
+mod outer;
 
 pub const END_MIN_Y: i32 = 0;
 pub const END_HEIGHT: i32 = 256;
@@ -64,12 +71,17 @@ pub struct EndGenerator {
     obsidian: BlockStateId,
     bedrock: BlockStateId,
     biome: Identifier,
+    outer: outer::Outer,
+    cities: Option<cities::Cities>,
+    gateways: Option<gateways::Gateways>,
 }
 
 #[derive(Debug, thiserror::Error)]
 pub enum EndGeneratorError {
     #[error("block registry is missing {0}")]
     MissingRequiredBlock(&'static str),
+    #[error("End generation resources: {0}")]
+    Resources(String),
 }
 
 /// One pillar shaft plus its cap row. Derived purely from `(seed, index)`.
@@ -102,6 +114,9 @@ impl EndGenerator {
             obsidian,
             bedrock,
             biome: Identifier::parse("minecraft:the_end").expect("static identifier"),
+            outer: outer::Outer::new(&registry)?,
+            cities: None,
+            gateways: None,
         })
     }
 
@@ -119,6 +134,9 @@ impl EndGenerator {
     /// Island surface height in world `y`. Columns whose surface drops below
     /// [`END_MIN_Y`] are void (all air).
     fn surface_height(&self, wx: i32, wz: i32) -> i32 {
+        if (wx as f64).hypot(wz as f64) >= 1000.0 {
+            return self.outer_height(wx, wz);
+        }
         let distance = (wx as f64).hypot(wz as f64);
         let edge = distance / END_ISLAND_RADIUS;
         let field = fbm_2d(
@@ -180,13 +198,52 @@ fn splitmix64(mut value: u64) -> u64 {
 }
 
 impl ChunkGenerator for EndGenerator {
-    fn noise_biome(&self, _world_x: i32, _y: i32, _world_z: i32) -> Option<Identifier> {
-        Some(self.biome.clone())
+    fn structure_sites_in_region(
+        &self,
+        min_chunk: (i32, i32),
+        max_chunk: (i32, i32),
+    ) -> Vec<mc_world::chunk::GeneratedStructureSite> {
+        let mut sites = Vec::new();
+        if self.cities.is_none() {
+            return sites;
+        }
+        let spacing = self.outer.placement.spacing;
+        for gx in min_chunk.0.div_euclid(spacing)..=max_chunk.0.div_euclid(spacing) {
+            for gz in min_chunk.1.div_euclid(spacing)..=max_chunk.1.div_euclid(spacing) {
+                let Some((x, y, z, _)) = self.city(gx, gz) else {
+                    continue;
+                };
+                let start_chunk = (x.div_euclid(16), z.div_euclid(16));
+                if start_chunk.0 < min_chunk.0
+                    || start_chunk.0 > max_chunk.0
+                    || start_chunk.1 < min_chunk.1
+                    || start_chunk.1 > max_chunk.1
+                {
+                    continue;
+                }
+                sites.push(mc_world::chunk::GeneratedStructureSite {
+                    structure: Identifier::parse("minecraft:end_city").expect("static identifier"),
+                    position: mc_world::BlockPos { x, y, z },
+                    start_chunk,
+                });
+            }
+        }
+        sites.sort_unstable_by_key(|site| site.start_chunk);
+        sites
+    }
+
+    fn noise_biome(&self, world_x: i32, _y: i32, world_z: i32) -> Option<Identifier> {
+        Some(self.biome_at(world_x, world_z).clone())
     }
 
     fn generate(&self, pos: ChunkPos) -> Chunk {
-        let mut chunk =
-            Chunk::empty_with_geometry(pos, self.air, self.biome.clone(), self.geometry);
+        let mut chunk = Chunk::empty_with_geometry(
+            pos,
+            self.air,
+            self.biome_at(pos.x * 16 + 8, pos.z * 16 + 8).clone(),
+            self.geometry,
+        );
+        self.fill_biomes(&mut chunk);
         // Island body: solid end stone from the floor up to the field, air
         // above; void columns (surface below the floor) stay all air.
         for lx in 0..16u8 {
@@ -194,13 +251,15 @@ impl ChunkGenerator for EndGenerator {
                 let wx = pos.x * 16 + i32::from(lx);
                 let wz = pos.z * 16 + i32::from(lz);
                 let surface = self.surface_height(wx, wz);
-                for y in END_MIN_Y..END_MIN_Y + END_HEIGHT {
-                    let state = if y <= surface {
-                        self.end_stone
-                    } else {
-                        self.air
-                    };
-                    let _ = chunk.set_block(lx, y, lz, state);
+                // Outer islands float above the void; avoid touching empty
+                // sections and never turn every far column into a solid floor.
+                let bottom = if (wx as f64).hypot(wz as f64) >= 1000.0 {
+                    (surface - 12 - (surface - 47).max(0)).max(16)
+                } else {
+                    END_MIN_Y
+                };
+                for y in bottom..=surface {
+                    let _ = chunk.set_block(lx, y, lz, self.end_stone);
                 }
             }
         }
@@ -227,6 +286,8 @@ impl ChunkGenerator for EndGenerator {
                 }
             }
         }
+        self.decorate_outer(&mut chunk);
+        self.decorate_gateways(&mut chunk);
         chunk.status = "minecraft:full".into();
         chunk.mark_dirty();
         chunk

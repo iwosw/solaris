@@ -118,6 +118,51 @@ fn total(state: &TickState) -> i32 {
 }
 
 #[test]
+fn comparator_reads_item_frames_through_backing_block_in_all_horizontal_directions() {
+    use super::super::{offset, signal::comparator_input};
+    use crate::boundary::EntityDataValue;
+
+    let mut state = state();
+    place(&mut state, HOPPER, "stone", &[]);
+    for (direction, face) in [
+        ((1, 0, 0), 5),
+        ((-1, 0, 0), 4),
+        ((0, 0, 1), 3),
+        ((0, 0, -1), 2),
+    ] {
+        let comparator = offset(HOPPER, (-direction.0, 0, -direction.2)).unwrap();
+        let position = offset(HOPPER, direction).unwrap();
+        for glow in [false, true] {
+            let empty =
+                crate::item_frame::spawn(&mut state, position, face, glow, ItemStack::EMPTY)
+                    .unwrap();
+            assert_eq!(comparator_input(&state, comparator, direction), 0);
+            state.remove_entity(state.entities.slot_of(empty).unwrap());
+
+            let stack = item(&state, "diamond", 1);
+            let frame = crate::item_frame::spawn(&mut state, position, face, glow, stack).unwrap();
+            let slot = state.entities.slot_of(frame).unwrap();
+            for rotation in 0..8 {
+                let appearance = Arc::make_mut(&mut state.entities.row_mut(slot).appearance);
+                appearance.extra.retain(|(index, _)| *index != 10);
+                appearance
+                    .extra
+                    .push((10, EntityDataValue::VarInt(rotation)));
+                assert_eq!(
+                    comparator_input(&state, comparator, direction),
+                    rotation as u8 + 1,
+                );
+            }
+            Arc::make_mut(&mut state.entities.row_mut(slot).appearance).spawn_data =
+                i32::from(face ^ 1);
+            assert_eq!(comparator_input(&state, comparator, direction), 0);
+            state.remove_entity(slot);
+            assert_eq!(comparator_input(&state, comparator, direction), 0);
+        }
+    }
+}
+
+#[test]
 fn hopper_pushes_and_pulls_once_then_waits_eight_ticks() {
     let mut state = state();
     let chest = super::super::offset(HOPPER, (1, 0, 0)).unwrap();
@@ -1095,7 +1140,9 @@ fn built_base_cooling_hopper_wal_has_no_per_tick_timer_images() {
     let mut state = state();
     state.gamerules.insert("spawn_mobs".into(), "false".into());
     // Isolate private timer revisions from unrelated terrain growth/decay.
-    state.gamerules.insert("random_tick_speed".into(), "0".into());
+    state
+        .gamerules
+        .insert("random_tick_speed".into(), "0".into());
     let chunks: rustc_hash::FxHashMap<_, _> = (-4..0)
         .flat_map(|x| (-4..0).map(move |z| (ChunkPos { x, z }, 0)))
         .collect();

@@ -235,6 +235,7 @@ fn structure_round_trips() {
     assert_eq!(
         spec,
         StructureSpec {
+            pool_aliases: Vec::new(),
             id: identifier("minecraft:village_plains"),
             structure_type: identifier("minecraft:jigsaw"),
             biomes: BiomeSet::Biomes(vec![
@@ -282,6 +283,7 @@ fn structure_optional_fields_default() {
     assert_eq!(
         spec,
         StructureSpec {
+            pool_aliases: Vec::new(),
             id: identifier("minecraft:village_plains"),
             structure_type: identifier("minecraft:jigsaw"),
             biomes: BiomeSet::Tag(identifier("minecraft:has_structure/village_plains")),
@@ -477,6 +479,7 @@ fn processor_list_round_trips_every_supported_processor() {
                 StructureProcessorSpec::Rule {
                     rules: vec![
                         ProcessorRuleSpec {
+                            append_loot: None,
                             input_predicate: RuleTestSpec::RandomBlockMatch {
                                 block: identifier("minecraft:cobblestone"),
                                 probability: 0.1,
@@ -497,6 +500,7 @@ fn processor_list_round_trips_every_supported_processor() {
                             },
                         },
                         ProcessorRuleSpec {
+                            append_loot: None,
                             input_predicate: RuleTestSpec::BlockStateMatch {
                                 state: BlockStateSpec {
                                     block: identifier("minecraft:dirt"),
@@ -614,7 +618,7 @@ fn unsupported_types_fail_closed() {
                             "element_type": "minecraft:legacy_single_pool_element",
                             "location": "minecraft:village/plains/houses/plains_small_house_1",
                             "processors": [
-                                { "processor_type": "minecraft:capped", "delegate": {} }
+                                { "processor_type": "minecraft:absent_processor", "delegate": {} }
                             ],
                             "projection": "rigid"
                         },
@@ -699,7 +703,7 @@ fn unsupported_types_fail_closed() {
                                         {
                                             "input_predicate": { "predicate_type": "minecraft:always_true" },
                                             "location_predicate": { "predicate_type": "minecraft:always_true" },
-                                            "block_entity_modifier": { "type": "minecraft:append_loot", "loot_table": "minecraft:empty" },
+                                            "block_entity_modifier": { "type": "minecraft:absent_modifier", "loot_table": "minecraft:empty" },
                                             "output_state": { "Name": "minecraft:air" }
                                         }
                                     ]
@@ -740,10 +744,10 @@ fn unsupported_types_fail_closed() {
         "minecraft:nether_fossil",
         "minecraft:weighted_list",
         "minecraft:absent_pool_element",
-        "minecraft:capped",
+        "minecraft:absent_processor",
         "minecraft:absent_test",
         "minecraft:absent_pos_test",
-        "minecraft:append_loot",
+        "minecraft:absent_modifier",
     ];
     for ((body, relative, referrer), type_id) in cases.iter().zip(expected_type) {
         let dir = fixture();

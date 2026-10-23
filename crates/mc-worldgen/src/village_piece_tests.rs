@@ -961,6 +961,7 @@ fn piece_settings<'a>(
     owner: &'a Identifier,
 ) -> PieceSettings<'a> {
     PieceSettings {
+        liquid_settings: mc_data::village_data::LiquidSettings::ApplyWaterlogging,
         position,
         reference_pos: BlockPos {
             x: 100,
@@ -991,6 +992,7 @@ fn spec(name: &str, properties: &[(&str, &str)]) -> BlockStateSpec {
 fn rule(input: RuleTestSpec, output: &str, properties: &[(&str, &str)]) -> StructureProcessorSpec {
     StructureProcessorSpec::Rule {
         rules: vec![ProcessorRuleSpec {
+            append_loot: None,
             input_predicate: input,
             location_predicate: RuleTestSpec::AlwaysTrue,
             position_predicate: PosRuleTestSpec::AlwaysTrue,
@@ -1285,6 +1287,45 @@ fn waterlogged_states_follow_the_world_water() {
             .map(|state| fixture.render(state)),
         Some("minecraft:stone".to_owned()),
         "a block without a waterlogged property is untouched"
+    );
+}
+
+#[test]
+fn modern_jigsaw_ignores_waterlogging_when_structure_requests_it() {
+    let fixture = Fixture::new();
+    let template = synthetic_piece(&fixture.blocks);
+    let semantics = fixture.semantics();
+    let owner = identifier("minecraft:trial_chambers");
+    let mut settings = piece_settings(
+        ORIGIN,
+        Rotation::Clockwise90,
+        PieceElement::Single,
+        &[],
+        &owner,
+    );
+    settings.liquid_settings = mc_data::village_data::LiquidSettings::IgnoreWaterlogging;
+    let mut writer = fixture.writer();
+    writer.world.insert(
+        BlockPos {
+            x: 99,
+            y: 64,
+            z: 200,
+        },
+        state_of(&fixture.blocks, "minecraft:water", &[]),
+    );
+    place_piece(
+        &semantics,
+        &template,
+        &settings,
+        &mut writer,
+        Some(&mut LegacyRandom::new(0)),
+    )
+    .unwrap();
+    assert_eq!(
+        writer
+            .state_at([99, 64, 200])
+            .map(|state| fixture.render(state)),
+        Some("minecraft:oak_slab[type=bottom,waterlogged=false]".to_owned())
     );
 }
 

@@ -345,8 +345,79 @@ pub(crate) fn overworld_terrain(
         )
         .map_err(|error| CoreError::Worldgen(error.to_string()))?;
         terrain = terrain.with_village_plans(Arc::new(plans));
+        for set in ["ancient_cities", "trail_ruins", "trial_chambers"] {
+            let closure = Arc::new(
+                mc_worldgen::village::load_village_closure(
+                    vanilla_data_dir,
+                    &mc_data::Identifier::parse(format!("minecraft:{set}"))
+                        .expect("static structure set"),
+                    &registry.blocks,
+                )
+                .map_err(|error| CoreError::Worldgen(error.to_string()))?,
+            );
+            let decor = Arc::new(
+                mc_worldgen::village::VillageDecor::compile(
+                    vanilla_data_dir,
+                    &closure,
+                    &mc_worldgen::vanilla_features::BlockSemantics::new(
+                        &registry.blocks,
+                        tags.as_ref(),
+                    ),
+                )
+                .map_err(|error| CoreError::Worldgen(error.to_string()))?,
+            );
+            let source = mc_worldgen::village::plan_source::VillagePlanSource::new(
+                closure,
+                decor,
+                config.seed,
+                Arc::clone(&registry.blocks),
+                tags.clone(),
+                tags.clone(),
+            )
+            .map_err(|error| CoreError::Worldgen(error.to_string()))?;
+            terrain = terrain.with_jigsaw_source(Arc::new(source));
+        }
     }
     crate::plugin_startup::apply_worldgen(registry, terrain)
+}
+
+/// Serving and offline conversion share the same immutable Nether generator.
+pub(crate) fn nether_terrain(
+    config: &CoreConfig,
+    registry: &CoreRegistry,
+) -> Result<mc_worldgen::NetherGenerator, CoreError> {
+    let mut terrain =
+        mc_worldgen::NetherGenerator::try_new(config.seed, Arc::clone(&registry.blocks))
+            .map_err(|error| CoreError::Worldgen(error.to_string()))?;
+    if let Some(root) = config.vanilla_data_dir.as_deref() {
+        terrain
+            .load_vanilla_worldgen(
+                root,
+                Arc::clone(
+                    registry
+                        .worldgen_tags
+                        .as_ref()
+                        .expect("full vanilla registry has worldgen tags"),
+                ),
+            )
+            .map_err(CoreError::Worldgen)?;
+    }
+    Ok(terrain)
+}
+
+pub(crate) fn end_terrain(
+    config: &CoreConfig,
+    registry: &CoreRegistry,
+) -> Result<mc_worldgen::end::EndGenerator, CoreError> {
+    let generator =
+        mc_worldgen::end::EndGenerator::try_new(config.seed, Arc::clone(&registry.blocks))
+            .map_err(|err| CoreError::Worldgen(err.to_string()))?;
+    let Some(root) = config.vanilla_data_dir.as_deref() else {
+        return Ok(generator);
+    };
+    generator
+        .with_vanilla_data(root, &registry.blocks)
+        .map_err(|err| CoreError::Worldgen(err.to_string()))
 }
 
 fn load_dimension_state(
@@ -390,17 +461,8 @@ fn load_dimension_state(
     };
     let generator: Arc<dyn ChunkGenerator> = match dimension {
         crate::dimensions::Dimension::Overworld => Arc::new(terrain.expect("overworld terrain")),
-        crate::dimensions::Dimension::Nether => Arc::new(
-            mc_worldgen::nether::NetherGenerator::try_new(
-                config.seed,
-                Arc::clone(&registry.blocks),
-            )
-            .map_err(|err| CoreError::Worldgen(err.to_string()))?,
-        ),
-        crate::dimensions::Dimension::End => Arc::new(
-            mc_worldgen::end::EndGenerator::try_new(config.seed, Arc::clone(&registry.blocks))
-                .map_err(|err| CoreError::Worldgen(err.to_string()))?,
-        ),
+        crate::dimensions::Dimension::Nether => Arc::new(nether_terrain(config, &registry)?),
+        crate::dimensions::Dimension::End => Arc::new(end_terrain(config, &registry)?),
     };
     let mut world = ChunkWorld::new_native(
         config.seed,

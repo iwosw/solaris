@@ -73,7 +73,8 @@ fn kind_of(path: &str) -> Kind {
         "wheat" | "carrots" | "potatoes" | "beetroots" => Kind::Crop,
         "bamboo_sapling" | "cactus" | "sugar_cane" | "bamboo" | "nether_wart" | "melon_stem"
         | "pumpkin_stem" | "sweet_berry_bush" | "cocoa" | "kelp" | "cave_vines"
-        | "weeping_vines" | "twisting_vines" | "vine" | "brown_mushroom" | "red_mushroom" => {
+        | "weeping_vines" | "twisting_vines" | "vine" | "brown_mushroom" | "red_mushroom"
+        | "chorus_flower" => {
             Kind::Plant
         }
         _ if crate::copper::family(path).is_some_and(|(_, age, waxed)| age < 3 && !waxed) => {

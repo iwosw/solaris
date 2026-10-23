@@ -43,18 +43,6 @@
 //!
 //! ## Flags that are deliberately not modelled
 //!
-//! - **Entities.** `setIgnoreEntities(false)` and `setFinalizeEntities(true)`
-//!   make `placeInWorld` call `placeEntities` over the template's `entities`
-//!   list. The engine's template loader ([`crate::structures`]) reads `size`,
-//!   `palette` and `blocks` only, so a piece carries no entity list and there is
-//!   nothing to place or finalize. Villagers come from the village's own
-//!   population path, not from piece NBT.
-//! - **`finalizeProcessing`.** `StructureTemplate.processBlockInfos` runs a
-//!   `finalizeProcessing` pass per processor after the block loop. The default
-//!   returns the list unchanged and the only override in 26.1.2 is
-//!   `CappedProcessor`; none of the 16 processor lists the village closure
-//!   reaches is anything but `minecraft:rule`, so there is no pass to run.
-//!   ([`crate::village::processors::apply_processors`] is the block loop.)
 //! - **The water flow-fill loop.** `placeInWorld`'s `toFill`/`lockedFluids`
 //!   sweep and the fluid tick `SimpleWaterloggedBlock.placeLiquid` schedules
 //!   need a fluid-tick model Solaris does not have at paste time; the
@@ -95,7 +83,7 @@ use thiserror::Error;
 use crate::structures::{StructureTemplate, TemplateChest, TemplateEntity};
 use crate::vanilla_features::{BlockSemantics, CompileError, RandomSource};
 use crate::village::processors::{
-    PieceBlock, PieceElement, ProcessLevel, apply_processors, piece_processors,
+    PieceBlock, PieceElement, ProcessLevel, apply_processors_with_loot, piece_processors,
 };
 use crate::village::solver::Rotation;
 
@@ -459,6 +447,8 @@ pub struct PieceSettings<'a> {
     /// The element's projection. `TerrainMatching` appends the projection's
     /// `GravityProcessor` to the processor list.
     pub projection: Projection,
+    /// Structure-level liquid policy; trial chambers ignore surrounding water.
+    pub liquid_settings: mc_data::village_data::LiquidSettings,
     /// The element kind, from the pool element the plan chose
     /// (`single_pool_element` or `legacy_single_pool_element`). It decides which
     /// block-ignore processors the piece gets, so it is caller data and never
@@ -592,6 +582,19 @@ pub fn place_piece(
             jigsaw_final_state: None,
         });
     }
+    if settings.element == PieceElement::Single {
+        let air = semantics
+            .blocks()
+            .block(&Identifier::parse("minecraft:air").expect("static id"))
+            .expect("the block registry contains air")
+            .default;
+        blocks.extend(template.air_cells().iter().map(|pos| PieceBlock {
+            pos: world_position(*pos, settings),
+            template_y: pos[1],
+            state: air,
+            jigsaw_final_state: None,
+        }));
+    }
     for jigsaw in template.jigsaws() {
         blocks.push(PieceBlock {
             pos: world_position(jigsaw.pos, settings),
@@ -601,7 +604,7 @@ pub fn place_piece(
         });
     }
 
-    let processed = apply_processors(
+    let (processed, processor_loot) = apply_processors_with_loot(
         semantics,
         writer,
         &blocks,
@@ -615,7 +618,9 @@ pub fn place_piece(
     // [`clear_footprint`]); a water source the piece leaves open to the side or
     // below would flow out over the village, so it is sealed (see
     // [`seal_exposed_water`]).
-    let carved: HashSet<BlockPos> = if settings.projection == Projection::Rigid {
+    let carved: HashSet<BlockPos> = if settings.projection == Projection::Rigid
+        && settings.element == PieceElement::LegacySingle
+    {
         template
             .air_cells()
             .iter()
@@ -625,7 +630,9 @@ pub fn place_piece(
     } else {
         HashSet::new()
     };
-    seal_exposed_water(semantics, writer, &mut processed, &carved);
+    if settings.element == PieceElement::LegacySingle {
+        seal_exposed_water(semantics, writer, &mut processed, &carved);
+    }
     clear_footprint(semantics, writer, &carved, settings.clip);
 
     let registry = semantics.blocks();
@@ -649,7 +656,13 @@ pub fn place_piece(
                 pos: block.pos,
                 state: block.state,
             })?;
-        let state = waterlogged_state(semantics, writer, block.pos, state)?;
+        let state = if settings.liquid_settings
+            == mc_data::village_data::LiquidSettings::ApplyWaterlogging
+        {
+            waterlogged_state(semantics, writer, block.pos, state)?
+        } else {
+            state
+        };
         writer.set_block(block.pos, state);
         written += 1;
         // Vanilla loads the chest's block entity after `setBlock` succeeded, at
@@ -671,6 +684,24 @@ pub fn place_piece(
             entity.state == block.state && world_position(entity.pos, settings) == block.pos
         }) {
             writer.set_block_entity(block.pos, entity);
+        }
+        if let Some((_, table)) = processor_loot.iter().find(|(pos, _)| *pos == block.pos) {
+            let entity = crate::structures::TemplateBlockEntity {
+                pos: [0, 0, 0],
+                state,
+                nbt: vec![
+                    (
+                        "id".into(),
+                        mc_nbt::Tag::String("minecraft:brushable_block".into()),
+                    ),
+                    ("LootTable".into(), mc_nbt::Tag::String(table.to_string())),
+                    (
+                        "LootTableSeed".into(),
+                        mc_nbt::Tag::Long(crate::village::processors::get_seed(block.pos)),
+                    ),
+                ],
+            };
+            writer.set_block_entity(block.pos, &entity);
         }
     }
     // `placeInWorld`'s entity step runs after the whole block and block-entity

@@ -346,6 +346,47 @@ fn native_checkpoint_settlement_record_plus_sequence_roundtrip() {
 }
 
 #[test]
+fn native_checkpoint_map_rows_and_sequence_roundtrip_or_fail_atomically() {
+    let directory = tempfile::tempdir().unwrap();
+    let store = NativeStore::create(&directory.path().join("state.redb"), [1; 32]).unwrap();
+    let record = |tick, value: serde_json::Value| NativeDomainRecord {
+        version: 1,
+        captured_tick: tick,
+        payload: serde_json::to_vec(&value).unwrap(),
+    };
+    // Fresh startup checkpoints the allocation fence before any map exists.
+    let mut empty = globals(0);
+    empty.insert("map_sequence".into(), record(0, json!(0)));
+    commit(&store, 0, 0, &empty, &[], &[]).unwrap();
+    assert_eq!(store.read_checkpoint().unwrap().globals, empty);
+    let mut maps = globals(1);
+    maps.insert("map/0".into(), record(1, json!({"colors": []})));
+    maps.insert("map_sequence".into(), record(1, json!(1)));
+    commit(&store, 1, 0, &maps, &[], &[]).unwrap();
+    assert_eq!(store.read_checkpoint().unwrap().globals, maps);
+
+    for (key, sequence, row) in [
+        ("map/-1", Some(json!(1)), record(2, json!({}))),
+        ("map/00", Some(json!(1)), record(2, json!({}))),
+        ("map/+0", Some(json!(1)), record(2, json!({}))),
+        ("map/2147483648", Some(json!(1)), record(2, json!({}))),
+        ("map/0", None, record(2, json!({}))),
+        ("map/0", Some(json!(0)), record(2, json!({}))),
+        ("map/0", Some(json!(2147483649_i64)), record(2, json!({}))),
+        ("map/0", Some(json!(1)), record(1, json!({}))),
+        ("map/0", Some(json!(1)), record(2, json!(null))),
+    ] {
+        let mut bad = globals(2);
+        bad.insert(key.into(), row);
+        if let Some(sequence) = sequence {
+            bad.insert("map_sequence".into(), record(2, sequence));
+        }
+        assert!(commit(&store, 2, 1, &bad, &[], &[]).is_err(), "{key}");
+        assert_eq!(store.read_checkpoint().unwrap().globals, maps);
+    }
+}
+
+#[test]
 fn native_checkpoint_requires_valid_plugin_domains_without_partial_commit() {
     let directory = tempfile::tempdir().unwrap();
     let store = NativeStore::create(&directory.path().join("state.redb"), [1; 32]).unwrap();

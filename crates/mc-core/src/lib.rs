@@ -132,6 +132,7 @@ mod physical_defense;
 mod piglin;
 pub mod placement;
 pub(crate) mod plants;
+mod chorus;
 pub mod player;
 mod plugin;
 #[cfg(test)]

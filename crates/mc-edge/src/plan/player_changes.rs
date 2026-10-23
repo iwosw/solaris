@@ -67,7 +67,7 @@ fn plan_change(change: &PlayerChange, viewer: &mut ViewerState, out: &mut Vec<Pl
                             name: d
                                 .name
                                 .as_ref()
-                                .map(|name| mc_nbt::Tag::String(name.clone())),
+                                .map(|name| mc_core::scoreboard::component(name)),
                         })
                         .collect(),
                 ),

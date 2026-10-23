@@ -980,3 +980,38 @@ fn tree_configuration_resolves_placers_and_defaults() {
     assert_eq!(tree.minimum_size.upper_size, 1);
     assert_eq!(tree.minimum_size.min_clipped_height, None);
 }
+
+#[test]
+fn modern_jigsaw_sculk_patch_loads_authored_budgets_and_rejects_unbounded_charge() {
+    let dir = worldgen_dir();
+    let loader = FeatureClosure::new(dir.path());
+    let mut value = serde_json::json!({
+        "type": "minecraft:sculk_patch",
+        "config": { "charge_count": 10, "amount_per_charge": 32,
+            "spread_attempts": 64, "growth_rounds": 0, "spread_rounds": 1,
+            "extra_rare_growths": { "type": "minecraft:uniform", "min_inclusive": 1, "max_inclusive": 3 },
+            "catalyst_chance": 0.5 }
+    });
+    let feature = loader
+        .parse_configured_feature(&id("minecraft:fixture"), &value)
+        .unwrap();
+    let ConfiguredFeatureKind::SculkPatch(spec) = feature.kind else {
+        panic!("sculk patch");
+    };
+    assert_eq!(spec.charge_count, 10);
+    assert_eq!(
+        spec.extra_rare_growths,
+        IntProviderSpec::Uniform {
+            min_inclusive: 1,
+            max_inclusive: 3
+        }
+    );
+    value["config"]["amount_per_charge"] = serde_json::json!(501);
+    assert!(matches!(
+        loader.parse_configured_feature(&id("minecraft:fixture"), &value),
+        Err(ClosureError::InvalidField {
+            field: "amount_per_charge",
+            ..
+        })
+    ));
+}
