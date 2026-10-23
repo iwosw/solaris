@@ -132,10 +132,10 @@ fn gradients_preserve_signed_zero_and_ieee_operation_order() {
         -0.0,
         1.0,
         -1.0,
-        f64::from_bits(1),
-        -f64::from_bits(1),
-        f64::INFINITY,
-        f64::NEG_INFINITY,
+        f32::from_bits(1),
+        -f32::from_bits(1),
+        f32::INFINITY,
+        f32::NEG_INFINITY,
     ];
     for hash in 0..16 {
         for x in values {
@@ -143,7 +143,8 @@ fn gradients_preserve_signed_zero_and_ieee_operation_order() {
                 for z in values {
                     assert_eq!(
                         grad(hash, x, y, z).to_bits(),
-                        reference_grad(hash, x, y, z).to_bits(),
+                        (reference_grad(hash, f64::from(x), f64::from(y), f64::from(z)) as f32)
+                            .to_bits(),
                         "gradient {hash} at ({x:?}, {y:?}, {z:?})"
                     );
                 }
@@ -223,7 +224,7 @@ fn reference_sample(
 }
 
 #[test]
-fn seeded_noise_matches_original_evaluation_bits() {
+fn seeded_fp32_noise_stays_close_to_fp64_at_large_coordinates() {
     for seed in [0, 1, 0x91_23_45_67_89_ab_cd_ef, u64::MAX] {
         let noise = ImprovedNoise::new(&mut Xoroshiro::seeded(seed));
         let mut random = Xoroshiro::seeded(seed ^ 0x4e_4f_49_53_45);
@@ -236,20 +237,19 @@ fn seeded_noise_matches_original_evaluation_bits() {
                 (0.125, 0.25),
                 (0.125, 1.0),
             ] {
-                assert_eq!(
-                    noise
-                        .sample_with_y_scale(wrap(x), wrap(y), wrap(z), y_scale, y_max)
-                        .to_bits(),
-                    reference_sample(
-                        &noise,
-                        reference_wrap(x),
-                        reference_wrap(y),
-                        reference_wrap(z),
-                        y_scale,
-                        y_max
-                    )
-                    .to_bits(),
-                    "seed {seed}, point ({x:?}, {y:?}, {z:?}), y scale/max ({y_scale}, {y_max})"
+                let actual =
+                    f64::from(noise.sample_with_y_scale(wrap(x), wrap(y), wrap(z), y_scale, y_max));
+                let expected = reference_sample(
+                    &noise,
+                    reference_wrap(x),
+                    reference_wrap(y),
+                    reference_wrap(z),
+                    y_scale,
+                    y_max,
+                );
+                assert!(
+                    (actual - expected).abs() <= 4.0e-6,
+                    "seed {seed}, ({x}, {y}, {z}), scale/max ({y_scale}, {y_max}): {actual} vs {expected}"
                 );
             }
         };

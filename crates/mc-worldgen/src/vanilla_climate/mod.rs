@@ -1,5 +1,7 @@
 //! Local-data overworld climate and multi-noise biome selection.
 pub(crate) mod noise;
+#[cfg(test)]
+mod numeric_bench;
 use crate::vanilla_density::DensityRuntime;
 use serde_json::Value;
 use std::{path::Path, sync::Arc};
@@ -7,7 +9,7 @@ use std::{path::Path, sync::Arc};
 #[derive(Debug, Clone, Copy)]
 pub struct ClimateSample<'a> {
     /// Temperature, humidity, continentalness, erosion, depth, weirdness.
-    pub climate: [f64; 6],
+    pub climate: [f32; 6],
     pub quantized: [i64; 6],
     pub biome: &'a str,
 }
@@ -222,8 +224,8 @@ impl VanillaClimate {
         );
         self.select(climate, None).0
     }
-    fn select(&self, climate: [f64; 6], last: Option<usize>) -> (ClimateSample<'_>, usize) {
-        let quantized = climate.map(quantize);
+    fn select(&self, climate: [f32; 6], last: Option<usize>) -> (ClimateSample<'_>, usize) {
+        let quantized = climate.map(|value| (value * 10000.0) as i64);
         let mut target = [0; 7];
         target[..6].copy_from_slice(&quantized);
         let mut best = last.map(|id| {

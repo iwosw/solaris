@@ -93,10 +93,12 @@ pub(crate) struct NormalNoise {
     pub(crate) value_factor: f64,
 }
 impl NormalNoise {
-    pub(crate) fn sample(&self, x: f64, y: f64, z: f64) -> f64 {
+    pub(crate) fn sample(&self, x: f64, y: f64, z: f64) -> f32 {
+        // Scale the precise coordinates BEFORE splitting each octave's lattice.
+        // Casting x/y/z here would erase adjacent blocks near the world border.
         let factor = 1.0181268882175227;
         (self.first.sample(x, y, z) + self.second.sample(x * factor, y * factor, z * factor))
-            * self.value_factor
+            * self.value_factor as f32
     }
     /// Proven uniform bound: `|sample(x, y, z)| <= returned` for every input.
     /// Each `ImprovedNoise` octave is a convex combination (fade weights in
@@ -149,13 +151,13 @@ impl PerlinNoise {
             value: 2f64.powi(n - 1) / (2f64.powi(n) - 1.0),
         }
     }
-    fn sample(&self, x: f64, y: f64, z: f64) -> f64 {
+    fn sample(&self, x: f64, y: f64, z: f64) -> f32 {
         let mut input = self.input;
-        let mut weight = self.value;
+        let mut weight = self.value as f32;
         let mut sum = 0.0;
         for (level, amplitude) in self.levels.iter().zip(&self.amplitudes) {
             if let Some(level) = level {
-                sum += amplitude
+                sum += *amplitude as f32
                     * level.sample_with_y_scale(
                         wrap(x * input),
                         wrap(y * input),
@@ -213,23 +215,27 @@ impl ImprovedNoise {
         z: f64,
         y_scale: f64,
         y_max: f64,
-    ) -> f64 {
+    ) -> f32 {
         let x = x + self.xo;
         let y = y + self.yo;
         let z = z + self.zo;
         let ix = floor_i32(x);
         let iy = floor_i32(y);
         let iz = floor_i32(z);
-        let xr = x - f64::from(ix);
-        let yr = y - f64::from(iy);
-        let zr = z - f64::from(iz);
+        // Only the small within-cell offsets enter fp32. Offsets and the
+        // permutation's integer cell retain their fp64/integer precision.
+        let xr = (x - f64::from(ix)) as f32;
+        let yr = (y - f64::from(iy)) as f32;
+        let zr = (z - f64::from(iz)) as f32;
+        let y_scale = y_scale as f32;
+        let y_max = y_max as f32;
         let delta = if y_scale != 0.0 {
             let limited = if y_max >= 0.0 && y_max < yr {
                 y_max
             } else {
                 yr
             };
-            (limited / y_scale + 1.0000000116860974e-7).floor() * y_scale
+            (limited / y_scale + 1.0e-7_f32).floor() * y_scale
         } else {
             0.0
         };
@@ -280,14 +286,14 @@ fn floor_i32(v: f64) -> i32 {
     // needs correction; saturation also preserves values at/below i32::MIN.
     truncated.saturating_sub(i32::from(v < f64::from(truncated)))
 }
-fn fade(v: f64) -> f64 {
+fn fade(v: f32) -> f32 {
     v * v * v * (v * (v * 6.0 - 15.0) + 10.0)
 }
-fn lerp(t: f64, a: f64, b: f64) -> f64 {
+fn lerp(t: f32, a: f32, b: f32) -> f32 {
     a + t * (b - a)
 }
-fn grad(hash: i32, x: f64, y: f64, z: f64) -> f64 {
-    const G: [[f64; 3]; 16] = [
+fn grad(hash: i32, x: f32, y: f32, z: f32) -> f32 {
+    const G: [[f32; 3]; 16] = [
         [1.0, 1.0, 0.0],
         [-1.0, 1.0, 0.0],
         [1.0, -1.0, 0.0],

@@ -17,14 +17,14 @@ struct Position {
 #[derive(Clone, Copy)]
 struct Cached {
     position: Position,
-    value: f64,
+    value: f32,
 }
 #[derive(Clone, Copy)]
 struct Cell {
     x: i32,
     y: i32,
     z: i32,
-    corners: [f64; 8],
+    corners: [f32; 8],
 }
 
 /// Bounded, node-indexed memoization in lattice coordinates. Only the selected
@@ -33,7 +33,7 @@ struct GridMemo {
     min: [i32; 3],
     size: [usize; 3],
     slots: Vec<usize>,
-    values: Vec<Option<f64>>,
+    values: Vec<Option<f32>>,
 }
 
 impl GridMemo {
@@ -74,11 +74,11 @@ impl GridMemo {
         Some(slot + (offset[1] * self.size[2] + offset[2]) * self.size[0] + offset[0])
     }
 
-    fn get(&self, id: Id, point: [i32; 3]) -> Option<f64> {
+    fn get(&self, id: Id, point: [i32; 3]) -> Option<f32> {
         self.index(id, point).and_then(|index| self.values[index])
     }
 
-    fn put(&mut self, id: Id, point: [i32; 3], value: f64) {
+    fn put(&mut self, id: Id, point: [i32; 3], value: f32) {
         if let Some(index) = self.index(id, point) {
             self.values[index] = Some(value);
         }
@@ -98,7 +98,7 @@ struct ChunkMemo {
 #[derive(Clone, Copy, Default)]
 struct PairMemo {
     key: u64,
-    value: f64,
+    value: f32,
     live: bool,
 }
 
@@ -145,7 +145,7 @@ pub(crate) struct DensitySampler<'a> {
     /// `[min, max]` per node (`None` = unknown, short-circuit never fires)
     /// and Y-freedom per node for `cache_2d`. Computed once per sampler on
     /// first use, then read-only — never per-voxel allocation or DAG walk.
-    node_bounds: Vec<Option<Option<[f64; 2]>>>,
+    node_bounds: Vec<Option<Option<[f32; 2]>>>,
     node_y_free: Vec<Option<bool>>,
 }
 
@@ -207,7 +207,7 @@ impl<'a> DensitySampler<'a> {
         });
         sampler
     }
-    pub(crate) fn sample(&mut self, field: Id, x: i32, y: i32, z: i32) -> f64 {
+    pub(crate) fn sample(&mut self, field: Id, x: i32, y: i32, z: i32) -> f32 {
         eval(
             self.runtime,
             self,
@@ -220,7 +220,7 @@ impl<'a> DensitySampler<'a> {
             },
         )
     }
-    pub(crate) fn sample_terrain(&mut self, field: Id, x: i32, y: i32, z: i32) -> f64 {
+    pub(crate) fn sample_terrain(&mut self, field: Id, x: i32, y: i32, z: i32) -> f32 {
         eval(
             self.runtime,
             self,
@@ -246,23 +246,23 @@ impl<'a> DensitySampler<'a> {
 }
 
 trait Cache {
-    fn get(&self, id: Id, position: Position) -> Option<f64>;
-    fn put(&mut self, id: Id, position: Position, value: f64);
-    fn cell(&self, id: Id, x: i32, y: i32, z: i32) -> Option<[f64; 8]>;
+    fn get(&self, id: Id, position: Position) -> Option<f32>;
+    fn put(&mut self, id: Id, position: Position, value: f32);
+    fn cell(&self, id: Id, x: i32, y: i32, z: i32) -> Option<[f32; 8]>;
     fn put_cell(&mut self, id: Id, cell: Cell);
-    fn corner(&self, _id: Id, _position: Position) -> Option<f64> {
+    fn corner(&self, _id: Id, _position: Position) -> Option<f32> {
         None
     }
-    fn put_corner(&mut self, _id: Id, _position: Position, _value: f64) {}
+    fn put_corner(&mut self, _id: Id, _position: Position, _value: f32) {}
     /// `cache_2d` last-(x, z) read, keyed by wrapper node. Default: miss.
-    fn pair(&self, _id: Id, _key: u64) -> Option<f64> {
+    fn pair(&self, _id: Id, _key: u64) -> Option<f32> {
         None
     }
-    fn put_pair(&mut self, _id: Id, _key: u64, _value: f64) {}
+    fn put_pair(&mut self, _id: Id, _key: u64, _value: f32) {}
     /// Lazily computed, coordinate-independent node bound (`None` entry =
     /// unknown; short-circuit never fires). Default recomputes per call —
     /// stateful samplers override with a once-per-sampler cache.
-    fn node_bound(&mut self, _id: Id) -> Option<[f64; 2]> {
+    fn node_bound(&mut self, _id: Id) -> Option<[f32; 2]> {
         None
     }
     /// Lazily computed Y-freedom for `cache_2d`. Default: not free (miss).
@@ -274,7 +274,7 @@ trait Cache {
     }
 }
 impl Cache for DensitySampler<'_> {
-    fn get(&self, id: Id, position: Position) -> Option<f64> {
+    fn get(&self, id: Id, position: Position) -> Option<f32> {
         if position.mode != Mode::Raw
             && let Some(chunk) = &self.chunk
             && chunk.flat.slots[id] != usize::MAX
@@ -288,7 +288,7 @@ impl Cache for DensitySampler<'_> {
             .filter(|value| value.position == position)
             .map(|value| value.value)
     }
-    fn put(&mut self, id: Id, position: Position, value: f64) {
+    fn put(&mut self, id: Id, position: Position, value: f32) {
         self.values[id] = Some(Cached { position, value });
         if position.mode != Mode::Raw
             && let Some(chunk) = &mut self.chunk
@@ -301,7 +301,7 @@ impl Cache for DensitySampler<'_> {
             );
         }
     }
-    fn cell(&self, id: Id, x: i32, y: i32, z: i32) -> Option<[f64; 8]> {
+    fn cell(&self, id: Id, x: i32, y: i32, z: i32) -> Option<[f32; 8]> {
         self.cells[id]
             .filter(|cell| (cell.x, cell.y, cell.z) == (x, y, z))
             .map(|cell| cell.corners)
@@ -309,7 +309,7 @@ impl Cache for DensitySampler<'_> {
     fn put_cell(&mut self, id: Id, cell: Cell) {
         self.cells[id] = Some(cell);
     }
-    fn corner(&self, id: Id, position: Position) -> Option<f64> {
+    fn corner(&self, id: Id, position: Position) -> Option<f32> {
         self.chunk.as_ref()?.corners.get(
             id,
             [
@@ -319,7 +319,7 @@ impl Cache for DensitySampler<'_> {
             ],
         )
     }
-    fn put_corner(&mut self, id: Id, position: Position, value: f64) {
+    fn put_corner(&mut self, id: Id, position: Position, value: f32) {
         if let Some(chunk) = &mut self.chunk {
             chunk.corners.put(
                 id,
@@ -332,11 +332,11 @@ impl Cache for DensitySampler<'_> {
             );
         }
     }
-    fn pair(&self, id: Id, key: u64) -> Option<f64> {
+    fn pair(&self, id: Id, key: u64) -> Option<f32> {
         let memo = self.pair_memos.get(id)?;
         (memo.live && memo.key == key).then_some(memo.value)
     }
-    fn put_pair(&mut self, id: Id, key: u64, value: f64) {
+    fn put_pair(&mut self, id: Id, key: u64, value: f32) {
         if let Some(memo) = self.pair_memos.get_mut(id) {
             *memo = PairMemo {
                 key,
@@ -345,7 +345,7 @@ impl Cache for DensitySampler<'_> {
             };
         }
     }
-    fn node_bound(&mut self, id: Id) -> Option<[f64; 2]> {
+    fn node_bound(&mut self, id: Id) -> Option<[f32; 2]> {
         if id >= self.node_bounds.len() {
             return None;
         }
@@ -373,11 +373,11 @@ impl Cache for DensitySampler<'_> {
 }
 struct NoCache;
 impl Cache for NoCache {
-    fn get(&self, _: Id, _: Position) -> Option<f64> {
+    fn get(&self, _: Id, _: Position) -> Option<f32> {
         None
     }
-    fn put(&mut self, _: Id, _: Position, _: f64) {}
-    fn cell(&self, _: Id, _: i32, _: i32, _: i32) -> Option<[f64; 8]> {
+    fn put(&mut self, _: Id, _: Position, _: f32) {}
+    fn cell(&self, _: Id, _: i32, _: i32, _: i32) -> Option<[f32; 8]> {
         None
     }
     fn put_cell(&mut self, _: Id, _: Cell) {}
@@ -389,15 +389,15 @@ struct FieldMemo {
     entries: [Option<(Id, Cached)>; 64],
 }
 impl Cache for FieldMemo {
-    fn get(&self, id: Id, position: Position) -> Option<f64> {
+    fn get(&self, id: Id, position: Position) -> Option<f32> {
         self.entries[id % self.entries.len()]
             .filter(|(key, value)| *key == id && value.position == position)
             .map(|(_, value)| value.value)
     }
-    fn put(&mut self, id: Id, position: Position, value: f64) {
+    fn put(&mut self, id: Id, position: Position, value: f32) {
         self.entries[id % self.entries.len()] = Some((id, Cached { position, value }));
     }
-    fn cell(&self, _: Id, _: i32, _: i32, _: i32) -> Option<[f64; 8]> {
+    fn cell(&self, _: Id, _: i32, _: i32, _: i32) -> Option<[f32; 8]> {
         None
     }
     fn put_cell(&mut self, _: Id, _: Cell) {}
@@ -409,7 +409,7 @@ pub(super) fn direct_fields<const N: usize>(
     x: i32,
     y: i32,
     z: i32,
-) -> [f64; N] {
+) -> [f32; N] {
     let mut cache = FieldMemo {
         entries: [None; 64],
     };
@@ -422,7 +422,7 @@ pub(super) fn direct_fields<const N: usize>(
     fields.map(|field| eval(runtime, &mut cache, field, position))
 }
 
-pub(super) fn direct_terrain(runtime: &DensityRuntime, field: Id, x: i32, y: i32, z: i32) -> f64 {
+pub(super) fn direct_terrain(runtime: &DensityRuntime, field: Id, x: i32, y: i32, z: i32) -> f32 {
     eval(
         runtime,
         &mut NoCache,
@@ -445,9 +445,9 @@ pub(super) fn direct_terrain(runtime: &DensityRuntime, field: Id, x: i32, y: i32
 fn bounds(
     runtime: &DensityRuntime,
     id: Id,
-    memo: &mut HashMap<Id, Option<[f64; 2]>>,
+    memo: &mut HashMap<Id, Option<[f32; 2]>>,
     stack: &mut Vec<Id>,
-) -> Option<[f64; 2]> {
+) -> Option<[f32; 2]> {
     if let Some(cached) = memo.get(&id) {
         return *cached;
     }
@@ -466,14 +466,14 @@ fn bounds(
 fn exact_bound(
     runtime: &DensityRuntime,
     id: Id,
-    memo: &mut HashMap<Id, Option<[f64; 2]>>,
+    memo: &mut HashMap<Id, Option<[f32; 2]>>,
     stack: &mut Vec<Id>,
-) -> Option<[f64; 2]> {
-    let bound = |input: Id, memo: &mut HashMap<Id, Option<[f64; 2]>>, stack: &mut Vec<Id>| {
+) -> Option<[f32; 2]> {
+    let bound = |input: Id, memo: &mut HashMap<Id, Option<[f32; 2]>>, stack: &mut Vec<Id>| {
         bounds(runtime, input, memo, stack)
     };
     match &runtime.nodes[id] {
-        Node::Constant(value) => Some([*value, *value]),
+        Node::Constant(value) => Some([*value as f32, *value as f32]),
         Node::Binary(kind, a, b) => {
             let a = bound(*a, memo, stack)?;
             let b = bound(*b, memo, stack)?;
@@ -488,8 +488,8 @@ fn exact_bound(
                         return None;
                     }
                     [
-                        products.iter().fold(f64::INFINITY, |m, v| m.min(*v)),
-                        products.iter().fold(f64::NEG_INFINITY, |m, v| m.max(*v)),
+                        products.iter().fold(f32::INFINITY, |m, v| m.min(*v)),
+                        products.iter().fold(f32::NEG_INFINITY, |m, v| m.max(*v)),
                     ]
                 }
                 // `min(a, b)` lies within `[min(a0, b0), min(a1, b1)]` and
@@ -546,7 +546,7 @@ fn exact_bound(
                 // `clamp(x,-1,1)/2 - x^3/24` is monotone non-decreasing
                 // (derivative `1/2 - x^2/8 >= 3/8` on `[-1,1]`).
                 Mapped::Squeeze => {
-                    let f = |x: f64| {
+                    let f = |x: f32| {
                         let x = x.clamp(-1.0, 1.0);
                         x / 2.0 - x * x * x / 24.0
                     };
@@ -556,9 +556,13 @@ fn exact_bound(
         }
         Node::Clamp(input, min, max) => {
             let v = bound(*input, memo, stack)?;
-            Some([v[0].clamp(*min, *max), v[1].clamp(*min, *max)])
+            Some([
+                v[0].clamp(*min as f32, *max as f32),
+                v[1].clamp(*min as f32, *max as f32),
+            ])
         }
         Node::Gradient(from_y, to_y, from, to) => {
+            let (from, to) = (*from as f32, *to as f32);
             // `((y - from_y) / (to_y - from_y)).clamp(0, 1)` feeds
             // `from + t * (to - from)`. Equal cell heights divide 0/0
             // (NaN survives clamp), non-finite endpoints can overflow the
@@ -570,17 +574,17 @@ fn exact_bound(
             }
             // Sound outward bound: extend past each endpoint by the
             // difference magnitude plus rounding of the two operations.
-            let diff = (*to - *from).abs();
+            let diff = (to - from).abs();
             let mag = from.abs().max(to.abs()).max(1.0);
-            let pad = diff + diff * 2.0 * f64::EPSILON + f64::EPSILON * mag;
-            let (lo, hi) = (widen_lo(from.min(*to) - pad), widen_hi(from.max(*to) + pad));
+            let pad = diff + diff * 2.0 * f32::EPSILON + f32::EPSILON * mag;
+            let (lo, hi) = (widen_lo(from.min(to) - pad), widen_hi(from.max(to) + pad));
             if !lo.is_finite() || !hi.is_finite() {
                 return None;
             }
             Some([lo, hi])
         }
         Node::Noise(noise, ..) => {
-            let b = runtime.noises[*noise].uniform_bound();
+            let b = runtime.noises[*noise].uniform_bound() as f32;
             Some([-b, b])
         }
         Node::Shift(..) => {
@@ -589,13 +593,13 @@ fn exact_bound(
             None
         }
         Node::Shifted(noise, ..) => {
-            let b = runtime.noises[*noise].uniform_bound();
+            let b = runtime.noises[*noise].uniform_bound() as f32;
             Some([-b, b])
         }
         // `rarity * |noise|` with `rarity in {0.5..3}`: non-negative, at most
         // `3 * noise_bound`.
         Node::Weird(noise, input, two_dimensional) => {
-            let b = runtime.noises[*noise].uniform_bound();
+            let b = runtime.noises[*noise].uniform_bound() as f32;
             let peak = if *two_dimensional { 3.0 } else { 2.0 };
             let _ = bound(*input, memo, stack)?;
             Some([0.0, peak * b])
@@ -620,27 +624,27 @@ fn exact_bound(
 
 /// Widen one ulp outward so float rounding in the bound derivation itself can
 /// never flip a short-circuit decision.
-fn widen_lo(v: f64) -> f64 {
+fn widen_lo(v: f32) -> f32 {
     if v.is_finite() {
-        v - f64::EPSILON * v.abs().max(1.0)
+        v - f32::EPSILON * v.abs().max(1.0)
     } else {
         v
     }
 }
-fn widen_hi(v: f64) -> f64 {
+fn widen_hi(v: f32) -> f32 {
     if v.is_finite() {
-        v + f64::EPSILON * v.abs().max(1.0)
+        v + f32::EPSILON * v.abs().max(1.0)
     } else {
         v
     }
 }
 
-fn spline_bound(value: &Spline) -> Option<[f64; 2]> {
+fn spline_bound(value: &Spline) -> Option<[f32; 2]> {
     match value {
-        Spline::Constant(v) => Some([f64::from(*v), f64::from(*v)]),
+        Spline::Constant(v) => Some([*v, *v]),
         Spline::Multipoint { points, .. } => {
-            let mut lo = f64::INFINITY;
-            let mut hi = f64::NEG_INFINITY;
+            let mut lo = f32::INFINITY;
+            let mut hi = f32::NEG_INFINITY;
             for point in points {
                 let [a, b] = spline_bound(&point.value)?;
                 // Linear extrapolation past an edge point can leave
@@ -665,18 +669,16 @@ fn spline_bound(value: &Spline) -> Option<[f64; 2]> {
                 return None;
             }
             for pair in points.windows(2) {
-                let width = (pair[1].location - pair[0].location) as f64;
+                let width = pair[1].location - pair[0].location;
                 // Evaluated as f32 `width` then `t = (input - a)/width`:
                 // non-finite or zero f32 width breaks the bound.
-                let width_f32 = width as f32;
-                if !width_f32.is_finite() || width_f32 == 0.0 {
+                if !width.is_finite() || width == 0.0 {
                     return None;
                 }
             }
-            // Splines evaluate in f32: widen past f64 epsilon to cover the
-            // narrower type's rounding on interior cubics.
+            // Widen past rounding of the interior cubic operations.
             let span = (hi - lo).abs().max(1.0);
-            let pad = f32::EPSILON as f64 * span + 1e-6 * span.max(1.0);
+            let pad = f32::EPSILON * span + 1e-6 * span.max(1.0);
             let (lo, hi) = (lo - pad, hi + pad);
             if !lo.is_finite() || !hi.is_finite() {
                 return None;
@@ -686,7 +688,7 @@ fn spline_bound(value: &Spline) -> Option<[f64; 2]> {
     }
 }
 
-fn eval<C: Cache>(runtime: &DensityRuntime, cache: &mut C, id: Id, p: Position) -> f64 {
+fn eval<C: Cache>(runtime: &DensityRuntime, cache: &mut C, id: Id, p: Position) -> f32 {
     let counters = cache.counters_mut().is_some();
     if counters {
         count(cache, |c| c.requested += 1);
@@ -703,7 +705,7 @@ fn eval<C: Cache>(runtime: &DensityRuntime, cache: &mut C, id: Id, p: Position) 
         count(cache, |c| c.evaluated += 1);
     }
     let value = match &runtime.nodes[id] {
-        Node::Constant(value) => *value,
+        Node::Constant(value) => *value as f32,
         Node::Binary(kind, a, b) => {
             let a = eval(runtime, cache, *a, p);
             match kind {
@@ -722,7 +724,7 @@ fn eval<C: Cache>(runtime: &DensityRuntime, cache: &mut C, id: Id, p: Position) 
                 // is `a` when `a` is strictly below every possible `b`
                 // (dually `max(a, b)` is `a` when strictly above every
                 // possible `b`). Strictness preserves `+0.0`/`-0.0` and NaN
-                // edge semantics of the baseline `f64::min`/`max`: at
+                // edge semantics of `f32::min`/`max`: at
                 // equality both arms are evaluated exactly as before.
                 // Bounds are proven intervals, never samples; on unknown
                 // bounds both arms run exactly as before.
@@ -775,11 +777,13 @@ fn eval<C: Cache>(runtime: &DensityRuntime, cache: &mut C, id: Id, p: Position) 
                 }
             }
         }
-        Node::Clamp(input, min, max) => eval(runtime, cache, *input, p).clamp(*min, *max),
+        Node::Clamp(input, min, max) => {
+            eval(runtime, cache, *input, p).clamp(*min as f32, *max as f32)
+        }
         Node::Gradient(from_y, to_y, from, to) => lerp(
-            ((f64::from(p.y) - f64::from(*from_y)) / f64::from(*to_y - *from_y)).clamp(0.0, 1.0),
-            *from,
-            *to,
+            ((p.y as f32 - *from_y as f32) / (*to_y - *from_y) as f32).clamp(0.0, 1.0),
+            *from as f32,
+            *to as f32,
         ),
         Node::Noise(noise, xz, y) => runtime.noises[*noise].sample(
             f64::from(p.x) * xz,
@@ -799,9 +803,9 @@ fn eval<C: Cache>(runtime: &DensityRuntime, cache: &mut C, id: Id, p: Position) 
             ) * 4.0
         }
         Node::Shifted(noise, sx, sy, sz, xz, y) => {
-            let x = f64::from(p.x) * xz + eval(runtime, cache, *sx, p);
-            let y = f64::from(p.y) * y + eval(runtime, cache, *sy, p);
-            let z = f64::from(p.z) * xz + eval(runtime, cache, *sz, p);
+            let x = f64::from(p.x) * xz + f64::from(eval(runtime, cache, *sx, p));
+            let y = f64::from(p.y) * y + f64::from(eval(runtime, cache, *sy, p));
+            let z = f64::from(p.z) * xz + f64::from(eval(runtime, cache, *sz, p));
             runtime.noises[*noise].sample(x, y, z)
         }
         Node::Weird(noise, input, two_dimensional) => {
@@ -830,9 +834,9 @@ fn eval<C: Cache>(runtime: &DensityRuntime, cache: &mut C, id: Id, p: Position) 
             rarity
                 * runtime.noises[*noise]
                     .sample(
-                        f64::from(p.x) / rarity,
-                        f64::from(p.y) / rarity,
-                        f64::from(p.z) / rarity,
+                        f64::from(p.x) / f64::from(rarity),
+                        f64::from(p.y) / f64::from(rarity),
+                        f64::from(p.z) / f64::from(rarity),
                     )
                     .abs()
         }
@@ -841,7 +845,7 @@ fn eval<C: Cache>(runtime: &DensityRuntime, cache: &mut C, id: Id, p: Position) 
             eval(
                 runtime,
                 cache,
-                if input >= *min && input < *max {
+                if input >= *min as f32 && input < *max as f32 {
                     *inside
                 } else {
                     *outside
@@ -849,7 +853,7 @@ fn eval<C: Cache>(runtime: &DensityRuntime, cache: &mut C, id: Id, p: Position) 
                 p,
             )
         }
-        Node::Spline(value) => f64::from(spline(runtime, cache, value, p)),
+        Node::Spline(value) => spline(runtime, cache, value, p),
         Node::Marker(Marker::Interpolated, input) if p.mode == Mode::Terrain => {
             interpolate(runtime, cache, id, *input, p)
         }
@@ -909,7 +913,7 @@ fn eval<C: Cache>(runtime: &DensityRuntime, cache: &mut C, id: Id, p: Position) 
         Node::Marker(_, input) => eval(runtime, cache, *input, p),
         Node::Blended(index) => runtime.blended[*index].sample(p.x, p.y, p.z),
         Node::FindTop(density, bound, lower, step) => {
-            let mut y = (eval(runtime, cache, *bound, p) / f64::from(*step)).floor() as i32 * step;
+            let mut y = (eval(runtime, cache, *bound, p) / *step as f32).floor() as i32 * step;
             let mut result = *lower;
             while y >= *lower {
                 if eval(
@@ -932,7 +936,7 @@ fn eval<C: Cache>(runtime: &DensityRuntime, cache: &mut C, id: Id, p: Position) 
                 }
                 y -= step;
             }
-            f64::from(result)
+            result as f32
         }
     };
     cache.put(id, p, value);
@@ -1017,7 +1021,7 @@ fn interpolate<C: Cache>(
     id: Id,
     input: Id,
     p: Position,
-) -> f64 {
+) -> f32 {
     let width = runtime.cell_width;
     let height = runtime.cell_height;
     let x = p.x.div_euclid(width) * width;
@@ -1061,16 +1065,16 @@ fn interpolate<C: Cache>(
 /// X, then Z — the `NoiseChunk` update order (not `Mth.lerp3`'s). Corner
 /// layout is index bit 0 = +x, bit 1 = +y, bit 2 = +z.
 fn interpolate_corners(
-    corners: [f64; 8],
+    corners: [f32; 8],
     dx: i32,
     dy: i32,
     dz: i32,
     width: i32,
     height: i32,
-) -> f64 {
-    let tx = f64::from(dx) / f64::from(width);
-    let ty = f64::from(dy) / f64::from(height);
-    let tz = f64::from(dz) / f64::from(width);
+) -> f32 {
+    let tx = dx as f32 / width as f32;
+    let ty = dy as f32 / height as f32;
+    let tz = dz as f32 / width as f32;
     // Y stage: 4 intermediates (one per (x, z) edge).
     let y00 = lerp(ty, corners[0], corners[2]);
     let y10 = lerp(ty, corners[1], corners[3]);
@@ -1087,7 +1091,7 @@ fn spline<C: Cache>(runtime: &DensityRuntime, cache: &mut C, value: &Spline, p: 
     match value {
         Spline::Constant(value) => *value,
         Spline::Multipoint { coordinate, points } => {
-            let input = eval(runtime, cache, *coordinate, p) as f32;
+            let input = eval(runtime, cache, *coordinate, p);
             let next = points.partition_point(|point| point.location <= input);
             if next == 0 || next == points.len() {
                 let edge = &points[if next == 0 { 0 } else { points.len() - 1 }];
@@ -1111,7 +1115,7 @@ fn spline<C: Cache>(runtime: &DensityRuntime, cache: &mut C, value: &Spline, p: 
         }
     }
 }
-fn lerp(t: f64, from: f64, to: f64) -> f64 {
+fn lerp(t: f32, from: f32, to: f32) -> f32 {
     from + t * (to - from)
 }
 

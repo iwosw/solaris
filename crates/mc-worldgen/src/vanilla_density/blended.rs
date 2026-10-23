@@ -35,7 +35,7 @@ impl BlendedNoise {
         }
     }
 
-    pub(super) fn sample(&self, x: i32, y: i32, z: i32) -> f64 {
+    pub(super) fn sample(&self, x: i32, y: i32, z: i32) -> f32 {
         let x = f64::from(x) * self.xz;
         let y = f64::from(y) * self.y;
         let z = f64::from(z) * self.xz;
@@ -53,7 +53,7 @@ impl BlendedNoise {
                 wrap(mz * scale),
                 main_smear * scale,
                 my * scale,
-            ) / scale;
+            ) / scale as f32;
             scale /= 2.0;
         }
         let alpha = (main / 10.0 + 1.0) / 2.0;
@@ -65,12 +65,12 @@ impl BlendedNoise {
             let sy = wrap(y * scale);
             let sz = wrap(z * scale);
             if alpha < 1.0 {
-                min +=
-                    self.min[i].sample_with_y_scale(sx, sy, sz, smear * scale, y * scale) / scale;
+                min += self.min[i].sample_with_y_scale(sx, sy, sz, smear * scale, y * scale)
+                    / scale as f32;
             }
             if alpha > 0.0 {
-                max +=
-                    self.max[i].sample_with_y_scale(sx, sy, sz, smear * scale, y * scale) / scale;
+                max += self.max[i].sample_with_y_scale(sx, sy, sz, smear * scale, y * scale)
+                    / scale as f32;
             }
             scale /= 2.0;
         }

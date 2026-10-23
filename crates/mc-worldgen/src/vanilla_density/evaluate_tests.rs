@@ -12,7 +12,7 @@ struct Counting<'a> {
 }
 
 impl Cache for Counting<'_> {
-    fn get(&self, id: Id, p: Position) -> Option<f64> {
+    fn get(&self, id: Id, p: Position) -> Option<f32> {
         self.calls[id].set(self.calls[id].get() + 1);
         let value = self.sampler.get(id, p);
         if value.is_none() {
@@ -20,16 +20,16 @@ impl Cache for Counting<'_> {
         }
         value
     }
-    fn put(&mut self, id: Id, p: Position, value: f64) {
+    fn put(&mut self, id: Id, p: Position, value: f32) {
         self.sampler.put(id, p, value);
     }
-    fn cell(&self, id: Id, x: i32, y: i32, z: i32) -> Option<[f64; 8]> {
+    fn cell(&self, id: Id, x: i32, y: i32, z: i32) -> Option<[f32; 8]> {
         self.sampler.cell(id, x, y, z)
     }
     fn put_cell(&mut self, id: Id, cell: Cell) {
         self.sampler.put_cell(id, cell);
     }
-    fn corner(&self, id: Id, p: Position) -> Option<f64> {
+    fn corner(&self, id: Id, p: Position) -> Option<f32> {
         let value = self.sampler.corner(id, p);
         let counter = if value.is_some() {
             &self.corner_hits
@@ -39,16 +39,16 @@ impl Cache for Counting<'_> {
         counter.set(counter.get() + 1);
         value
     }
-    fn put_corner(&mut self, id: Id, p: Position, value: f64) {
+    fn put_corner(&mut self, id: Id, p: Position, value: f32) {
         self.sampler.put_corner(id, p, value);
     }
-    fn pair(&self, id: Id, key: u64) -> Option<f64> {
+    fn pair(&self, id: Id, key: u64) -> Option<f32> {
         self.sampler.pair(id, key)
     }
-    fn put_pair(&mut self, id: Id, key: u64, value: f64) {
+    fn put_pair(&mut self, id: Id, key: u64, value: f32) {
         self.sampler.put_pair(id, key, value);
     }
-    fn node_bound(&mut self, id: Id) -> Option<[f64; 2]> {
+    fn node_bound(&mut self, id: Id) -> Option<[f32; 2]> {
         self.sampler.node_bound(id)
     }
     fn node_y_free(&mut self, id: Id) -> bool {
@@ -186,9 +186,9 @@ fn staged_lerp_matches_scalar_trilerp() {
         for dy in 0..height {
             for dx in 0..width {
                 for dz in 0..width {
-                    let tx = f64::from(dx) / f64::from(width);
-                    let ty = f64::from(dy) / f64::from(height);
-                    let tz = f64::from(dz) / f64::from(width);
+                    let tx = dx as f32 / width as f32;
+                    let ty = dy as f32 / height as f32;
+                    let tz = dz as f32 / width as f32;
                     let scalar = lerp(
                         tz,
                         lerp(
@@ -226,14 +226,14 @@ fn min_max_short_circuit_skips_proven_arm() {
         skip_id: Option<Id>,
     }
     impl Cache for SkipCounting {
-        fn get(&self, id: Id, _position: Position) -> Option<f64> {
+        fn get(&self, id: Id, _position: Position) -> Option<f32> {
             if Some(id) == self.skip_id {
                 self.skipped_probes.fetch_add(1, Ordering::SeqCst);
             }
             None
         }
-        fn put(&mut self, _id: Id, _position: Position, _value: f64) {}
-        fn cell(&self, _id: Id, _x: i32, _y: i32, _z: i32) -> Option<[f64; 8]> {
+        fn put(&mut self, _id: Id, _position: Position, _value: f32) {}
+        fn cell(&self, _id: Id, _x: i32, _y: i32, _z: i32) -> Option<[f32; 8]> {
             None
         }
         fn put_cell(&mut self, _id: Id, _cell: Cell) {}
@@ -265,11 +265,11 @@ fn min_max_short_circuit_skips_proven_arm() {
     };
     // Sanity: plain eval works through the new Cache defaults.
     let v = eval(&runtime, &mut cache, zero, p);
-    assert_eq!(v.to_bits(), 0.0f64.to_bits());
+    assert_eq!(v.to_bits(), 0.0f32.to_bits());
     // Find a real `min(a, b)` where `a < node_bound(b)[0]` (strict,
     // mirroring vanilla `Ap2`): evaluating the `min` node must not probe
     // `b` at all, and still return `a`'s bits.
-    let mut skipped: Option<(Id, Id, Id, f64)> = None;
+    let mut skipped: Option<(Id, Id, Id, f32)> = None;
     let mut analyzer = DensitySampler::new(&runtime);
     for (id, node) in runtime.nodes.iter().enumerate() {
         if let Node::Binary(Binary::Min, a, b) = node {
@@ -347,7 +347,7 @@ fn min_max_short_circuit_skips_proven_arm() {
             unreachable!()
         };
         assert!(
-            lo <= from.min(to) && hi >= from.max(to),
+            lo <= from.min(to) as f32 && hi >= from.max(to) as f32,
             "gradient bound [{lo}, {hi}] must span endpoints [{}, {}]",
             from.min(to),
             from.max(to)
@@ -474,7 +474,7 @@ fn diagnostic_counters_are_gated_and_value_neutral() {
     let field = runtime.field("final_density").unwrap();
     let positions = [(3, -17, 9), (-129, 200, 65), (1000, -64, -1000), (0, 0, 0)];
     let mut plain = DensitySampler::new(&runtime);
-    let expected: Vec<u64> = positions
+    let expected: Vec<u32> = positions
         .iter()
         .map(|(x, y, z)| {
             eval(
@@ -608,7 +608,7 @@ fn scalar_density_bits_stable_across_entry_points() {
 }
 
 /// Strictness acceptance: at equality the short-circuit must NOT fire, so
-/// `+0.0`/`-0.0` keep baseline `f64::min`/`max` bits. Both signed-zero
+/// `+0.0`/`-0.0` keep baseline `f32::min`/`max` bits. Both signed-zero
 /// permutations are exercised: with counters on, no short-circuit is
 /// recorded and bits match the plain baseline.
 #[test]
@@ -629,7 +629,7 @@ fn min_max_short_circuit_never_fires_at_equality() {
     };
     // Find a real min node with a known bound; evaluate it with `a` exactly
     // equal to the bound edge: strict `<` must not fire.
-    let mut target: Option<(Id, Id, f64)> = None;
+    let mut target: Option<(Id, Id, f32)> = None;
     let mut analyzer = DensitySampler::new(&runtime);
     for (id, node) in runtime.nodes.iter().enumerate() {
         if let Node::Binary(Binary::Min, a, b) = node
@@ -664,19 +664,19 @@ fn min_max_short_circuit_never_fires_at_equality() {
             "strict `<` must not fire when a == bound edge"
         );
     }
-    // Both signed-zero permutations keep baseline `f64::min`/`max` bits
+    // Both signed-zero permutations keep baseline `f32::min`/`max` bits
     // (documents why equality never short-circuits): IEEE `minNum` returns
     // `-0.0` whenever either side is `-0.0`, so returning `a` directly at
     // equality would flip bits when `a` is `+0.0` and `b` is `-0.0`.
-    for (x, y) in [(0.0f64, -0.0f64), (-0.0f64, 0.0f64)] {
-        assert_eq!(x.min(y).to_bits(), (-0.0f64).to_bits());
-        assert_eq!(x.max(y).to_bits(), (0.0f64).to_bits());
+    for (x, y) in [(0.0f32, -0.0f32), (-0.0f32, 0.0f32)] {
+        assert_eq!(x.min(y).to_bits(), (-0.0f32).to_bits());
+        assert_eq!(x.max(y).to_bits(), (0.0f32).to_bits());
     }
     // The flip itself: returning `a` (+0.0) instead of evaluating
     // `min(a, b)` (-0.0) changes bits — hence strict `<`/`>`.
     assert_ne!(
-        0.0f64.to_bits(),
-        0.0f64.min(-0.0f64).to_bits(),
+        0.0f32.to_bits(),
+        0.0f32.min(-0.0f32).to_bits(),
         "returning a=+0.0 at equality would flip baseline min bits"
     );
 }

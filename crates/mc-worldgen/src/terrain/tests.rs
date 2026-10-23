@@ -5,6 +5,69 @@ use mc_world::chunk::{MAX_Y, MIN_Y, OVERWORLD_GEOMETRY};
 use std::collections::BTreeMap;
 
 #[test]
+fn ore_boundary_culling_preserves_cells_and_exposure() {
+    let g = TerrainGenerator::new(42, tiny_registry());
+    let mut rule = g.ores.rules()[0].clone();
+    rule.y = YRange { min: -64, max: 319 };
+    rule.discard_chance_on_air_exposure = 0.5;
+    let mut placed = 0;
+    for pos in [ChunkPos { x: -1, z: -1 }, ChunkPos { x: 0, z: 0 }] {
+        let columns =
+            std::array::from_fn(|i| g.plan_column(pos, (i % 16) as u8, (i / 16) as u8, None));
+        let mut actual =
+            Chunk::empty_with_geometry(pos, g.air, g.biomes.default.clone(), g.geometry);
+        for y in -40..=-24 {
+            for z in 0..16 {
+                for x in 0..16 {
+                    actual.set_block(x, y, z, g.stone).unwrap();
+                }
+            }
+        }
+        let mut expected = actual.clone();
+        let mut actual_heights = HeightContext::for_chunk(&g, pos, &[], None);
+        let mut expected_heights = HeightContext::for_chunk(&g, pos, &[], None);
+        let mut actual_cache = g.ore_column_cache(&actual, &columns, &mut actual_heights);
+        let mut expected_cache = g.ore_column_cache(&expected, &columns, &mut expected_heights);
+        for dx in [-1, 0, 15, 16] {
+            for dz in [-1, 0, 15, 16] {
+                let anchor = [pos.x * 16 + dx, -32, pos.z * 16 + dz];
+                for hash in 0..32 {
+                    g.place_ore_vein(&mut actual, &mut actual_cache, &rule, anchor, hash, 17);
+                    // Original ordering: query every offset, then reject
+                    // out-of-chunk writes in place_ore_cell.
+                    let mut offsets = [[0; 3]; MAX_ORE_VEIN_SIZE];
+                    let count = ore_veins::ore_offsets(&mut offsets, hash, 17);
+                    for (i, &offset) in offsets[..count].iter().enumerate() {
+                        if g.ore_cell_can_generate(
+                            &mut expected_cache,
+                            &rule,
+                            anchor,
+                            offset,
+                            hash ^ i as u64,
+                        ) {
+                            g.place_ore_cell(&mut expected, &rule, anchor, offset);
+                        }
+                    }
+                }
+            }
+        }
+        for y in -40..=-24 {
+            for z in 0..16 {
+                for x in 0..16 {
+                    let block = actual.get_block(x, y, z);
+                    assert_eq!(block, expected.get_block(x, y, z), "{pos:?} ({x},{y},{z})");
+                    placed += usize::from(block == Some(rule.normal));
+                }
+            }
+        }
+    }
+    assert!(
+        placed > 0,
+        "boundary comparison must exercise actual ore writes"
+    );
+}
+
+#[test]
 fn diagnostic_cache_evicts_one_column_without_clearing_a_full_shard() {
     let cache = DiagnosticCache::default();
     let coordinate = |index: usize| (index as i32 * DIAGNOSTIC_CACHE_SHARDS as i32, 0);

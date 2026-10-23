@@ -117,7 +117,7 @@ impl DensityRuntime {
         x: i32,
         y: i32,
         z: i32,
-    ) -> [f64; N] {
+    ) -> [f32; N] {
         evaluate::direct_fields(self, fields, x, y, z)
     }
 }
@@ -151,7 +151,7 @@ impl SurfaceHeightSampler<'_> {
 
     /// Terrain density at one block through the region's shared lattice
     /// corners: the same value [`VanillaDensity::density`] computes.
-    pub(crate) fn density(&mut self, x: i32, y: i32, z: i32) -> f64 {
+    pub(crate) fn density(&mut self, x: i32, y: i32, z: i32) -> f32 {
         self.sampler.sample_terrain(self.field, x, y, z)
     }
 }
@@ -195,7 +195,7 @@ impl VanillaDensity {
                 // The vanilla Y lerp between this corner and the one above.
                 let dy = (0..height)
                     .rev()
-                    .find(|dy| value + f64::from(*dy) / f64::from(height) * (upper - value) > 0.0)
+                    .find(|dy| value + *dy as f32 / height as f32 * (upper - value) > 0.0)
                     .unwrap_or(0);
                 return Some((y + dy).min(max_y - 1));
             }
@@ -242,12 +242,12 @@ impl VanillaDensity {
         self.min_y() - 1
     }
 
-    pub fn density(&self, x: i32, y: i32, z: i32) -> f64 {
+    pub fn density(&self, x: i32, y: i32, z: i32) -> f32 {
         evaluate::direct_terrain(&self.runtime, self.final_density, x, y, z)
     }
 
     /// The terrain's sloped cheese before cave subtraction and vertical slides.
-    pub fn initial_density(&self, x: i32, y: i32, z: i32) -> f64 {
+    pub fn initial_density(&self, x: i32, y: i32, z: i32) -> f32 {
         evaluate::direct_terrain(&self.runtime, self.sloped_cheese, x, y, z)
     }
 
@@ -265,7 +265,7 @@ impl VanillaDensity {
 
     /// Reuses interpolation corners and compiled-node caches across a whole column.
     /// `output[0]` is min_y. No allocation occurs per block.
-    pub fn fill_density_column(&self, x: i32, z: i32, output: &mut [f64]) {
+    pub fn fill_density_column(&self, x: i32, z: i32, output: &mut [f32]) {
         assert_eq!(output.len(), self.height() as usize);
         let mut sampler = self.runtime.sampler();
         for (offset, density) in output.iter_mut().enumerate() {
@@ -277,7 +277,7 @@ impl VanillaDensity {
     /// Chunk output is Y-major, then Z, then X: `(y-min_y)*256 + z*16+x`.
     /// Each interpolated node retains the chunk's shared lattice corners;
     /// flat-cache nodes retain quart-column values across all vertical cells.
-    pub fn fill_density_chunk(&self, min_x: i32, min_z: i32, output: &mut [f64]) {
+    pub fn fill_density_chunk(&self, min_x: i32, min_z: i32, output: &mut [f32]) {
         assert_eq!(output.len(), self.height() as usize * 256);
         let mut sampler = DensitySampler::for_chunk(&self.runtime, min_x, min_z);
         let width = self.runtime.cell_width;

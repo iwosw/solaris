@@ -401,7 +401,7 @@ impl<'h> HeightContext<'h> {
 
     /// Native terrain density at one block through the shared halo sampler;
     /// `None` without vanilla density.
-    fn native_density(&mut self, world_x: i32, y: i32, world_z: i32) -> Option<f64> {
+    fn native_density(&mut self, world_x: i32, y: i32, world_z: i32) -> Option<f32> {
         self.native_sampler
             .as_mut()
             .map(|sampler| sampler.density(world_x, y, world_z))
@@ -1224,7 +1224,7 @@ impl TerrainGenerator {
                 Identifier::parse(native.biome).expect("validated vanilla biome identifier");
             let vegetation_density = self
                 .biome_supports_land_vegetation(&biome)
-                .then(|| self.vegetation_density(world_x, world_z, native.climate[1]));
+                .then(|| self.vegetation_density(world_x, world_z, f64::from(native.climate[1])));
             return TerrainDiagnosticSample {
                 surface_y,
                 biome,
@@ -1348,12 +1348,12 @@ impl TerrainGenerator {
             let sample = climate.sample(x, surface_y, z).climate;
             return TerrainSample {
                 surface_y,
-                temperature: sample[0],
-                moisture: sample[1],
-                continentalness: sample[2],
-                erosion: sample[3],
-                ridges: sample[5].abs(),
-                river: sample[5].abs(),
+                temperature: f64::from(sample[0]),
+                moisture: f64::from(sample[1]),
+                continentalness: f64::from(sample[2]),
+                erosion: f64::from(sample[3]),
+                ridges: f64::from(sample[5].abs()),
+                river: f64::from(sample[5].abs()),
                 wetland: 0.0,
                 climate_domain: 0.0,
             };
@@ -1876,7 +1876,17 @@ impl TerrainGenerator {
     ) {
         let mut offsets = [[0_i8; 3]; MAX_ORE_VEIN_SIZE];
         let offset_count = ore_veins::ore_offsets(&mut offsets, vein_hash, vein_size);
+        let min_x = i64::from(chunk.pos.x) * 16;
+        let min_z = i64::from(chunk.pos.z) * 16;
         for (index, &offset) in offsets[..offset_count].iter().enumerate() {
+            // Off-chunk cells can never be written here. Reject them before
+            // reconstructing their density and exposure halo; the remaining
+            // in-chunk cells still query cross-boundary neighbours normally.
+            let x = i64::from(anchor[0]) + i64::from(offset[0]);
+            let z = i64::from(anchor[2]) + i64::from(offset[2]);
+            if !(min_x..min_x + 16).contains(&x) || !(min_z..min_z + 16).contains(&z) {
+                continue;
+            }
             if self.ore_cell_can_generate(
                 column_cache,
                 rule,
@@ -2705,6 +2715,8 @@ impl ChunkGenerator for TerrainGenerator {
     }
 
     fn generate(&self, pos: ChunkPos) -> Chunk {
+        #[cfg(test)]
+        let mut stage_clock = profile_tests::StageClock::new();
         let mut chunk =
             Chunk::empty_with_geometry(pos, self.air, self.biomes.default.clone(), self.geometry);
         chunk
@@ -2713,6 +2725,8 @@ impl ChunkGenerator for TerrainGenerator {
         chunk
             .heightmaps
             .insert("WORLD_SURFACE".into(), Heightmap::zeroed());
+        #[cfg(test)]
+        stage_clock.end(5);
         let native_density = self.vanilla().map(|(climate, density)| {
             let min_x = world_block_coordinate(pos.x, 0);
             let min_z = world_block_coordinate(pos.z, 0);
@@ -2735,7 +2749,7 @@ impl ChunkGenerator for TerrainGenerator {
                     Identifier::parse(native.biome).expect("validated vanilla biome identifier");
                 let vegetation_density = self
                     .biome_supports_land_vegetation(&biome)
-                    .then(|| self.vegetation_density(x, z, native.climate[1]));
+                    .then(|| self.vegetation_density(x, z, f64::from(native.climate[1])));
                 self.diagnostic_cache.insert(
                     x,
                     z,
@@ -2748,7 +2762,11 @@ impl ChunkGenerator for TerrainGenerator {
             }
             values
         });
+        #[cfg(test)]
+        stage_clock.end(0);
         let village = self.village_plans_for_chunk(pos);
+        #[cfg(test)]
+        stage_clock.end(4);
         let columns = std::array::from_fn(|idx| {
             let lx = (idx % 16) as u8;
             let lz = (idx / 16) as u8;
@@ -2839,29 +2857,47 @@ impl ChunkGenerator for TerrainGenerator {
             }
             chunk.highest_opaque.set(plan.lx, plan.lz, motion_blocking);
         }
+        #[cfg(test)]
+        stage_clock.end(1);
         if self.geological_ores.is_some() {
             self.apply_caves(&mut chunk, &columns);
+            #[cfg(test)]
+            stage_clock.end(2);
             if let Some(geological_ores) = &self.geological_ores {
                 geological_ores.apply(self, &mut chunk);
             }
         } else {
+            #[cfg(test)]
+            stage_clock.end(3);
             {
                 let mut ore_cache = self.ore_column_cache(&chunk, &columns, &mut heights);
                 self.apply_caves_with_cache(&mut chunk, &columns, Some(&mut ore_cache));
+                #[cfg(test)]
+                stage_clock.end(2);
                 self.apply_ores_with_cache(&mut chunk, &mut ore_cache);
             }
         }
+        #[cfg(test)]
+        stage_clock.end(3);
         self.assign_biomes(&mut chunk, &columns);
+        #[cfg(test)]
+        stage_clock.end(0);
         if let Some(plans) = village.as_ref() {
             {
                 self.apply_village_pieces(&mut chunk, plans, &mut heights);
             }
         }
+        #[cfg(test)]
+        stage_clock.end(4);
         {
             self.apply_decorations(&mut chunk, &columns, &mut heights);
         }
+        #[cfg(test)]
+        stage_clock.end(3);
         chunk.status = "minecraft:full".into();
         chunk.mark_dirty();
+        #[cfg(test)]
+        stage_clock.end(5);
         chunk
     }
 }
@@ -2881,3 +2917,7 @@ mod village_water_tests;
 #[cfg(test)]
 #[path = "terrain/village_seed_tests.rs"]
 mod village_seed_tests;
+
+#[cfg(test)]
+#[path = "terrain/profile_tests.rs"]
+mod profile_tests;
