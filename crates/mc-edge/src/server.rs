@@ -2017,9 +2017,8 @@ async fn handle_connection(stream: TcpStream, server: Arc<EdgeServer>) -> anyhow
                     dh.respawn();
                 }
                 for mut input in inputs.drain(..) {
-                    // A muted identity keeps every command right it had; only
-                    // ordinary chat is dropped, with one private notice.
-                    if matches!(input, PlayerInput::Chat { .. })
+                    // Mutes block communication, not unrelated command rights.
+                    if input.is_communication()
                         && !server.hub.session_locked(id)
                         && server
                             .admin

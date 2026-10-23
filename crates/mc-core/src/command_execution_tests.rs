@@ -444,6 +444,186 @@ fn chat_routing_preserves_message_and_unprivileged_selector_literals() {
 }
 
 #[test]
+fn security_communication_includes_muted_commands() {
+    assert!(
+        PlayerInput::Chat {
+            connection: ConnectionId(1),
+            message: "hello".into(),
+        }
+        .is_communication()
+    );
+    for command in [
+        "me waves",
+        "msg Bob hello",
+        "tell Bob hello",
+        "w Bob hello",
+        "say hello",
+        "tellraw Bob {\"text\":\"hello\"}",
+        "title Bob title \"hello\"",
+        "  me   waves",
+    ] {
+        assert!(
+            PlayerInput::Command {
+                connection: ConnectionId(1),
+                command: command.into(),
+                permission_level: 0,
+            }
+            .is_communication(),
+            "mute must block {command}"
+        );
+    }
+    for command in [
+        "gamemode creative",
+        "time query daytime",
+        "settlement guide",
+        "help",
+        "",
+    ] {
+        assert!(
+            !PlayerInput::Command {
+                connection: ConnectionId(1),
+                command: command.into(),
+                permission_level: 2,
+            }
+            .is_communication(),
+            "mute must preserve {command}"
+        );
+    }
+}
+
+#[test]
+fn security_chat_burst_disconnects_only_the_sender() {
+    let (mut state, _, _) = fixture();
+    state.outbox_cap = 512;
+    let inputs: Vec<_> = (0..513)
+        .map(|_| PlayerInput::Chat {
+            connection: ConnectionId(1),
+            message: "spam".into(),
+        })
+        .collect();
+    let (_, deliveries, _) = crate::tick::run_tick(&mut state, &inputs);
+    let receiver = &deliveries
+        .iter()
+        .find(|(id, _)| *id == ConnectionId(2))
+        .unwrap()
+        .1;
+    assert!(
+        !receiver
+            .iter()
+            .any(|change| matches!(change, PlayerChange::Disconnect { .. })),
+        "a permitted sender burst must not disconnect its recipients"
+    );
+    assert_eq!(
+        receiver
+            .iter()
+            .filter(|change| matches!(change, PlayerChange::StyledChat { .. }))
+            .count(),
+        9
+    );
+    let sender = &deliveries
+        .iter()
+        .find(|(id, _)| *id == ConnectionId(1))
+        .unwrap()
+        .1;
+    assert!(sender.iter().any(|change| matches!(change, PlayerChange::Disconnect { reason } if reason == "disconnect.spam")));
+}
+
+#[test]
+fn security_chat_and_message_aliases_share_the_sender_budget() {
+    let (mut state, _, _) = fixture();
+    let mut inputs: Vec<_> = (0..6)
+        .map(|_| PlayerInput::Chat {
+            connection: ConnectionId(1),
+            message: "hello".into(),
+        })
+        .collect();
+    for command in [
+        "me waves",
+        "msg Bob hello",
+        "tell Bob hello",
+        "w Bob spam",
+        "say spam",
+    ] {
+        inputs.push(PlayerInput::Command {
+            connection: ConnectionId(1),
+            command: command.into(),
+            permission_level: 2,
+        });
+    }
+    let (_, deliveries, _) = crate::tick::run_tick(&mut state, &inputs);
+    let receiver = &deliveries
+        .iter()
+        .find(|(id, _)| *id == ConnectionId(2))
+        .unwrap()
+        .1;
+    assert_eq!(
+        receiver
+            .iter()
+            .filter(|change| matches!(change, PlayerChange::StyledChat { .. }))
+            .count(),
+        9
+    );
+    assert_eq!(state.disconnects, [(ConnectionId(1), state.tick - 1)]);
+}
+
+#[test]
+fn security_experience_maximum_commands_saturate() {
+    let (mut state, alice, _) = fixture();
+    let inputs = [
+        "experience set @s 2147483647 levels",
+        "experience add @s 2147483647 points",
+        "experience add @s 2147483647 levels",
+    ]
+    .map(|command| PlayerInput::Command {
+        connection: ConnectionId(1),
+        command: command.into(),
+        permission_level: 2,
+    });
+    crate::tick::run_tick(&mut state, &inputs);
+    let xp = state.players[&alice].vitals.experience;
+    assert_eq!(xp.level, i32::MAX);
+    assert_eq!(xp.total, i32::MAX);
+    assert_eq!(xp.progress, 0.0);
+}
+
+#[test]
+fn security_chat_budget_decays_per_tick_and_is_per_sender() {
+    let (mut state, alice, bob) = fixture();
+    let inputs: Vec<_> = [ConnectionId(1), ConnectionId(2)]
+        .into_iter()
+        .flat_map(|connection| {
+            (0..9).map(move |_| PlayerInput::Chat {
+                connection,
+                message: "hello".into(),
+            })
+        })
+        .collect();
+    crate::tick::run_tick(&mut state, &inputs);
+    assert!(state.disconnects.is_empty());
+    for entity in [alice, bob] {
+        assert_eq!(state.players[&entity].chat_spam_ticks, 180);
+    }
+    for _ in 0..20 {
+        crate::tick::run_tick(&mut state, &[]);
+    }
+    assert_eq!(state.players[&alice].chat_spam_ticks, 160);
+    crate::tick::run_tick(
+        &mut state,
+        &[PlayerInput::Chat {
+            connection: ConnectionId(1),
+            message: "another message".into(),
+        }],
+    );
+    assert!(state.disconnects.is_empty());
+    assert_eq!(state.players[&alice].chat_spam_ticks, 179);
+    assert_eq!(state.players[&bob].chat_spam_ticks, 159);
+    for _ in 0..180 {
+        crate::tick::run_tick(&mut state, &[]);
+    }
+    assert_eq!(state.players[&alice].chat_spam_ticks, 0);
+}
+
+#[test]
 fn command_boundary_enforces_operator_level() {
     let (mut state, alice, _) = fixture();
     crate::tick::run_tick(

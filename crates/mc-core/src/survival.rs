@@ -423,7 +423,9 @@ impl Experience {
         }
         while self.progress >= 1.0 {
             self.progress = (self.progress - 1.0) * Self::points_for_level(self.level) as f32;
-            self.level += 1;
+            // Level grants share vanilla's saturating i32 ceiling. At that
+            // ceiling the full bar is still consumed, so the loop progresses.
+            self.add_levels(1);
             self.progress /= Self::points_for_level(self.level) as f32;
         }
     }

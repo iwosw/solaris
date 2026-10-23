@@ -101,7 +101,7 @@ Advertised roots come from [command_tree.rs](../crates/mc-edge/src/command_tree.
 | `/give`, `/clear`, `/kill`, `/summon` | `implemented` | Spawn/item plumbing incl. villager/item NBT fixes |
 | `/time`, `/weather`, `/difficulty`, `/gamerule` | `implemented` | Clock/weather/rule authority |
 | `/setblock`, `/fill`, `/forceload`, `/worldborder` | `implemented` | Edit/ticket/border paths |
-| `/experience`, `/xp`, `/enchant`, `/effect` | `implemented` | XP/enchant/effect application |
+| `/experience`, `/xp`, `/enchant`, `/effect` | `implemented` | XP levels and total points saturate at `i32::MAX`; full XP bars at the level ceiling consume points without wrapping the level |
 | `/spawnpoint`, `/setworldspawn`, `/seed` | `implemented` | Spawn/seed reads |
 | `/say`, `/tellraw`, `/title`, `/bossbar` | `implemented` | Broadcast/presentation (bossbars session-kept) |
 | `/advancement`, `/team`, `/scoreboard`, `/locate` | `implemented` | Meta/progress/lookup |

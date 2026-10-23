@@ -2606,6 +2606,7 @@ fn run_dimension_tick_inner<'a>(
     let previous_weather = crate::weather::view(state);
     for player in state.players.values_mut() {
         player.statistics.advance_tick(state.tick);
+        player.chat_spam_ticks = player.chat_spam_ticks.saturating_sub(1);
     }
     crate::chunk_tickets::refresh(state);
     state.refresh_active_chunks(state.tick + 1);
@@ -4620,6 +4621,11 @@ fn apply_inputs<'a>(
             continue;
         }
         if auth::refuse_input(state, input) {
+            continue;
+        }
+        if input.is_communication()
+            && !input::social::admit_communication(state, input.connection())
+        {
             continue;
         }
         if let PlayerInput::AuthorizedBuild { authorization } = input {

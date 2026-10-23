@@ -435,9 +435,19 @@ the login refusal shows the expiration line, and `/banlist` stops listing it.
 Anything that does not parse as a duration is the first word of the reason, so
 vanilla `/ban <player> <reason>` is unchanged. `/mute <player> [duration]
 [reason]` and `/unmute <player>` use `muted-players.json` in the same directory:
-a muted identity keeps every command right and only its ordinary chat is refused
-with a private "You are muted." notice. `/warn <player> [reason]` delivers one
-private warning line to an online player and keeps no record.
+a muted identity cannot send ordinary chat or native communication commands
+(`/me`, `/msg`, `/tell`, `/w`, `/say`, `/tellraw`, `/title`); other command rights
+are unchanged. Refused messages receive a private "You are muted." notice.
+`/warn <player> [reason]` delivers one private warning line to an online player
+and keeps no record.
+
+Chat and native communication commands share a sender-owned spam counter:
+20 points per input, one point removed per tick, and disconnection at 200
+points (vanilla's chat-spam threshold). The threshold-crossing input is refused
+before broadcast, and queued inputs cannot continue broadcasting after the
+sender is disconnected. This protects other players' reliable queues from a
+single sender's burst. Operators share this communication limit; console
+commands are not charged.
 
 Connection admission has two optional per-address limits under `[network]`:
 `connection_throttle_ms` (minimum gap between two accepted connections from one

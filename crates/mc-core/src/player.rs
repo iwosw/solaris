@@ -66,6 +66,8 @@ pub struct PlayerState {
     pub(crate) airtime_safe_position: Option<[f64; 3]>,
     /// Connection-local fence: vehicle physics/corrections run at most once per tick.
     pub(crate) last_vehicle_move_tick: Option<u64>,
+    /// Connection-local chat/communication budget; never persisted.
+    pub(crate) chat_spam_ticks: u16,
     /// Connection-local vanilla teleport sequence; retained across respawns
     /// and dimension transfers, never persisted across reconnects.
     pub(crate) teleport_id: i32,
@@ -160,6 +162,7 @@ impl PlayerState {
             airtime_sample_tick: None,
             airtime_safe_position: None,
             last_vehicle_move_tick: None,
+            chat_spam_ticks: 0,
             teleport_id: 0,
             awaiting_teleport: None,
             using: None,

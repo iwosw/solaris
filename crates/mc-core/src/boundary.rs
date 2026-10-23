@@ -308,6 +308,19 @@ pub enum PlayerInput {
 }
 
 impl PlayerInput {
+    /// Native player text that shares mute and chat-spam admission.
+    #[must_use]
+    pub fn is_communication(&self) -> bool {
+        match self {
+            Self::Chat { .. } => true,
+            Self::Command { command, .. } => matches!(
+                command.split_whitespace().next(),
+                Some("me" | "msg" | "tell" | "w" | "say" | "tellraw" | "title")
+            ),
+            _ => false,
+        }
+    }
+
     pub fn connection(&self) -> ConnectionId {
         match self {
             Self::BuildPreviewFence { fence } => fence.connection(),

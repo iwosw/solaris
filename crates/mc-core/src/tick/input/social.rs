@@ -1,6 +1,42 @@
 use crate::boundary::{BlockPos, ConnectionId, PlayerChange};
 use crate::tick::TickState;
 
+/// Vanilla's TickThrottler(20, 200), checked before fan-out rather than after it.
+/// The counter travels with the player across respawns/dimensions, but not rejoins.
+pub(in crate::tick) fn admit_communication(
+    state: &mut TickState,
+    connection: ConnectionId,
+) -> bool {
+    if state
+        .disconnects
+        .iter()
+        .any(|(sealed, _)| *sealed == connection)
+    {
+        return false;
+    }
+    let Some(entity) = state.connections.entity_of(connection) else {
+        return false;
+    };
+    let Some(player) = state.players.get_mut(&entity) else {
+        return false;
+    };
+    player.chat_spam_ticks += 20;
+    if player.chat_spam_ticks < 200 {
+        return true;
+    }
+    // Seal exactly once, including when the sender's queue is already full.
+    // Later queued communication must not broadcast while Leave is pending.
+    state
+        .outbox
+        .entry(connection)
+        .or_default()
+        .push(PlayerChange::Disconnect {
+            reason: "disconnect.spam".to_owned(),
+        });
+    state.disconnects.push((connection, state.tick));
+    false
+}
+
 pub(in crate::tick) fn seen_advancements(
     state: &mut TickState,
     (connection, tab): (&ConnectionId, &Option<String>),

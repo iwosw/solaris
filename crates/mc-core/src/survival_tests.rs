@@ -173,6 +173,28 @@ fn experience_levels_follow_vanilla_thresholds() {
 }
 
 #[test]
+fn experience_maximum_level_consumes_full_bars_without_wrapping() {
+    for level in [i32::MAX - 1, i32::MAX] {
+        let mut xp = Experience {
+            level,
+            progress: 0.75,
+            total: i32::MAX,
+        };
+        xp.add_points(i32::MAX);
+        assert_eq!(xp.level, i32::MAX);
+        assert_eq!(xp.progress, 0.75);
+        assert_eq!(xp.total, i32::MAX);
+        xp.add_points(i32::MAX);
+        assert_eq!(xp.level, i32::MAX);
+        assert_eq!(xp.progress, 0.75);
+        xp.add_points(-i32::MAX);
+        assert_eq!(xp.level, i32::MAX - 1);
+        assert_eq!(xp.progress, 0.75);
+        assert_eq!(xp.total, 0);
+    }
+}
+
+#[test]
 fn falls_hurt_one_point_per_block_beyond_three() {
     assert_eq!(fall_damage(3.0), 0.0);
     assert_eq!(fall_damage(3.5), 1.0);
