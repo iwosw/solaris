@@ -413,6 +413,17 @@ fn reduce_damage_impl(
     if kind == DamageKind::Void {
         return amount;
     }
+    let amount = if matches!(
+        kind,
+        DamageKind::FallingAnvil | DamageKind::FallingStalactite
+    ) && row.appearance.equipment[5]
+        .as_ref()
+        .is_some_and(|helmet| !helmet.is_empty())
+    {
+        amount * 0.75
+    } else {
+        amount
+    };
     let bypass = kind.bypasses_armor();
     let armor = effective_attribute_impl(rules, row, "armor", 0.0, physical) as f32;
     let toughness = effective_attribute_impl(rules, row, "armor_toughness", 0.0, physical) as f32;

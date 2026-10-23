@@ -76,6 +76,87 @@ const CENTRE: ChunkPos = ChunkPos { x: 0, z: 0 };
 const EAST: ChunkPos = ChunkPos { x: 1, z: 0 };
 
 #[test]
+fn physics_slab_bottom_blocks_direct_skylight_below_it() {
+    let (mut world, registry) = world(None, true);
+    world.ensure_blocking(&want(&[CENTRE]));
+    world.set_block(8, 101, 8, registry.states.air);
+    world.fold_overlay();
+    assert_eq!(world.light_at(8, 100, 8).unwrap().0, 15);
+    let slab = registry
+        .blocks
+        .block(&mc_data::Identifier::parse("minecraft:stone_slab").unwrap())
+        .unwrap()
+        .default
+        .0;
+    world.set_block(8, 101, 8, slab);
+    world.fold_overlay();
+    assert!(world.light_at(8, 100, 8).unwrap().0 < 15);
+    let chunk = world.chunk(CENTRE).unwrap();
+    let baked = mc_world::light::compute_chunk_light(
+        [[None; 3], [None, Some(chunk), None], [None; 3]],
+        &registry.light,
+    );
+    assert!(baked.sky_at(8, 100, 8) < 15);
+    world.set_block(8, 101, 8, registry.states.air);
+    world.fold_overlay();
+    assert_eq!(world.light_at(8, 100, 8).unwrap().0, 15);
+}
+
+#[test]
+fn physics_complementary_slab_faces_block_light_and_shape_edits_relight() {
+    let (mut world, registry) = world(None, false);
+    world.ensure_blocking(&want(&[CENTRE]));
+    let slab = registry
+        .blocks
+        .block(&mc_data::Identifier::parse("minecraft:stone_slab").unwrap())
+        .unwrap();
+    let bottom = slab.default.0;
+    let mut props = registry
+        .blocks
+        .by_id(slab.default)
+        .unwrap()
+        .properties
+        .clone();
+    props.iter_mut().find(|(key, _)| key == "type").unwrap().1 = "top".into();
+    let top = registry
+        .blocks
+        .by_name_and_props(&slab.id, &props)
+        .unwrap()
+        .0;
+    for x in 2..=10 {
+        for y in 99..=101 {
+            for z in 7..=9 {
+                world.set_block(x, y, z, registry.states.stone);
+            }
+        }
+    }
+    for x in 3..=9 {
+        world.set_block(x, 100, 8, registry.states.air);
+    }
+    world.set_block(3, 100, 8, registry.states.torch);
+    world.set_block(5, 100, 8, bottom);
+    world.set_block(6, 100, 8, top);
+    world.fold_overlay();
+    assert_eq!(world.light_at(7, 100, 8).unwrap().1, 0);
+    world.set_block(6, 100, 8, bottom);
+    world.fold_overlay();
+    assert!(world.light_at(7, 100, 8).unwrap().1 > 0);
+    world.set_block(6, 100, 8, top);
+    world.fold_overlay();
+    assert_eq!(world.light_at(7, 100, 8).unwrap().1, 0);
+    let chunk = world.chunk(CENTRE).unwrap();
+    let baked = mc_world::light::compute_chunk_light(
+        [[None; 3], [None, Some(chunk), None], [None; 3]],
+        &registry.light,
+    );
+    assert_eq!(
+        baked.block_at(7, 100, 8),
+        0,
+        "fresh bake uses the same faces"
+    );
+}
+
+#[test]
 fn torch_place_remove_relights_across_chunk_boundary_without_full_recompute() {
     let (mut world, registry) = world(None, false);
     world.ensure_blocking(&want(&[CENTRE, EAST]));

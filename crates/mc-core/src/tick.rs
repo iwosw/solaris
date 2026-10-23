@@ -5239,22 +5239,11 @@ fn tick_players(state: &mut TickState, changes: &mut ChangeSet, intents: &mut Ve
             changes.entities_spawned.push(id);
         }
         // Eye-in-water for drowning.
-        let eye = [
-            mc_physics::mth::floor_i32(pos[0]),
-            mc_physics::mth::floor_i32(pos[1] + 1.62),
-            mc_physics::mth::floor_i32(pos[2]),
-        ];
-        let eye_in_water = state
-            .world
-            .block_at(eye[0], eye[1], eye[2])
-            .and_then(|id| state.registry.blocks.by_id(mc_world::BlockStateId(id)))
-            .is_some_and(|block| {
-                block.block.id.path() == "water"
-                    || block
-                        .properties
-                        .iter()
-                        .any(|(name, value)| name == "waterlogged" && value == "true")
-            });
+        let pose = state.entities.row(slot).appearance.pose;
+        let eye_in_water = crate::fluids::water_at_point(
+            state,
+            [pos[0], pos[1] + player_eye_height(pose), pos[2]],
+        );
         let vitals_tick = state
             .players
             .get_mut(&entity)

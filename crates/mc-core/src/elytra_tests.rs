@@ -32,6 +32,20 @@ fn start(state: &mut TickState) {
     );
 }
 
+fn support_landing(state: &mut TickState, player: EntityId) {
+    let slot = state.entities.slot_of(player).unwrap();
+    let mut pos = state.entities.pos(slot);
+    pos[1] = pos[1].floor();
+    state.entities.set_pos(slot, pos);
+    state.world.set_block(
+        pos[0].floor() as i32,
+        pos[1] as i32 - 1,
+        pos[2].floor() as i32,
+        state.registry.states.stone,
+    );
+    state.world.fold_overlay();
+}
+
 #[test]
 fn elytra_start_checks_airborne_equipment_fluid_riding_and_levitation() {
     for condition in [
@@ -244,6 +258,18 @@ fn elytra_fast_glide_is_not_corrected_and_shallow_descent_resets_fall_damage() {
             .any(|change| matches!(change, PlayerChange::PositionCorrected { .. }))
     );
     assert!(state.players[&player].fall_distance < 0.3);
+    run_tick(
+        &mut state,
+        &[PlayerInput::MoveStatus {
+            connection: ConnectionId(1),
+            on_ground: true,
+        }],
+    );
+    assert!(
+        state.players[&player].fall_flying,
+        "an unsupported ground claim is not a landing"
+    );
+    support_landing(&mut state, player);
     let (_, drains, _) = run_tick(
         &mut state,
         &[PlayerInput::MoveStatus {
@@ -288,6 +314,7 @@ fn elytra_fast_glide_is_not_corrected_and_shallow_descent_resets_fall_damage() {
         }],
     );
     assert_eq!(state.players[&player].fall_distance, 6.0);
+    support_landing(&mut state, player);
     run_tick(
         &mut state,
         &[PlayerInput::MoveStatus {

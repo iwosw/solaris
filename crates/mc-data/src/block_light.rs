@@ -85,6 +85,8 @@ pub struct BlockLightTable {
     opacity: Vec<u8>,
     propagates_sky: Vec<bool>,
     suffocating: Vec<bool>,
+    /// Six four-bit boundary masks for slab/stair light occlusion.
+    faces: Vec<u32>,
 }
 
 impl BlockLightTable {
@@ -123,6 +125,17 @@ impl BlockLightTable {
         self.suffocating.get(state_id as usize).copied()
     }
 
+    #[must_use]
+    pub fn faces(&self, state_id: u32) -> u32 {
+        self.faces.get(state_id as usize).copied().unwrap_or(0)
+    }
+
+    #[must_use]
+    pub fn face_occludes(&self, from: u32, to: u32, axis: usize, positive: bool) -> bool {
+        let side = axis * 2 + usize::from(positive);
+        ((self.faces(from) >> (side * 4)) | (self.faces(to) >> ((side ^ 1) * 4))) & 15 == 15
+    }
+
     /// Build a table from in-memory arrays; used by tests and by
     /// callers that don't want to stage a filesystem layout.
     /// Panics if the three arrays have different lengths.
@@ -138,6 +151,7 @@ impl BlockLightTable {
         let suffocating = opacity.iter().map(|opacity| *opacity == 15).collect();
         Self {
             version: version.into(),
+            faces: vec![0; emission.len()],
             emission,
             opacity,
             propagates_sky,
@@ -158,6 +172,7 @@ impl BlockLightTable {
         assert_eq!(emission.len(), suffocating.len());
         Self {
             version: version.into(),
+            faces: vec![0; emission.len()],
             emission,
             opacity,
             propagates_sky,
@@ -172,6 +187,7 @@ impl BlockLightTable {
         self.opacity.push(15);
         self.propagates_sky.push(false);
         self.suffocating.push(true);
+        self.faces.push(0);
     }
 
     /// Build a runtime table from `blocks.json` when the exact vanilla
@@ -217,12 +233,43 @@ impl BlockLightTable {
 
         Self {
             version: "blocks-report-conservative".to_string(),
+            faces: shape_faces(report, len),
             emission,
             opacity,
             propagates_sky,
             suffocating,
         }
     }
+}
+
+fn shape_faces(report: &[BlockReport], len: usize) -> Vec<u32> {
+    let mut faces = vec![0; len];
+    let shapes = crate::collision_shapes::vanilla_collision_shapes();
+    for block in report {
+        let name = block.id.path();
+        if !name.ends_with("_slab") && !name.ends_with("_stairs") {
+            continue;
+        }
+        for state in &block.states {
+            let Some(mask) = faces.get_mut(state.id as usize) else {
+                continue;
+            };
+            let props: Vec<_> = state
+                .properties
+                .iter()
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect();
+            if let Some(shape) = shapes.get_for_state(state.id, &block.id, &props) {
+                for axis in 0..3 {
+                    for positive in [false, true] {
+                        *mask |= u32::from(shape.face_quadrants(axis, positive))
+                            << ((axis * 2 + usize::from(positive)) * 4);
+                    }
+                }
+            }
+        }
+    }
+    faces
 }
 
 fn conservative_opacity(path: &str) -> u8 {
@@ -444,6 +491,7 @@ fn parse_raw(raw: RawTable) -> Result<BlockLightTable, BlockLightError> {
 
     Ok(BlockLightTable {
         version: raw.version,
+        faces: shape_faces(&crate::blocks::solaris_required_blocks_report(), expected),
         emission,
         opacity,
         propagates_sky,

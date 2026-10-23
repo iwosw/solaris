@@ -261,6 +261,8 @@ pub(in crate::tick) fn move_input(
         state.correct_position(*connection, new_pos, *yaw, *pitch);
     }
     // Charge only accepted movement, not a clipped client prediction.
+    let in_water =
+        crate::fluids::water_at_point(state, [new_pos[0], new_pos[1] + 0.01, new_pos[2]]);
     if let Some(player) = state.players.get_mut(&entity)
         && !player.creative()
         && !player.spectator()
@@ -268,14 +270,22 @@ pub(in crate::tick) fn move_input(
         let dx = new_pos[0] - old[0];
         let dz = new_pos[2] - old[2];
         let horizontal = (dx * dx + dz * dz).sqrt() as f32;
-        let rate = if player.sprinting {
+        let rate = if in_water {
+            crate::survival::SWIM_EXHAUSTION_PER_METER
+        } else if player.sprinting {
             crate::survival::SPRINT_EXHAUSTION_PER_METER
         } else {
             0.0
         };
         let before = (player.vitals.food, player.vitals.saturation);
-        player.vitals.add_exhaustion(horizontal * rate);
-        if was_grounded && new_pos[1] > old[1] && !on_ground {
+        let distance = if in_water {
+            let dy = (new_pos[1] - old[1]) as f32;
+            (horizontal * horizontal + dy * dy).sqrt()
+        } else {
+            horizontal
+        };
+        player.vitals.add_exhaustion(distance * rate);
+        if !in_water && was_grounded && new_pos[1] > old[1] && !on_ground {
             player.vitals.add_exhaustion(if player.sprinting {
                 crate::survival::SPRINT_JUMP_EXHAUSTION
             } else {
@@ -287,8 +297,7 @@ pub(in crate::tick) fn move_input(
             state.push_player(*connection, health);
         }
     }
-    // Fall damage on landing, on the client's ground flag as
-    // vanilla (`doCheckFallDamage`); water and climbables reset.
+    // Landing uses authoritative support; flowing/contained water cancels falls.
     let feet = [
         new_pos[0].floor() as i32,
         new_pos[1].floor() as i32,
@@ -298,7 +307,7 @@ pub(in crate::tick) fn move_input(
         .world
         .block_at(feet[0], feet[1], feet[2])
         .is_some_and(|id| {
-            id == state.registry.states.water
+            in_water
                 || state
                     .registry
                     .blocks
@@ -314,12 +323,27 @@ pub(in crate::tick) fn move_input(
             intents.push(intent);
         }
     }
+    let grounded = state.entities.ground(slot);
+    let landing_factor = if grounded {
+        state
+            .world
+            .block_at(feet[0], (new_pos[1] - 0.01).floor() as i32, feet[2])
+            .and_then(|id| state.registry.blocks.by_id(mc_world::BlockStateId(id)))
+            .map_or(1.0, |block| match block.block.id.path() {
+                "hay_block" | "honey_block" => 0.2,
+                "slime_block" if !sneaking => 0.0,
+                name if name.ends_with("_bed") => 0.5,
+                _ => 1.0,
+            })
+    } else {
+        1.0
+    };
     let damage = state.players.get_mut(&entity).map_or(0.0, |player| {
         let dy = new_pos[1] - old[1];
         if fall_flying && matches!(input, PlayerInput::Move { .. }) && dy > -0.5 {
             player.fall_distance = 0.0;
         }
-        player.fall(dy, *on_ground, cushioned)
+        (player.fall(dy, grounded, cushioned) * landing_factor).ceil()
     });
     if damage > 0.0 {
         let seq = state.next_seq(entity);
@@ -339,7 +363,7 @@ pub(in crate::tick) fn move_input(
             },
         });
     }
-    if *on_ground {
+    if grounded {
         crate::tick::elytra::land(state, entity);
     } else {
         crate::tick::elytra::refresh(state, entity);

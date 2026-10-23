@@ -48,6 +48,92 @@ fn setup() -> (TickState, BlockPos) {
     state.world.set_block(pos.x, 200, pos.z, stone);
     (state, pos)
 }
+
+#[test]
+fn physics_torch_does_not_support_sand() {
+    let (mut state, pos) = setup();
+    let torch = state
+        .registry
+        .blocks
+        .block(&Identifier::parse("minecraft:torch").unwrap())
+        .unwrap()
+        .default
+        .0;
+    let sand = state.registry.states.sand;
+    state.world.set_block(pos.x, pos.y - 1, pos.z, torch);
+    state.world.set_block(pos.x, pos.y, pos.z, sand);
+    let mut spawned = Vec::new();
+    start(&mut state, &mut vec![(pos, sand)], &mut spawned);
+    assert_eq!(spawned.len(), 1);
+}
+
+#[test]
+fn physics_powder_hardens_at_water_entry_not_pool_bottom() {
+    let (mut state, pos) = setup();
+    let powder = state
+        .registry
+        .blocks
+        .block(&Identifier::parse("minecraft:white_concrete_powder").unwrap())
+        .unwrap()
+        .default
+        .0;
+    let water = state.registry.states.water;
+    for y in 201..pos.y {
+        state.world.set_block(pos.x, y, pos.z, water);
+    }
+    state.world.set_block(pos.x, pos.y, pos.z, powder);
+    let mut writes = vec![(pos, powder)];
+    let mut spawned = Vec::new();
+    let mut removed = Vec::new();
+    start(&mut state, &mut writes, &mut spawned);
+    run(&mut state, &mut writes, &mut spawned, &mut removed);
+    assert_eq!(removed.len(), 1);
+    assert_eq!(
+        state.world.block_at(pos.x, pos.y - 1, pos.z),
+        concrete(&state.registry.blocks, powder)
+    );
+}
+
+#[test]
+fn physics_falling_hazards_queue_bounded_impact_damage() {
+    for (name, multiplier) in [("anvil", 2.0), ("pointed_dripstone", 6.0)] {
+        let (mut state, pos) = setup();
+        let block = state
+            .registry
+            .blocks
+            .block(&Identifier::parse(format!("minecraft:{name}")).unwrap())
+            .unwrap()
+            .default
+            .0;
+        let falling = state.spawn_mob(
+            FALLING_BLOCK_TYPE.unwrap(),
+            [pos.x as f64 + 0.5, 201.01, pos.z as f64 + 0.5],
+            1.0,
+        );
+        let slot = state.entities.slot_of(falling).unwrap();
+        state.entities.row_mut(slot).falling = Some(FallingState {
+            block_state: block,
+            age: 20,
+            touched_water: false,
+        });
+        state.entities.row_mut(slot).controls.fall_distance = 5.0;
+        let player = state.connections.entity_of(ConnectionId(1)).unwrap();
+        let player_slot = state.entities.slot_of(player).unwrap();
+        state
+            .entities
+            .set_pos(player_slot, [pos.x as f64 + 0.5, 201.0, pos.z as f64 + 0.5]);
+        let mut removed = Vec::new();
+        run(&mut state, &mut Vec::new(), &mut Vec::new(), &mut removed);
+        assert_eq!(removed, vec![falling]);
+        assert!(
+            state
+                .merge_damage
+                .iter()
+                .any(|(slot, damage)| state.entities.body(*slot).id == player
+                    && damage.amount == 5.0 * multiplier)
+        );
+    }
+}
 #[test]
 fn source_becomes_retained_entity_then_lands_once() {
     let (mut state, pos) = setup();

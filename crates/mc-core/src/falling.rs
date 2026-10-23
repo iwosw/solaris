@@ -92,8 +92,16 @@ pub(crate) fn gravity(blocks: &BlockRegistry, id: u32) -> bool {
     })
 }
 fn enter(state: &TickState, block: u32) -> bool {
-    block == state.registry.states.air
-        || crate::fluids::fluid_at(&state.registry.states, block).is_some()
+    crate::fluids::fluid_at(&state.registry.states, block).is_some()
+        || state
+            .registry
+            .blocks
+            .by_id(BlockStateId(block))
+            .is_some_and(|entry| {
+                mc_data::collision_shapes::vanilla_collision_shapes()
+                    .get_for_state(block, &entry.block.id, &entry.properties)
+                    .is_some_and(|shape| shape.is_empty())
+            })
 }
 fn set(state: &mut TickState, writes: &mut Vec<(BlockPos, u32)>, pos: BlockPos, block: u32) {
     state.world.set_block(pos.x, pos.y, pos.z, block);
@@ -258,10 +266,20 @@ pub(crate) fn run(
             old[1] + resolved.delta.y,
             old[2] + resolved.delta.z,
         ];
+        state.entities.row_mut(slot).controls.fall_distance += (old[1] - next[1]).max(0.0);
+        let powder = state
+            .registry
+            .blocks
+            .by_id(BlockStateId(falling.block_state))
+            .is_some_and(|entry| entry.block.id.path().ends_with("_concrete_powder"));
+        let mut water_landing = None;
         let Some(samples) = mc_physics::sweep_sample_count(resolved.delta, 0.25) else {
             continue;
         };
-        for sample in 0..=samples {
+        'sweep: for sample in 0..=if powder { samples } else { 0 } {
+            if !powder {
+                break;
+            }
             let t = sample as f64 / samples.max(1) as f64;
             let center = [
                 old[0] + resolved.delta.x * t,
@@ -275,22 +293,43 @@ pub(crate) fn run(
                     for z in ((center[2] - 0.49).floor() as i32)
                         ..=((center[2] + 0.49 - 1e-7).floor() as i32)
                     {
-                        falling.touched_water |= state
-                            .world
-                            .block_at(x, y, z)
+                        let block = state.world.block_at(x, y, z);
+                        let wet = block
                             .and_then(|block| crate::fluids::contained(state, block))
                             .is_some_and(|(fluid, _)| fluid == crate::fluids::Fluid::Water);
+                        falling.touched_water |= wet;
+                        if wet
+                            && block
+                                .and_then(|id| crate::fluids::fluid_at(&state.registry.states, id))
+                                .is_some()
+                        {
+                            water_landing = Some(BlockPos { x, y, z });
+                            break 'sweep;
+                        }
                     }
                 }
             }
         }
         falling.age = falling.age.saturating_add(1);
-        let landing = resolved.grounded.then_some(BlockPos {
-            x: next[0].floor() as i32,
-            y: next[1].floor() as i32,
-            z: next[2].floor() as i32,
+        let landing = water_landing.or_else(|| {
+            resolved.grounded.then_some(BlockPos {
+                x: next[0].floor() as i32,
+                y: next[1].floor() as i32,
+                z: next[2].floor() as i32,
+            })
         });
         if let Some(pos) = landing {
+            if resolved.grounded {
+                impact(state, slot, falling.block_state, next);
+            }
+            let landed_block = if resolved.grounded {
+                anvil_landing_state(state, slot, falling.block_state)
+            } else {
+                Some(falling.block_state)
+            };
+            if let Some(block) = landed_block {
+                falling.block_state = block;
+            }
             let current = state
                 .world
                 .block_at(pos.x, pos.y, pos.z)
@@ -303,21 +342,13 @@ pub(crate) fn run(
                 .block
                 .id
                 .path();
-            let shatter = matches!(
-                path,
-                "suspicious_sand" | "suspicious_gravel" | "pointed_dripstone"
-            );
-            let replaceable = crate::fluids::contained(state, current).is_some()
-                || state
-                    .registry
-                    .blocks
-                    .by_id(BlockStateId(current))
-                    .is_some_and(|block| {
-                        mc_data::block_semantics_26_1_2::passable_block_name(
-                            block.block.id.as_str(),
-                        )
-                    });
-            if !replaceable {
+            let shatter = landed_block.is_none()
+                || matches!(
+                    path,
+                    "suspicious_sand" | "suspicious_gravel" | "pointed_dripstone"
+                );
+            let replaceable = crate::tick::replaceable(state, current);
+            if !replaceable && !shatter {
                 drop(state, pos, falling.block_state, spawned);
             } else if !shatter {
                 let block = if falling.touched_water {
@@ -350,6 +381,103 @@ pub(crate) fn run(
             );
             state.entities.row_mut(slot).falling = Some(falling);
         }
+    }
+}
+
+fn anvil_landing_state(
+    state: &TickState,
+    slot: crate::entities::EntitySlot,
+    block: u32,
+) -> Option<u32> {
+    let entry = state.registry.blocks.by_id(BlockStateId(block))?;
+    let next = match entry.block.id.path() {
+        "anvil" => Some("minecraft:chipped_anvil"),
+        "chipped_anvil" => Some("minecraft:damaged_anvil"),
+        "damaged_anvil" => None,
+        _ => return Some(block),
+    };
+    let distance = (state.entities.row(slot).controls.fall_distance - 1.0).ceil();
+    if distance <= 0.0 {
+        return Some(block);
+    }
+    let roll = crate::farming::hash(&[
+        state.tick,
+        state.entities.body(slot).id.0 as u64,
+        u64::from(block),
+    ]);
+    if (roll as f64 / u64::MAX as f64) >= (0.05 + distance * 0.05).min(1.0) {
+        return Some(block);
+    }
+    next.and_then(|name| {
+        state.registry.blocks.by_name_and_props(
+            &Identifier::parse(name).expect("static anvil id"),
+            &entry.properties,
+        )
+    })
+    .map(|id| id.0)
+}
+
+/// Only a landing hazard queries neighboring entity buckets; ordinary falling
+/// sand and airborne hazards do not scan other entities.
+fn impact(
+    state: &mut TickState,
+    falling: crate::entities::EntitySlot,
+    block: u32,
+    position: [f64; 3],
+) {
+    let Some(entry) = state.registry.blocks.by_id(BlockStateId(block)) else {
+        return;
+    };
+    let (kind, multiplier) = match entry.block.id.path() {
+        "anvil" | "chipped_anvil" | "damaged_anvil" => {
+            (crate::survival::DamageKind::FallingAnvil, 2.0)
+        }
+        "pointed_dripstone" => (crate::survival::DamageKind::FallingStalactite, 6.0),
+        _ => return,
+    };
+    let distance = state.entities.row(falling).controls.fall_distance;
+    let amount = ((distance - 1.0).ceil().max(0.0) as f32 * multiplier).min(40.0);
+    if amount == 0.0 {
+        return;
+    }
+    let reach = state.entities.max_half_width() + 0.49;
+    let mut targets = Vec::new();
+    for x in ((position[0] - reach).floor() as i32).div_euclid(16)
+        ..=((position[0] + reach).floor() as i32).div_euclid(16)
+    {
+        for z in ((position[2] - reach).floor() as i32).div_euclid(16)
+            ..=((position[2] + reach).floor() as i32).div_euclid(16)
+        {
+            state
+                .entities
+                .for_each_slot_in_chunk(crate::boundary::ChunkPos { x, z }, |slot| {
+                    let body = state.entities.body(slot);
+                    let p = state.entities.pos(slot);
+                    if slot != falling
+                        && body.alive
+                        && (p[0] - position[0]).abs() < body.half_width + 0.49
+                        && (p[2] - position[2]).abs() < body.half_width + 0.49
+                        && p[1] < position[1] + 0.98
+                        && p[1] + body.height > position[1]
+                    {
+                        targets.push(slot);
+                    }
+                });
+        }
+    }
+    targets.sort_unstable();
+    targets.dedup();
+    for slot in targets {
+        state.merge_damage.push((
+            slot,
+            crate::tick::DamagePiece {
+                amount,
+                kind,
+                source: None,
+                physical: None,
+                custom_armor: false,
+            },
+        ));
     }
 }
 fn drop(state: &mut TickState, pos: BlockPos, block: u32, spawned: &mut Vec<EntityId>) {

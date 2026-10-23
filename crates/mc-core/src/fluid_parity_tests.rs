@@ -24,6 +24,66 @@ fn named(state: &TickState, name: &str, overrides: &[(&str, &str)]) -> u32 {
         .unwrap()
         .0
 }
+
+#[test]
+fn physics_lava_preserves_waterlogged_block_below() {
+    let (mut state, _, pos) = setup();
+    let wet = named(&state, "oak_fence", &[("waterlogged", "true")]);
+    let lava = state.registry.states.lava_levels[0];
+    place(&mut state, pos, wet);
+    place(
+        &mut state,
+        BlockPos {
+            y: pos.y + 1,
+            ..pos
+        },
+        lava,
+    );
+    run(&mut state, 30);
+    assert_eq!(state.world.block_at(pos.x, pos.y, pos.z), Some(wet));
+}
+
+#[test]
+fn physics_waterlogged_slab_seals_its_bottom_face() {
+    let (mut state, _, pos) = setup();
+    let wet = named(
+        &state,
+        "oak_slab",
+        &[("type", "bottom"), ("waterlogged", "true")],
+    );
+    let air = state.registry.states.air;
+    place(
+        &mut state,
+        BlockPos {
+            y: pos.y - 1,
+            ..pos
+        },
+        air,
+    );
+    place(&mut state, pos, wet);
+    run(&mut state, 5);
+    assert_eq!(state.world.block_at(pos.x, pos.y - 1, pos.z), Some(air));
+}
+
+#[test]
+fn physics_water_selects_nearest_descent() {
+    let (mut state, _, pos) = setup();
+    let air = state.registry.states.air;
+    let water = state.registry.states.water;
+    place(
+        &mut state,
+        BlockPos {
+            x: pos.x + 1,
+            y: pos.y - 1,
+            ..pos
+        },
+        air,
+    );
+    place(&mut state, pos, water);
+    run(&mut state, 5);
+    assert_eq!(at(&state, pos, -1), air);
+    assert_eq!(at(&state, pos, 1), state.registry.states.water_levels[1]);
+}
 fn item(state: &TickState, name: &str) -> u32 {
     state
         .registry

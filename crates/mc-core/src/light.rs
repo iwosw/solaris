@@ -194,6 +194,9 @@ impl LightEngine {
             let mut strongest = (0_u8, 0_u8);
             for (direction, peer) in peers.iter().enumerate() {
                 if let Some(peer) = peer {
+                    if admission_face_blocked(&slots, cell, *peer, volume, direction, &self.table) {
+                        continue;
+                    }
                     let light = admission_light(&slots, *peer, volume);
                     strongest.0 = strongest.0.max(light.0);
                     strongest.1 = strongest.1.max(light.1);
@@ -299,12 +302,16 @@ impl LightEngine {
                 continue;
             }
             let best = (current.0.saturating_sub(1), current.1.saturating_sub(1));
-            for peer in admission_neighbours(&slots, cell, volume)
+            for (direction, peer) in admission_neighbours(&slots, cell, volume)
                 .into_iter()
-                .flatten()
+                .enumerate()
+                .filter_map(|(direction, peer)| peer.map(|peer| (direction, peer)))
             {
                 let old = admission_light(&slots, peer, volume);
                 if best.0 <= old.0 && best.1 <= old.1 {
+                    continue;
+                }
+                if admission_face_blocked(&slots, cell, peer, volume, direction, &self.table) {
                     continue;
                 }
                 let (cost, _) = admission_material(&slots, peer, volume, &self.table);
@@ -367,6 +374,7 @@ impl LightEngine {
         if self.table.emission(previous.0) == self.table.emission(next.0)
             && self.table.opacity(previous.0) == self.table.opacity(next.0)
             && self.table.propagates_sky(previous.0) == self.table.propagates_sky(next.0)
+            && self.table.faces(previous.0) == self.table.faces(next.0)
         {
             return Vec::new();
         }
@@ -466,6 +474,32 @@ fn admission_material(
             table.emission(state.0).unwrap_or(0),
         )
     })
+}
+
+fn admission_face_blocked(
+    slots: &[AdmissionSlot<'_>],
+    cell: usize,
+    peer: usize,
+    volume: usize,
+    direction: usize,
+    table: &BlockLightTable,
+) -> bool {
+    let block = |cell: usize| {
+        let local = cell % volume;
+        slots[cell / volume]
+            .chunk
+            .and_then(|chunk| {
+                chunk.get_block(
+                    (local % 16) as u8,
+                    chunk.geometry().min_y() + (local / 256) as i32,
+                    (local / 16 % 16) as u8,
+                )
+            })
+            .unwrap_or(BlockStateId(0))
+            .0
+    };
+    let axis = [0, 0, 2, 2, 1, 1][direction];
+    table.face_occludes(block(cell), block(peer), axis, direction % 2 == 1)
 }
 
 fn seed_admission_boundaries(

@@ -540,7 +540,9 @@ pub(crate) fn finish_with(
             // The reset only runs on contact during cooldown; without contact
             // the value is unused, so idle/decaying entities skip the map probe.
             let cooldown = if touch.is_some() {
-                if world.players.contains_key(&id) {
+                if world.players.contains_key(&id)
+                    || world.entities.row(slot).entity_life.vehicle.is_some()
+                {
                     10
                 } else {
                     300
@@ -791,7 +793,11 @@ pub(crate) fn finish_with(
             }
         };
         let source = world_mut(state, current);
-        let cooldown = if is_player { 10 } else { 300 };
+        let cooldown = if is_player || source.entities.row(slot).entity_life.vehicle.is_some() {
+            10
+        } else {
+            300
+        };
         source.entities.row_mut(slot).entity_life.portal = super::PortalState {
             elapsed: 0,
             cooldown,

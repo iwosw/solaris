@@ -103,6 +103,7 @@ fn locate_uses_non_village_start_and_actual_underground_height() {
                 start_chunk: (128, -2),
             }]
         }
+
     }
     let hit = search_structure(
         &Structures,

@@ -5,8 +5,8 @@
 //! fluid is scheduled only by neighbor writes or OLD lava ignition fuel.
 //! Waterlogged sources retain their enclosing block; buckets fill/drain them
 //! explicitly, while flowing water never washes a waterloggable block away.
-//! OLD's open-side spread is retained (no new slope-search behavior), with
-//! overworld water/lava delays of 5/30 ticks and lava drop-off of 2.
+//! Flow uses bounded shortest-descent selection and collision-face occlusion.
+//! Water/lava delays and horizontal drop-off follow the owning dimension.
 
 use crate::boundary::{BlockPos, EntityId};
 use crate::registry::ResolvedStates;
@@ -26,13 +26,58 @@ pub(crate) fn contained(state: &TickState, block: u32) -> Option<(Fluid, u8)> {
             .blocks
             .by_id(mc_world::BlockStateId(block))
             .filter(|entry| {
-                entry
-                    .properties
-                    .iter()
-                    .any(|(key, value)| key == "waterlogged" && value == "true")
+                entry.block.id.path() == "bubble_column"
+                    || entry
+                        .properties
+                        .iter()
+                        .any(|(key, value)| key == "waterlogged" && value == "true")
             })
             .map(|_| (Fluid::Water, 0))
     })
+}
+
+/// Point immersion includes flowing fluid height and pose-dependent eye samples.
+pub(crate) fn water_at_point(state: &TickState, point: [f64; 3]) -> bool {
+    let [x, y, z] = point.map(|v| v.floor() as i32);
+    let Some((Fluid::Water, level)) = state
+        .world
+        .block_at(x, y, z)
+        .and_then(|id| contained(state, id))
+    else {
+        return false;
+    };
+    let above = state
+        .world
+        .block_at(x, y + 1, z)
+        .and_then(|id| contained(state, id))
+        .is_some_and(|(fluid, _)| fluid == Fluid::Water);
+    let height = if above {
+        1.0
+    } else {
+        f64::from(amount(level)) / 9.0
+    };
+    point[1] < f64::from(y) + height
+}
+
+fn passage(state: &TickState, from: BlockPos, to: BlockPos) -> bool {
+    let (axis, positive) = if from.x != to.x {
+        (0, to.x > from.x)
+    } else if from.y != to.y {
+        (1, to.y > from.y)
+    } else {
+        (2, to.z > from.z)
+    };
+    let face = |pos: BlockPos, positive| {
+        let id = state.world.block_at(pos.x, pos.y, pos.z)?;
+        let block = state.registry.blocks.by_id(mc_world::BlockStateId(id))?;
+        mc_data::collision_shapes::vanilla_collision_shapes()
+            .get_for_state(id, &block.block.id, &block.properties)
+            .map(|shape| shape.face_quadrants(axis, positive))
+    };
+    match (face(from, positive), face(to, !positive)) {
+        (Some(a), Some(b)) => a | b != 15,
+        _ => false,
+    }
 }
 
 pub(crate) fn waterlogged(state: &TickState, block: u32, wet: bool) -> Option<u32> {
@@ -308,6 +353,9 @@ fn new_liquid(state: &TickState, pos: BlockPos, fluid: Fluid) -> u32 {
     let mut max = 0;
     let mut sources = 0;
     for step in SIDES {
+        if !passage(state, offset(pos, step), pos) {
+            continue;
+        }
         if let Some((_, level)) = fluid_of(offset(pos, step)) {
             if level == 0 {
                 sources += 1;
@@ -341,7 +389,7 @@ fn new_liquid(state: &TickState, pos: BlockPos, fluid: Fluid) -> u32 {
             return fluid.source(states);
         }
     }
-    if fluid_of(offset(pos, [0, 1, 0])).is_some() {
+    if fluid_of(offset(pos, [0, 1, 0])).is_some() && passage(state, offset(pos, [0, 1, 0]), pos) {
         return fluid.falling(states);
     }
     let left = max.saturating_sub(fluid.drop_off(state.dimension));
@@ -404,6 +452,33 @@ fn flow_to(
     set(state, writes, pos, new);
 }
 
+/// Search at most four horizontal steps (two for slow Overworld lava).
+/// The fixed recursion depth bounds work; reverse edges are excluded.
+fn slope_distance(
+    state: &TickState,
+    pos: BlockPos,
+    from: BlockPos,
+    fluid: Fluid,
+    depth: u8,
+    limit: u8,
+) -> u8 {
+    let below = offset(pos, [0, -1, 0]);
+    if passage(state, pos, below) && flow_into(state, below, fluid).is_some() {
+        return depth;
+    }
+    if depth == limit {
+        return u8::MAX;
+    }
+    let mut best = u8::MAX;
+    for step in SIDES {
+        let side = offset(pos, step);
+        if side != from && passage(state, pos, side) && flow_into(state, side, fluid).is_some() {
+            best = best.min(slope_distance(state, side, pos, fluid, depth + 1, limit));
+        }
+    }
+    best
+}
+
 /// Vanilla `FlowingFluid.spread`: down first; sideways only from a source
 /// or when nothing below takes the flow.
 fn spread(
@@ -419,11 +494,18 @@ fn spread(
     let below_block = state.world.block_at(below.x, below.y, below.z);
     let below_fluid = below_block.and_then(|block| contained(state, block));
     // Lava flowing down onto water makes stone.
-    if fluid == Fluid::Lava && below_fluid.is_some_and(|(other, _)| other == Fluid::Water) {
+    if fluid == Fluid::Lava
+        && below_block
+            .and_then(|block| fluid_at(&states, block))
+            .is_some_and(|(other, _)| other == Fluid::Water)
+        && passage(state, pos, below)
+    {
         set(state, writes, below, states.stone);
         return;
     }
-    if let Some(into) = flow_into(state, below, fluid) {
+    if passage(state, pos, below)
+        && let Some(into) = flow_into(state, below, fluid)
+    {
         let falling = fluid.falling(&states);
         if below_block != Some(falling) {
             flow_to(state, below, into, falling, writes, spawned);
@@ -439,8 +521,25 @@ fn spread(
         return;
     }
     let new = fluid.flowing(&states, left);
-    for step in SIDES {
+    let limit = if fluid == Fluid::Lava && state.dimension != crate::dimensions::Dimension::Nether {
+        2
+    } else {
+        4
+    };
+    let costs = SIDES.map(|step| {
         let side = offset(pos, step);
+        if passage(state, pos, side) && flow_into(state, side, fluid).is_some() {
+            slope_distance(state, side, pos, fluid, 0, limit)
+        } else {
+            u8::MAX
+        }
+    });
+    let best = costs.into_iter().min().unwrap_or(u8::MAX);
+    for (index, step) in SIDES.into_iter().enumerate() {
+        let side = offset(pos, step);
+        if costs[index] != best || !passage(state, pos, side) {
+            continue;
+        }
         let Some(into) = flow_into(state, side, fluid) else {
             continue;
         };

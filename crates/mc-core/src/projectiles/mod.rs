@@ -2,6 +2,7 @@
 
 pub(crate) mod embedded_projectiles;
 pub(crate) mod eye;
+
 pub mod fishing;
 pub(crate) mod flight;
 #[cfg(test)]

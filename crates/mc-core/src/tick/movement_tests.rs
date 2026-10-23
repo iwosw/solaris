@@ -20,6 +20,108 @@ fn kicked(changes: &[(ConnectionId, Vec<PlayerChange>)]) -> bool {
 }
 
 #[test]
+fn physics_landing_blocks_reduce_damage_without_trusting_ground_claims() {
+    for (name, expected) in [("hay_block", 4.0), ("slime_block", 0.0), ("stone", 20.0)] {
+        let (mut state, player, pos) = flat_player_fixture();
+        let block = state
+            .registry
+            .blocks
+            .block(&Identifier::parse(format!("minecraft:{name}")).unwrap())
+            .unwrap()
+            .default
+            .0;
+        state.world.set_block(
+            pos[0].floor() as i32,
+            pos[1].floor() as i32 - 1,
+            pos[2].floor() as i32,
+            block,
+        );
+        let slot = state.entities.slot_of(player).unwrap();
+        state.entities.set_pos(slot, [pos[0], pos[1] + 0.5, pos[2]]);
+        state.players.get_mut(&player).unwrap().fall_distance = 22.5;
+        state.entities.row_mut(slot).protected_until = 0;
+        run_tick(&mut state, &[movement([pos[0], pos[1] - 0.1, pos[2]])]);
+        assert_eq!(
+            state.players[&player].vitals.health,
+            20.0 - expected,
+            "{name}"
+        );
+        assert!(
+            state.entities.ground(slot),
+            "support, not the false client flag"
+        );
+    }
+}
+
+#[test]
+fn physics_water_eye_sample_uses_pose_and_flow_height() {
+    let (mut state, _, pos) = flat_player_fixture();
+    let x = pos[0].floor() as i32;
+    let y = pos[1].floor() as i32;
+    let z = pos[2].floor() as i32;
+    state
+        .world
+        .set_block(x, y + 1, z, state.registry.states.water);
+    let feet = [pos[0], y as f64 + 0.5, pos[2]];
+    let eye = |pose| {
+        [
+            feet[0],
+            feet[1] + crate::tick::player_eye_height(pose),
+            feet[2],
+        ]
+    };
+    assert!(crate::fluids::water_at_point(&state, eye(5)));
+    assert!(!crate::fluids::water_at_point(&state, eye(0)));
+    state
+        .world
+        .set_block(x, y + 1, z, state.registry.states.water_levels[7]);
+    assert!(!crate::fluids::water_at_point(&state, eye(5)));
+}
+
+#[test]
+fn physics_flowing_water_cancels_landing_damage() {
+    let (mut state, player, pos) = flat_player_fixture();
+    let slot = state.entities.slot_of(player).unwrap();
+    state.entities.set_pos(slot, [pos[0], pos[1] + 0.5, pos[2]]);
+    state.players.get_mut(&player).unwrap().fall_distance = 23.0;
+    state.world.set_block(
+        pos[0].floor() as i32,
+        pos[1].floor() as i32,
+        pos[2].floor() as i32,
+        state.registry.states.water_levels[3],
+    );
+    state.world.fold_overlay();
+    state.entities.row_mut(slot).protected_until = 0;
+    run_tick(&mut state, &[movement(pos)]);
+    assert_eq!(state.players[&player].vitals.health, 20.0);
+    assert_eq!(state.players[&player].fall_distance, 0.0);
+}
+
+#[test]
+fn physics_swimming_charges_water_distance_not_land_sprint() {
+    for sprinting in [false, true] {
+        let (mut state, player, pos) = flat_player_fixture();
+        let slot = state.entities.slot_of(player).unwrap();
+        state.entities.set_ground(slot, false);
+        state.players.get_mut(&player).unwrap().sprinting = sprinting;
+        let target = [pos[0] + 0.2, pos[1] + 0.2, pos[2]];
+        state.world.set_block(
+            target[0].floor() as i32,
+            target[1].floor() as i32,
+            target[2].floor() as i32,
+            state.registry.states.water,
+        );
+        let before = state.players[&player].vitals.exhaustion;
+        run_tick(&mut state, &[movement(target)]);
+        let added = state.players[&player].vitals.exhaustion - before;
+        assert!(
+            (added - (0.08_f32).sqrt() * 0.01).abs() < 1e-5,
+            "{sprinting}: {added}"
+        );
+    }
+}
+
+#[test]
 fn unsupported_non_descending_airtime_corrects_then_kicks() {
     let (mut state, player, pos) = flat_player_fixture();
     state.max_airtime_ticks = 3;

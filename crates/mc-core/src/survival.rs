@@ -87,6 +87,8 @@ pub enum DamageKind {
     HotFloor,
     Campfire,
     Fall,
+    FallingAnvil,
+    FallingStalactite,
     Drowning,
     Starvation,
     Poison,
@@ -135,6 +137,8 @@ impl DamageKind {
             (Self::HotFloor, _) => "minecraft:hot_floor",
             (Self::Campfire, _) => "minecraft:campfire",
             (Self::Fall, _) => "minecraft:fall",
+            (Self::FallingAnvil, _) => "minecraft:falling_anvil",
+            (Self::FallingStalactite, _) => "minecraft:falling_stalactite",
             (Self::Drowning, _) => "minecraft:drown",
             (Self::Starvation, _) => "minecraft:starve",
             (Self::Wither, _) => "minecraft:wither",
@@ -197,6 +201,8 @@ impl DamageKind {
             | Self::OnFire
             | Self::Lightning
             | Self::Fall
+            | Self::FallingAnvil
+            | Self::FallingStalactite
             | Self::Drowning
             | Self::Starvation
             | Self::Poison
@@ -516,6 +522,15 @@ fn reduce_damage_impl(
     if matches!(kind, DamageKind::Void | DamageKind::Starvation) {
         return amount.max(0.0);
     }
+    let amount = if matches!(
+        kind,
+        DamageKind::FallingAnvil | DamageKind::FallingStalactite
+    ) && armor.get(3).is_some_and(|helmet| !helmet.is_empty())
+    {
+        amount * 0.75
+    } else {
+        amount
+    };
     let mut stats = ArmorStats {
         armor: 0.0,
         toughness: 0.0,

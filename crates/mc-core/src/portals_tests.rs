@@ -374,6 +374,43 @@ fn items_and_mobs_wait_for_destination_then_transfer_once() {
 }
 
 #[test]
+fn physics_empty_vehicle_portal_cooldown_is_ten_ticks() {
+    for name in ["minecraft:oak_boat", "minecraft:minecart"] {
+        let (mut state, _) = worlds();
+        let source = frame(&mut state, BlockPos { x: 4, y: 70, z: 4 }, 2, 3, true);
+        light(&mut state, source);
+        let type_id = mc_data::entity_types::entity_type_contract_26_1_2_by_name(name)
+            .unwrap()
+            .protocol_id;
+        let id = state.spawn_mob(type_id, [4.5, 70.0, 4.5], 10.0);
+        let nether = state.other_dimensions.get_mut(&Dimension::Nether).unwrap();
+        load(nether, [0.5, 70.0, 0.5], 2);
+        portal_step(&mut state);
+        assert_eq!(
+            dimensions_travel::locate(&state, id).unwrap().0,
+            Dimension::Nether
+        );
+        let nether = state.other_dimensions.get_mut(&Dimension::Nether).unwrap();
+        let slot = nether.entities.slot_of(id).unwrap();
+        assert_eq!(nether.entities.row(slot).entity_life.portal.cooldown, 10);
+        nether.entities.set_pos(slot, [12.0, 75.0, 12.0]);
+        for _ in 0..10 {
+            portal_step(&mut state);
+        }
+        let nether = &state.other_dimensions[&Dimension::Nether];
+        assert_eq!(
+            nether
+                .entities
+                .row(nether.entities.slot_of(id).unwrap())
+                .entity_life
+                .portal
+                .cooldown,
+            0
+        );
+    }
+}
+
+#[test]
 fn end_portal_native_inside_shape_and_boss_exclusions() {
     let (mut state, id) = worlds();
     let portal = BlockPos { x: 8, y: 70, z: 8 };

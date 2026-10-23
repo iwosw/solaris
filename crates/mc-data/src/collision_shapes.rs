@@ -123,6 +123,38 @@ impl<'a> CollisionShape<'a> {
                     ]
             })
     }
+
+    /// Covered half-block squares on a boundary face (axis X/Y/Z).
+    /// Slab/stair boxes align with this grid; no allocation or raster scan.
+    #[must_use]
+    pub fn face_quadrants(self, axis: usize, positive: bool) -> u8 {
+        let boundary = if positive {
+            COLLISION_UNITS_PER_BLOCK
+        } else {
+            0
+        };
+        let a = (axis + 1) % 3;
+        let b = (axis + 2) % 3;
+        let half = COLLISION_UNITS_PER_BLOCK / 2;
+        let mut mask = 0;
+        for bounds in self.iter().map(CollisionBox::coordinates) {
+            if bounds[axis + if positive { 3 } else { 0 }] != boundary {
+                continue;
+            }
+            for u in 0..2 {
+                for v in 0..2 {
+                    if bounds[a] <= u * half
+                        && bounds[a + 3] >= (u + 1) * half
+                        && bounds[b] <= v * half
+                        && bounds[b + 3] >= (v + 1) * half
+                    {
+                        mask |= 1 << (u * 2 + v);
+                    }
+                }
+            }
+        }
+        mask
+    }
 }
 
 impl CollisionShapeTable {

@@ -999,6 +999,7 @@ fn poi_type_of(block: &Identifier) -> Identifier {
     Identifier::parse("minecraft:meeting").expect("static POI id")
 }
 
+
 /// Resolve a structure target: id must be a known vanilla structure, tags
 /// expand to member structures. Returns member ids plus the display name.
 fn resolve_structure_target(

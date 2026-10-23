@@ -24,7 +24,9 @@ pub(super) fn use_item(state: &mut TickState, actor: EntityId, hand: Hand) {
     if state.dimension != Dimension::Overworld {
         return;
     }
-    let Some(slot) = weapons::held_slot(state, actor, hand) else { return };
+    let Some(slot) = weapons::held_slot(state, actor, hand) else {
+        return;
+    };
     let player = &state.players[&actor];
     if player.spectator() || player.vitals.is_dead() {
         return;
@@ -32,10 +34,19 @@ pub(super) fn use_item(state: &mut TickState, actor: EntityId, hand: Hand) {
     if !player.creative() && !weapons::costs_allowed(state, actor, &[(slot, 1)], slot, None) {
         return;
     }
-    let Some((origin, _)) = weapons::geometry(state, actor, 0.0) else { return };
+    let Some((origin, _)) = weapons::geometry(state, actor, 0.0) else {
+        return;
+    };
     let mut stack = player.inventory.slots[slot].clone();
     stack.count = 1;
-    let request = EyeUse { actor, connection: player.connection, hand, origin, dimension: state.dimension, stack };
+    let request = EyeUse {
+        actor,
+        connection: player.connection,
+        hand,
+        origin,
+        dimension: state.dimension,
+        stack,
+    };
     crate::command_locate::submit_eye(state, request);
 }
 
@@ -45,32 +56,56 @@ pub(crate) fn complete(state: &mut TickState, request: EyeUse, destination: (i32
     {
         return;
     }
-    let Some(slot) = weapons::held_slot(state, request.actor, request.hand) else { return };
+    let Some(slot) = weapons::held_slot(state, request.actor, request.hand) else {
+        return;
+    };
     let player = &state.players[&request.actor];
-    if player.spectator() || player.vitals.is_dead()
+    if player.spectator()
+        || player.vitals.is_dead()
         || !can_stack(&player.inventory.slots[slot], &request.stack)
         || player.inventory.slots[slot].is_empty()
-        || (!player.creative() && !weapons::costs_allowed(state, request.actor, &[(slot, 1)], slot, None))
+        || (!player.creative()
+            && !weapons::costs_allowed(state, request.actor, &[(slot, 1)], slot, None))
     {
         return;
     }
-    let Some((origin, _)) = weapons::geometry(state, request.actor, 0.0) else { return };
+    let Some((origin, _)) = weapons::geometry(state, request.actor, 0.0) else {
+        return;
+    };
     // A delayed search must not throw from a departed location or point at a
     // stale nearest result after the player teleports elsewhere.
-    if origin.iter().zip(request.origin).any(|(now, before)| (now - before).abs() > 8.0) {
+    if origin
+        .iter()
+        .zip(request.origin)
+        .any(|(now, before)| (now - before).abs() > 8.0)
+    {
         return;
     }
     let owner_slot = state.entities.slot_of(request.actor).expect("live player");
     let owner = state.entities.row(owner_slot).uuid;
     let target = flight_target(origin, destination);
-    let roll = crate::farming::hash(&[state.tick, request.actor.0 as u64, state.projectiles.spawned.len() as u64]);
-    let mut record = ProjectileState::new(ProjectileKind::EyeOfEnder, Some(owner), request.stack.clone());
-    record.data = ProjectileData::Eye { origin, target, drop_item: !roll.is_multiple_of(5) };
+    let roll = crate::farming::hash(&[
+        state.tick,
+        request.actor.0 as u64,
+        state.projectiles.spawned.len() as u64,
+    ]);
+    let mut record = ProjectileState::new(
+        ProjectileKind::EyeOfEnder,
+        Some(owner),
+        request.stack.clone(),
+    );
+    record.data = ProjectileData::Eye {
+        origin,
+        target,
+        drop_item: !roll.is_multiple_of(5),
+    };
     if super::launch(state, record, origin, [0.0; 3]).is_none() {
         return;
     }
     let player = state.players.get_mut(&request.actor).expect("live player");
-    player.statistics.increment(StatType::Used, request.stack.item_id, 1);
+    player
+        .statistics
+        .increment(StatType::Used, request.stack.item_id, 1);
     if !player.creative() {
         decrement_stack(&mut player.inventory.slots[slot]);
     }
@@ -78,20 +113,35 @@ pub(crate) fn complete(state: &mut TickState, request: EyeUse, destination: (i32
 }
 
 fn flight_target(origin: [f64; 3], destination: (i32, i32, i32)) -> [f64; 3] {
-    let target = [f64::from(destination.0), f64::from(destination.1), f64::from(destination.2)];
+    let target = [
+        f64::from(destination.0),
+        f64::from(destination.1),
+        f64::from(destination.2),
+    ];
     let dx = target[0] - origin[0];
     let dz = target[2] - origin[2];
     let distance = dx.hypot(dz);
     if distance > 12.0 {
-        [origin[0] + dx * 12.0 / distance, origin[1] + 8.0, origin[2] + dz * 12.0 / distance]
+        [
+            origin[0] + dx * 12.0 / distance,
+            origin[1] + 8.0,
+            origin[2] + dz * 12.0 / distance,
+        ]
     } else {
         target
     }
 }
 
 pub(super) fn step(state: &mut TickState, id: EntityId, record: &ProjectileState) -> bool {
-    let Some(slot) = state.entities.slot_of(id) else { return true };
-    let ProjectileData::Eye { origin, target, drop_item } = record.data else {
+    let Some(slot) = state.entities.slot_of(id) else {
+        return true;
+    };
+    let ProjectileData::Eye {
+        origin,
+        target,
+        drop_item,
+    } = record.data
+    else {
         // A vanilla imported/summoned eye has no retained destination.
         return record.age > 80;
     };
@@ -110,9 +160,14 @@ pub(super) fn step(state: &mut TickState, id: EntityId, record: &ProjectileState
     // wiki-level guidance, not a copy of vanilla's oscillating integrator.
     let time = (f64::from(record.age) / 40.0).min(1.0);
     let progress = time * time * (3.0 - 2.0 * time);
-    let position = std::array::from_fn(|axis| origin[axis] + (target[axis] - origin[axis]) * progress);
+    let position =
+        std::array::from_fn(|axis| origin[axis] + (target[axis] - origin[axis]) * progress);
     let old = state.entities.pos(slot);
-    super::set_flight(state, slot, std::array::from_fn(|axis| position[axis] - old[axis]));
+    super::set_flight(
+        state,
+        slot,
+        std::array::from_fn(|axis| position[axis] - old[axis]),
+    );
     state.entities.set_pos(slot, position);
     false
 }

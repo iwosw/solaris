@@ -444,7 +444,9 @@ pub fn apply_block_change_to_light(
     let prev_sky_pass = table.propagates_sky(prev_state.0).unwrap_or(true);
     let new_sky_pass = table.propagates_sky(new_state.0).unwrap_or(true);
 
-    if prev_emit == new_emit && prev_op == new_op && prev_sky_pass == new_sky_pass {
+    let shape_changed = table.faces(prev_state.0) != table.faces(new_state.0);
+    if prev_emit == new_emit && prev_op == new_op && prev_sky_pass == new_sky_pass && !shape_changed
+    {
         return Vec::new();
     }
 
@@ -479,15 +481,16 @@ pub fn apply_block_change_to_light(
         geometry,
     );
 
-    if prev_op != new_op || prev_sky_pass != new_sky_pass {
-        let reseed_column = highest_opaque_changed(
-            chunks,
-            table,
-            edit_coord,
-            world_y,
-            prev_sky_pass,
-            new_sky_pass,
-        );
+    if prev_op != new_op || prev_sky_pass != new_sky_pass || shape_changed {
+        let reseed_column = shape_changed
+            || highest_opaque_changed(
+                chunks,
+                table,
+                edit_coord,
+                world_y,
+                prev_sky_pass,
+                new_sky_pass,
+            );
         incremental_sky_light(
             &mut window,
             &mut changed,
@@ -604,6 +607,38 @@ fn coord_parts(coord: WCoord) -> (usize, usize, usize, usize, usize) {
 fn window_slot_is_some(window: &[[Option<ChunkLight>; 3]; 3], coord: WCoord) -> bool {
     let (dx, dz, _, _, _) = coord_parts(coord);
     window[dz][dx].is_some()
+}
+
+fn faces_at_coord(
+    chunks: &[[Option<&Chunk>; 3]; 3],
+    table: &BlockLightTable,
+    coord: WCoord,
+    geometry: ChunkGeometry,
+) -> u32 {
+    let (cx, cz, lx, ly, lz) = coord_parts(coord);
+    chunks[cz][cx]
+        .and_then(|chunk| chunk.get_block(lx as u8, geometry.min_y() + ly as i32, lz as u8))
+        .map_or(0, |state| table.faces(state.0))
+}
+
+fn face_blocked(
+    chunks: &[[Option<&Chunk>; 3]; 3],
+    table: &BlockLightTable,
+    from: WCoord,
+    to: WCoord,
+    geometry: ChunkGeometry,
+) -> bool {
+    let (axis, positive) = if from.0 != to.0 {
+        (0, to.0 > from.0)
+    } else if from.1 != to.1 {
+        (1, to.1 > from.1)
+    } else {
+        (2, to.2 > from.2)
+    };
+    let side = axis * 2 + usize::from(positive);
+    let a = faces_at_coord(chunks, table, from, geometry);
+    let b = faces_at_coord(chunks, table, to, geometry);
+    ((a >> (side * 4)) | (b >> ((side ^ 1) * 4))) & 15 == 15
 }
 
 #[inline]
@@ -820,6 +855,9 @@ fn incremental_block_light(
             if block_light_at(window, ncoord) >= best_propagated {
                 continue;
             }
+            if face_blocked(chunks, table, coord, ncoord, geometry) {
+                continue;
+            }
             let n_op = opacity_at_coord(chunks, table, ncoord, geometry);
             let cost = n_op.max(1);
             let propagated = cur.saturating_sub(cost);
@@ -874,9 +912,11 @@ fn incremental_sky_light(
     let new_self = if new_sky_pass {
         let mut all_open = true;
         let (gx, edit_ly, gz) = edit_coord;
-        for ly in edit_ly + 1..geometry.height() as usize {
+        for ly in edit_ly..geometry.height() as usize {
             let coord = (gx, ly, gz);
-            if !propagates_sky_at_coord(chunks, table, coord, geometry) {
+            if !propagates_sky_at_coord(chunks, table, coord, geometry)
+                || face_blocked(chunks, table, (gx, ly + 1, gz), coord, geometry)
+            {
                 all_open = false;
                 break;
             }
@@ -904,7 +944,7 @@ fn incremental_sky_light(
     // opaque cell or once we hit any cell whose new value matches its
     // old.
     if reseed_column {
-        let column_open_above_self = new_self == 15;
+        let mut column_open_above_self = new_self == 15;
         let (gx, edit_ly, gz) = edit_coord;
         for ly in (0..edit_ly).rev() {
             let coord = (gx, ly, gz);
@@ -915,6 +955,8 @@ fn incremental_sky_light(
             if !cell_passes {
                 break;
             }
+            column_open_above_self &=
+                !face_blocked(chunks, table, (gx, ly + 1, gz), coord, geometry);
             let new_val = if column_open_above_self {
                 // Walking down through an open column: sky stays at 15.
                 15
@@ -995,6 +1037,9 @@ fn incremental_sky_light(
                 continue;
             }
             if sky_light_at(window, ncoord) >= best_propagated {
+                continue;
+            }
+            if face_blocked(chunks, table, coord, ncoord, geometry) {
                 continue;
             }
             let n_op = opacity_at_coord(chunks, table, ncoord, geometry);
@@ -1089,12 +1134,36 @@ fn compute_chunk_light_slow_in(
         &mut ws.emitters,
     );
 
-    seed_sky_from_open_columns(&ws.propagates_sky, &mut ws.sky, &mut ws.queue, world_height);
-    bfs(&ws.opacity, &mut ws.sky, &mut ws.queue, world_height);
+    seed_sky_from_open_columns(
+        &ws.propagates_sky,
+        &mut ws.sky,
+        &mut ws.queue,
+        world_height,
+        |from, to| {
+            let target = grid_idx(to.0, to.1, to.2);
+            let marked = ws.opacity[target] & 128 != 0
+                || (from.1 < world_height
+                    && ws.opacity[grid_idx(from.0, from.1, from.2)] & 128 != 0);
+            marked && face_blocked(&neighbourhood, table, from, to, geometry)
+        },
+    );
+    bfs(
+        &ws.opacity,
+        &mut ws.sky,
+        &mut ws.queue,
+        world_height,
+        |from, to| face_blocked(&neighbourhood, table, from, to, geometry),
+    );
 
     if !ws.emitters.is_empty() {
         ws.queue.extend(ws.emitters.iter().copied());
-        bfs(&ws.opacity, &mut ws.block, &mut ws.queue, world_height);
+        bfs(
+            &ws.opacity,
+            &mut ws.block,
+            &mut ws.queue,
+            world_height,
+            |from, to| face_blocked(&neighbourhood, table, from, to, geometry),
+        );
     }
 
     extract_centre_with_backend(&ws.sky, &ws.block, ws.kernel_backend, geometry)
@@ -1146,6 +1215,15 @@ fn neighbourhood_is_columnar_without_emitters(
             let Some(chunk) = *slot else {
                 continue;
             };
+            // Scalar height hints cannot certify directional shape occlusion.
+            if chunk.sections.iter().any(|section| {
+                section.palette().map_or_else(
+                    || table.faces(section.get(0, 0, 0).0) != 0,
+                    |palette| palette.iter().any(|state| table.faces(state.0) != 0),
+                )
+            }) {
+                return false;
+            }
             for lz in 0..SECTION_DIM {
                 for lx in 0..SECTION_DIM {
                     if let Some(top_y) = columnar_top_hint(chunk, lx as u8, lz as u8) {
@@ -1263,7 +1341,8 @@ fn populate_grids(
                 let base_ly = section_idx * SECTION_DIM;
                 if section.palette().is_none() {
                     let state = section.get(0, 0, 0);
-                    let op = table.opacity(state.0).unwrap_or(0);
+                    let op = table.opacity(state.0).unwrap_or(0)
+                        | if table.faces(state.0) != 0 { 128 } else { 0 };
                     let sky_pass = table.propagates_sky(state.0).unwrap_or(true);
                     let emit = table.emission(state.0).unwrap_or(0);
                     if op == 0 && sky_pass && emit == 0 {
@@ -1359,7 +1438,8 @@ fn populate_indirect_section(
             let ly = base_ly + cell / (SECTION_DIM * SECTION_DIM);
             let idx = grid_idx(cx * SECTION_DIM + lx, ly, cz * SECTION_DIM + lz);
             let state = palette[((word >> (offset * bits)) & mask) as usize];
-            opacity[idx] = table.opacity(state.0).unwrap_or(0);
+            opacity[idx] = table.opacity(state.0).unwrap_or(0)
+                | if table.faces(state.0) != 0 { 128 } else { 0 };
             propagates_sky[idx] = table.propagates_sky(state.0).unwrap_or(true);
             let emit = table.emission(state.0).unwrap_or(0);
             if emit > 0 {
@@ -1375,6 +1455,7 @@ fn seed_sky_from_open_columns(
     sky: &mut [u8],
     queue: &mut VecDeque<u32>,
     world_height: usize,
+    occludes: impl Fn(WCoord, WCoord) -> bool,
 ) {
     // Each column's direct sky is one interval [bottom, world_height).
     // Its boundary consists of the bottom cell and the portions below
@@ -1384,7 +1465,7 @@ fn seed_sky_from_open_columns(
         for gz in 0..N_Z {
             for ly in (0..world_height).rev() {
                 let idx = grid_idx(gx, ly, gz);
-                if propagates_sky[idx] {
+                if propagates_sky[idx] && !occludes((gx, ly + 1, gz), (gx, ly, gz)) {
                     sky[idx] = 15;
                 } else {
                     bottoms[gz * N_X + gx] = ly + 1;
@@ -1421,7 +1502,13 @@ fn seed_sky_from_open_columns(
 }
 
 /// Generic 6-neighbour BFS used by both passes.
-fn bfs(opacity: &[u8], values: &mut [u8], queue: &mut VecDeque<u32>, world_height: usize) {
+fn bfs(
+    opacity: &[u8],
+    values: &mut [u8],
+    queue: &mut VecDeque<u32>,
+    world_height: usize,
+    occludes: impl Fn(WCoord, WCoord) -> bool,
+) {
     while let Some(packed) = queue.pop_front() {
         let idx = packed as usize;
         let current = values[idx];
@@ -1460,7 +1547,13 @@ fn bfs(opacity: &[u8], values: &mut [u8], queue: &mut VecDeque<u32>, world_heigh
             if values[nidx] >= best_propagated {
                 continue;
             }
-            let cost = opacity[nidx].max(1);
+            // The high bit is a cold-path marker, not additional opacity.
+            if (opacity[idx] | opacity[nidx]) & 128 != 0
+                && occludes((gx, ly, gz), (nx as usize, ny as usize, nz as usize))
+            {
+                continue;
+            }
+            let cost = (opacity[nidx] & 15).max(1);
             let candidate = current.saturating_sub(cost);
             if candidate > values[nidx] {
                 values[nidx] = candidate;

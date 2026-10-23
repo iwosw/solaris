@@ -25,12 +25,30 @@ fn irregular_sky_boundaries_match_full_source_propagation() {
             }
         }
     }
-    bfs(&opacity, &mut expected, &mut full_sources, height);
+    bfs(
+        &opacity,
+        &mut expected,
+        &mut full_sources,
+        height,
+        |_, _| false,
+    );
 
     let mut actual = vec![0; grid_volume(height)];
     let mut boundary_sources = VecDeque::new();
-    seed_sky_from_open_columns(&propagates_sky, &mut actual, &mut boundary_sources, height);
-    bfs(&opacity, &mut actual, &mut boundary_sources, height);
+    seed_sky_from_open_columns(
+        &propagates_sky,
+        &mut actual,
+        &mut boundary_sources,
+        height,
+        |_, _| false,
+    );
+    bfs(
+        &opacity,
+        &mut actual,
+        &mut boundary_sources,
+        height,
+        |_, _| false,
+    );
 
     for (index, (actual, expected)) in actual.iter().zip(&expected).enumerate() {
         assert_eq!(actual, expected, "light at grid index {index}");
