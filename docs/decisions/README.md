@@ -25,6 +25,7 @@ summarizes current boundaries.
 | [0014](0014-v1-core-retirement.md) | Accepted; Phase 5 source retirement complete | Shared Loader/vanilla boundaries, v2-only harness/operator surface and clean v1 deletion |
 | [0015](0015-multiversion-protocol-translation.md) | Proposed; 26.3 deferred by measured diff | Per-session `mc-edge` protocol translation and profile evidence |
 | [0016](0016-mob-capabilities.md) | Accepted; layer 1 implemented | Owned data blueprints, mob capabilities, bounded data-defined mob types and their vanilla presentation |
+| [0017](0017-tick-system-graph.md) | Proposed graph; one-system prototype | Declared entity-column resources, ordered row execution and deterministic tick barriers |
 | [0018](0018-in-game-computer.md) | Accepted; draft, client QA pending | Operator-only terminal on vanilla carrier blocks and local desktop-capture boundary |
 
 ## Routing
@@ -35,6 +36,7 @@ summarizes current boundaries.
 - Current state authority, tick/merge, threads, waiting, persistence, shutdown,
   snapshots, plugin intents, block work and tickets: 0013.
 - Mob blueprint capabilities, data-defined mob types and their bounds: 0016.
+- Tick system graph proposal and bounded row-phase prototype: 0017.
 - Current crate ownership, retirement and explicit port/delete decisions: 0013/0014.
 - Worldgen topology, climate, rivers, caves and feature ownership: 0008; runtime
   storage/recovery constraints remain 0013.

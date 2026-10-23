@@ -56,6 +56,12 @@ eligible item chosen in dense-slot order. Row preparation combines dolphin
 presence, chase-consumer counts and ordered breeding cells in one projection
 reduction after serial rare-helper rebuilds (which can change enderman chasing).
 
+The row movement/think map is the single declared-system prototype in
+[ADR 0017](decisions/0017-tick-system-graph.md). Typed immutable inputs and
+ordered scratch outputs retain the existing preparation/writeback barriers;
+the scheduler selects serial or data-parallel execution. Other tick stages
+remain owner-ordered, not a migrated general system graph.
+
 ## Threads and waiting
 
 The core owns its tick and long-lived data-parallel worker pool. The edge owns

@@ -40,6 +40,7 @@ pub(crate) mod merchant;
 pub(crate) mod mining;
 mod passive_follow;
 mod stations;
+mod system_graph;
 
 #[cfg(test)]
 pub(crate) mod mining_tests;
@@ -6284,16 +6285,7 @@ fn run_entity_phase(state: &mut TickState, sim: bool) -> Vec<Intent> {
         difficulty: state.difficulty,
         night: crate::natural_spawn::is_night(state.day_time),
     };
-    // Preserve Rayon's indexed collection: filtering first falls back to
-    // per-worker vectors and a linked-list merge. Empty rows stay in place
-    // until the serial drain, which also preserves slot order without a sort.
-    {
-        use rayon::prelude::*;
-        rows.par_iter()
-            .with_min_len(256)
-            .map(|row| row.alive.then(|| step_entity(*row, &ctx)))
-            .collect_into_vec(&mut ordered);
-    }
+    system_graph::run(&ctx, &mut ordered);
     let scope_time = scope_start.elapsed();
     #[cfg(all(test, debug_assertions))]
     {
