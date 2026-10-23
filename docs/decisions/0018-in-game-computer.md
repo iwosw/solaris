@@ -114,6 +114,7 @@ left; `3 REFUSED(id, u8 reason)` 0 not allowed, 1 not a monitor, 2 out of reach,
 `5 PERMISSION(id, u8 allowed)` to the requester; `6 ACTIVE(id, u8 on)` to every
 native client in that dimension on open/close/owner leave, and as a snapshot
 when a native client joins or changes dimension.
+`7 AUDIO(id, u32 seq, opus)` to viewers only (see "Screen audio").
 
 Permission is per (owner, viewer) and covers all of the owner's open screens;
 it ends on REVOKE/LEAVE, when the owner closes their last screen, or when
@@ -126,6 +127,44 @@ while DEMAND is on, only from the owner, within a 1 MiB/s byte budget (256 KiB
 burst); overflow frames are dropped, malformed or repeated unsolicited frames
 close the screen. A viewer's full reliable queue drops the frame, never the
 connection.
+
+### Screen audio
+
+The captured app's sound rides the same channel and the same rules as its picture.
+Client -> server `7 AUDIO_PART(id, u32 seq, opus)`: one Opus packet (48 kHz mono, 20 ms,
+1..=1000 bytes; the codec and jitter buffer are the voice-chat ones, ADR 0019). Server ->
+client `7 AUDIO(id, u32 seq, opus)`, rewritten from the owner's part with the same id and `seq`.
+The relay never decodes Opus. Audio is accepted only from the owner and only while `DEMAND`
+is on; it is delivered only to granted viewers that are looking (the `watching` set that also
+gates frames), so a viewer who looks away or is revoked hears nothing within one tick. It has
+its own token buckets (60 packets/s with a burst of 25, 32 KiB/s with an 8 KiB burst):
+overflow is dropped, never queued. Audio sent without demand is dropped and counted
+separately (150 strikes close the screen as `BAD_FRAME`); an empty or >1000-byte packet closes
+the screen like a malformed frame. A full reliable queue drops the packet, not the connection
+(`Effect::is_media`). No new `DEMAND` field: a client captures audio exactly when it is asked
+for pictures and locally approved at least one viewer.
+
+Playback is positional: the client mixes each screen as one speaker at the monitor
+rectangle's face centre with linear distance attenuation, silent beyond 32 blocks (the server's
+looking range). The owner hears a nested app the same way, because its private sink is the
+app's only output.
+
+Sources, by routing rule (a capture must never contain Solaris's own playback or voice chat;
+there is no echo cancellation):
+
+- **Linux nested compositor apps**: a private PipeWire null sink per monitor (held-open `pw-cli`,
+  `object.linger=false`). The app is launched with `PIPEWIRE_NODE` and `PULSE_SINK` set to it and
+  `pw-cat` records the sink's monitor (48 kHz mono f32). The sink outlives every capture and is
+  destroyed only after the app is killed, so a stopped capture cannot spill the app onto the
+  owner's speakers. Without PipeWire tools the app simply runs without audio routing.
+- **Windows**: WASAPI process loopback (`VAD\Process_Loopback`, Windows 10 2004+) of the shared
+  window's process tree; our own process is refused. The app keeps playing on the owner's output,
+  so the owner is not given a second positioned copy. Compile-checked for
+  `x86_64-pc-windows-gnu`; **not executed on Windows**.
+- **Linux portal windows**: video only. The portal offers no per-window audio and the only
+  alternative is the whole-system monitor, which would loop Solaris's playback into the stream.
+- Test hook: `SOLARIS_SCREEN_AUDIO_WAV` replaces the source's audio by a looped 48 kHz 16-bit
+  WAV through the same capture abstraction (no behaviour change when unset).
 
 ## Monitor block (carrier-backed custom block)
 

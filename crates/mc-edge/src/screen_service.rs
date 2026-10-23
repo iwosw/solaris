@@ -192,8 +192,8 @@ impl Service {
 }
 
 /// Delivery on the reliable queue, called with the relay lock held (only
-/// non-blocking `try_send`). A full queue drops a FRAME (stale video is
-/// worthless); control messages (DEMAND/STOP/ACTIVE/REQUESTED/PERMISSION/
+/// non-blocking `try_send`). A full queue drops a FRAME or AUDIO packet (stale
+/// media is worthless); control messages (DEMAND/STOP/ACTIVE/REQUESTED/PERMISSION/
 /// REFUSED) follow the normal command-queue rule: a full queue retires the
 /// connection. One encoding serves all viewers of the same relayed payload.
 fn deliver(server: &EdgeServer, effects: Vec<Effect>) {
@@ -215,7 +215,7 @@ fn deliver(server: &EdgeServer, effects: Vec<Effect>) {
         };
         if let Some(handles) = server.connections.get(effect.to)
             && handles.reliable_tx.try_send(framed).is_err()
-            && !effect.is_frame()
+            && !effect.is_media()
         {
             tracing::warn!(
                 connection = effect.to.0,

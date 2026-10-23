@@ -31,6 +31,14 @@ const MAX_FRAME_BYTES: usize = 131_072;
 const MAX_FRAME_HEIGHT: u16 = 640;
 const BYTES_PER_SECOND: f64 = 1_048_576.0;
 const BYTES_BURST: f64 = 262_144.0;
+/// One Opus packet per `AUDIO_PART` (the client sends 20 ms packets; ADR 0018).
+pub(crate) const MAX_OPUS_BYTES: usize = 1000;
+const AUDIO_PACKETS_PER_SECOND: f64 = 60.0;
+const AUDIO_PACKET_BURST: f64 = 25.0;
+const AUDIO_BYTES_PER_SECOND: f64 = 32_768.0;
+const AUDIO_BYTES_BURST: f64 = 8_192.0;
+/// Audio still in flight when DEMAND turns off is dropped, not punished (50 packets/s).
+const MAX_AUDIO_STRIKES: u32 = 150;
 /// Frames still in flight when DEMAND turns off are dropped, not punished.
 const MAX_STRIKES: u32 = 30;
 const MAX_PENDING_PER_OWNER: usize = 8;
@@ -44,6 +52,7 @@ mod server_kind {
     pub const REQUESTED: u8 = 4;
     pub const PERMISSION: u8 = 5;
     pub const ACTIVE: u8 = 6;
+    pub const AUDIO: u8 = 7;
 }
 /// `STOP` reasons.
 pub(crate) mod stop {
@@ -245,6 +254,12 @@ pub(crate) enum Message<'a> {
         viewer: Uuid,
     },
     Leave(ScreenId),
+    /// One Opus packet (48 kHz mono, 20 ms) of the shared source's audio.
+    AudioPart {
+        id: ScreenId,
+        seq: u32,
+        opus: &'a [u8],
+    },
 }
 
 pub(crate) fn decode(bytes: &[u8]) -> Option<Message<'_>> {
@@ -283,6 +298,11 @@ pub(crate) fn decode(bytes: &[u8]) -> Option<Message<'_>> {
             viewer: Uuid::from_slice(reader.take(16)?).ok()?,
         },
         6 => Message::Leave(ScreenId::parse(&mut reader)?),
+        7 => Message::AudioPart {
+            id: ScreenId::parse(&mut reader)?,
+            seq: reader.u32()?,
+            opus: std::mem::take(&mut reader.0),
+        },
         _ => return None,
     };
     reader.0.is_empty().then_some(message)
@@ -311,6 +331,13 @@ fn frame(id: &ScreenId, seq: u32, width: u16, height: u16, codec: u8, data: &[u8
     message(server_kind::FRAME, id, &body)
 }
 
+fn audio(id: &ScreenId, seq: u32, opus: &[u8]) -> Bytes {
+    let mut body = Vec::with_capacity(4 + opus.len());
+    body.extend(seq.to_be_bytes());
+    body.extend(opus);
+    message(server_kind::AUDIO, id, &body)
+}
+
 /// One server -> client payload to deliver.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct Effect {
@@ -318,9 +345,9 @@ pub(crate) struct Effect {
     pub payload: Bytes,
 }
 impl Effect {
-    /// Video frames are droppable; everything else is a control message.
-    pub(crate) fn is_frame(&self) -> bool {
-        self.payload[1] == server_kind::FRAME
+    /// Video frames and audio packets are droppable; everything else is a control message.
+    pub(crate) fn is_media(&self) -> bool {
+        matches!(self.payload[1], server_kind::FRAME | server_kind::AUDIO)
     }
 }
 
@@ -355,6 +382,10 @@ struct Open {
     strikes: u32,
     budget: f64,
     updated: Instant,
+    audio_strikes: u32,
+    audio_packets: f64,
+    audio_bytes: f64,
+    audio_updated: Instant,
 }
 
 struct Pending {
@@ -446,6 +477,7 @@ impl Relay {
             open.demand = on;
             open.partial = None;
             open.strikes = 0;
+            open.audio_strikes = 0;
             effects.push(Effect {
                 to: open.owner,
                 payload: demand(id, on),
@@ -555,6 +587,7 @@ impl Relay {
                     now,
                 );
             }
+            Message::AudioPart { id, seq, opus } => return self.audio_part(from, id, seq, opus, now),
             Message::Request(id) => return self.request(from, id, now),
             Message::Answer { request, allow } => {
                 if self
@@ -643,6 +676,10 @@ impl Relay {
                 strikes: 0,
                 budget: BYTES_BURST,
                 updated: now,
+                audio_strikes: 0,
+                audio_packets: AUDIO_PACKET_BURST,
+                audio_bytes: AUDIO_BYTES_BURST,
+                audio_updated: now,
             },
         );
         let mut effects = vec![Effect {
@@ -775,6 +812,58 @@ impl Relay {
         }
         open.budget -= complete.data.len() as f64;
         let payload = frame(&id, seq, width, height, codec, &complete.data);
+        let mut viewers: Vec<ConnectionId> = self
+            .watching
+            .iter()
+            .filter(|(_, screen)| *screen == id)
+            .map(|(viewer, _)| *viewer)
+            .collect();
+        viewers.sort();
+        effects.extend(viewers.into_iter().map(|to| Effect {
+            to,
+            payload: payload.clone(),
+        }));
+        effects
+    }
+
+    /// Relay one owner audio packet to the granted viewers that are looking.
+    /// Gated exactly like video: only the owner, only while DEMAND is on; the
+    /// server never decodes Opus, it bounds and rate-limits the packets.
+    fn audio_part(
+        &mut self,
+        from: ConnectionId,
+        id: ScreenId,
+        seq: u32,
+        opus: &[u8],
+        now: Instant,
+    ) -> Vec<Effect> {
+        let Some(open) = self.screens.get_mut(&id).filter(|open| open.owner == from) else {
+            return Self::refuse(from, &id, refused::NO_SCREEN);
+        };
+        let mut effects = Vec::new();
+        if !open.demand {
+            open.audio_strikes += 1;
+            if open.audio_strikes > MAX_AUDIO_STRIKES {
+                self.close(&id, Some(refused::BAD_FRAME), stop::OWNER_CLOSED, &mut effects);
+            }
+            return effects;
+        }
+        if opus.is_empty() || opus.len() > MAX_OPUS_BYTES {
+            self.close(&id, Some(refused::BAD_FRAME), stop::OWNER_CLOSED, &mut effects);
+            return effects;
+        }
+        let elapsed = now.saturating_duration_since(open.audio_updated).as_secs_f64();
+        open.audio_updated = now;
+        open.audio_packets =
+            (open.audio_packets + elapsed * AUDIO_PACKETS_PER_SECOND).min(AUDIO_PACKET_BURST);
+        open.audio_bytes =
+            (open.audio_bytes + elapsed * AUDIO_BYTES_PER_SECOND).min(AUDIO_BYTES_BURST);
+        if open.audio_packets < 1.0 || open.audio_bytes < opus.len() as f64 {
+            return effects;
+        }
+        open.audio_packets -= 1.0;
+        open.audio_bytes -= opus.len() as f64;
+        let payload = audio(&id, seq, opus);
         let mut viewers: Vec<ConnectionId> = self
             .watching
             .iter()
