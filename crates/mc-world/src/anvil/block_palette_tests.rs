@@ -125,3 +125,79 @@ fn anvil_palette_missing_properties_inherit_block_defaults() {
         Err(ChunkNbtError::UnknownBlockState { .. })
     ));
 }
+
+#[test]
+fn malformed_palettes_fail_closed_instead_of_panicking_or_replacing_cells() {
+    let registry = BlockRegistry::from_report(&[BlockReport {
+        id: Identifier::parse("minecraft:air").unwrap(),
+        properties: BTreeMap::new(),
+        states: vec![BlockStateReport {
+            id: 0,
+            default: true,
+            properties: BTreeMap::new(),
+        }],
+    }])
+    .unwrap();
+    for biome in [false, true] {
+        for (length, data) in [
+            (0, None),
+            (2, None),
+            (3, Some(vec![-1; if biome { 2 } else { 256 }])),
+        ] {
+            let entry = if biome {
+                Tag::String("minecraft:plains".into())
+            } else {
+                Tag::Compound(vec![("Name".into(), Tag::String("minecraft:air".into()))])
+            };
+            let mut fields = vec![(
+                "palette".into(),
+                Tag::List(ListTag {
+                    element_type: if biome {
+                        tag_type::STRING
+                    } else {
+                        tag_type::COMPOUND
+                    },
+                    elements: vec![entry; length],
+                }),
+            )];
+            if let Some(data) = data {
+                fields.push(("data".into(), Tag::LongArray(data)));
+            }
+            let error = if biome {
+                decode_biome_section(&fields).unwrap_err()
+            } else {
+                decode_block_section(&fields, &registry, BlockStateId(0)).unwrap_err()
+            };
+            assert!(
+                matches!(error, ChunkNbtError::InvalidPalette { .. }),
+                "{error}"
+            );
+        }
+    }
+}
+
+#[test]
+fn three_dimensional_biomes_roundtrip_every_cell() {
+    let palette = [
+        "minecraft:plains",
+        "minecraft:lush_caves",
+        "minecraft:desert",
+    ]
+    .map(|name| Tag::String(name.into()));
+    let mut data = vec![0_i64; 2];
+    for cell in 0..BIOME_VOLUME {
+        data[cell / 32] |= ((cell % 3) as i64) << ((cell % 32) * 2);
+    }
+    let source = Tag::Compound(vec![
+        (
+            "palette".into(),
+            Tag::List(ListTag {
+                element_type: tag_type::STRING,
+                elements: palette.to_vec(),
+            }),
+        ),
+        ("data".into(), Tag::LongArray(data)),
+    ]);
+    let decoded = decode_biome_section(expect_compound(&source, "biomes").unwrap()).unwrap();
+    assert_eq!(encode_biome_section(&decoded), source);
+}

@@ -475,8 +475,8 @@ fn scoreboard_and_chat_are_global_but_entity_visibility_is_not() {
             .any(|change| matches!(change, PlayerChange::Scoreboard { .. }))
     );
     command(&mut state, 1, "scoreboard players set @a points 7");
-    assert_eq!(state.scoreboard.scores["Alice"]["points"], 7);
-    assert_eq!(state.scoreboard.scores["Bob"]["points"], 7);
+    assert_eq!(state.scoreboard.scores["Alice"]["points"].value, 7);
+    assert_eq!(state.scoreboard.scores["Bob"]["points"].value, 7);
     let (output, drains, _) = crate::tick::run_tick(
         &mut state,
         &[PlayerInput::Chat {
@@ -2111,7 +2111,7 @@ fn vanilla_headless_world_roundtrip() {
         .unwrap();
     assert!(board.objectives.contains_key("layout_gate"));
     assert_eq!(
-        board.scores["LayoutPlayer"]["layout_gate"],
+        board.scores["LayoutPlayer"]["layout_gate"].value,
         if verified { 41 } else { 37 }
     );
     let player = &recovered.dimensions[&Dimension::Overworld].players[&uuid.to_string()];

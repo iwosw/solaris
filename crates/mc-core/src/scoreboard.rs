@@ -142,11 +142,24 @@ pub struct Objective {
     pub criteria: String,
     pub display_name: String,
 }
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct Score {
+    pub value: i32,
+    pub locked: bool,
+}
+impl Default for Score {
+    fn default() -> Self {
+        Self {
+            value: 0,
+            locked: true,
+        }
+    }
+}
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Scoreboard {
     pub teams: BTreeMap<String, Team>,
     pub objectives: BTreeMap<String, Objective>,
-    pub scores: BTreeMap<String, BTreeMap<String, i32>>,
+    pub scores: BTreeMap<String, BTreeMap<String, Score>>,
     pub display_slots: BTreeMap<i32, String>,
 }
 #[derive(Debug, Clone, PartialEq)]
@@ -210,7 +223,7 @@ impl ScoreboardCommand {
                     "objectives",
                     "add",
                     _,
-                    "dummy" | "deathCount" | "playerKillCount" | "health",
+                    "dummy" | "trigger" | "deathCount" | "playerKillCount" | "health",
                     ..,
                 ],
             ) => true,
@@ -226,6 +239,7 @@ impl ScoreboardCommand {
                 "scoreboard",
                 ["players", "reset", _]
                 | ["players", "reset", _, _]
+                | ["players", "enable", _, _]
                 | ["players", "get", _, _]
                 | ["players", "list"]
                 | ["players", "list", _],
@@ -242,6 +256,8 @@ impl ScoreboardCommand {
                     _,
                 ],
             ) => true,
+            ("trigger", [_]) => true,
+            ("trigger", [_, "add" | "set", value]) => value.parse::<i32>().is_ok(),
             _ => false,
         };
         if !valid {
@@ -283,7 +299,7 @@ impl Scoreboard {
                 events.push(ScoreboardEvent::Score {
                     owner: owner.clone(),
                     objective: objective.clone(),
-                    score: *score,
+                    score: score.value,
                 });
             }
         }
@@ -391,6 +407,9 @@ fn execute_inner(
     executor: EntityId,
     command: &ScoreboardCommand,
 ) -> Result<String, String> {
+    if command.root == "trigger" {
+        return execute_trigger(state, executor, &command.args);
+    }
     let a = &command.args;
     let mut events = Vec::new();
     let message;
@@ -649,6 +668,54 @@ fn execute_inner(
     publish(state, events);
     Ok(message)
 }
+
+fn execute_trigger(
+    state: &mut TickState,
+    executor: EntityId,
+    args: &[String],
+) -> Result<String, String> {
+    let name = state
+        .connections
+        .name_of(executor)
+        .ok_or("Only players can trigger an objective")?;
+    let objective = &args[0];
+    if state
+        .scoreboard
+        .objectives
+        .get(objective)
+        .is_none_or(|value| value.criteria != "trigger")
+    {
+        return Err("That objective is not a trigger".into());
+    }
+    let score = state
+        .scoreboard
+        .scores
+        .get_mut(name)
+        .and_then(|scores| scores.get_mut(objective))
+        .filter(|score| !score.locked)
+        .ok_or("That trigger is not enabled")?;
+    let amount = args
+        .get(2)
+        .map_or(Ok(1), |value| value.parse::<i32>())
+        .map_err(|_| "Expected integer")?;
+    score.value = if args.get(1).is_some_and(|operation| operation == "set") {
+        amount
+    } else {
+        score.value.wrapping_add(amount)
+    };
+    score.locked = true;
+    let value = score.value;
+    let owner = name.to_owned();
+    publish(
+        state,
+        vec![ScoreboardEvent::Score {
+            owner,
+            objective: objective.clone(),
+            score: value,
+        }],
+    );
+    Ok(format!("Triggered {objective} with value {value}"))
+}
 fn execute_players(
     state: &mut TickState,
     executor: EntityId,
@@ -697,7 +764,7 @@ fn execute_players(
             .get(&owners[0])
             .and_then(|s| s.get(&a[3]))
             .ok_or("Score is not set")?;
-        return Ok(format!("{} has {} [{}]", owners[0], score, a[3]));
+        return Ok(format!("{} has {} [{}]", owners[0], score.value, a[3]));
     }
     let objective = a.get(3);
     if let Some(objective) = objective {
@@ -706,7 +773,11 @@ fn execute_players(
             .objectives
             .get(objective)
             .ok_or("Unknown objective")?;
-        if a[1] != "reset" && definition.criteria != "dummy" {
+        if a[1] == "enable" {
+            if definition.criteria != "trigger" {
+                return Err("That objective is not a trigger".into());
+            }
+        } else if a[1] != "reset" && !matches!(definition.criteria.as_str(), "dummy" | "trigger") {
             return Err("That objective is read-only".to_owned());
         }
     }
@@ -718,7 +789,12 @@ fn execute_players(
         if !state.scoreboard.objectives.contains_key(&a[6]) {
             return Err("Unknown source objective".to_owned());
         }
-        if a[4] == "><" && state.scoreboard.objectives[&a[6]].criteria != "dummy" {
+        if a[4] == "><"
+            && !matches!(
+                state.scoreboard.objectives[&a[6]].criteria.as_str(),
+                "dummy" | "trigger"
+            )
+        {
             return Err("Source objective is read-only".to_owned());
         }
         Some(source)
@@ -755,18 +831,33 @@ fn execute_players(
             continue;
         }
         let obj = &a[3];
+        if a[1] == "enable" {
+            let score = next
+                .get_mut(owner)
+                .expect("staged holder")
+                .entry(obj.clone())
+                .or_default();
+            score.locked = false;
+            events.push(ScoreboardEvent::Score {
+                owner: owner.clone(),
+                objective: obj.clone(),
+                score: score.value,
+            });
+            continue;
+        }
         let mut value = next
             .get(owner)
             .and_then(|s| s.get(obj))
-            .copied()
+            .map(|score| score.value)
             .unwrap_or(0);
         if let Some(sources) = &sources {
             for source in sources {
-                let rhs = next
+                let rhs = &mut next
                     .entry(source.clone())
                     .or_default()
                     .entry(a[6].clone())
-                    .or_default();
+                    .or_default()
+                    .value;
                 let old = value;
                 value = match a[4].as_str() {
                     "=" => *rhs,
@@ -811,7 +902,9 @@ fn execute_players(
                 });
                 next.entry(owner.clone())
                     .or_default()
-                    .insert(obj.clone(), value);
+                    .entry(obj.clone())
+                    .or_default()
+                    .value = value;
             }
         } else {
             let amount: i32 = a[4].parse().map_err(|_| "Expected integer")?;
@@ -827,7 +920,9 @@ fn execute_players(
         }
         next.entry(owner.clone())
             .or_default()
-            .insert(obj.clone(), value);
+            .entry(obj.clone())
+            .or_default()
+            .value = value;
         events.push(ScoreboardEvent::Score {
             owner: owner.clone(),
             objective: obj.clone(),
@@ -851,7 +946,7 @@ pub fn automatic(state: &mut TickState, deaths: &[EntityId], kills: &[(EntityId,
         .scoreboard
         .objectives
         .iter()
-        .filter(|(_, o)| o.criteria != "dummy")
+        .filter(|(_, o)| !matches!(o.criteria.as_str(), "dummy" | "trigger"))
         .map(|(n, o)| (n.clone(), o.criteria.clone()))
         .collect();
     for (objective, criteria) in definitions {
@@ -864,7 +959,7 @@ pub fn automatic(state: &mut TickState, deaths: &[EntityId], kills: &[(EntityId,
                 .scores
                 .get(name)
                 .and_then(|s| s.get(&objective))
-                .copied();
+                .map(|score| score.value);
             let value = match criteria.as_str() {
                 "health" => player.vitals.health.ceil() as i32,
                 "deathCount" if deaths.contains(id) => old.unwrap_or(0).wrapping_add(1),
@@ -883,7 +978,9 @@ pub fn automatic(state: &mut TickState, deaths: &[EntityId], kills: &[(EntityId,
                     .scores
                     .entry(name.to_owned())
                     .or_default()
-                    .insert(objective.clone(), value);
+                    .entry(objective.clone())
+                    .or_default()
+                    .value = value;
                 events.push(ScoreboardEvent::Score {
                     owner: name.to_owned(),
                     objective: objective.clone(),

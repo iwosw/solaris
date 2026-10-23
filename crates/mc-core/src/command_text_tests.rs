@@ -50,7 +50,13 @@ fn score_components_resolve_to_the_scoreboard_value() {
         .scores
         .entry("Alex".into())
         .or_default()
-        .insert("kills".into(), 7);
+        .insert(
+            "kills".into(),
+            crate::scoreboard::Score {
+                value: 7,
+                locked: true,
+            },
+        );
     let component =
         parse_component(r#"{"score":{"name":"Alex","objective":"kills"},"color":"gold"}"#).unwrap();
     let resolved = resolve_component(&state, EntityId(-1), &component).unwrap();

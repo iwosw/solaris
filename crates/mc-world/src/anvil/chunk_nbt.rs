@@ -155,6 +155,11 @@ pub enum ChunkNbtError {
     SectionYOutOfByteRange(i32),
     #[error("packed bit-array length mismatch: expected {expected} words, got {got}")]
     PackedWordMismatch { expected: usize, got: usize },
+    #[error("invalid {field} palette: {reason}")]
+    InvalidPalette {
+        field: &'static str,
+        reason: &'static str,
+    },
     #[error("{field} has wrong byte length: expected {expected}, got {got}")]
     LightLengthMismatch {
         field: &'static str,
@@ -372,6 +377,25 @@ fn chunk_from_nbt_with_items_impl(
                     "block entity at ({bx},{by},{bz}): {error}"
                 ))
             })?;
+            if let Some(id) = block_entity_id
+                && items.is_some()
+                && (is_furnace_block_entity_id(id)
+                    || is_chest_storage_block_entity_id(id)
+                    || is_hopper_block_entity_id(id)
+                    || id == "minecraft:brewing_stand")
+                && cmp.iter().any(|(name, _)| !typed_container_field(id, name))
+            {
+                let mut bytes = Vec::new();
+                mc_nbt::write_network(&mut bytes, be)?;
+                chunk.block_entities.insert(
+                    BlockPos {
+                        x: bx,
+                        y: by,
+                        z: bz,
+                    },
+                    bytes,
+                );
+            }
             if block_entity_id.is_some_and(|id| is_furnace_block_entity_id(id))
                 && let Some(items) = items
             {
@@ -634,6 +658,12 @@ pub(crate) fn decode_block_section(
     air: BlockStateId,
 ) -> Result<ChunkSection, ChunkNbtError> {
     let palette_list = get_list(nbt, "palette")?;
+    if palette_list.elements.is_empty() || palette_list.elements.len() > SECTION_VOLUME {
+        return Err(ChunkNbtError::InvalidPalette {
+            field: "block_states",
+            reason: "palette length must be between 1 and 4096",
+        });
+    }
     let palette: Vec<BlockStateId> = palette_list
         .elements
         .iter()
@@ -680,10 +710,11 @@ pub(crate) fn decode_block_section(
         .collect::<Result<Vec<_>, _>>()?;
 
     match get_optional_long_array(nbt, "data")? {
-        None => {
-            // Single-state section.
-            Ok(ChunkSection::filled(palette[0], air))
-        }
+        None if palette.len() == 1 => Ok(ChunkSection::filled(palette[0], air)),
+        None => Err(ChunkNbtError::InvalidPalette {
+            field: "block_states",
+            reason: "multi-state palette requires packed data",
+        }),
         Some(longs) => {
             let bits = block_states_bits_per_entry(palette.len());
             let words: Vec<u64> = longs.iter().map(|&l| l as u64).collect();
@@ -696,6 +727,12 @@ pub(crate) fn decode_block_section(
                 });
             }
             let indices = PackedBitArray::from_words(bits, SECTION_VOLUME, words);
+            if (0..SECTION_VOLUME).any(|index| indices.get(index) as usize >= palette.len()) {
+                return Err(ChunkNbtError::InvalidPalette {
+                    field: "block_states",
+                    reason: "packed index outside palette",
+                });
+            }
             Ok(ChunkSection::from_indirect(palette, indices, air))
         }
     }
@@ -703,6 +740,12 @@ pub(crate) fn decode_block_section(
 
 fn decode_biome_section(nbt: &[(String, Tag)]) -> Result<BiomeSection, ChunkNbtError> {
     let palette_list = get_list(nbt, "palette")?;
+    if palette_list.elements.is_empty() || palette_list.elements.len() > BIOME_VOLUME {
+        return Err(ChunkNbtError::InvalidPalette {
+            field: "biomes",
+            reason: "palette length must be between 1 and 64",
+        });
+    }
     let palette: Vec<Identifier> = palette_list
         .elements
         .iter()
@@ -718,12 +761,13 @@ fn decode_biome_section(nbt: &[(String, Tag)]) -> Result<BiomeSection, ChunkNbtE
         .collect::<Result<Vec<_>, _>>()?;
 
     match get_optional_long_array(nbt, "data")? {
-        None => Ok(BiomeSection::filled(
-            palette
-                .into_iter()
-                .next()
-                .expect("vanilla biome palette always non-empty"),
+        None if palette.len() == 1 => Ok(BiomeSection::filled(
+            palette.into_iter().next().expect("validated palette"),
         )),
+        None => Err(ChunkNbtError::InvalidPalette {
+            field: "biomes",
+            reason: "multi-biome palette requires packed data",
+        }),
         Some(longs) => {
             let bits = biome_bits_per_entry(palette.len());
             let words: Vec<u64> = longs.iter().map(|&l| l as u64).collect();
@@ -736,6 +780,12 @@ fn decode_biome_section(nbt: &[(String, Tag)]) -> Result<BiomeSection, ChunkNbtE
                 });
             }
             let indices = PackedBitArray::from_words(bits, BIOME_VOLUME, words);
+            if (0..BIOME_VOLUME).any(|index| indices.get(index) as usize >= palette.len()) {
+                return Err(ChunkNbtError::InvalidPalette {
+                    field: "biomes",
+                    reason: "packed index outside palette",
+                });
+            }
             Ok(BiomeSection::from_indirect(palette, indices))
         }
     }
@@ -951,12 +1001,16 @@ fn chunk_to_nbt_parts(
         let mut furnaces: Vec<(&BlockPos, &FurnaceBlockEntity)> = chunk.furnaces.iter().collect();
         furnaces.sort_by_key(|(pos, _)| (pos.x, pos.y, pos.z));
         for (pos, furnace) in furnaces {
-            be_list.push(encode_furnace(
+            let mut encoded = encode_furnace(
                 pos,
                 furnace,
                 items,
                 furnace_block_entity_id_for_block(chunk, registry, *pos),
-            )?);
+            )?;
+            if let Some(native) = chunk.block_entities.get(pos) {
+                merge_container_metadata(&mut encoded, native)?;
+            }
+            be_list.push(encoded);
         }
         let mut chests: Vec<(&BlockPos, &ChestBlockEntity)> = chunk.chests.iter().collect();
         chests.sort_by_key(|(pos, _)| (pos.x, pos.y, pos.z));
@@ -968,19 +1022,27 @@ fn chunk_to_nbt_parts(
                 chest_storage_block_entity_id_for_block(chunk, registry, *pos),
             )?;
             if let Some(native) = chunk.block_entities.get(pos) {
-                super::copper_chest_nbt::merge_metadata(&mut encoded, native)?;
+                merge_container_metadata(&mut encoded, native)?;
             }
             be_list.push(encoded);
         }
         let mut hoppers: Vec<(&BlockPos, &HopperBlockEntity)> = chunk.hoppers.iter().collect();
         hoppers.sort_by_key(|(pos, _)| (pos.x, pos.y, pos.z));
         for (pos, hopper) in hoppers {
-            be_list.push(encode_hopper(pos, hopper, items)?);
+            let mut encoded = encode_hopper(pos, hopper, items)?;
+            if let Some(native) = chunk.block_entities.get(pos) {
+                merge_container_metadata(&mut encoded, native)?;
+            }
+            be_list.push(encoded);
         }
         let mut stands: Vec<_> = chunk.brewing_stands.iter().collect();
         stands.sort_by_key(|(pos, _)| (pos.x, pos.y, pos.z));
         for (pos, stand) in stands {
-            be_list.push(encode_brewing_stand(pos, stand, items)?);
+            let mut encoded = encode_brewing_stand(pos, stand, items)?;
+            if let Some(native) = chunk.block_entities.get(pos) {
+                merge_container_metadata(&mut encoded, native)?;
+            }
+            be_list.push(encoded);
         }
     }
     root.push((
@@ -1187,6 +1249,55 @@ fn encode_biome_section(section: &BiomeSection) -> Tag {
         }
     }
     Tag::Compound(out)
+}
+
+// Keep only unowned metadata from the source image: reattaching an old Items,
+// LootTable or timer would resurrect consumed custody after a native mutation.
+fn typed_container_field(id: &str, name: &str) -> bool {
+    matches!(name, "id" | "x" | "y" | "z" | "Items")
+        || if is_chest_storage_block_entity_id(id) {
+            matches!(name, "LootTable" | "LootTableSeed")
+        } else if is_furnace_block_entity_id(id) {
+            matches!(
+                name,
+                "lit_time_remaining"
+                    | "lit_total_time"
+                    | "cooking_time_spent"
+                    | "cooking_total_time"
+                    | "RecipesUsed"
+            )
+        } else if is_hopper_block_entity_id(id) {
+            name == "TransferCooldown"
+        } else {
+            matches!(name, "BrewTime" | "Fuel")
+        }
+}
+
+fn merge_container_metadata(encoded: &mut Tag, native: &[u8]) -> Result<(), ChunkNbtError> {
+    let old = mc_nbt::read_network(&mut Cursor::new(native))?;
+    let Tag::Compound(mut old) = old else {
+        return Err(ChunkNbtError::InvalidBlockEntity(
+            "retained container: expected compound".into(),
+        ));
+    };
+    let id_index = old
+        .iter()
+        .position(|(name, _)| name == "id")
+        .ok_or(ChunkNbtError::MissingField("id"))?;
+    let Tag::String(id) = old.swap_remove(id_index).1 else {
+        return Err(ChunkNbtError::InvalidBlockEntity(
+            "retained container: invalid id".into(),
+        ));
+    };
+    let Tag::Compound(fields) = encoded else {
+        unreachable!("encoded container compound")
+    };
+    for (name, value) in old {
+        if !typed_container_field(&id, &name) && !fields.iter().any(|(key, _)| key == &name) {
+            fields.push((name, value));
+        }
+    }
+    Ok(())
 }
 
 fn decode_brewing_stand(

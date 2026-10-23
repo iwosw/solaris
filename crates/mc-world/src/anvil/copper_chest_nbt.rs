@@ -4,7 +4,6 @@ use crate::block::{BlockRegistry, BlockStateId};
 use crate::chunk::ChestBlockEntity;
 use mc_data::items::ItemRegistry;
 use mc_data::loot::chest_26_1_2::ChestLootCatalog;
-use mc_nbt::Tag;
 
 pub(super) fn is_copper(registry: &BlockRegistry, id: BlockStateId) -> bool {
     registry
@@ -62,26 +61,5 @@ pub(super) fn materialize(
     }
     chest.loot_table = None;
     chest.loot_seed = 0;
-    Ok(())
-}
-
-pub(super) fn merge_metadata(encoded: &mut Tag, native: &[u8]) -> Result<(), ChunkNbtError> {
-    let tag = mc_nbt::read_network(&mut std::io::Cursor::new(native))?;
-    let Tag::Compound(old) = tag else {
-        return Err(ChunkNbtError::InvalidBlockEntity(
-            "copper chest: expected compound".into(),
-        ));
-    };
-    let Tag::Compound(fields) = encoded else {
-        unreachable!("encoded chest compound")
-    };
-    for (name, value) in old {
-        if !matches!(
-            name.as_str(),
-            "id" | "x" | "y" | "z" | "Items" | "LootTable" | "LootTableSeed"
-        ) {
-            fields.push((name, value));
-        }
-    }
     Ok(())
 }

@@ -86,7 +86,13 @@ fn modern_fixture(root: &Path, config: &CoreConfig) {
     );
     scoreboard.scores.insert(
         "FixturePlayer".into(),
-        BTreeMap::from([("gate".into(), 37)]),
+        BTreeMap::from([(
+            "gate".into(),
+            crate::scoreboard::Score {
+                value: 37,
+                locked: true,
+            },
+        )]),
     );
     save(root, "data/minecraft/scoreboard.dat", &scoreboard.to_nbt());
     for (index, dimension) in [Dimension::Overworld, Dimension::Nether, Dimension::End]
@@ -1288,4 +1294,120 @@ fn duplicate_legacy_and_modern_advancement_destinations_are_rejected() {
     }
     assert!(import_anvil(&config, &source, &native, &temp.path().join("import.json")).is_err());
     assert!(!native.exists());
+}
+
+#[test]
+fn container_metadata_survives_native_import_export_without_restoring_inventory() {
+    use mc_world::{BlockPos, BlockStateId, Chunk, ChunkPos};
+    let temp = tempfile::tempdir().unwrap();
+    let source = temp.path().join("anvil");
+    let native = temp.path().join("native");
+    let exported = temp.path().join("export");
+    std::fs::create_dir(&source).unwrap();
+    let config = CoreConfig::new(native.clone(), 42);
+    modern_fixture(&source, &config);
+    let registry = crate::registry::CoreRegistry::load(None).unwrap();
+    let mut chunk = Chunk::empty(
+        ChunkPos { x: 0, z: 0 },
+        BlockStateId(registry.states.air),
+        mc_data::Identifier::parse("minecraft:plains").unwrap(),
+    );
+    chunk.status = "minecraft:full".into();
+    for (x, name) in [
+        "chest",
+        "barrel",
+        "furnace",
+        "blast_furnace",
+        "smoker",
+        "hopper",
+        "brewing_stand",
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let id = mc_data::Identifier::parse(format!("minecraft:{name}")).unwrap();
+        chunk
+            .set_block(x as u8, 80, 0, registry.blocks.block(&id).unwrap().default)
+            .unwrap();
+        let tag = Tag::Compound(vec![
+            ("id".into(), Tag::String(id.to_string())),
+            ("x".into(), Tag::Int(x as i32)),
+            ("y".into(), Tag::Int(80)),
+            ("z".into(), Tag::Int(0)),
+            (
+                "CustomName".into(),
+                Tag::Compound(vec![("text".into(), Tag::String(format!("named-{name}")))]),
+            ),
+            ("lock".into(), Tag::Compound(Vec::new())),
+            (
+                "components".into(),
+                Tag::Compound(vec![("test:payload".into(), Tag::Long(37))]),
+            ),
+        ]);
+        let mut bytes = Vec::new();
+        mc_nbt::write_network(&mut bytes, &tag).unwrap();
+        chunk.block_entities.insert(
+            BlockPos {
+                x: x as i32,
+                y: 80,
+                z: 0,
+            },
+            bytes,
+        );
+    }
+    let path = Dimension::Overworld
+        .directory(&source)
+        .join("region/r.0.0.mca");
+    let payload = mc_world::anvil::chunk_to_payload_with_items(
+        &chunk,
+        &registry.blocks,
+        Some(&registry.items),
+        0,
+    )
+    .unwrap();
+    mc_world::anvil::write_region(&path, &[payload]).unwrap();
+    import_anvil(&config, &source, &native, &temp.path().join("import.json")).unwrap();
+    export_anvil(
+        &config,
+        &native,
+        &exported,
+        &temp.path().join("export.json"),
+    )
+    .unwrap();
+    let bytes = mc_world::anvil::read_chunk(
+        Dimension::Overworld
+            .directory(&exported)
+            .join("region/r.0.0.mca"),
+        0,
+        0,
+    )
+    .unwrap()
+    .unwrap();
+    let (_, tag) = mc_nbt::read_named(&mut bytes.uncompressed_nbt.as_slice()).unwrap();
+    let Tag::Compound(fields) = tag else {
+        panic!("chunk")
+    };
+    let (_, Tag::List(entities)) = fields
+        .iter()
+        .find(|(key, _)| key == "block_entities")
+        .unwrap()
+    else {
+        panic!("entities")
+    };
+    assert_eq!(entities.elements.len(), 7);
+    for entity in &entities.elements {
+        let Tag::Compound(fields) = entity else {
+            panic!("container")
+        };
+        for key in ["CustomName", "lock", "components"] {
+            assert!(
+                fields.iter().any(|(name, _)| name == key),
+                "lost {key}: {entity:?}"
+            );
+        }
+        let Some(Tag::List(items)) = mc_data::item_nbt::field(fields, "Items") else {
+            panic!("inventory")
+        };
+        assert!(items.elements.is_empty());
+    }
 }

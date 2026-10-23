@@ -396,7 +396,7 @@ fn scoreboard_survives_core_checkpoint_and_recovery_and_syncs_rejoining_viewer()
         assert_eq!(record.captured_tick, image.tick);
         let tag = crate::native_checkpoint::decode_tag(record, "scoreboard").unwrap();
         let scoreboard = crate::scoreboard::Scoreboard::from_nbt(&tag).unwrap();
-        assert_eq!(scoreboard.scores["probe"]["wins"], 42);
+        assert_eq!(scoreboard.scores["probe"]["wins"].value, 42);
         assert_eq!(scoreboard.display_slots[&1], "wins");
         assert!(!scoreboard.teams["allies"].friendly_fire);
         assert!(scoreboard.teams["allies"].members.contains("probe"));

@@ -546,6 +546,18 @@ fn typed_container_slots_accept_vanilla_bytes_and_existing_ints() {
             let Tag::Compound(fields) = entity else {
                 panic!("block entity compound")
             };
+            fields.push((
+                "CustomName".into(),
+                Tag::String("Preserved container".into()),
+            ));
+            fields.push((
+                "lock".into(),
+                Tag::Compound(vec![("components".into(), Tag::Compound(vec![]))]),
+            ));
+            fields.push((
+                "components".into(),
+                Tag::Compound(vec![("test:metadata".into(), Tag::Long(17))]),
+            ));
             let (_, Tag::List(stacks)) =
                 fields.iter_mut().find(|(name, _)| name == "Items").unwrap()
             else {
@@ -568,7 +580,7 @@ fn typed_container_slots_accept_vanilla_bytes_and_existing_ints() {
                 };
             }
         }
-        let decoded = chunk_from_nbt_with_items(
+        let mut decoded = chunk_from_nbt_with_items(
             &root,
             &registry,
             Some(&items),
@@ -580,6 +592,49 @@ fn typed_container_slots_accept_vanilla_bytes_and_existing_ints() {
         assert_eq!(decoded.furnaces[&positions[1]], furnace);
         assert_eq!(decoded.hoppers[&positions[2]], hopper);
         assert_eq!(decoded.brewing_stands[&positions[3]], stand);
+        // Typed inventory edits must not discard metadata or resurrect old items.
+        decoded
+            .chests
+            .get_mut(&positions[0])
+            .unwrap()
+            .slots
+            .fill(FurnaceSlot::default());
+        decoded
+            .furnaces
+            .get_mut(&positions[1])
+            .unwrap()
+            .slots
+            .fill(FurnaceSlot::default());
+        decoded
+            .hoppers
+            .get_mut(&positions[2])
+            .unwrap()
+            .slots
+            .fill(FurnaceSlot::default());
+        decoded
+            .brewing_stands
+            .get_mut(&positions[3])
+            .unwrap()
+            .slots
+            .fill(FurnaceSlot::default());
+        let encoded = chunk_to_nbt_with_items(&decoded, &registry, Some(&items)).unwrap();
+        let fields = expect_compound(&encoded, "chunk").unwrap();
+        for entity in &get_list(fields, "block_entities").unwrap().elements {
+            let fields = expect_compound(entity, "container").unwrap();
+            assert_eq!(
+                get_string(fields, "CustomName").unwrap(),
+                "Preserved container"
+            );
+            assert!(matches!(
+                get_field(fields, "lock").unwrap(),
+                Tag::Compound(_)
+            ));
+            assert!(matches!(
+                get_field(fields, "components").unwrap(),
+                Tag::Compound(_)
+            ));
+            assert!(get_list(fields, "Items").unwrap().elements.is_empty());
+        }
     }
 }
 

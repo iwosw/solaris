@@ -816,6 +816,42 @@ mod tests {
     use super::*;
 
     #[test]
+    fn unchanged_weather_preserves_independent_vanilla_timers() {
+        let mut manifest = CheckpointManifest {
+            world_spawn: Some([0, 80, 0]),
+            ..Default::default()
+        };
+        let mut tags = MetadataTags::new();
+        checkpoint_tags(&mut tags, 42, &manifest).unwrap();
+        let path = "data/minecraft/weather.dat";
+        for (raining, thundering, clear) in [
+            (false, false, 0),
+            (true, false, 0),
+            (true, true, 0),
+            (false, false, 99),
+        ] {
+            let weather = saved_data_mut(&mut tags, path).unwrap();
+            for (key, value) in [
+                ("raining", Tag::Byte(i8::from(raining))),
+                ("thundering", Tag::Byte(i8::from(thundering))),
+                ("clear_weather_time", Tag::Int(clear)),
+                ("rain_time", Tag::Int(12345)),
+                ("thunder_time", Tag::Int(67890)),
+            ] {
+                put(weather, key, value);
+            }
+            let expected = tags[path].clone();
+            import_tags(&tags, &mut manifest).unwrap();
+            checkpoint_tags(&mut tags, 42, &manifest).unwrap();
+            assert_eq!(tags[path], expected);
+            // Native simulation changes still replace the projected deadline.
+            manifest.climate.as_mut().unwrap().remaining_ticks -= 1;
+            checkpoint_tags(&mut tags, 42, &manifest).unwrap();
+            assert_ne!(tags[path], expected);
+        }
+    }
+
+    #[test]
     fn modern_metadata_checkpoint_roundtrip_uses_native_global_domains() {
         let mut tags = MetadataTags::new();
         let mut manifest = CheckpointManifest {

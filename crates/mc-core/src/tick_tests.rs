@@ -6578,6 +6578,46 @@ fn team_join_and_friendly_fire_block_melee_and_projectiles_without_hurt_side_eff
 }
 
 #[test]
+fn scoreboard_trigger_requires_enable_and_relocks_without_affecting_admin_scores() {
+    let (mut state, player, _) = flat_player_fixture();
+    let run = |state: &mut TickState, input: &str, operator: bool| {
+        let crate::commands::Command::Scoreboard(command) =
+            crate::commands::parse(input, operator).unwrap()
+        else {
+            panic!("scoreboard command")
+        };
+        crate::scoreboard::execute(state, player, &command)
+    };
+    run(&mut state, "scoreboard objectives add probe trigger", true);
+    run(&mut state, "scoreboard players set Alice probe 7", true);
+    assert!(state.scoreboard.scores["Alice"]["probe"].locked);
+    assert!(run(&mut state, "trigger probe", false).contains("not enabled"));
+    assert_eq!(state.scoreboard.scores["Alice"]["probe"].value, 7);
+    run(&mut state, "scoreboard players enable Alice probe", true);
+    assert!(!state.scoreboard.scores["Alice"]["probe"].locked);
+    state.scoreboard = crate::scoreboard::Scoreboard::from_nbt(&state.scoreboard.to_nbt()).unwrap();
+    run(&mut state, "trigger probe add 3", false);
+    assert_eq!(state.scoreboard.scores["Alice"]["probe"].value, 10);
+    assert!(state.scoreboard.scores["Alice"]["probe"].locked);
+    assert!(run(&mut state, "trigger probe set 1", false).contains("not enabled"));
+    run(&mut state, "scoreboard players enable Alice probe", true);
+    run(&mut state, "trigger probe set -4", false);
+    assert_eq!(state.scoreboard.scores["Alice"]["probe"].value, -4);
+    assert!(state.scoreboard.scores["Alice"]["probe"].locked);
+    run(&mut state, "scoreboard players reset Alice probe", true);
+    assert!(run(&mut state, "trigger probe", false).contains("not enabled"));
+    run(&mut state, "scoreboard players enable Alice probe", true);
+    run(&mut state, "trigger probe", false);
+    assert_eq!(state.scoreboard.scores["Alice"]["probe"].value, 1);
+    run(&mut state, "scoreboard objectives add dummy dummy", true);
+    assert!(
+        run(&mut state, "scoreboard players enable Alice dummy", true).contains("not a trigger")
+    );
+    assert!(run(&mut state, "trigger dummy", false).contains("not a trigger"));
+    assert!(crate::commands::parse("scoreboard players enable Alice probe", false).is_err());
+}
+
+#[test]
 fn scoreboard_command_operations_and_join_snapshot_are_authoritative() {
     let (mut state, player, _) = flat_player_fixture();
     for command in [
@@ -6593,7 +6633,7 @@ fn scoreboard_command_operations_and_join_snapshot_are_authoritative() {
         };
         crate::scoreboard::execute(&mut state, player, &command);
     }
-    assert_eq!(state.scoreboard.scores["Alice"]["wins"], 10);
+    assert_eq!(state.scoreboard.scores["Alice"]["wins"].value, 10);
     assert_eq!(state.scoreboard.display_slots[&1], "wins");
     let (_, drains, _) = run_tick(
         &mut state,

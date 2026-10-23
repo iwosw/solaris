@@ -215,11 +215,13 @@ fn scoreboard_heap(board: &crate::scoreboard::Scoreboard) -> usize {
             + objective.display_name.capacity()
     });
     let scores = board.scores.iter().map(|(holder, scores)| {
-        string_node(holder, size_of::<std::collections::BTreeMap<String, i32>>())
-            + tree_root(scores.len(), string + size_of::<i32>())
+        string_node(
+            holder,
+            size_of::<std::collections::BTreeMap<String, crate::scoreboard::Score>>(),
+        ) + tree_root(scores.len(), string + size_of::<crate::scoreboard::Score>())
             + scores
                 .keys()
-                .map(|objective| string_node(objective, size_of::<i32>()))
+                .map(|objective| string_node(objective, size_of::<crate::scoreboard::Score>()))
                 .sum::<usize>()
     });
     let slots = board
@@ -234,7 +236,7 @@ fn scoreboard_heap(board: &crate::scoreboard::Scoreboard) -> usize {
         string + size_of::<crate::scoreboard::Objective>(),
     ) + tree_root(
         board.scores.len(),
-        string + size_of::<std::collections::BTreeMap<String, i32>>(),
+        string + size_of::<std::collections::BTreeMap<String, crate::scoreboard::Score>>(),
     ) + tree_root(board.display_slots.len(), string + size_of::<i32>());
     roots
         + teams

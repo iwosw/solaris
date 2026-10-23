@@ -269,7 +269,8 @@ impl Scoreboard {
                     Tag::Compound(vec![
                         ("Name".into(), value(owner)),
                         ("Objective".into(), value(objective)),
-                        ("Score".into(), Tag::Int(*score)),
+                        ("Score".into(), Tag::Int(score.value)),
+                        ("Locked".into(), Tag::Byte(i8::from(score.locked))),
                     ])
                 })
             })
@@ -377,9 +378,7 @@ impl Scoreboard {
             if !result.objectives.contains_key(&objective) {
                 return Err(format!("score references missing objective {objective}"));
             }
-            if boolean(fields, "Locked", false)? {
-                return Err("unsupported locked scoreboard score".into());
-            }
+            let locked = boolean(fields, "Locked", true)?;
             absent(fields, "display")?;
             absent(fields, "format")?;
             let score = match field(fields, "Score")? {
@@ -391,7 +390,13 @@ impl Scoreboard {
                 .scores
                 .entry(owner)
                 .or_insert_with(BTreeMap::new)
-                .insert(objective, score)
+                .insert(
+                    objective,
+                    super::scoreboard::Score {
+                        value: score,
+                        locked,
+                    },
+                )
                 .is_some()
             {
                 return Err("duplicate scoreboard score".into());
@@ -470,9 +475,18 @@ mod tests {
                 display_name: "Kills ♥".into(),
             },
         );
-        board
-            .scores
-            .insert("Alice".into(), [("kills".into(), -7)].into_iter().collect());
+        board.scores.insert(
+            "Alice".into(),
+            [(
+                "kills".into(),
+                crate::scoreboard::Score {
+                    value: -7,
+                    locked: true,
+                },
+            )]
+            .into_iter()
+            .collect(),
+        );
         board.display_slots.insert(1, "kills".into());
         board.teams.insert(
             "red".into(),
@@ -536,7 +550,7 @@ mod tests {
         let Tag::Compound(score) = &mut scores.elements[0] else {
             unreachable!()
         };
-        score.push(("Locked".into(), Tag::Byte(1)));
+        score.push(("Locked".into(), Tag::String("invalid".into())));
         assert!(Scoreboard::from_nbt(&root).is_err());
         let mut root = board().to_nbt();
         let Tag::Compound(root_fields) = &mut root else {
@@ -586,6 +600,49 @@ mod tests {
             crate::journal::replay_batches(replay, &batches).scoreboard,
             Some(tail)
         );
+    }
+
+    #[test]
+    fn locked_and_enabled_scores_roundtrip_through_nbt_and_wal() {
+        let mut value = board();
+        value.scores.get_mut("Alice").unwrap().insert(
+            "enabled".into(),
+            crate::scoreboard::Score {
+                value: 12,
+                locked: false,
+            },
+        );
+        value.objectives.insert(
+            "enabled".into(),
+            Objective {
+                criteria: "trigger".into(),
+                display_name: "Enabled".into(),
+            },
+        );
+        assert_eq!(Scoreboard::from_nbt(&value.to_nbt()).unwrap(), value);
+        let entries = vec![(
+            1,
+            1,
+            vec![crate::journal::JournalEntry::Scoreboard {
+                value: value.clone(),
+            }],
+        )];
+        let replay = crate::journal::replay_batches(crate::journal::Replay::default(), &entries);
+        assert_eq!(replay.scoreboard, Some(value));
+    }
+
+    #[test]
+    fn absent_locked_field_defaults_to_locked() {
+        let value = board();
+        let mut root = value.to_nbt();
+        let Tag::Compound(fields) = &mut root else { unreachable!() };
+        let Tag::List(scores) = &mut fields.iter_mut()
+            .find(|(key, _)| key == "PlayerScores").unwrap().1 else { unreachable!() };
+        for score in &mut scores.elements {
+            let Tag::Compound(fields) = score else { unreachable!() };
+            fields.retain(|(key, _)| key != "Locked");
+        }
+        assert_eq!(Scoreboard::from_nbt(&root).unwrap(), value);
     }
 
     #[test]

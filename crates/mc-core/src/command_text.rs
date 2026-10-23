@@ -114,7 +114,7 @@ fn resolve_compound(
             .and_then(|holder| state.scoreboard.scores.get(&holder))
             .and_then(|scores| scores.get(objective))
         {
-            extra.push(text_tag(value));
+            extra.push(text_tag(value.value));
         }
     }
     for (key, value) in fields {

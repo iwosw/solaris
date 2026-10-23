@@ -313,7 +313,7 @@ pub fn parse(command: &str, operator: bool) -> Result<Command, CommandError> {
     if !operator
         && !matches!(
             *name,
-            "me" | "msg" | "tell" | "w" | "teammsg" | "tm" | "settlement"
+            "me" | "msg" | "tell" | "w" | "teammsg" | "tm" | "settlement" | "trigger"
         )
     {
         return Err(CommandError::Unknown);
@@ -352,7 +352,7 @@ pub fn parse(command: &str, operator: bool) -> Result<Command, CommandError> {
         }
         "bossbar" => crate::command_bossbar::parse(args, command).map(Command::BossBar),
         "enchant" => crate::command_enchant::parse(args).map(Command::Enchant),
-        "team" | "scoreboard" => {
+        "team" | "scoreboard" | "trigger" => {
             crate::scoreboard::ScoreboardCommand::parse(name, args).map(Command::Scoreboard)
         }
         "say" | "me" if !args.is_empty() => {

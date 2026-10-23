@@ -820,6 +820,46 @@ solaris-v2 --config server.toml world export-anvil \
   --source /srv/native-world --destination /srv/exported-world --receipt /srv/export.json
 ```
 
+### Interchange preservation and limits
+
+A successful receipt means the offline conversion published a complete destination,
+not that native gameplay implements every retained vanilla field. Inspect
+`known_gaps`, `normalizations`, `opaque_retention`, and `upgrades` before replacing
+a server. Keep the original world and receipts. Region compression, palette order,
+compound order, omitted defaults and `LastUpdate` are normalized, not byte-identical.
+
+| Data | Interchange custody |
+|---|---|
+| Block states, including waterlogged/facing/other properties | Registry state identity; unknown states/properties refuse import. Missing properties inherit the registered default. Empty palettes, missing multi-state packed data and out-of-range palette indices refuse decoding rather than replacing terrain. |
+| Three-dimensional biomes | Every 4×4×4 cell per section is retained by biome identifier, independent of palette order. |
+| Heightmaps and lighting | Named heightmap arrays and section/boundary sky/block light arrays are retained. Native block edits may invalidate/recompute light and heightmaps; unchanged-world conversion is the preservation case. |
+| Chests/barrels, furnace/smoker/blast furnace, hoppers, brewing stands | Inventory/components and owned timers are typed. Unowned block-entity metadata (including `CustomName`, `lock`, `components`) is retained alongside the native container and merged without resurrecting old inventory or consumed loot tables. Retention of a lock is not enforcement of that lock during native gameplay. Copper-chest loot is materialized at admission, not an untouched loot-table round trip. |
+| Signs (front and back), banners, spawners, shulkers, lecterns, beehives, campfires, jukeboxes and other block entities | Complete NBT retained by position unless a native gameplay mutation replaces it; storage/trial/conduit payload validators may refuse unsupported forms. This is interchange custody, not proof of every block entity's gameplay parity. |
+| Villagers (offers/gossip), item frames, armor stands, paintings, minecarts, boats and other entities | UUID and shared fields are decoded, species-specific/unowned fields retained; native hydration validates supported species payloads. Unsupported forms fail with file/chunk/entity UUID/type context. Wire IDs are reminted and are not vanilla identities. Duplicate UUID bodies are dropped deterministically with explicit receipt losses and separate original-NBT artifacts. |
+| Player inventory/equipment, ender chest, XP, effects, spawn, attributes, recipes | Native-owned fields are mapped; unowned player fields are retained. Recipe-book recipes are refreshed from native custody while other book fields survive. Saved attribute NBT retention does not imply native attribute behavior. Absent-dimension login/respawn fallback is recorded as a preservation loss. |
+| Advancements/statistics | Owned JSON is imported/exported semantically; orphan advancement documents remain opaque. Statistics-only UUID files can create native offline-player records. |
+| World rules, time, weather, border, dragon fight, wandering trader | Typed metadata is refreshed from recovered native state. 26.1.2 stores several formerly `level.dat` fields in separate saved-data files. Unowned envelope fields are retained; deferred old saved data conflicts with an active native owner fail export. |
+| Maps, scoreboards/teams, raids | Maps are upgraded/retained as saved data; scoreboard/team and raid state have typed native owners. Each score retains its `Locked` flag: newly created scores are locked, `/scoreboard players enable` unlocks a trigger score, and `/trigger` consumes that permission and re-locks it. Unknown saved-data envelope fields are merged by record identity, not list position. |
+| POI, structure starts/references | POI files remain byte-exact opaque files, not native POI authority. Full-chunk structure metadata is retained. Empty protochunk regeneration may discard structure starts/references and records the loss. |
+| Scheduled ticks | Native queues retain identity, priority and remaining delay. Empty-fluid no-ops, foreign-chunk work and exact duplicates are normalized and counted; delays outside the Anvil integer range fail export. |
+| Protochunk statuses | Non-full chunks with terrain or owned block-entity/tick payload are stored with their status. All-air non-full chunks without owned payload are omitted for native regeneration; counters and loss records identify discarded fields. Solaris generation is not seed-equivalent to vanilla generation. |
+| Other `data/*.dat` and auxiliary files | Explicit allowlist only; unknown active files, custom dimensions/worldgen descriptors and executable datapacks fail closed. Known opaque saved data, player backups, icons and resource packs are retained subject to a 16 MiB aggregate conversion-extras record limit. |
+
+Native-only plugin/settlement state and block-log history have no vanilla runtime
+equivalent; Anvil is not a backup format for these domains. Use native backup/restore
+when their recovery is required. Running either server between conversions changes
+its authoritative state; comparing those worlds is not an unchanged-NBT round trip.
+
+The headless command-fixture gate is `python3 -m tools.harness.anvil_interchange
+--binary /path/to/solaris-v2 --jar /path/to/server-bundler.jar --eula-file
+/path/to/already-accepted/eula.txt --cache /path/to/content --output /new/artifact/path`.
+It retains the source, conversion receipts, normalized NBT differences (including
+added fields), command feedback, and Java/native logs. It separately checks an
+unchanged import/export and a native edit/export → Java open/save → reimport.
+It does not accept legal terms or claim real-client/gameplay coverage.
+Supply the official 26.1.2 bundler JAR, not its extracted inner server JAR (which
+requires a separate library classpath).
+
 Anvil is a compatibility format, not live fallback or dual-write storage.
 Earth WorldPlan preparation is not ported. Simulation tickets are not an
 offline generator: using them advances simulation and persists ticket

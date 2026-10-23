@@ -44,6 +44,7 @@ const ROOTS: &[(&str, u8)] = &[
     ("teammsg", 0),
     ("tm", 0),
     ("settlement", 0),
+    ("trigger", 0),
     ("gamemode", 2),
     ("teleport", 2),
     ("tp", 2),
@@ -1011,6 +1012,13 @@ pub(crate) fn tree(op_level: u8, plugins: &[(String, u8)]) -> ClientboundCommand
     if let Some(root) = t.root("scoreboard", false) {
         scoreboard_tree(&mut t, root);
     }
+    if let Some(root) = t.root("trigger", false) {
+        let objective = t.argument(root, "objective", Parser::Objective, true);
+        for name in ["add", "set"] {
+            let operation = t.literal(objective, name, false);
+            t.argument(operation, "value", integer(None, None), true);
+        }
+    }
     if let Some(root) = t.root("kick", false) {
         let targets = t.argument(root, "targets", players(false), true);
         t.argument(targets, "reason", Parser::Message, true);
@@ -1313,6 +1321,15 @@ fn scoreboard_tree(t: &mut Tree, root: i32) {
         "targets",
         Parser::ScoreHolder { multiple: true },
         true,
+        "ask_server",
+    );
+    t.argument(targets, "objective", Parser::Objective, true);
+    let enable = t.literal(players, "enable", false);
+    let targets = t.suggested(
+        enable,
+        "targets",
+        Parser::ScoreHolder { multiple: true },
+        false,
         "ask_server",
     );
     t.argument(targets, "objective", Parser::Objective, true);
