@@ -185,6 +185,7 @@ fn bonemeal_rejects_mature_stems_but_newly_mature_stems_can_bear_fruit() {
             simple_block(0, "minecraft:air"),
             age_block("minecraft:melon_stem", &ages),
             simple_block(9, "minecraft:melon"),
+            simple_block(11, "minecraft:dirt"),
             BlockReport {
                 id: Identifier::parse("minecraft:attached_melon_stem").unwrap(),
                 properties: property_schema(&[("facing", &["north"])]),
@@ -196,6 +197,15 @@ fn bonemeal_rejects_mature_stems_but_newly_mature_stems_can_bear_fruit() {
     let mut world = in_memory_world();
     let position = BlockPos { x: 4, y: 64, z: 4 };
     let fruit = BlockPos { z: 3, ..position };
+    world
+        .set_block_at(
+            BlockPos {
+                y: fruit.y - 1,
+                ..fruit
+            },
+            BlockStateId(11),
+        )
+        .unwrap();
     world.set_block_at(position, BlockStateId(8)).unwrap();
     assert_eq!(
         bonemeal_growth_edits(&registry, &world, position, BlockStateId(8), 0),

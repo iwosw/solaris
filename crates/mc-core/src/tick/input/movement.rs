@@ -297,6 +297,15 @@ pub(in crate::tick) fn move_input(
                     .by_id(mc_world::BlockStateId(id))
                     .is_some_and(|block| crate::statistics::climbable(state, block.block.raw_id))
         });
+    if state.entities.ground(slot) && !cushioned {
+        let distance = state.players.get(&entity).map_or(0.0, |player| {
+            player.fall_distance + (old[1] - new_pos[1]).max(0.0)
+        });
+        if let Some(mut intent) = crate::farming::trample_intent(state, entity, new_pos, distance) {
+            intent.seq = state.next_seq(entity);
+            intents.push(intent);
+        }
+    }
     let damage = state.players.get_mut(&entity).map_or(0.0, |player| {
         let dy = new_pos[1] - old[1];
         if fall_flying && matches!(input, PlayerInput::Move { .. }) && dy > -0.5 {

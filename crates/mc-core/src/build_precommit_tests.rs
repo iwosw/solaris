@@ -1453,7 +1453,7 @@ async fn real_chance_based_composter_fill_keep_and_deny_preserve_native_roll_and
             .find(|sequence| {
                 matches!(
                     crate::composter::plan_use(&state, actor, Hand::Main, POS, *sequence),
-                    crate::composter::UsePlan::Fill { .. }
+                    crate::composter::UsePlan::Fill { current, next, .. } if current != next
                 )
             })
             .expect("a successful native 30-percent compost roll");

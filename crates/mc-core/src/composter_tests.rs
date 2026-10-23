@@ -200,7 +200,7 @@ fn failed_roll_full_use_offhand_and_creative_do_not_double_debit() {
     assert_eq!(level(&state, POS), Some(1));
     assert_eq!(
         state.players[&entity].inventory.slots[crate::inventory::OFF_HAND].count,
-        2
+        1
     );
     give(&mut state, entity, "cake", 2, Hand::Off);
     run_tick(&mut state, &[use_input(1, Hand::Off)]);

@@ -10,6 +10,9 @@ use rustc_hash::FxHashMap;
 use crate::boundary::{BlockPos, EntityId};
 use crate::tick::TickState;
 
+#[path = "plants_growth.rs"]
+mod growth;
+
 pub(crate) struct Plan {
     pub(crate) writes: Vec<(BlockPos, u32)>,
     pub(crate) expects: Vec<(BlockPos, u32)>,
@@ -91,6 +94,8 @@ pub(crate) fn random_growth(state: &TickState, at: BlockPos, id: u32, seed: u64)
     plan(state, at, |read| {
         let pos = old(at);
         match path {
+            "kelp" | "cave_vines" | "weeping_vines" | "twisting_vines" | "vine"
+            | "brown_mushroom" | "red_mushroom" => growth::random(read, at, id, seed),
             "bamboo_sapling" => rules::bamboo_sapling_growth_edits(blocks, read, pos, seed),
             "cactus" | "sugar_cane" | "bamboo" => {
                 rules::vertical_plant_growth_edits(blocks, read, pos, BlockStateId(id), seed)
@@ -105,6 +110,9 @@ pub(crate) fn random_growth(state: &TickState, at: BlockPos, id: u32, seed: u64)
                     }
                     Some(vec![PlantBlockEdit { pos, new_state }])
                 } else {
+                    if !rules::crop_growth_gate_passes(blocks, read, pos, BlockStateId(id), seed) {
+                        return None;
+                    }
                     rules::stem_fruit_edits(blocks, read, pos, BlockStateId(id))
                 }
             }
@@ -118,6 +126,9 @@ pub(crate) fn bonemeal(state: &TickState, at: BlockPos, seed: u64) -> Option<Pla
         return None;
     }
     plan(state, at, |read| {
+        if let Some(edits) = growth::bonemeal(read, at, id, seed) {
+            return Some(edits);
+        }
         rules::bonemeal_growth_edits(
             &state.registry.blocks,
             read,
@@ -279,7 +290,13 @@ pub(crate) fn neighbor_updates(
                 continue;
             };
             crate::leaves::schedule(state, at, id);
-            if !can_stand(state, id, at) {
+            if crate::farming::covered_farmland(state, at, id) {
+                let dirt = state.registry.states.dirt;
+                state.world.set_block(at.x, at.y, at.z, dirt);
+                writes.retain(|(pos, _)| *pos != at);
+                writes.push((at, dirt));
+                pending.push(at);
+            } else if !can_stand(state, id, at) {
                 if !state.pop_block_loot(at, id, spawned) {
                     continue;
                 }

@@ -8,10 +8,9 @@
 //! Every roll is a hash of (world seed, tick, section, sample): no RNG state
 //! and the same tick always rolls the same.
 //!
-//! Crops and saplings use authoritative local light after day/weather darkening.
-//! Simplifications: no rain hydration, no trampling, no farmland decay under
-//! a solid block, no grass decay or grass light checks. Plant/tree shapes use
-//! the shared OLD 26.1 rules; leaf distance uses persisted native block ticks.
+//! Crops use raw local light; saplings use day/weather-darkened light.
+//! Hydration, soil cover and spreading dirt run only for sampled cells.
+//! Plant/tree shapes use shared rules; leaf distance uses native block ticks.
 
 use mc_data::ItemStack;
 use mc_world::{BlockRegistry, BlockStateId, Chunk, ChunkSection, SECTION_DIM};
@@ -33,6 +32,7 @@ enum Kind {
     /// Other plant soil (podzol, coarse dirt, rooted dirt, moss, mud).
     Soil,
     Grass,
+    Mycelium,
     Farmland,
     Crop,
     Sapling,
@@ -47,6 +47,7 @@ impl Kind {
         matches!(
             self,
             Self::Grass
+                | Self::Mycelium
                 | Self::Farmland
                 | Self::Crop
                 | Self::Sapling
@@ -67,10 +68,14 @@ fn kind_of(path: &str) -> Kind {
         "dirt_path" => Kind::DirtPath,
         "podzol" | "coarse_dirt" | "rooted_dirt" | "moss_block" | "mud" => Kind::Soil,
         "grass_block" => Kind::Grass,
+        "mycelium" => Kind::Mycelium,
         "farmland" => Kind::Farmland,
         "wheat" | "carrots" | "potatoes" | "beetroots" => Kind::Crop,
         "bamboo_sapling" | "cactus" | "sugar_cane" | "bamboo" | "nether_wart" | "melon_stem"
-        | "pumpkin_stem" | "sweet_berry_bush" | "cocoa" => Kind::Plant,
+        | "pumpkin_stem" | "sweet_berry_bush" | "cocoa" | "kelp" | "cave_vines"
+        | "weeping_vines" | "twisting_vines" | "vine" | "brown_mushroom" | "red_mushroom" => {
+            Kind::Plant
+        }
         _ if crate::copper::family(path).is_some_and(|(_, age, waxed)| age < 3 && !waxed) => {
             Kind::Copper
         }
@@ -287,7 +292,10 @@ pub(crate) fn plan_use_intent_at(
         return Some(Intent {
             actor: entity,
             seq: 0,
-            kind: IntentKind::Cultivate { wear: 0 },
+            kind: IntentKind::Cultivate {
+                pos: clicked,
+                wear: 0,
+            },
             footprint,
         });
     }
@@ -345,8 +353,82 @@ pub(crate) fn plan_use_intent_at(
     Some(Intent {
         actor: entity,
         seq: 0,
-        kind: IntentKind::Cultivate { wear },
+        kind: IntentKind::Cultivate { pos: clicked, wear },
         footprint,
+    })
+}
+
+/// Award only after the whole cultivation footprint and held debit are accepted.
+pub(crate) fn accepted_use(state: &mut TickState, intent: &Intent, pos: BlockPos) {
+    let held = intent
+        .footprint
+        .inv
+        .iter()
+        .find_map(|claim| {
+            state
+                .players
+                .get(&claim.owner)?
+                .inventory
+                .slots
+                .get(claim.slot as usize)
+        })
+        .cloned();
+    let result = intent
+        .footprint
+        .block_write
+        .iter()
+        .find(|(at, _)| *at == pos)
+        .map(|(_, id)| *id);
+    crate::advancements::accepted_block(
+        state,
+        intent.actor,
+        "minecraft:item_used_on_block",
+        pos,
+        result,
+        held,
+    );
+}
+
+/// Plan only an actual landing. The caller supplies accepted position/distance,
+/// never the client's claimed ground flag. Merge fences intervening block edits.
+pub(crate) fn trample_intent(
+    state: &TickState,
+    entity: EntityId,
+    position: [f64; 3],
+    distance: f64,
+) -> Option<Intent> {
+    if distance <= 0.5 || state.players.get(&entity).is_some_and(|p| p.spectator()) {
+        return None;
+    }
+    let at = BlockPos {
+        x: position[0].floor() as i32,
+        y: (position[1] - 0.01).floor() as i32,
+        z: position[2].floor() as i32,
+    };
+    let id = state.world.block_at(at.x, at.y, at.z)?;
+    if state.registry.farming.kind(id) != Kind::Farmland
+        || crate::plugin_player::protects_cell(state, at)
+    {
+        return None;
+    }
+    let mut roll = Roll::new(hash(&[
+        state.tick,
+        entity.0 as u64,
+        at.x as u64,
+        at.z as u64,
+    ]));
+    if f64::from(roll.below(1_000_000)) / 1_000_000.0 >= distance - 0.5 {
+        return None;
+    }
+    Some(Intent {
+        actor: entity,
+        seq: 0,
+        kind: IntentKind::TrampleFarmland,
+        footprint: Footprint {
+            block_expect: vec![(at, id)],
+            block_write: vec![(at, state.registry.states.dirt)],
+            ..Default::default()
+        },
     })
 }
 
@@ -646,7 +728,7 @@ fn tick_cell(
     let outcome = match kind {
         Kind::Crop => crop(state, at, id, roll),
         Kind::Farmland => farmland(state, at, id),
-        Kind::Grass => grass(state, at, roll),
+        Kind::Grass | Kind::Mycelium => grass(state, at, roll),
         Kind::Sapling => sapling(state, at, id, roll),
         Kind::Copper => {
             crate::copper::random_tick(state, at, id, roll.below(u32::MAX)).map(Outcome::Set)
@@ -756,16 +838,29 @@ fn farmland(state: &TickState, at: BlockPos, id: u32) -> Option<Outcome> {
     let states = &state.registry.states;
     let farming = &state.registry.farming;
     let above = state.world.block_at(at.x, at.y + 1, at.z)?;
+    if covered_farmland(state, at, id) {
+        return Some(Outcome::Set(vec![(at, states.dirt)]));
+    }
     let wet = (-4..=4).any(|dx| {
         (-4..=4).any(|dz| {
             (0..=1).any(|dy| {
                 state
                     .world
                     .block_at(at.x + dx, at.y + dy, at.z + dz)
-                    .is_some_and(|near| states.water_levels.contains(&near))
+                    .is_some_and(|near| {
+                        states.water_levels.contains(&near)
+                            || prop(&state.registry.blocks, near, "waterlogged") == Some("true")
+                            || is_block(&state.registry.blocks, near, "kelp")
+                            || is_block(&state.registry.blocks, near, "kelp_plant")
+                            || is_block(&state.registry.blocks, near, "seagrass")
+                            || is_block(&state.registry.blocks, near, "tall_seagrass")
+                    })
             })
         })
-    });
+    }) || crate::conduit::rain_exposed(
+        state,
+        [f64::from(at.x), f64::from(at.y), f64::from(at.z)],
+    );
     let moisture = farming.farmland.iter().position(|state| *state == id)?;
     let new = if wet {
         (moisture < 7).then_some(farming.farmland[7])?
@@ -784,10 +879,53 @@ fn farmland(state: &TickState, at: BlockPos, id: u32) -> Option<Outcome> {
     Some(Outcome::Set(vec![(at, new)]))
 }
 
-/// Vanilla `SpreadingSnowyDirtBlock.randomTick`: four tries at a random cell
-/// in x/z +-1, y -3..=+1; dirt with air above turns to grass.
+/// Cover checks are also used by the event-driven neighbor settlement.
+pub(crate) fn covered_farmland(state: &TickState, at: BlockPos, id: u32) -> bool {
+    if state.registry.farming.kind(id) != Kind::Farmland {
+        return false;
+    }
+    state
+        .world
+        .block_at(at.x, at.y + 1, at.z)
+        .is_some_and(|above| {
+            state.registry.materials.classify(above).is_solid()
+                && !prop(&state.registry.blocks, above, "facing").is_some_and(|_| {
+                    state
+                        .registry
+                        .blocks
+                        .by_id(BlockStateId(above))
+                        .is_some_and(|block| block.block.id.path().ends_with("_fence_gate"))
+                })
+        })
+}
+
+fn grass_survives(state: &TickState, at: BlockPos) -> bool {
+    let Some(above) = state.world.block_at(at.x, at.y + 1, at.z) else {
+        return true;
+    };
+    if is_block(&state.registry.blocks, above, "snow")
+        && prop(&state.registry.blocks, above, "layers") == Some("1")
+    {
+        return true;
+    }
+    !state.registry.states.water_levels.contains(&above)
+        && prop(&state.registry.blocks, above, "waterlogged") != Some("true")
+        && state
+            .registry
+            .light
+            .opacity(above)
+            .is_none_or(|opacity| opacity < 15)
+}
+
+/// Grass and mycelium share survival/light rules, preserving their own family.
 fn grass(state: &TickState, at: BlockPos, roll: &mut Roll) -> Option<Outcome> {
-    let air = state.registry.states.air;
+    if !grass_survives(state, at) {
+        return Some(Outcome::Set(vec![(at, state.registry.states.dirt)]));
+    }
+    if state.raw_brightness(at.x, at.y + 1, at.z) < 9 {
+        return None;
+    }
+    let source = state.world.block_at(at.x, at.y, at.z)?;
     let mut cells = Vec::new();
     for _ in 0..4 {
         let target = BlockPos {
@@ -796,9 +934,16 @@ fn grass(state: &TickState, at: BlockPos, roll: &mut Roll) -> Option<Outcome> {
             z: at.z + roll.below(3) as i32 - 1,
         };
         if kind_at(state, target.x, target.y, target.z) == Kind::Dirt
-            && state.world.block_at(target.x, target.y + 1, target.z) == Some(air)
+            && grass_survives(state, target)
         {
-            cells.push((target, state.registry.states.grass_block));
+            let above = state.world.block_at(target.x, target.y + 1, target.z)?;
+            let snowy = if is_block(&state.registry.blocks, above, "snow") {
+                "true"
+            } else {
+                "false"
+            };
+            let grown = with_prop(&state.registry.blocks, source, "snowy", snowy)?;
+            cells.push((target, grown));
         }
     }
     (!cells.is_empty()).then_some(Outcome::Set(cells))
@@ -904,3 +1049,7 @@ impl Roll {
 #[cfg(test)]
 #[path = "farming_cache_tests.rs"]
 mod cache_tests;
+
+#[cfg(test)]
+#[path = "farming_environment_tests.rs"]
+mod environment_tests;

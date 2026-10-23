@@ -389,6 +389,72 @@ fn bamboo_state_with_properties(
     blocks.by_name_and_props(&current.block.id, &properties)
 }
 
+/// Read the small planned extension before the immutable world. This keeps a
+/// two-block bone-meal growth in one atomic native footprint.
+struct GrowthRead<'a, W> {
+    world: &'a W,
+    edits: Vec<PlantBlockEdit>,
+}
+
+impl<W: PlantBlockRead> PlantBlockRead for GrowthRead<'_, W> {
+    fn get_cached_block(&self, pos: BlockPos) -> Option<BlockStateId> {
+        self.edits
+            .iter()
+            .rev()
+            .find(|edit| edit.pos == pos)
+            .map(|edit| edit.new_state)
+            .or_else(|| self.world.get_cached_block(pos))
+    }
+
+    fn combined_light_at(&self, pos: BlockPos) -> Option<u8> {
+        self.world.combined_light_at(pos)
+    }
+}
+
+fn bamboo_bonemeal_edits(
+    blocks: &BlockRegistry,
+    world: &impl PlantBlockRead,
+    pos: BlockPos,
+    seed: u64,
+) -> Option<Vec<PlantBlockEdit>> {
+    let mut top = pos;
+    // Bamboo's maximum natural height is sixteen. Never walk an unbounded
+    // operator-built column in a gameplay action.
+    for _ in 0..16 {
+        let above = BlockPos {
+            y: top.y + 1,
+            ..top
+        };
+        if !same_block_at(blocks, world, "bamboo", above)? {
+            break;
+        }
+        top = above;
+    }
+    let mut read = GrowthRead {
+        world,
+        edits: Vec::new(),
+    };
+    for step in 0..1 + (splitmix64(seed) & 1) {
+        let id = read.get_cached_block(top)?;
+        let roll = splitmix64(seed.wrapping_add(step)) / 3 * 3;
+        let growth = if blocks.by_id(id)?.block.id.path() == "bamboo_sapling" {
+            bamboo_sapling_growth_edits(blocks, &read, top, roll)
+        } else {
+            bamboo_growth_edits(blocks, &read, top, id, roll)
+        };
+        let Some(growth) = growth else { break };
+        for edit in growth {
+            if let Some(existing) = read.edits.iter_mut().find(|old| old.pos == edit.pos) {
+                *existing = edit;
+            } else {
+                read.edits.push(edit);
+            }
+        }
+        top.y += 1;
+    }
+    (!read.edits.is_empty()).then_some(read.edits)
+}
+
 fn vertical_plant_supported_base(
     blocks: &BlockRegistry,
     world: &impl PlantBlockRead,
@@ -516,8 +582,7 @@ pub fn next_crop_growth_state(blocks: &BlockRegistry, state: BlockStateId) -> Op
 /// neighbours (dry +0.25 / hydrated +0.75 each), halved when crowded (same
 /// crop on a diagonal, or on both axes). Returns whether the random tick
 /// may advance the crop; `random_seed` is the tick's own roll seed.
-/// Nether wart ignores light/moisture (soul sand, no farmland) and always
-/// passes here; its vanilla per-tick chance is out of scope.
+/// Nether wart and cocoa use independent one-in-ten/one-in-five gates.
 pub fn crop_growth_gate_passes(
     blocks: &BlockRegistry,
     world: &impl PlantBlockRead,
@@ -532,22 +597,26 @@ pub fn crop_growth_gate_passes(
     if !is_supported_age_crop(&current.block.id) {
         return false;
     }
-    if current.block.id.as_str() == "minecraft:nether_wart" {
-        return true;
+    match current.block.id.path() {
+        "nether_wart" => return random_seed.is_multiple_of(10),
+        "cocoa" => return random_seed.is_multiple_of(5),
+        "sweet_berry_bush" => {
+            return random_seed.is_multiple_of(5)
+                && world.combined_light_at(pos).is_none_or(|light| light >= 9);
+        }
+        _ => {}
     }
     // Wiki: crops need light >= 9 at the plant block. Missing baked light
     // (tests, unbaked planning) reads as light (fail-open).
     if world.combined_light_at(pos).is_some_and(|light| light < 9) {
         return false;
     }
-    // Soil base: hydrated farmland (moisture > 0) scores 4, dry scores 2.
-    // Missing/non-farmland soil reads as dry (fail-open for reduced regs).
+    // Only farmland contributes; adjacent stone/air contributes nothing.
     let below = BlockPos {
         y: pos.y - 1,
         ..pos
     };
-    let hydrated = below_soil_hydrated(blocks, world, below);
-    let mut points = if hydrated { 4.0 } else { 2.0 };
+    let mut points = 1.0 + soil_points(blocks, world, below);
     // The 8 neighbours around the soil: dry +0.25, hydrated +0.75.
     for dz in -1..=1 {
         for dx in -1..=1 {
@@ -559,11 +628,7 @@ pub fn crop_growth_gate_passes(
                 y: below.y,
                 z: below.z + dz,
             };
-            points += if below_soil_hydrated(blocks, world, neighbour) {
-                0.75
-            } else {
-                0.25
-            };
+            points += soil_points(blocks, world, neighbour) / 4.0;
         }
     }
     // Crowding halves the points: same crop on a diagonal, or on both axes
@@ -607,23 +672,18 @@ fn crop_crowded(
     }
     x_side && z_side
 }
-fn below_soil_hydrated(
-    blocks: &BlockRegistry,
-    world: &impl PlantBlockRead,
-    soil: BlockPos,
-) -> bool {
-    let Some(state) = world.get_cached_block(soil) else {
-        return false;
+fn soil_points(blocks: &BlockRegistry, world: &impl PlantBlockRead, soil: BlockPos) -> f64 {
+    let Some(block) = world.get_cached_block(soil).and_then(|id| blocks.by_id(id)) else {
+        return 0.0;
     };
-    let Some(block) = blocks.by_id(state) else {
-        return false;
-    };
-    if block.block.id.as_str() != "minecraft:farmland" {
-        return false;
+    if block.block.id.path() != "farmland" {
+        return 0.0;
     }
-    block_state_property(block, "moisture")
-        .and_then(|moisture| moisture.parse::<u8>().ok())
-        .is_some_and(|moisture| moisture > 0)
+    if block_state_property(block, "moisture").is_some_and(|moisture| moisture != "0") {
+        3.0
+    } else {
+        1.0
+    }
 }
 
 fn same_crop_at(
@@ -696,6 +756,12 @@ pub fn bonemeal_growth_edits(
     state: BlockStateId,
     tree_seed: u64,
 ) -> Option<Vec<PlantBlockEdit>> {
+    if matches!(
+        blocks.by_id(state)?.block.id.path(),
+        "bamboo" | "bamboo_sapling"
+    ) {
+        return bamboo_bonemeal_edits(blocks, world, pos, tree_seed);
+    }
     if let Some(edit) = bonemeal_crop_growth_edit(blocks, pos, state, tree_seed) {
         // A newly mature stem may bear fruit; an already mature stem is not
         // a valid bone-meal target and must wait for a natural random tick.
@@ -871,6 +937,28 @@ pub fn stem_fruit_edits(
         if !matches!(world.get_cached_block(fruit_pos), Some(found) if found == air) {
             continue;
         }
+        let soil = world.get_cached_block(BlockPos {
+            y: fruit_pos.y - 1,
+            ..fruit_pos
+        })?;
+        if !blocks.by_id(soil).is_some_and(|block| {
+            matches!(
+                block.block.id.path(),
+                "farmland"
+                    | "dirt"
+                    | "grass_block"
+                    | "coarse_dirt"
+                    | "podzol"
+                    | "mycelium"
+                    | "rooted_dirt"
+                    | "moss_block"
+                    | "pale_moss_block"
+                    | "mud"
+                    | "muddy_mangrove_roots"
+            )
+        }) {
+            continue;
+        }
         let attached_state =
             sibling_state_with_property(blocks, attached_default, "facing", facing)?;
         return Some(vec![
@@ -908,7 +996,11 @@ pub fn sapling_tree_edits(
     let (log_name, leaves_name, base_height, random_height) = sapling_tree_blocks(sapling_name)?;
 
     let two_by_two = find_two_by_two_saplings(blocks, world, pos, sapling_name);
-    if sapling_name == "minecraft:dark_oak_sapling" && two_by_two.is_none() {
+    if matches!(
+        sapling_name,
+        "minecraft:dark_oak_sapling" | "minecraft:pale_oak_sapling"
+    ) && two_by_two.is_none()
+    {
         return None;
     }
 
@@ -928,7 +1020,10 @@ pub fn sapling_tree_edits(
         _ => return None,
     }
 
-    if sapling_name == "minecraft:dark_oak_sapling" {
+    if matches!(
+        sapling_name,
+        "minecraft:dark_oak_sapling" | "minecraft:pale_oak_sapling"
+    ) {
         return dark_oak_two_by_two_edits(
             blocks,
             world,
@@ -1328,6 +1423,12 @@ fn sapling_tree_blocks(sapling: &str) -> Option<(&'static str, &'static str, i32
         }
         "minecraft:dark_oak_sapling" => {
             Some(("minecraft:dark_oak_log", "minecraft:dark_oak_leaves", 4, 0))
+        }
+        "minecraft:cherry_sapling" => {
+            Some(("minecraft:cherry_log", "minecraft:cherry_leaves", 5, 2))
+        }
+        "minecraft:pale_oak_sapling" => {
+            Some(("minecraft:pale_oak_log", "minecraft:pale_oak_leaves", 6, 2))
         }
         _ => None,
     }

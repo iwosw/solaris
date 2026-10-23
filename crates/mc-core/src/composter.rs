@@ -145,9 +145,6 @@ pub(crate) fn plan_use(
     }
     let held = &player.inventory.slots[crate::tick::held_slot_index(player, hand)];
     if current == READY {
-        if !held.is_empty() {
-            return UsePlan::Pass;
-        }
         return level_state(state, pos, 0)
             .zip(
                 state
@@ -169,10 +166,8 @@ pub(crate) fn plan_use(
     let Some(chance) = state.registry.items.name_of(held.item_id).and_then(chance) else {
         return UsePlan::Pass;
     };
-    if current != 0 && fill_seed(pos, sequence) % 100 >= u64::from(chance) {
-        return UsePlan::Direct;
-    }
-    let Some(next) = level_state(state, pos, current + 1) else {
+    let succeeds = current == 0 || fill_seed(pos, sequence) % 100 < u64::from(chance);
+    let Some(next) = level_state(state, pos, current + u8::from(succeeds)) else {
         return UsePlan::Direct;
     };
     UsePlan::Fill {
@@ -181,7 +176,7 @@ pub(crate) fn plan_use(
             .block_at(pos.x, pos.y, pos.z)
             .expect("resident composter"),
         next,
-        maturing: current + 1 == FULL,
+        maturing: succeeds && current + 1 == FULL,
     }
 }
 
@@ -197,8 +192,8 @@ pub(crate) fn schedule_fill(state: &mut TickState, pos: BlockPos, maturing: bool
 }
 
 /// Commits a use serially on the tick owner. Returning true prevents ordinary
-/// placement from also debiting the same held stack. Failed old-supported
-/// chance rolls and full composters do not consume an item.
+/// placement from also debiting the same held stack. Every composting attempt
+/// consumes its input, including failed chance rolls; full composters do not.
 pub(crate) fn use_on(
     state: &mut TickState,
     entity: EntityId,

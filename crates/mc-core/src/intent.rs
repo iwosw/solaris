@@ -185,8 +185,11 @@ pub enum IntentKind {
     /// rewrites the target (and takes the bone meal); `wear` is the damage
     /// the hoe takes on acceptance.
     Cultivate {
+        pos: BlockPos,
         wear: i32,
     },
+    /// A supported landing converts farmland; no mining loot or tool payment.
+    TrampleFarmland,
     /// A plugin-authored block tool replaces the target block: the footprint
     /// rewrites it, `wear` is the damage the held tool takes on acceptance and
     /// `give` is the item granted to the player (dropped if the inventory is full).

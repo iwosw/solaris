@@ -1157,14 +1157,19 @@ impl TickState {
                     );
                 }
             }
-            IntentKind::Cultivate { wear } => {
+            IntentKind::Cultivate { pos, wear } => {
                 let Ok(plan) = self.player_tool_wear_plan(intent.actor, *wear) else {
                     return false;
                 };
+                crate::farming::accepted_use(self, intent, *pos);
                 self.apply_player_tool_wear(intent.actor, plan);
                 for (write_pos, write_state) in &intent.footprint.block_write {
                     self.merge_block_writes.push((*write_pos, *write_state));
                 }
+            }
+            IntentKind::TrampleFarmland => {
+                self.merge_block_writes
+                    .extend_from_slice(&intent.footprint.block_write);
             }
             IntentKind::BlockTool { wear, give } => {
                 let Ok(plan) = self.player_tool_wear_plan(intent.actor, *wear) else {
@@ -1338,6 +1343,7 @@ impl TickState {
                         | IntentKind::Cultivate { .. }
                         | IntentKind::BlockTool { .. }
                         | IntentKind::UseBlock { .. }
+                        | IntentKind::ComposterFill { .. }
                 ) && claim.owner == intent.actor
                 {
                     player
