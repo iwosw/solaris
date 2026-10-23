@@ -117,6 +117,15 @@ async fn through_host(
     input: PlayerInput,
     answer: impl FnOnce(Request),
 ) -> (Result<PlayerInput, BuildRefusal>, Vec<BuildEdit>) {
+    if let PlayerInput::Dig {
+        connection,
+        position,
+        action: DigAction::Finish,
+        ..
+    } = &input
+    {
+        crate::tick::mining_tests::ready_to_finish(state, *connection, *position);
+    }
     let mut admission = std::pin::pin!(gateway.admit(input));
     pending(admission.as_mut());
     answer_previews(state);

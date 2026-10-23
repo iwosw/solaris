@@ -688,6 +688,7 @@ fn block_interactions_require_reach_and_ack_refusals() {
     state.players.get_mut(&entity).expect("player").game_mode = crate::commands::GameMode::Survival;
     let _ = run_tick(&mut state, &[use_at(near, 4)]);
     assert!(state.open_containers.contains_key(&entity));
+    crate::tick::mining_tests::ready_to_finish(&mut state, ConnectionId(1), near);
     let _ = run_tick(&mut state, &[dig_at(near, DigAction::Finish, 5)]);
     assert_eq!(
         state.world.block_at(near.x, near.y, near.z),
@@ -860,6 +861,7 @@ fn dig_and_place_commit_block_changes() {
     state
         .entities
         .set_pos(slot, [8.5, f64::from(pos.y + 1), 10.5]);
+    crate::tick::mining_tests::ready_to_finish(&mut state, ConnectionId(1), pos);
     let (output, _, _) = run_tick(
         &mut state,
         &[PlayerInput::Dig {
@@ -1644,6 +1646,11 @@ fn torches_pop_when_their_support_breaks() {
     state.world.set_block(x, y, z + 3, stone);
     state.world.set_block(x, y + 1, z + 3, torch);
     state.world.fold_overlay();
+    crate::tick::mining_tests::ready_to_finish(
+        &mut state,
+        ConnectionId(1),
+        crate::boundary::BlockPos { x, y, z },
+    );
     let _ = run_tick(
         &mut state,
         &[PlayerInput::Dig {
@@ -1703,6 +1710,11 @@ fn breaking_a_door_half_removes_the_whole_door() {
     state.world.set_block(x, y, z, door("lower"));
     state.world.set_block(x, y + 1, z, door("upper"));
     state.world.fold_overlay();
+    crate::tick::mining_tests::ready_to_finish(
+        &mut state,
+        ConnectionId(1),
+        crate::boundary::BlockPos { x, y: y + 1, z },
+    );
     let _ = run_tick(
         &mut state,
         &[PlayerInput::Dig {
@@ -2903,27 +2915,31 @@ fn registry_loads_full_vanilla_data() {
     assert!(facts.tool.is_some(), "pickaxe has tool rules");
 }
 
-/// Survival break spawns the block's loot as an item entity (embedded data:
-/// dirt drops dirt with no tool gate).
+/// Survival break spawns the block's loot with a correctly admitted mining tool.
 #[test]
 fn survival_break_spawns_loot() {
     use crate::boundary::{BlockPos, DigAction, PlayerInput};
     let mut state = test_state();
     let entity = join(&mut state, 101, "miner");
-    // Find ground and dig the block below an air cell... simplest: place dirt
-    // via TestGive? Break needs a real block: use the spawn terrain.
+    // The embedded loot fixture contains stone -> cobblestone.
     let registry = test_registry();
-    let dirt_block = registry
+    let stone_block = registry
         .blocks
         .block(&mc_data::Identifier::parse("minecraft:stone").expect("id"))
         .expect("stone")
         .default
         .0;
-    // Put a dirt block at a known air cell near spawn.
-    state.world.set_block(8, 81, 8, dirt_block);
+    state.world.set_block(8, 81, 8, stone_block);
     state.world.fold_overlay();
     let slot = state.entities.slot_of(entity).expect("slot");
     state.entities.set_pos(slot, [8.5, 82.0, 10.5]);
+    state.players.get_mut(&entity).unwrap().inventory.slots[0] =
+        crate::crafter::tests::stack(&state, "diamond_pickaxe", 1);
+    crate::tick::mining_tests::ready_to_finish(
+        &mut state,
+        crate::boundary::ConnectionId(101),
+        BlockPos { x: 8, y: 81, z: 8 },
+    );
     let _ = run_tick(
         &mut state,
         &[PlayerInput::Dig {
@@ -2945,7 +2961,7 @@ fn survival_break_spawns_loot() {
             }
         })
         .any(|pos| (pos[0] - 8.5).abs() < 0.01 && (pos[1] - 81.5).abs() < 0.01);
-    assert!(found, "stone drop spawned at block centre");
+    assert!(found, "cobblestone drop spawned at block centre");
     let _ = entity;
 }
 
@@ -4119,6 +4135,15 @@ fn breaking_filled_chest_drops_contents_and_clears_storage() {
         }],
     );
     assert!(state.open_containers.contains_key(&entity));
+    crate::tick::mining_tests::ready_to_finish(
+        &mut state,
+        ConnectionId(205),
+        BlockPos {
+            x: cx,
+            y: cy,
+            z: cz,
+        },
+    );
     let (output, drains, _) = run_tick(
         &mut state,
         &[PlayerInput::Dig {
@@ -4754,6 +4779,8 @@ fn container_break_drops_survive_restart_without_resurrection() {
         config.simulation_distance = 2;
         config.view_distance = 2;
         config.checkpoint_every_ticks = 100_000;
+        config.vanilla_data_dir =
+            Some(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data/vanilla"));
         let core = Core::open(config).expect("open");
         let mut rx = core.subscribe();
         core.submit(PlayerInput::Join {
@@ -4973,6 +5000,31 @@ fn container_break_drops_survive_restart_without_resurrection() {
                 .is_some_and(|slot| slot.as_ref().is_some_and(|stack| stack.count == 3)),
             "chest holds 3 dirt, got {chest_image:?}"
         );
+        core.submit(PlayerInput::Dig {
+            connection: ConnectionId(231),
+            position: cell,
+            action: DigAction::Start,
+            sequence: 3999,
+        });
+        // Fence on the Start acknowledgement rather than consuming snapshots
+        // queued before that input. This fixture sends no movement, so allow
+        // the airborne penalty too: 2.5 * 30 * 5 = 375 server ticks.
+        let started = loop {
+            let output = rx.blocking_recv().expect("dig acknowledgement tick");
+            if core
+                .try_drain_outbox()
+                .iter()
+                .flat_map(|(_, queue)| queue)
+                .any(|change| matches!(change, PlayerChange::BlockActionsAcked { sequence: 3999 }))
+            {
+                break output.tick;
+            }
+        };
+        loop {
+            if rx.blocking_recv().expect("mining tick").tick >= started + 375 {
+                break;
+            }
+        }
         // Break the chest: drops + MenuClosed in the same transaction.
         core.submit(PlayerInput::Dig {
             connection: ConnectionId(231),
@@ -5027,6 +5079,8 @@ fn container_break_drops_survive_restart_without_resurrection() {
         config.simulation_distance = 2;
         config.view_distance = 2;
         config.checkpoint_every_ticks = 100_000;
+        config.vanilla_data_dir =
+            Some(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data/vanilla"));
         let core2 = Core::open(config).expect("reopen");
         let mut rx2 = core2.subscribe();
         core2.submit(PlayerInput::Join {

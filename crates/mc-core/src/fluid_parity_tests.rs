@@ -80,6 +80,7 @@ fn waterlogged_bucket_fill_drain_and_break_preserve_one_source_and_one_drop() {
         water_bucket
     );
     run_tick(&mut state, &[click(pos, 3)]);
+    crate::tick::mining_tests::ready_to_finish(&mut state, ConnectionId(1), pos);
     let (out, _, _) = run_tick(
         &mut state,
         &[PlayerInput::Dig {
@@ -423,6 +424,14 @@ fn double_plant_replaces_clicked_vegetation_and_upper_break_drops_one_lower_loot
     assert_eq!(state.world.block_at(pos.x, pos.y, pos.z), Some(lower));
     assert_eq!(state.world.block_at(pos.x, pos.y + 1, pos.z), Some(upper));
     assert_eq!(state.players[&player].inventory.slots[0].count, 1);
+    crate::tick::mining_tests::ready_to_finish(
+        &mut state,
+        ConnectionId(1),
+        BlockPos {
+            y: pos.y + 1,
+            ..pos
+        },
+    );
     let (out, _, _) = run_tick(
         &mut state,
         &[PlayerInput::Dig {

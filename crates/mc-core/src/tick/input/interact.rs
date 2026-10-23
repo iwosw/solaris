@@ -27,6 +27,12 @@ pub(in crate::tick) fn dig(
             sequence: *sequence,
         },
     );
+    if matches!(action, DigAction::Start | DigAction::Cancel) {
+        crate::tick::mining::cancel(state, entity);
+    }
+    if *action == DigAction::Cancel {
+        return;
+    }
     let Some(current) = state.world.block_at(position.x, position.y, position.z) else {
         return;
     };
@@ -69,21 +75,17 @@ pub(in crate::tick) fn dig(
     if current == state.registry.states.air {
         return;
     }
-    // Vanilla `handleBlockBreakAction`: a finished dig breaks; a
-    // started one breaks at once in creative and on blocks with
-    // no hardness (grass, flowers, torches), which the client
-    // destroys without ever sending the finish.
-    let creative = state
-        .players
-        .get(&entity)
-        .is_some_and(|player| player.creative());
-    let instant = creative || crate::effects::mining_progress(state, entity, current) >= 1.0;
-    let breaks = match action {
-        DigAction::Finish => true,
-        DigAction::Start => instant,
-        _ => false,
-    };
+    let breaks = crate::tick::mining::allows(state, entity, *position, current, *action);
+    if *action == DigAction::Start && !breaks {
+        crate::tick::mining::start(state, entity, *position, current);
+    }
     if !breaks {
+        if *action == DigAction::Finish {
+            changes.blocks.push(crate::boundary::BlockChange {
+                position: *position,
+                state: current,
+            });
+        }
         return;
     }
     let mut intent = plan_break(state, entity, *position, current);

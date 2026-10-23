@@ -273,6 +273,7 @@ fn auth_gate_config_off_and_unlock_restore_inventory_and_movement_inputs() {
         );
         assert_eq!(state.entities.pos(slot), [9.0, 81.0, 8.5]);
         let block = BlockPos { x: 8, y: 80, z: 9 };
+        crate::tick::mining_tests::ready_to_finish(&mut state, SESSION, block);
         let (intents, _) = apply(
             &mut state,
             &[PlayerInput::Dig {

@@ -187,6 +187,7 @@ impl Rig {
     }
 
     fn dig(&mut self, pos: BlockPos) -> crate::boundary::TickOutput {
+        crate::tick::mining_tests::ready_to_finish(&mut self.state, ConnectionId(1), pos);
         run_tick(
             &mut self.state,
             &[PlayerInput::Dig {

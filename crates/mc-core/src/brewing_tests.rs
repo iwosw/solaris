@@ -578,6 +578,7 @@ fn breaking_active_stand_closes_view_and_drops_each_slot_once_with_replay_tombst
     open(&mut state);
     step(&mut state);
     let before = state.block_entities[&KEY].slots.clone();
+    crate::tick::mining_tests::ready_to_finish(&mut state, CONNECTION, POS);
     let (output, drains, _) = run_tick(
         &mut state,
         &[PlayerInput::Dig {

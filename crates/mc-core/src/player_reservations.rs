@@ -72,6 +72,7 @@ impl PlayerState {
             connection: self.connection,
             teleport_id: self.teleport_id,
             awaiting_teleport: self.awaiting_teleport,
+            dig_progress: None,
             opaque_player_fields: Vec::new(),
             statistics: self.statistics.clone(),
             inventory: self.inventory.clone(),

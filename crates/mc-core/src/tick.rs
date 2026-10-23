@@ -37,7 +37,11 @@ mod damage;
 mod elytra;
 mod input;
 pub(crate) mod merchant;
+pub(crate) mod mining;
 mod stations;
+
+#[cfg(test)]
+pub(crate) mod mining_tests;
 
 #[cfg(test)]
 #[path = "entity_phase_tests.rs"]
@@ -1073,6 +1077,7 @@ impl TickState {
                     self.merge_broken
                         .push((intent.actor, *pos, broken, drops, xp));
                 }
+                mining::cancel(self, intent.actor);
                 for (write_pos, write_state) in &intent.footprint.block_write {
                     self.merge_block_writes.push((*write_pos, *write_state));
                 }
@@ -2638,6 +2643,7 @@ fn run_dimension_tick_inner<'a>(
             .unwrap_or(mc_data::ItemStack::EMPTY);
         player.attribute_snapshot_held = Some(held);
     }
+    mining::advance(state);
     apply_inputs(state, &deferred, &mut intents, &mut changes);
     apply_inputs(state, inputs, &mut intents, &mut changes);
     state.refresh_active_chunks(state.tick + 1);
@@ -3554,6 +3560,13 @@ pub(crate) fn client_build_refused(
             !within_block_reach(state, entity, *position)
                 || !crate::plugin_player::allows_block(state, entity, *position)
                 || crate::plugin_inventories::has_reservations_for_block(state, *position)
+                || (*action == DigAction::Finish
+                    && state
+                        .world
+                        .block_at(position.x, position.y, position.z)
+                        .is_none_or(|current| {
+                            !mining::allows(state, entity, *position, current, *action)
+                        }))
         }
         PlayerInput::UseItemOn { position, face, .. } => {
             // A zone's public-use flag lets a non-member flip a door-like block;
@@ -3628,14 +3641,7 @@ pub(crate) fn plan_client_build_at(
             {
                 return None;
             }
-            let instant = state
-                .players
-                .get(&entity)
-                .is_some_and(|player| player.creative())
-                || crate::effects::mining_progress(state, entity, current) >= 1.0;
-            if !(matches!(action, DigAction::Finish)
-                || matches!(action, DigAction::Start) && instant)
-            {
+            if !mining::allows(state, entity, *position, current, *action) {
                 return None;
             }
             Some(plan_break(state, entity, *position, current))

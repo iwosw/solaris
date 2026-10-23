@@ -218,6 +218,11 @@ impl BlockPlanningRead for Read<'_> {
     fn emission(&self, source: BlockPos, target: BlockPos) -> u8 {
         output(self.0, source, target)
     }
+    fn protection_allows(&self, pos: BlockPos) -> bool {
+        // Pistons have no player identity: use the same environmental zone
+        // admission as fire/explosions, including public-use protected claims.
+        !crate::plugin_player::protects_cell(self.0, pos)
+    }
 }
 pub(crate) fn schedule_cell(state: &mut TickState, pos: BlockPos, delay: u64, priority: i32) {
     let Some(block) = at(state, pos) else {

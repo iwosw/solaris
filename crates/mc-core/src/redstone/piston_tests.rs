@@ -45,6 +45,52 @@ fn move_now(s: &mut TickState, pos: BlockPos, powered: bool) -> Result<(), pisto
 }
 
 #[test]
+fn protected_piston_footprints_refuse_push_pull_head_and_destroy_atomically() {
+    for (pull, fragile, protected) in [
+        (false, false, cell(4, 4)),
+        (false, false, cell(5, 4)),
+        (false, false, cell(6, 4)),
+        (false, true, cell(5, 4)),
+        (true, false, cell(4, 4)),
+        (true, false, cell(5, 4)),
+        (true, false, cell(6, 4)),
+    ] {
+        let mut s = state();
+        let base = place(&mut s, 4, 200, 4, "sticky_piston", &[("facing", "east")]);
+        put(&mut s, cell(5, 4), if fragile { "torch" } else { "stone" });
+        if pull {
+            move_now(&mut s, base, true).unwrap();
+        }
+        s.plugins.set_domain(
+            "towns",
+            "player-zones",
+            serde_json::json!({
+                "claim": {
+                    "dimension": "minecraft:overworld",
+                    "minimum": [protected.x, protected.y, protected.z],
+                    "maximum": [protected.x, protected.y, protected.z],
+                    "allowed_actors": [uuid::Uuid::nil().to_string()],
+                    "public_use": true
+                }
+            }),
+        );
+        crate::plugin_player::restore(&mut s).unwrap();
+        assert!(crate::plugin_player::protects_cell(&s, protected));
+        let cells = [base, cell(5, 4), cell(6, 4)];
+        let before = cells.map(|pos| s.world.block_at(pos.x, pos.y, pos.z));
+        assert_eq!(
+            move_now(&mut s, base, !pull),
+            Err(piston::Refusal::Protected(protected)),
+            "pull={pull}, fragile={fragile}, protected={protected:?}"
+        );
+        assert_eq!(
+            before,
+            cells.map(|pos| s.world.block_at(pos.x, pos.y, pos.z))
+        );
+    }
+}
+
+#[test]
 fn complete_26_1_2_registry_reactions_match_the_native_server_oracle() {
     let mut s = state();
     let base = cell(4, 4);

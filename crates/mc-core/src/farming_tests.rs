@@ -134,6 +134,7 @@ fn use_on(state: &mut TickState, x: i32, y: i32, z: i32, face: u8) {
 }
 
 fn dig(state: &mut TickState, x: i32, y: i32, z: i32) {
+    crate::tick::mining_tests::ready_to_finish(state, ConnectionId(1), BlockPos { x, y, z });
     let _ = run_tick(
         state,
         &[PlayerInput::Dig {

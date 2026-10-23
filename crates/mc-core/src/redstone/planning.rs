@@ -11,6 +11,7 @@ pub(super) struct BlockEdit {
 pub(super) trait BlockPlanningRead {
     fn get_cached_block(&self, pos: BlockPos) -> Option<BlockStateId>;
     fn emission(&self, source: BlockPos, target: BlockPos) -> u8;
+    fn protection_allows(&self, pos: BlockPos) -> bool;
 }
 pub(super) fn block_state_property<'a>(state: &'a BlockState, key: &str) -> Option<&'a str> {
     super::prop(state, key)
@@ -54,7 +55,7 @@ impl<'a, R: BlockPlanningRead + ?Sized> Settle<'a, R> {
         self.blocks.by_id(self.block_at(pos)?)
     }
     pub fn protection_allows(&self, pos: BlockPos) -> bool {
-        self.block_at(pos).is_some()
+        self.block_at(pos).is_some() && self.read.protection_allows(pos)
     }
     pub fn plan(&mut self, pos: BlockPos, new_state: BlockStateId) -> bool {
         if self.block_at(pos) == Some(new_state) {

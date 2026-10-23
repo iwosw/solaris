@@ -141,6 +141,7 @@ fn item_motion_block_drop_lands_near_its_block_and_keeps_custody() {
     };
     state.world.set_block(at.x, at.y, at.z, block);
     state.world.fold_overlay();
+    crate::tick::mining_tests::ready_to_finish(&mut state, ConnectionId(1), at);
     let (out, _, _) = run_tick(
         &mut state,
         &[PlayerInput::Dig {

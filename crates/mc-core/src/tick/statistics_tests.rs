@@ -117,6 +117,7 @@ fn statistics_break_pickup_drop_and_request_are_authoritative() {
         .unwrap();
     state.players.get_mut(&entity).unwrap().inventory.slots[0] =
         mc_data::ItemStack::new(pickaxe, 1);
+    crate::tick::mining_tests::ready_to_finish(&mut state, ConnectionId(1), target);
     run_tick(
         &mut state,
         &[PlayerInput::Dig {
@@ -150,6 +151,7 @@ fn statistics_break_pickup_drop_and_request_are_authoritative() {
     // A real accepted break with the wrong tool is not BLOCK_MINED in vanilla.
     state.world.set_block(target.x, target.y, target.z, stone);
     state.players.get_mut(&entity).unwrap().inventory.slots[0] = mc_data::ItemStack::EMPTY;
+    crate::tick::mining_tests::ready_to_finish(&mut state, ConnectionId(1), target);
     run_tick(
         &mut state,
         &[PlayerInput::Dig {

@@ -146,6 +146,7 @@ impl Rig {
     }
 
     fn dig(&mut self, pos: BlockPos) {
+        crate::tick::mining_tests::ready_to_finish(&mut self.state, GRIEFER, pos);
         self.tick(&[PlayerInput::Dig {
             connection: GRIEFER,
             position: pos,

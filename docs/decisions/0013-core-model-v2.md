@@ -30,6 +30,23 @@ cadence varies, see Mob blueprints), remote physical tickets keep chosen areas
 simulated without players, radical hardware-level optimizations are allowed
 when measured and documented.
 
+## Mining and piston protection admission (2026-10-23)
+
+Survival digging is native tick-owned, transient player state: Start selects
+one target and block preimage; server ticks accumulate the authoritative
+hardness/tool/effect progress. Finish is not an independent block edit.
+Direct input and build-hook preview/commit use the same progress admission.
+Cancel, a changed target/preimage, loss of reach, death or dimension travel
+invalidate progress. Missing or negative hardness fails closed in survival;
+creative Start remains instant. Refused finishes acknowledge and repair the
+client prediction without publishing a world mutation.
+
+Pistons have no player actor. Their atomic move planner uses the existing
+environmental protected-cell policy (also used by fire and explosions), not
+zone membership or public-use permission. Protection covers base, head,
+every moved source/destination and every destroyed cell before any edit or
+drop is published; one protected cell refuses the whole push or pull.
+
 ## Optional Java distant terrain read boundary (2026-10-22)
 
 `mc-core::terrain` owns bounded immutable detail-6 sampling: one 4×4-chunk

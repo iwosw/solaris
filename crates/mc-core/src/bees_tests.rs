@@ -591,6 +591,7 @@ fn silk_touch_break_pickup_place_disk_wal_and_checkpoint_have_one_bee_owner() {
         level: 1,
     });
     original.players.get_mut(&actor).unwrap().inventory.slots[0] = tool;
+    crate::tick::mining_tests::ready_to_finish(&mut original, ConnectionId(1), POS);
     let (seed_output, _, _) = crate::tick::run_tick(&mut original, &[]);
     let seed_entries = crate::core::journal_entries_for_tick(&mut original, &seed_output);
     let mut writer = JournalWriter::open(&dir, 1).unwrap();
@@ -762,6 +763,7 @@ fn non_silk_break_releases_nectar_bee_once_even_when_hive_is_replaced() {
     occupied_hive(&mut original);
     let tool = item(&original, "minecraft:diamond_axe", 1);
     original.players.get_mut(&actor).unwrap().inventory.slots[0] = tool;
+    crate::tick::mining_tests::ready_to_finish(&mut original, ConnectionId(1), POS);
     let (output, _, _) = crate::tick::run_tick(
         &mut original,
         &[PlayerInput::Dig {

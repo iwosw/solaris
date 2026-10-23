@@ -929,8 +929,7 @@ pub(crate) fn sync_join(state: &mut crate::tick::TickState, entity: crate::bound
     sync_appearance(state, entity);
 }
 
-/// The client handles ongoing dig progress from UpdateMobEffect; the server
-/// uses the same modifier when deciding whether Start destroys in one tick.
+/// Authoritative per-tick dig progress, also used for instant Start admission.
 pub(crate) fn mining_progress(
     state: &crate::tick::TickState,
     entity: crate::boundary::EntityId,
