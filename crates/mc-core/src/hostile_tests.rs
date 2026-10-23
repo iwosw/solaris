@@ -970,3 +970,38 @@ fn locked_session_admits_no_monster_targets_and_unlock_restores() {
     state.locked_sessions.remove(&connection);
     assert!(crate::hostile::has_live_targets(&state));
 }
+
+/// A wet enderman stages its drowning damage by dense slot before the serial
+/// hostile pass; the exploding creeper that pass removes sits ahead of it, so
+/// swap-removal moves the enderman and its staged slot would equal the store
+/// length when `end_fight::crystal_hits` reads it right after merge
+/// (`EntityStore::body` index out of bounds in the live 20-bot session).
+#[test]
+fn staged_damage_follows_a_slot_moved_by_the_exploding_creeper_removal() {
+    let (mut state, player, centre) = setup(2.0);
+    state
+        .gamerules
+        .insert("advance_weather".into(), "false".into());
+    // No block loot: the store must end exactly at the staged slot.
+    state
+        .gamerules
+        .insert("mob_griefing".into(), "false".into());
+    state.weather = (crate::commands::Weather::Rain, 1_000_000);
+    let creeper_type = type_id(&state, "minecraft:creeper");
+    let enderman_type = type_id(&state, "minecraft:enderman");
+    let creeper = state.spawn_mob(creeper_type, centre, 20.0);
+    let enderman = state.spawn_mob(
+        enderman_type,
+        [centre[0] + 6.0, centre[1], centre[2] + 6.0],
+        4_000.0,
+    );
+    let slot = state.entities.slot_of(enderman).unwrap();
+    state.entities.row_mut(slot).controls.no_ai = true;
+    for _ in 1..=FUSE_TICKS + 5 {
+        run_tick(&mut state, &[]);
+    }
+    assert!(state.entities.slot_of(creeper).is_none(), "exploded");
+    let slot = state.entities.slot_of(enderman).expect("enderman survives");
+    assert!(state.entities.row(slot).health < 4_000.0, "rain hurt it");
+    assert!(state.players.contains_key(&player));
+}

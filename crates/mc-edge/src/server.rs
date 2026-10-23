@@ -2084,7 +2084,8 @@ async fn play_writer(
                 let packet = mc_protocol::packets::play::ClientboundKeepAlive {
                     id: tick_stats.tick() as i64,
                 };
-                if writer.send_packet(&packet).await.is_err() {
+                if let Err(error) = writer.send_packet(&packet).await {
+                    warn!(%error, connection = id.0, "keepalive write failed");
                     return ("keepalive-write-failed", None);
                 }
                 continue;
@@ -2102,7 +2103,8 @@ async fn play_writer(
                 if let Some(message) = msg {
                     if !message.valid() { continue; }
                     // Never batch DH ahead of queued ordinary gameplay.
-                    if writer.write_bytes(&message.bytes).await.is_err() {
+                    if let Err(error) = writer.write_bytes(&message.bytes).await {
+                        warn!(%error, connection = id.0, "dh write failed");
                         return ("dh-write-failed", None);
                     }
                     net_counters.bytes_written.fetch_add(message.bytes.len() as u64, Ordering::Relaxed);
@@ -2120,7 +2122,8 @@ async fn play_writer(
                 break;
             }
         }
-        if writer.write_bytes(&batch).await.is_err() {
+        if let Err(error) = writer.write_bytes(&batch).await {
+            warn!(%error, connection = id.0, reliable, bytes = batch.len(), "play write failed");
             return (
                 if reliable {
                     "reliable-write-failed"

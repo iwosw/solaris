@@ -1963,7 +1963,53 @@ impl TickState {
             self.outbox.remove(&connection);
         }
         self.players.remove(&id);
+        let last = self.entities.len() as u32 - 1;
         self.entities.remove(slot);
+        self.follow_swap_removal(slot, last);
+    }
+
+    /// Swap-removal moved the row at `last` into `removed`. Slots staged for
+    /// the merge/commit (damage, pickups, container custody) follow that row;
+    /// entries for the removed row itself are dropped, so no staged slot can
+    /// point past the store or at an unrelated entity.
+    fn follow_swap_removal(&mut self, removed: EntitySlot, last: u32) {
+        let follow = |slot: EntitySlot| {
+            if slot == removed {
+                None
+            } else if slot.0 == last {
+                Some(removed)
+            } else {
+                Some(slot)
+            }
+        };
+        self.merge_damage.retain_mut(|(slot, _)| {
+            follow(*slot).is_some_and(|next| {
+                *slot = next;
+                true
+            })
+        });
+        self.plugin_damage.retain_mut(|(slot, _)| {
+            follow(*slot).is_some_and(|next| {
+                *slot = next;
+                true
+            })
+        });
+        self.merge_pickups.retain_mut(|(item, collector, _)| {
+            let (Some(next_item), Some(next_collector)) = (follow(*item), follow(*collector))
+            else {
+                return false;
+            };
+            *item = next_item;
+            *collector = next_collector;
+            true
+        });
+        if !self.merge_consumed_items.is_empty() {
+            self.merge_consumed_items = self
+                .merge_consumed_items
+                .drain()
+                .filter_map(follow)
+                .collect();
+        }
     }
 
     /// Spawn a mob/item entity from a blueprint type id.

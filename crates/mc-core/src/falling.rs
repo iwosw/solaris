@@ -222,7 +222,7 @@ pub(crate) fn run(
                 falling.block_state,
                 spawned,
             );
-            state.entities.remove(slot);
+            state.remove_entity(slot);
             removed.push(id);
             continue;
         }
@@ -328,7 +328,7 @@ pub(crate) fn run(
                 };
                 set(state, writes, pos, block);
             }
-            state.entities.remove(slot);
+            state.remove_entity(slot);
             removed.push(id);
         } else {
             state.entities.set_pos(slot, next);
