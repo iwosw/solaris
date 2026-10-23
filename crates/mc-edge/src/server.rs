@@ -1481,7 +1481,9 @@ pub async fn serve_with_console(
         }
         None
     };
-    let mut accept_retry_at = None;
+    // Set when accept hit descriptor/buffer exhaustion: retried only after one of
+    // our own sessions ends and releases its socket (no timer).
+    let mut accept_blocked = false;
     loop {
         tokio::select! {
             _ = async { let _ = stop.wait_for(|stopping| *stopping).await; } => {
@@ -1510,9 +1512,25 @@ pub async fn serve_with_console(
                 }
                 return Ok(());
             }
-            _ = tasks.join_next(), if !tasks.is_empty() => {}
-            accepted = accept_with_backoff(|| listener.accept(), &mut accept_retry_at) => {
-                let (stream, peer) = accepted;
+            _ = tasks.join_next(), if !tasks.is_empty() => accept_blocked = false,
+            accepted = listener.accept(), if !accept_blocked => {
+                let (stream, peer) = match accepted {
+                    Ok(accepted) => accepted,
+                    Err(error) => match accept_failure(&error, tasks.len()) {
+                        AcceptFailure::Transient => {
+                            debug!(%error, "transient accept failure");
+                            continue;
+                        }
+                        AcceptFailure::WaitForSession => {
+                            warn!(%error, sessions = tasks.len(), "accept exhausted resources; admission paused until a session ends");
+                            accept_blocked = true;
+                            continue;
+                        }
+                        AcceptFailure::Fatal => {
+                            return Err(anyhow::anyhow!(error).context("listener accept failed"));
+                        }
+                    },
+                };
                 // Refused before the handshake: the throttle and the per-address
                 // cap answer like an absent listener instead of buffering work.
                 let address = Some(peer.ip());
@@ -1552,31 +1570,31 @@ pub async fn serve_with_console(
     }
 }
 
-/// Keep resource exhaustion local to admission. The deadline lives outside the
-/// future so another select branch cannot cancel the backoff and retry early.
-async fn accept_with_backoff<T, F, Fut>(
-    mut accept: F,
-    retry_at: &mut Option<tokio::time::Instant>,
-) -> T
-where
-    F: FnMut() -> Fut,
-    Fut: Future<Output = std::io::Result<T>>,
-{
-    loop {
-        if let Some(deadline) = *retry_at {
-            tokio::time::sleep_until(deadline).await;
+#[derive(Debug, PartialEq, Eq)]
+enum AcceptFailure {
+    /// One pending connection failed; the listener is fine.
+    Transient,
+    /// Descriptor/buffer exhaustion while our own sessions hold sockets: wait
+    /// for one to end instead of failing the whole server.
+    WaitForSession,
+    /// Nothing of ours can free the resource, or the listener itself broke.
+    Fatal,
+}
+
+fn accept_failure(error: &std::io::Error, open_sessions: usize) -> AcceptFailure {
+    use std::io::ErrorKind;
+    match error.kind() {
+        ErrorKind::ConnectionAborted | ErrorKind::ConnectionReset | ErrorKind::Interrupted => {
+            return AcceptFailure::Transient;
         }
-        match accept().await {
-            Ok(accepted) => {
-                *retry_at = None;
-                return accepted;
-            }
-            Err(error) => {
-                warn!(%error, "socket accept failed; retrying in 100 ms");
-                *retry_at =
-                    Some(tokio::time::Instant::now() + std::time::Duration::from_millis(100));
-            }
-        }
+        _ => {}
+    }
+    // EMFILE, ENFILE, ENOBUFS, ENOMEM.
+    let exhausted = matches!(error.raw_os_error(), Some(24 | 23 | 105 | 12));
+    if exhausted && open_sessions > 0 {
+        AcceptFailure::WaitForSession
+    } else {
+        AcceptFailure::Fatal
     }
 }
 

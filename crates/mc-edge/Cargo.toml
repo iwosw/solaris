@@ -51,6 +51,3 @@ serde_json = { workspace = true }
 zip = { workspace = true }
 zstd = { version = "0.13", default-features = false }
 tempfile = "3"
-
-[dev-dependencies]
-tokio = { workspace = true, features = ["test-util"] }

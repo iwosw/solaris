@@ -1,5 +1,4 @@
 use super::*;
-use std::cell::Cell;
 use std::time::Duration;
 
 #[test]
@@ -35,70 +34,21 @@ fn every_packet_id_has_bounded_limiter_storage() {
     assert!(limiter.buckets.len() <= 70);
 }
 
-#[tokio::test(start_paused = true)]
-async fn socket_exhaustion_retries_with_backoff_then_accepts() {
-    // Linux ENFILE and EMFILE, followed by a transient aborted connection.
-    let mut results = [
-        Err(std::io::Error::from_raw_os_error(23)),
-        Err(std::io::Error::from_raw_os_error(24)),
-        Err(std::io::Error::from(std::io::ErrorKind::ConnectionAborted)),
-        Ok(42),
-    ]
-    .into_iter();
-    let start = tokio::time::Instant::now();
-    let mut attempts = Vec::new();
-    let mut retry_at = None;
-    let accepted = accept_with_backoff(
-        || {
-            attempts.push(tokio::time::Instant::now());
-            std::future::ready(results.next().expect("unexpected accept attempt"))
-        },
-        &mut retry_at,
-    )
-    .await;
-    assert_eq!(accepted, 42);
-    assert_eq!(attempts.len(), 4);
-    assert_eq!(attempts[0], start);
-    for pair in attempts.windows(2) {
-        assert_eq!(pair[1] - pair[0], Duration::from_millis(100));
-    }
-    assert!(retry_at.is_none());
-}
-
-#[tokio::test(start_paused = true)]
-async fn accept_backoff_survives_select_cancellation() {
-    let attempts = Cell::new(0);
-    let start = tokio::time::Instant::now();
-    let mut retry_at = None;
-    {
-        let attempt = accept_with_backoff(
-            || {
-                attempts.set(attempts.get() + 1);
-                std::future::ready(Err::<(), _>(std::io::Error::from_raw_os_error(24)))
-            },
-            &mut retry_at,
+#[test]
+fn accept_exhaustion_waits_for_a_session_instead_of_stopping_the_server() {
+    for errno in [23, 24, 105, 12] {
+        let error = std::io::Error::from_raw_os_error(errno);
+        assert_eq!(
+            accept_failure(&error, 3),
+            AcceptFailure::WaitForSession,
+            "errno {errno}"
         );
-        tokio::pin!(attempt);
-        assert!(
-            std::future::poll_fn(|cx| std::task::Poll::Ready(attempt.as_mut().poll(cx)))
-                .await
-                .is_pending()
-        );
+        // With no session of ours to release a socket, waiting would hang:
+        // fail with a diagnostic instead.
+        assert_eq!(accept_failure(&error, 0), AcceptFailure::Fatal);
     }
-    assert_eq!(attempts.get(), 1);
-    assert_eq!(retry_at, Some(start + Duration::from_millis(100)));
-    let accepted = accept_with_backoff(
-        || {
-            attempts.set(attempts.get() + 1);
-            std::future::ready(Ok(7))
-        },
-        &mut retry_at,
-    )
-    .await;
-    assert_eq!(accepted, 7);
-    assert_eq!(attempts.get(), 2);
-    assert_eq!(
-        tokio::time::Instant::now() - start,
-        Duration::from_millis(100)
-    );
+    let aborted = std::io::Error::from(std::io::ErrorKind::ConnectionAborted);
+    assert_eq!(accept_failure(&aborted, 0), AcceptFailure::Transient);
+    let broken = std::io::Error::from_raw_os_error(22); // EINVAL: listener broke
+    assert_eq!(accept_failure(&broken, 3), AcceptFailure::Fatal);
 }

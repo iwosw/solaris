@@ -453,9 +453,11 @@ Connection admission has two optional per-address limits under `[network]`:
 `connection_throttle_ms` (minimum gap between two accepted connections from one
 address) and `max_connections_per_ip` (concurrent cap). Both default to `0`
 (disabled) and a refused connection is closed before the handshake.
-Listener accept failures (including process/system file-descriptor exhaustion)
-are logged and retried after a 100 ms backoff without stopping existing sessions
-or the core. Shutdown remains responsive during that backoff.
+When accepting a connection exhausts file descriptors or socket buffers while
+sessions are open, the listener logs a warning and pauses admission until one of
+those sessions ends; existing sessions and the core keep running. The same failure
+with no open session, or any other listener error, stops the server with the
+error. A single aborted or reset pending connection is skipped.
 
 ## Announcements, tick control and `/locate`
 
