@@ -43,6 +43,7 @@ fn fixture() -> (EdgeServer, std::path::PathBuf) {
         lod: None,
         dh: None,
         screens: Default::default(),
+        voice: Default::default(),
     };
     (server, dir)
 }

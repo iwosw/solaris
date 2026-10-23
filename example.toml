@@ -147,6 +147,12 @@ world_dir = "world"
 # Changing the seed requires a fresh world directory.
 seed = 0
 
+[voice]
+# Proximity voice chat relay for native Solaris clients (ADR 0019). The server
+# only forwards Opus packets; it never decodes audio.
+enabled = true
+range_blocks = 48
+
 [computer]
 # Right-click iron blocks with the explicitly enabled Fabric computer client.
 # Level-4 operators only. Never expose a privileged host shell.

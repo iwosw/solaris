@@ -99,6 +99,16 @@ impl Connection {
     }
 }
 
+/// Native pose of a living player entity in the published tick.
+pub(crate) fn published_pose(tick: &TickOutput, entity: EntityId) -> Option<Pose> {
+    let (dimension, view) = std::iter::once(tick)
+        .chain(tick.snapshot.dimensions.values())
+        .find_map(|out| Some((out.snapshot.dimension, out.snapshot.entities.get(entity)?)))?;
+    let index = Dimension::ALL.iter().position(|d| *d == dimension)?;
+    (view.appearance.health > 0.0)
+        .then(|| Pose::from_feet(index as u8, view.position, view.yaw, view.pitch))
+}
+
 impl Service {
     fn monitors(&self, server: &EdgeServer) -> &[(u32, u8)] {
         self.monitor_states.get_or_init(|| {
@@ -166,17 +176,8 @@ impl Service {
         let entities = self.relay.lock().entities();
         let mut poses = HashMap::with_capacity(entities.len());
         for (connection, entity) in entities {
-            let found = std::iter::once(tick)
-                .chain(tick.snapshot.dimensions.values())
-                .find_map(|out| Some((out.snapshot.dimension, out.snapshot.entities.get(entity)?)));
-            if let Some((dimension, view)) = found
-                && view.appearance.health > 0.0
-                && let Some(index) = Dimension::ALL.iter().position(|d| *d == dimension)
-            {
-                poses.insert(
-                    connection,
-                    Pose::from_feet(index as u8, view.position, view.yaw, view.pitch),
-                );
+            if let Some(pose) = published_pose(tick, entity) {
+                poses.insert(connection, pose);
             }
         }
         *self.latest.lock() = Some(tick.clone());

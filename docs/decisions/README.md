@@ -27,6 +27,7 @@ summarizes current boundaries.
 | [0016](0016-mob-capabilities.md) | Accepted; layer 1 implemented | Owned data blueprints, mob capabilities, bounded data-defined mob types and their vanilla presentation |
 | [0017](0017-tick-system-graph.md) | Proposed graph; one-system prototype | Declared entity-column resources, ordered row execution and deterministic tick barriers |
 | [0018](0018-in-game-computer.md) | Accepted; draft, client QA pending | Operator-only terminal on vanilla carrier blocks and local desktop-capture boundary |
+| [0019](0019-voice-chat.md) | Accepted; draft, real-client QA pending | Proximity voice chat: `solaris:voice` Opus relay between native clients, edge-only |
 
 ## Routing
 

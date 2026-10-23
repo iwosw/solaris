@@ -50,6 +50,7 @@ fn fixture(require_plugin_login: bool) -> (EdgeServer, std::path::PathBuf) {
         lod: None,
         dh: None,
         screens: Default::default(),
+        voice: Default::default(),
     };
     (server, dir)
 }

@@ -66,6 +66,8 @@ mod screen;
 mod screen_service;
 mod server_properties;
 mod vanilla_items;
+mod voice;
+mod voice_service;
 
 #[cfg(test)]
 mod plugin_tests;

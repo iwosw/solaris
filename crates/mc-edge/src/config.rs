@@ -60,6 +60,9 @@ pub struct EdgeConfig {
     /// Opt-in operator-only in-game terminal.
     #[serde(default)]
     pub computer: crate::computer::ComputerConfig,
+    /// Proximity voice relay for native clients.
+    #[serde(default)]
+    pub voice: crate::voice::VoiceConfig,
     /// Startup-only import; explicit TOML leaves override imported properties.
     #[serde(default)]
     pub properties: PropertiesSection,
@@ -708,6 +711,7 @@ const KNOWN_SECTIONS: &[&str] = &[
     "lod",
     "distant_horizons",
     "computer",
+    "voice",
     "properties",
     "rcon",
     "query",
@@ -754,6 +758,7 @@ fn unknown_leaves(table: &toml::Table) -> Vec<String> {
             "computer",
             &["enabled", "local_only", "command", "working_directory"],
         ),
+        ("voice", &["enabled", "range_blocks"]),
         (
             "anti_cheat",
             &[

@@ -273,6 +273,8 @@ pub struct EdgeServer {
     pub(crate) dh: Option<Arc<crate::dh::Service>>,
     /// `solaris:screen` relay (ADR 0018 "Screen sharing").
     pub(crate) screens: crate::screen_service::Service,
+    /// `solaris:voice` proximity relay (ADR 0019).
+    pub(crate) voice: crate::voice_service::Service,
 }
 
 /// Owned chunk-encoding registries for the pump path.
@@ -324,6 +326,8 @@ impl EdgeServer {
         cfg: EdgeConfig,
     ) -> anyhow::Result<Self> {
         cfg.computer.validate()?;
+        cfg.voice.validate()?;
+        let voice = crate::voice_service::Service::new(&cfg.voice);
         let dashboard = dashboard_state(&cfg);
         let loader_manifest = loader_manifest(&hub.registry().plugin_client_bundles)?;
         // Any required bundle forces Loader negotiation on every client; a
@@ -424,6 +428,7 @@ impl EdgeServer {
             lod,
             dh,
             screens: Default::default(),
+            voice,
             recipes,
             hub,
             data,
@@ -1502,6 +1507,7 @@ pub async fn serve_with_console(
     let mut pump = spawn_pump(Arc::clone(&server))?;
     server.console_state.running.store(true, Ordering::Relaxed);
     let screen_ticks = crate::screen_service::spawn_tick_task(Arc::clone(&server));
+    let voice_ticks = crate::voice_service::spawn_tick_task(Arc::clone(&server));
     let load_metrics = spawn_load_metrics(&server);
     let mut stop = server.stop.subscribe();
     let addresses = std::sync::Arc::new(crate::conn_limit::AddressLimiter::new(
@@ -1556,6 +1562,7 @@ pub async fn serve_with_console(
                 }
                 pump.abort();
                 screen_ticks.abort();
+                voice_ticks.abort();
                 load_metrics.abort();
                 if let Some(msmp) = &msmp {
                     msmp.abort();
@@ -2006,6 +2013,10 @@ async fn handle_connection(stream: TcpStream, server: Arc<EdgeServer>) -> anyhow
         )
     });
 
+    let voice = native_client.then(|| {
+        crate::voice_service::Connection::start(Arc::clone(&server), id, entity, outcome.uuid)
+    });
+
     // --- Play: reads and writes progress independently. A writer task owns
     // --- the write half (keepalive, then reliable before world); this task
     // --- reads inputs, so a slow socket write never delays the client's
@@ -2079,6 +2090,21 @@ async fn handle_connection(stream: TcpStream, server: Arc<EdgeServer>) -> anyhow
                     Err(error) => {
                         warn!(%error, connection = id.0, "edge command decode/delivery failed");
                         break 'play_loop "edge-command-error";
+                    }
+                }
+                if let Some(voice) = &voice
+                    && frame.id == mc_protocol::packets::play::ServerboundCustomPayload::ID
+                {
+                    match crate::voice_service::payload(&frame.body) {
+                        Ok(Some(payload)) => {
+                            voice.receive(&payload);
+                            continue;
+                        }
+                        Ok(None) => {}
+                        Err(error) => {
+                            warn!(%error, connection = id.0, "voice packet malformed");
+                            break 'play_loop "voice-decode";
+                        }
                     }
                 }
                 if let Some(screen) = &screen
