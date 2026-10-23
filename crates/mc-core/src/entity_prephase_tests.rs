@@ -36,11 +36,21 @@ fn species_id_helpers_match_contract_and_blueprint_names() {
 
 /// Native-100-like population through the real `run_tick`; phases are read from
 /// MC_CORE_PHASE_LOG output by the caller.
+/// N100_MOBS and N100_VILLAGERS override the default 104k/64 populations.
+/// Villager timings use the existing test-only brain counters, in microseconds.
 #[test]
 #[ignore = "release micro: native-100-like 105k mixed mobs"]
 fn native100_like_entity_phase_micro() {
     use crate::boundary::{ConnectionId, PlayerInput};
     const SIDE: i32 = 384;
+    let mobs: usize = std::env::var("N100_MOBS")
+        .map(|value| value.parse().expect("N100_MOBS must be an integer"))
+        .unwrap_or(104_000);
+    let villagers: usize = std::env::var("N100_VILLAGERS")
+        .map(|value| value.parse().expect("N100_VILLAGERS must be an integer"))
+        .unwrap_or(64);
+    assert_eq!(mobs % 8, 0, "N100_MOBS must divide evenly among eight kinds");
+    eprintln!("NATIVE100 population mobs={mobs} villagers={villagers} players=100");
     let registry = Arc::new(CoreRegistry::load(None).unwrap());
     let world = crate::horde_bench::flat_world(&registry);
     let mut state = TickState::new(Arc::clone(&registry), world, 2, 512);
@@ -107,7 +117,7 @@ fn native100_like_entity_phase_micro() {
             .entity_types
             .id_of(&mc_data::Identifier::parse(name).unwrap())
             .unwrap();
-        for _ in 0..13_000 {
+        for _ in 0..mobs / 8 {
             let id = state.spawn_mob(type_id, position(), 20.0);
             let slot = state.entities.slot_of(id).unwrap();
             state.entities.row_mut(slot).persistent = true;
@@ -118,19 +128,23 @@ fn native100_like_entity_phase_micro() {
         .entity_types
         .id_of(&mc_data::Identifier::parse("minecraft:villager").unwrap())
         .unwrap();
-    for _ in 0..64 {
+    for _ in 0..villagers {
         let id = state.spawn_mob(villager, position(), 20.0);
         state
             .entities
             .row_mut(state.entities.slot_of(id).unwrap())
             .persistent = true;
     }
+    assert_eq!(state.entities.len(), mobs + villagers + 100);
     for _ in 0..60 {
         let start = std::time::Instant::now();
         crate::tick::run_tick(&mut state, &[]);
         eprintln!(
-            "NATIVE100 total_ms={:.2}",
-            start.elapsed().as_secs_f64() * 1000.0
+            "NATIVE100 total_ms={:.2} villager_brain_us={} villager_roster_us={} villager_phase_us={:?}",
+            start.elapsed().as_secs_f64() * 1000.0,
+            state.villager_pois.brain_us,
+            state.villager_pois.roster_us,
+            state.villager_pois.phase_us,
         );
     }
 }

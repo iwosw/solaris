@@ -165,6 +165,21 @@ slot exclusively:
 A run without a user systemd scope prints a warning and continues
 unbounded; the receipt records the profile's own result either way.
 
+The ignored `mc-core` test `native100_like_entity_phase_micro` is an internal
+in-process tick workload, not the real-protocol native-100 capacity gate.
+`N100_MOBS` (default `104000`, divisible by eight) and `N100_VILLAGERS`
+(default `64`) select its populations; it always joins 100 in-process players
+and measures 60 real ticks. For the 100k-mob/20k-villager PGO comparison, set
+`N100_MOBS=100000 N100_VILLAGERS=20000` for both training and every candidate.
+Build the release test executable in the ordinary build lane, then run it
+with `--ignored --nocapture native100_like_entity_phase_micro` in a Main-approved
+`-x -p` window. Each `NATIVE100` sample reports total milliseconds and existing
+test-only villager brain/roster microseconds; the seven `villager_phase_us`
+entries are refresh, admission, evaluation, social, acquisition, full and
+skipped. These counters overlap and must not be summed as disjoint phases.
+The flat scene has no authored village buildings or workstations, so its
+villager timings do not establish inhabited-settlement workload coverage.
+
 ## Receipts and failure diagnosis
 
 Each `run` creates an isolated
