@@ -157,6 +157,25 @@ one picture per FRAME, Annex B. The server still never decodes: it only reads th
 - **Bounds.** If a picture exceeds 131072 bytes the owner restarts at 3/4 of the size with a
   key frame instead of sending a partial reference chain.
 
+Measured per viewer (2026-10-23; own server, two real windowed clients on private Xvfb displays,
+owner sharing a scripted 1280x720 test source scaled to 640x360, one granted looking viewer;
+payload bytes of the `solaris:screen` messages counted by the clients, 14-24 s windows after the
+opening key frame; client repo `tools/screen_codec_live.py`, receipts kept outside the repository
+in `solaris-work/evidence/screen-codec/{jpeg,h264}`). The software-rendered owner produces about 3 to 5 new
+captures per second, so JPEG fps below 5 is the capture rate, not a limit:
+
+| content | JPEG q60 (before) | H.264 (after) | factor |
+|---|---|---|---|
+| static desktop | 282 KB/s (2.5 pictures/s) | 4 KB/s (1 key frame in 24 s) | ~70x |
+| scrolling text (high-entropy glyph noise, worst plausible text) | 440 KB/s (3.9/s) | 48 KB/s (0.8/s, bitrate-capped) | ~9x |
+| video-like moving gradient | 72 KB/s (3.6/s) | 12 KB/s (4/s) | ~6x |
+| full-frame noise (incompressible) | 194 KB/s (3.4/s) | 49 KB/s (0.4/s, bitrate-capped) | ~4x |
+
+The H.264 encoder runs at a 500 kbit/s ceiling with frame skipping, so incompressible or
+very busy content lowers the picture rate instead of the traffic; the server relays the same
+bytes to every viewer, so 50 viewers of a static screen cost about 200 KB/s instead of 14 MB/s.
+Looking away then back restarted the stream from a key frame (`rx_keys` rose, viewer resumed).
+
 ### Screen audio
 
 The captured app's sound rides the same channel and the same rules as its picture.
