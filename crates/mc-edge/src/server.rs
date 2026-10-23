@@ -271,6 +271,8 @@ pub struct EdgeServer {
     pub(crate) lod: Option<crate::lod::LodService>,
     /// Optional Java Distant Horizons presentation; shares native LOD workers.
     pub(crate) dh: Option<Arc<crate::dh::Service>>,
+    /// `solaris:screen` relay (ADR 0018 "Screen sharing").
+    pub(crate) screens: crate::screen_service::Service,
 }
 
 /// Owned chunk-encoding registries for the pump path.
@@ -421,6 +423,7 @@ impl EdgeServer {
             loader_required,
             lod,
             dh,
+            screens: Default::default(),
             recipes,
             hub,
             data,
@@ -1498,6 +1501,7 @@ pub async fn serve_with_console(
     let _remote_admin = crate::remote_admin::start(Arc::clone(&server)).await?;
     let mut pump = spawn_pump(Arc::clone(&server))?;
     server.console_state.running.store(true, Ordering::Relaxed);
+    let screen_ticks = crate::screen_service::spawn_tick_task(Arc::clone(&server));
     let load_metrics = spawn_load_metrics(&server);
     let mut stop = server.stop.subscribe();
     let addresses = std::sync::Arc::new(crate::conn_limit::AddressLimiter::new(
@@ -1551,6 +1555,7 @@ pub async fn serve_with_console(
                     console.abort();
                 }
                 pump.abort();
+                screen_ticks.abort();
                 load_metrics.abort();
                 if let Some(msmp) = &msmp {
                     msmp.abort();
@@ -1990,6 +1995,16 @@ async fn handle_connection(stream: TcpStream, server: Arc<EdgeServer>) -> anyhow
     } else {
         None
     };
+    // Native clients only: screen frames are a Solaris client feature.
+    let screen = native_client.then(|| {
+        crate::screen_service::Connection::start(
+            Arc::clone(&server),
+            id,
+            entity,
+            outcome.uuid,
+            outcome.name.clone(),
+        )
+    });
 
     // --- Play: reads and writes progress independently. A writer task owns
     // --- the write half (keepalive, then reliable before world); this task
@@ -2064,6 +2079,21 @@ async fn handle_connection(stream: TcpStream, server: Arc<EdgeServer>) -> anyhow
                     Err(error) => {
                         warn!(%error, connection = id.0, "edge command decode/delivery failed");
                         break 'play_loop "edge-command-error";
+                    }
+                }
+                if let Some(screen) = &screen
+                    && frame.id == mc_protocol::packets::play::ServerboundCustomPayload::ID
+                {
+                    match crate::screen_service::payload(&frame.body) {
+                        Ok(Some(payload)) => {
+                            screen.receive(&payload);
+                            continue;
+                        }
+                        Ok(None) => {}
+                        Err(error) => {
+                            warn!(%error, connection = id.0, "screen packet malformed");
+                            break 'play_loop "screen-decode";
+                        }
                     }
                 }
                 if let Some(computer) = &computer

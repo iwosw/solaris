@@ -62,6 +62,8 @@ pub mod status;
 mod conn_limit;
 mod remote_admin;
 mod resource_pack;
+mod screen;
+mod screen_service;
 mod server_properties;
 mod vanilla_items;
 

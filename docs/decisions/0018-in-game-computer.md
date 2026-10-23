@@ -78,3 +78,51 @@ Server codec/security/lifecycle tests; Fabric compilation and unit tests; Linux
 capture-to-OpenGL-texture smoke on an isolated display, not the owner's desktop.
 No real-client MCP run in this work item; Muse owns subsequent block/use/session
 QA. Unit/smoke receipts do not prove in-world rendering or other operating systems.
+
+## Screen sharing (`solaris:screen`, protocol 1)
+
+A native client may show its captured desktop window on a `solaris:monitor`
+row. By default every other player sees only a generic "monitor is on" texture
+(`ACTIVE`, no frames). A viewer may ask the owner for permission; only while
+the permission is active **and** the viewer looks at the row does the server
+turn `DEMAND` on for the owner and relay frames to that viewer. No input from
+viewers exists in the protocol. `mc-edge` (`screen.rs` pure relay state,
+`screen_service.rs` delivery) is the only authority; it never decodes frames,
+sees only native-Loader clients and refuses everything else.
+
+Play custom payload on both directions, big-endian: `u8 version=1, u8 kind, body`.
+`ScreenId` (15 bytes): `i32 x,y,z` of the min-coordinate anchor block, `u8 side`
+(2 N, 3 S, 4 W, 5 E: the face carrying the screen), `u8 width` (1..=16 blocks,
+extending +X for sides 2/3 and +Z for 4/5, one block high), `u8 dimension`
+(`Dimension::ALL` index, must equal the sender's dimension).
+
+Client -> server: `0 OPEN(id)` owner starts (within 8 blocks; every row block must
+be a monitor, i.e. a `minecraft:black_glazed_terracotta` carrier state whose
+`facing` equals `side`; at most 4 per owner and 128 open screens; one owner per row); `1 CLOSE(id)`;
+`2 FRAME_PART(id, u32 seq, u16 w, u16 h, u8 codec=0 JPEG, u8 idx, u8 count, bytes)`
+with every part carrying the full header, <=30000 data bytes per part (the
+serverbound payload limit is 32767), <=5 parts, <=131072 bytes, w<=640, h<=640;
+`3 REQUEST(id)` viewer asks the owner; `4 ANSWER(u32 request, u8 allow)`;
+`5 REVOKE(id, 16-byte viewer uuid)`; `6 LEAVE(id)` viewer drops permission.
+
+Server -> client: `0 DEMAND(id, u8 on, u16 max_width=640, u8 fps=5)` to the owner;
+`1 FRAME(id, u32 seq, u16 w, u16 h, u8 codec, bytes)` reassembled, to viewers
+only; `2 STOP(id, u8 reason)` 0 looked away, 1 owner closed, 2 revoked, 3 owner
+left; `3 REFUSED(id, u8 reason)` 0 not allowed, 1 not a monitor, 2 out of reach,
+3 too many, 4 taken, 5 bad frame, 6 no such screen, 7 repeat/rate limited;
+`4 REQUESTED(id, u32 request, 16-byte uuid, u8 len, utf8 name)` to the owner;
+`5 PERMISSION(id, u8 allowed)` to the requester; `6 ACTIVE(id, u8 on)` to every
+native client in that dimension on open/close/owner leave, and as a snapshot
+when a native client joins or changes dimension.
+
+Permission is per (owner, viewer) and covers all of the owner's open screens;
+it ends on REVOKE/LEAVE, when the owner closes their last screen, or when
+either player disconnects. "Looking" is derived from the published native pose
+only: eye position (feet + 1.62), yaw/pitch, on the face's front side, within
+32 blocks and within 35 degrees plus the row's angular size of its centre; no
+occlusion. Reach (8 blocks) applies to OPEN only; a show ends on CLOSE, revoke,
+disconnect, or when its monitor blocks are broken or unloaded (`REFUSED`). Frames are accepted only
+while DEMAND is on, only from the owner, within a 1 MiB/s byte budget (256 KiB
+burst); overflow frames are dropped, malformed or repeated unsolicited frames
+close the screen. A viewer's full reliable queue drops the frame, never the
+connection.

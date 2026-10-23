@@ -45,6 +45,7 @@ fn fixture() -> (EdgeServer, std::path::PathBuf) {
         loader_required: false,
         lod: None,
         dh: None,
+        screens: Default::default(),
     };
     (server, dir)
 }

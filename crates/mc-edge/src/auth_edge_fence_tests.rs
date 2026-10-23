@@ -49,6 +49,7 @@ fn fixture(require_plugin_login: bool) -> (EdgeServer, std::path::PathBuf) {
         loader_required: false,
         lod: None,
         dh: None,
+        screens: Default::default(),
     };
     (server, dir)
 }
