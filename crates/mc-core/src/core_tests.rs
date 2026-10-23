@@ -348,6 +348,25 @@ fn unversioned_v2_history_refuses_without_stamping_current_revision() {
 }
 
 #[test]
+#[ignore = "requires the local licensed vanilla content cache"]
+fn canonical_startup_loads_modern_jigsaw_and_nether_bastions() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut config = test_config(directory.path().to_path_buf(), 512);
+    config.vanilla_data_dir = Some(
+        std::env::var_os("SOLARIS_CONTENT_CACHE")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| {
+                std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data/vanilla")
+            }),
+    );
+    // Exercise the serving path, including all three modern Overworld
+    // closures and the Nether bastion closure, not a synthetic plan source.
+    Core::open(config)
+        .expect("canonical startup loads the shipped jigsaw resources")
+        .shutdown();
+}
+
+#[test]
 fn scoreboard_survives_core_checkpoint_and_recovery_and_syncs_rejoining_viewer() {
     use crate::scoreboard::ScoreboardEvent;
     let (core, dir) = open_core(512);

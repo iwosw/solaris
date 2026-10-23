@@ -11,7 +11,7 @@
 //! the first child provides connectors and all children are placed together.
 
 use std::collections::{BTreeMap, VecDeque};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use mc_data::village_data::{
     PlacementSpec, PoolElementSpec, RandomSpreadType, StructureProcessorSpec, TemplatePoolSpec,
@@ -139,12 +139,6 @@ pub enum ClosureError {
     Template(#[from] crate::structures::StructureError),
     #[error(transparent)]
     ResourcePath(#[from] mc_data::ResourcePathError),
-    #[error("missing structure piece {piece} referenced by {referrer} at {path}")]
-    MissingPiece {
-        piece: Identifier,
-        referrer: Identifier,
-        path: PathBuf,
-    },
 }
 
 /// Load and walk the closure from a vanilla content cache root (the directory
@@ -459,12 +453,21 @@ fn load_piece(
     let mut resource = ResourcePath::from_identifier_path(piece)?;
     resource.set_extension("nbt")?;
     let path = resource.lexical_under(&root);
-    if !path.is_file() {
-        return Err(ClosureError::MissingPiece {
-            piece: piece.clone(),
-            referrer: referrer.clone(),
-            path,
-        });
+    match StructureTemplate::from_nbt_file(&path, registry) {
+        Ok(template) => Ok(template),
+        Err(crate::structures::StructureError::Io { source, .. })
+            if source.kind() == std::io::ErrorKind::NotFound =>
+        {
+            // Vanilla getOrCreate uses a zero-sized template for absent
+            // resources. The closure caches it, so each id is reported once.
+            tracing::warn!(template = %piece, referrer = %referrer,
+                "missing jigsaw template; using vanilla empty-template semantics");
+            Ok(StructureTemplate::new([0; 3], Vec::new()))
+        }
+        Err(error) => Err(error.into()),
     }
-    Ok(StructureTemplate::from_nbt_file(&path, registry)?)
 }
+
+#[cfg(test)]
+#[path = "closure_tests.rs"]
+mod tests;

@@ -81,7 +81,7 @@ fn flight_target(origin: [f64; 3], destination: (i32, i32, i32)) -> [f64; 3] {
     let target = [f64::from(destination.0), f64::from(destination.1), f64::from(destination.2)];
     let dx = target[0] - origin[0];
     let dz = target[2] - origin[2];
-    let distance = dx.hypot(dz);
+    let distance = mc_physics::mth::length2(dx, dz);
     if distance > 12.0 {
         [origin[0] + dx * 12.0 / distance, origin[1] + 8.0, origin[2] + dz * 12.0 / distance]
     } else {

@@ -214,7 +214,7 @@ pub(super) fn set_crafting_enchantments(
     }
 }
 
-pub(super) fn logical_item<'a>(
+pub(crate) fn logical_item<'a>(
     rules: &ItemRules<'a>,
     stack: &ItemStack,
 ) -> Option<&'a mc_data::Identifier> {

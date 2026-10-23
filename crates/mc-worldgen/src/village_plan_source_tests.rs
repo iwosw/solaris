@@ -1088,9 +1088,9 @@ fn village_pieces_place_their_villagers_as_chunk_inhabitants() {
     }
 }
 
-/// Live proof over the real cache: a generated village carries its piece
-/// villagers as chunk inhabitant markers, and the closure reports the mobs the
-/// lane does not spawn.
+/// Live proof over the real cache: a generated village carries its authored
+/// entities as chunk inhabitant markers, with villager-specific data intact.
+/// The closure also reports entity types needing non-villager runtime support.
 ///
 /// The chunks the villager pieces land in are generated one at a time and their
 /// markers collected; generation is bounded to the pieces whose templates carry
@@ -1161,7 +1161,7 @@ fn live_village_populates_its_pieces_villagers() {
     }
 
     println!(
-        "{villager_pieces} pieces carry template entities; {} villagers placed",
+        "{villager_pieces} pieces carry template entities; {} inhabitants placed",
         markers.len()
     );
     assert!(
@@ -1173,8 +1173,19 @@ fn live_village_populates_its_pieces_villagers() {
         "the villager pieces' chunks must carry inhabitant markers",
     );
     let mut claims = BTreeSet::new();
+    assert!(markers.iter().any(|marker| marker.entity_type == "minecraft:villager"));
     for marker in &markers {
-        assert_eq!(marker.entity_type, "minecraft:villager");
+        assert!(
+            claims.insert(marker.claim.clone()),
+            "two inhabitants share the claim {}",
+            marker.claim,
+        );
+        assert!(source.closure().pieces.values().any(|template| {
+            template.entities().iter().any(|entity| entity.entity_type == marker.entity_type)
+        }), "marker type must originate in an authored template: {}", marker.entity_type);
+        if marker.entity_type != "minecraft:villager" {
+            continue;
+        }
         assert!(
             ["plains", "desert", "savanna", "snow", "taiga"]
                 .contains(&marker.villager_kind.as_str()),
@@ -1208,11 +1219,6 @@ fn live_village_populates_its_pieces_villagers() {
                 .any(|quarter| (turns - quarter).abs() < 1e-3),
             "a yaw that is not the authored yaw plus a quarter turn: {}",
             marker.yaw,
-        );
-        assert!(
-            claims.insert(marker.claim.clone()),
-            "two villagers share the claim {}",
-            marker.claim,
         );
     }
 

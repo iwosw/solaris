@@ -83,7 +83,7 @@ impl EndGenerator {
                         ^ (cx as u64).wrapping_mul(0xF13C_7AF1)
                         ^ (cz as u64).wrapping_mul(0x5B79_2A91),
                 );
-                if h % gateway.chance != 0 {
+                if !h.is_multiple_of(gateway.chance) {
                     continue;
                 }
                 let x = cx * 16 + ((h >> 20) % 16) as i32;

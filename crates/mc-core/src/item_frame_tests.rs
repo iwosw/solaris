@@ -106,7 +106,7 @@ fn item_frame_native_place_insert_rotate_pop_and_break_preserve_custody() {
             connection: ConnectionId(1),
             target: frame,
         };
-        let (output, _, _) = run_tick(&mut state, &[attack.clone()]);
+        let (output, _, _) = run_tick(&mut state, std::slice::from_ref(&attack));
         assert!(state.entities.slot_of(frame).is_some());
         assert!(displayed(&state, slot).is_none());
         assert_eq!(output.changes.entities_spawned.len(), 1);

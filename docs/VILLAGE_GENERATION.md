@@ -17,6 +17,16 @@ village capability; do not infer it from the old profile or warning names.
 
 ## Modern jigsaw structures
 
+Missing template resources follow vanilla's `StructureTemplateManager.getOrCreate`:
+the closure caches a zero-sized empty template and logs its identifier once during
+loading. This is required by the shipped ancient-city `walls/no_corners` pool,
+which references the absent `intact_horizontal_wall_stairs_5` resource in 26.1.2.
+Malformed templates and other I/O failures still fail closed.
+The ignored licensed-cache regression
+`mc-core::core_tests::canonical_startup_loads_modern_jigsaw_and_nether_bastions`
+opens and shuts down the native core through the serving startup path, covering
+the three modern Overworld closures and the Nether bastion closure together.
+
 The native overworld startup also loads the `ancient_cities`, `trail_ruins`,
 and `trial_chambers` structure sets from the licensed content cache. Each has
 its own random-spread grid and the structure JSON's three-dimensional biome

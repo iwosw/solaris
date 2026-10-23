@@ -72,7 +72,7 @@ fn submit(state: &mut TickState, merchant: EntityId) -> bool {
         .filter_map(|m| m.destination.map(|[x,y,z]| mc_world::BlockPos{x,y,z})).collect();
     crate::command_locate::submit_structure_lookup(state, crate::command_locate::StructureLookupRequest {
         connection:pending.openers[0].0,origin:(pos[0],pos[1],pos[2]),
-        destination:Identifier::parse(&format!("minecraft:{}",spec.tag)).expect("vanilla destination"),
+        destination:Identifier::parse(format!("minecraft:{}",spec.tag)).expect("vanilla destination"),
         search_radius:100,skip_existing_chunks:true,referenced,
         reply:Box::new(move |state,hit| complete(state,merchant,hit)),
     })
@@ -105,7 +105,7 @@ fn complete(state: &mut TickState, merchant: EntityId, hit: Option<mc_world::Blo
     state.maps.attempted_trades.insert((pending.uuid,spec.level));
     if pending.specs.is_empty() {
         for (connection,hand) in pending.openers {
-            if state.connections.by_connection.contains_key(&connection) {
+            if state.connections.entity_of(connection).is_some() {
                 state.deferred_uses.push(PlayerInput::InteractEntity {connection,target:merchant,hand,location:[0.0;3]});
             }
         }

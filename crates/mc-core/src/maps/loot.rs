@@ -149,7 +149,7 @@ fn resolve(state: &mut TickState, key: Key, pending: Pending) -> Result<(), Stri
     state.world.set_opaque_block_entity(pos,Some(bytes.clone()));
     state.opaque_changes.push((crate::boundary::BlockPos { x:pos.x,y:pos.y,z:pos.z },Some(bytes)));
     for (connection,input) in pending.openers {
-        if state.connections.by_connection.contains_key(&connection) { state.deferred_uses.push(input); }
+        if state.connections.entity_of(connection).is_some() { state.deferred_uses.push(input); }
     }
     Ok(())
 }

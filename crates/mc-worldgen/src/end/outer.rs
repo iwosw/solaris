@@ -161,7 +161,7 @@ impl EndGenerator {
                 let y = self.outer_height(x, z);
                 let h =
                     splitmix64(self.seed as u64 ^ (x as u64).wrapping_mul(0x517C_C1B7) ^ z as u64);
-                if y >= 60 && h % 53 == 0 {
+                if y >= 60 && h.is_multiple_of(53) {
                     let height = 2 + ((h >> 16) % 4) as i32;
                     for dy in 1..height {
                         put(chunk, x, y + dy, z, self.outer.plant);

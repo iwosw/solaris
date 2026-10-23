@@ -1,4 +1,5 @@
 use super::*;
+use crate::dimensions::Dimension;
 use crate::journal::CheckpointManifest;
 use crate::native_checkpoint as bridge;
 use mc_data::entity_nbt::{VanillaEntity, entity_from_fields};

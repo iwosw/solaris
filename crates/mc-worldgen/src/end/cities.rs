@@ -302,7 +302,7 @@ impl Cities {
         // each bridge has a 1/8 ship chance, capped at one ship per city.
         let mut ship = false;
         for side in 0..4 {
-            let branch = splitmix64(hash ^ (side as u64).wrapping_add(0xB41D_6E));
+            let branch = splitmix64(hash ^ (side as u64).wrapping_add(0x00B4_1D6E));
             if branch & 1 == 0 {
                 continue;
             }
@@ -310,7 +310,7 @@ impl Cities {
             for segment in 0..5 {
                 paste(16, offset([2, top, 7 + segment * 4]), side);
             }
-            if !ship && (branch >> 1) % 8 == 0 {
+            if !ship && (branch >> 1).is_multiple_of(8) {
                 paste(19, offset([-2, top - 5, 32]), side);
                 ship = true;
             } else {

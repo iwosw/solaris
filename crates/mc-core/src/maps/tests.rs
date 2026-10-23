@@ -169,7 +169,7 @@ fn saved_maps_cartography_clone_scale_lock_consumes_one_and_cancels_without_ids(
         map.unlimited_tracking = true;
         let original = state.maps.allocate(map).unwrap();
         let map_item = crate::maps::filled_map(&state,original).unwrap();
-        let input = state.registry.items.id_of(&mc_data::Identifier::parse(&format!("minecraft:{ingredient}")).unwrap()).unwrap();
+        let input = state.registry.items.id_of(&mc_data::Identifier::parse(format!("minecraft:{ingredient}")).unwrap()).unwrap();
         let registry = Arc::clone(&state.registry);
         let player = state.players.get_mut(&actor).unwrap();
         player.open_menu(&registry.item_rules(),MenuKind::Cartography,"Cartography".into(),&[]);
@@ -179,11 +179,14 @@ fn saved_maps_cartography_clone_scale_lock_consumes_one_and_cancels_without_ids(
         let window = menu.window;
         let revision = menu.state_id;
         let mut changes = ChangeSet::default();
-        // Refused stale client revisions cannot allocate a map or debit input.
-        crate::maps::cartography::click(&mut state,actor,(window,revision-1,2,0,crate::boundary::ClickMode::Pickup),&mut changes);
+        // Wrong windows cannot allocate a map or debit input.
+        crate::maps::cartography::click(&mut state,actor,(window.wrapping_add(1),revision,2,0,crate::boundary::ClickMode::Pickup),&mut changes);
         assert_eq!(state.maps.next_id,1);
-        let revision = state.players[&actor].open.as_ref().unwrap().state_id;
-        crate::maps::cartography::click(&mut state,actor,(window,revision,2,0,crate::boundary::ClickMode::Pickup),&mut changes);
+        assert_eq!(state.players[&actor].open.as_ref().unwrap().grid[1].count,3);
+        assert!(state.players[&actor].open.as_ref().unwrap().carried.is_empty());
+        // Like other vanilla menus, a stale revision executes against current
+        // server state and resynchronizes, rather than refusing the take.
+        crate::maps::cartography::click(&mut state,actor,(window,revision-1,2,0,crate::boundary::ClickMode::Pickup),&mut changes);
         let menu = state.players[&actor].open.as_ref().unwrap();
         assert_eq!(menu.carried.count,count);
         assert_eq!(menu.grid[1].count,2);

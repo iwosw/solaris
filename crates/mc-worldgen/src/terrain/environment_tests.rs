@@ -61,10 +61,10 @@ fn native_deep_cavities_are_not_dry_air() {
     }
 }
 
+#[cfg(not(debug_assertions))]
 #[test]
 #[ignore = "approximate release A/B microbenchmark; run only on owner authorization"]
 fn overworld_structure_generation_approximate_ab() {
-    assert!(!cfg!(debug_assertions), "release measurements only");
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data/vanilla");
     let blocks = Arc::new(
         BlockRegistry::from_report(&mc_data::blocks::solaris_required_blocks_report()).unwrap(),

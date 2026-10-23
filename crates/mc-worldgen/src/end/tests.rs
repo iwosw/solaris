@@ -253,7 +253,7 @@ fn outer_end_city_ship_and_chorus_are_chunk_order_independent() {
         .filter_map(|(gx, gz)| generator.city(gx, gz))
         .find(|(_, _, _, h)| {
             let branches: [u64; 4] =
-                std::array::from_fn(|side| splitmix64(*h ^ (side as u64).wrapping_add(0xB41D_6E)));
+                std::array::from_fn(|side| splitmix64(*h ^ (side as u64).wrapping_add(0x00B4_1D6E)));
             branches.iter().filter(|b| **b & 1 != 0).count() >= 2
                 && branches.iter().any(|b| *b & 1 != 0 && (b >> 1) % 8 == 0)
         })
@@ -359,7 +359,7 @@ fn end_city_site_query_matches_placement_and_respects_bounds() {
     for site in sites {
         assert_eq!(site.structure.as_str(), "minecraft:end_city");
         let narrowed = generator.structure_sites_in_region(site.start_chunk, site.start_chunk);
-        assert_eq!(narrowed, [site.clone()]);
+        assert_eq!(narrowed.as_slice(), std::slice::from_ref(&site));
         let expected =
             generator
                 .outer
@@ -399,7 +399,7 @@ fn natural_return_gateway_has_imported_destination_and_border_frame() {
                     ^ (pos.x as u64).wrapping_mul(0xF13C_7AF1)
                     ^ (pos.z as u64).wrapping_mul(0x5B79_2A91),
             );
-            if h % 700 != 0 {
+            if !h.is_multiple_of(700) {
                 return None;
             }
             let chunk = generator.generate(pos);
