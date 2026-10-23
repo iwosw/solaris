@@ -8,6 +8,8 @@ use serde::{Deserialize, Serialize};
 pub struct Controls {
     pub no_ai: bool,
     pub invulnerable: bool,
+    /// Manually lit swell fuse; unlike proximity ignition this does not cancel.
+    pub ignited: bool,
     pub fall_distance: f64,
 }
 impl Controls {
@@ -19,12 +21,13 @@ impl Controls {
     pub(crate) fn journal_eq(&self, live: &Self) -> bool {
         self.no_ai == live.no_ai
             && self.invulnerable == live.invulnerable
+            && self.ignited == live.ignited
             && !(live.fall_distance == 0.0 && self.fall_distance != 0.0)
     }
 
     pub(crate) fn from_fields(fields: &[(String, Tag)]) -> Result<Self, CoreError> {
         let mut state = Self::default();
-        for name in ["NoAI", "Invulnerable", "FallDistance"] {
+        for name in ["NoAI", "Invulnerable", "ignited", "FallDistance"] {
             let mut found = fields.iter().filter(|(key, _)| key == name);
             let Some((_, value)) = found.next() else {
                 continue;
@@ -35,6 +38,7 @@ impl Controls {
             match (name, value) {
                 ("NoAI", Tag::Byte(value)) => state.no_ai = *value != 0,
                 ("Invulnerable", Tag::Byte(value)) => state.invulnerable = *value != 0,
+                ("ignited", Tag::Byte(value)) => state.ignited = *value != 0,
                 ("FallDistance", Tag::Float(value)) if value.is_finite() => {
                     state.fall_distance = f64::from(*value)
                 }
@@ -51,6 +55,7 @@ impl Controls {
     pub(crate) fn to_fields(self) -> Vec<(String, Tag)> {
         vec![
             ("NoAI".into(), Tag::Byte(i8::from(self.no_ai))),
+            ("ignited".into(), Tag::Byte(i8::from(self.ignited))),
             (
                 "Invulnerable".into(),
                 Tag::Byte(i8::from(self.invulnerable)),

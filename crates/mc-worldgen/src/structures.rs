@@ -1521,3 +1521,7 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+#[path = "structures_entity_tests.rs"]
+mod entity_tests;

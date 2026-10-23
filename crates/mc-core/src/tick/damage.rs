@@ -505,6 +505,13 @@ impl TickState {
                 let victim_uuid = self.entities.row(slot).uuid;
                 let mut combat_hits = Vec::new();
                 let was_alive = self.entities.body(slot).alive;
+                let resists_magic = match self.entities.body(slot).kind {
+                    EntityKind::Mob { type_id } => self
+                        .registry
+                        .blueprint(type_id)
+                        .is_some_and(|bp| bp.capabilities.resists_magic),
+                    _ => false,
+                };
                 let row = self.entities.row_mut(slot);
                 let previous_health = row.health;
                 if let Some(attacker) = player_hit {
@@ -532,6 +539,17 @@ impl TickState {
                             &rules, row, incoming, piece.kind,
                         );
                     }
+                    let reduced = if resists_magic
+                        && matches!(
+                            piece.kind,
+                            crate::survival::DamageKind::Magic
+                                | crate::survival::DamageKind::Poison
+                                | crate::survival::DamageKind::Thorns
+                        ) {
+                        reduced * 0.15
+                    } else {
+                        reduced
+                    };
                     let before = row.health.max(0.0);
                     let absorption = row.active_effects.absorption;
                     let amount = row.active_effects.reduce_damage(piece.kind, reduced);
@@ -653,15 +671,10 @@ impl TickState {
                         && let EntityKind::Mob { type_id } = kind
                         && let Some(blueprint) = self.registry.blueprint(type_id)
                     {
-                        let xp = row.loot.slime_size.map_or_else(
-                            || {
-                                crate::experience_orbs::mob_experience(
-                                    &blueprint.name,
-                                    row.appearance.baby,
-                                    self.tick ^ id.0 as u64,
-                                )
-                            },
-                            i32::from,
+                        let xp = crate::entity_loot::death_experience(
+                            &blueprint.name,
+                            row,
+                            self.tick ^ id.0 as u64,
                         );
                         let pos = self.entities.pos(slot);
                         crate::experience_orbs::award(self, pos, xp, &mut spawned);

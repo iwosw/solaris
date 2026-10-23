@@ -267,6 +267,29 @@ fn equipment(row: &ColdRow) -> [Option<&ItemStack>; 8] {
         row.loot.saddle.as_deref(),
     ]
 }
+
+/// Death-only equipment reward; picked-up equipment has drop chance above one.
+pub(crate) fn death_experience(name: &str, row: &ColdRow, seed: u64) -> i32 {
+    let mut xp = row.loot.slime_size.map_or_else(
+        || crate::experience_orbs::mob_experience(name, row.appearance.baby, seed),
+        i32::from,
+    );
+    if xp == 0 {
+        return 0;
+    }
+    let mut rng = crate::natural_spawn::Rng(seed);
+    for (index, stack) in equipment(row).into_iter().enumerate() {
+        let chance = if index < 6 {
+            row.loot.drop_chances[index]
+        } else {
+            row.loot.extra_drop_chances[index - 6]
+        };
+        if chance <= 1.0 && stack.is_some_and(|stack| !stack.is_empty()) {
+            xp += 1 + rng.below(3) as i32;
+        }
+    }
+    xp
+}
 /// Evaluate retained bases/modifiers plus slot-matched equipment without heap scratch.
 pub fn effective_attribute(rules: &ItemRules<'_>, row: &ColdRow, name: &str, default: f64) -> f64 {
     effective_attribute_impl(rules, row, name, default, false)
@@ -703,7 +726,7 @@ pub(crate) fn commit_death(
         let looting = cause.source_attacker().map_or(0, |entity| {
             entity.active_enchantments.level(&id("minecraft:looting"))
         });
-        if !entity.flags.is_baby
+        if (!entity.flags.is_baby || bp.category == crate::blueprint::MobCategory::Monster)
             && let Some(table) = table.as_ref()
         {
             for stack in

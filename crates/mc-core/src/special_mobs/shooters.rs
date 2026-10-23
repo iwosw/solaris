@@ -225,6 +225,11 @@ pub(crate) fn run(
                 Potion::Slowness
             } else if health >= 8.0 && !effects.has(EffectId::Poison) {
                 Potion::Poison
+            } else if horizontal <= 3.0
+                && !effects.has(EffectId::Weakness)
+                && crate::natural_spawn::Rng(state.tick ^ id.0 as u64).below(4) == 0
+            {
+                Potion::Weakness
             } else {
                 Potion::Harming
             };

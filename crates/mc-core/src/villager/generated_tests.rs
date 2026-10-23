@@ -1,15 +1,15 @@
 use super::{VillagerKind, VillagerProfession, conversion_tests::state, generated};
 use crate::boundary::{ChangeSet, ChunkPos};
 use std::sync::Arc;
-struct MarkerGenerator(mc_worldgen::TerrainGenerator);
+struct MarkerGenerator(mc_worldgen::TerrainGenerator, &'static str, bool);
 impl mc_world::ChunkGenerator for MarkerGenerator {
     fn generate(&self, pos: mc_world::ChunkPos) -> mc_world::Chunk {
         let mut chunk = mc_world::ChunkGenerator::generate(&self.0, pos);
         chunk.set_generated_entities(&[mc_world::GeneratedEntityMarker {
             claim: "village:0:0:resident:1".into(),
-            entity_type: "minecraft:villager".into(),
+            entity_type: self.1.into(),
             position: [0.5, 80., 0.5],
-            persistent: false,
+            persistent: self.2,
             villager_kind: "minecraft:savanna".into(),
             profession: "minecraft:farmer".into(),
             level: 2,
@@ -21,13 +21,18 @@ impl mc_world::ChunkGenerator for MarkerGenerator {
     }
 }
 fn fixture() -> crate::tick::TickState {
+    fixture_for("minecraft:villager", false)
+}
+
+fn fixture_for(entity_type: &'static str, persistent: bool) -> crate::tick::TickState {
     let mut state = state();
     state.world = crate::world::ChunkWorld::new(
         42,
-        Arc::new(MarkerGenerator(mc_worldgen::TerrainGenerator::new(
-            42,
-            Arc::clone(&state.registry.blocks),
-        ))),
+        Arc::new(MarkerGenerator(
+            mc_worldgen::TerrainGenerator::new(42, Arc::clone(&state.registry.blocks)),
+            entity_type,
+            persistent,
+        )),
         &state.registry,
         mc_world::BlockStateId(state.registry.states.air),
         [0, 80, 0],
@@ -205,6 +210,44 @@ fn generated_brain_schedule_and_merchant_cover_adult_baby_and_unemployed() {
             let offers = resident.offers.clone();
             super::trades::initialize_offers(&mut resident, &registry);
             assert_eq!(resident.offers, offers, "initialization is idempotent");
+        }
+    }
+}
+
+#[test]
+fn structure_monsters_use_native_blueprints_and_once_only_persistent_claims() {
+    for name in [
+        "minecraft:piglin",
+        "minecraft:piglin_brute",
+        "minecraft:witch",
+        "minecraft:pillager",
+        "minecraft:vindicator",
+        "minecraft:evoker",
+        "minecraft:elder_guardian",
+        "minecraft:zombie_villager",
+        "minecraft:shulker",
+    ] {
+        for persistent in [false, true] {
+            let mut state = fixture_for(name, persistent);
+            let mut changes = ChangeSet::default();
+            generated::load(&mut state, &[], &mut changes);
+            assert_eq!(changes.entities_spawned.len(), 1, "{name}");
+            let id = changes.entities_spawned[0];
+            let slot = state.entities.slot_of(id).unwrap();
+            let row = state.entities.row(slot);
+            assert_eq!(
+                row.uuid,
+                generated::generated_uuid("village:0:0:resident:1")
+            );
+            if persistent {
+                assert!(row.persistent, "{name}");
+            }
+            assert_eq!(state.entities.rot(slot)[..2], [93.0, 7.0]);
+            assert_eq!(state.new_generated_entity_claims.len(), 1);
+            state.remove_entity(slot);
+            changes.entities_spawned.clear();
+            generated::load(&mut state, &[ChunkPos { x: 0, z: 0 }], &mut changes);
+            assert!(changes.entities_spawned.is_empty(), "{name} resurrected");
         }
     }
 }

@@ -493,6 +493,7 @@ pub struct TickState {
     pub(crate) vibrations: crate::vibration::Bus,
     pub(crate) sculk: crate::sculk::SculkState,
     pub(crate) trial_spawners: crate::trial_spawner::Spawners,
+    pub(crate) monster_spawners: crate::monster_spawner::Spawners,
     pub(crate) vaults: crate::vault::Vaults,
     pub(crate) shriekers: crate::shrieker::Shriekers,
     /// Players lying in a bed ([`crate::sleep`]).
@@ -700,6 +701,7 @@ impl TickState {
             vibrations: crate::vibration::Bus::default(),
             sculk: crate::sculk::SculkState::default(),
             trial_spawners: Default::default(),
+            monster_spawners: Default::default(),
             vaults: Default::default(),
             shriekers: Default::default(),
             sleepers: HashMap::default(),
@@ -2885,11 +2887,13 @@ fn run_dimension_tick_inner<'a>(
     crate::shulker::commit_placements(state);
     crate::block_entity_defaults::after_blocks(state, &block_writes);
     crate::trial_spawner::after_blocks(state, &block_writes);
+    crate::monster_spawner::after_blocks(state, &block_writes);
     crate::vault::after_blocks(state, &block_writes);
     crate::item_frame::blocks_changed(state, &block_writes, &mut popped_drops);
     crate::block_log::after_blocks(state);
     if sim {
         crate::trial_spawner::run(state, &mut block_writes, &mut changes);
+        crate::monster_spawner::run(state, &mut changes);
         crate::vault::run(state, &mut block_writes, &mut changes);
     }
     changes.entities_spawned.extend(spawned_drops);
@@ -4416,6 +4420,14 @@ fn sync_chunk_block_entities(state: &mut TickState) {
         let Some(chunk) = state.world.chunk(chunk_pos) else {
             continue;
         };
+        if let Err(error) = crate::monster_spawner::hydrate_chunk(
+            &mut state.monster_spawners,
+            &state.registry,
+            chunk,
+        ) {
+            state.world.reject_resident(chunk_pos, error);
+            continue;
+        }
         let trial_admission =
             crate::trial_spawner::hydrate_chunk(&mut state.trial_spawners, &state.registry, chunk)
                 .and_then(|()| {
@@ -5372,8 +5384,8 @@ struct ReadRow {
     levitation: f32,
     slow_falling: bool,
     special: Option<crate::hostile::Special>,
-    /// Ignores players by day (vanilla spider).
-    night_aggro: bool,
+    /// Target acquisition uses local light, except recent retaliation.
+    dark_aggro: bool,
     /// A lit fuse holds the mob still.
     standing: bool,
     plugin_target: Option<[f64; 3]>,
@@ -5909,7 +5921,7 @@ fn read_row(
         || crate::plugin_npcs::needs_state(row)
         || crate::creaking::needs_state(body)
         || crate::piglin::eligible(body, row);
-    let (chaser, breeder, item_entity, player, special, night_aggro) = match body.kind {
+    let (chaser, breeder, item_entity, player, special, dark_aggro) = match body.kind {
         EntityKind::Mob { .. } => {
             let special = blueprint.and_then(crate::hostile::special_of);
             (
@@ -5924,7 +5936,7 @@ fn read_row(
                 false,
                 false,
                 special,
-                blueprint.is_some_and(|blueprint| blueprint.capabilities.night_aggro_only),
+                blueprint.is_some_and(|blueprint| blueprint.capabilities.dark_aggro_only),
             )
         }
         EntityKind::Item { .. } => (false, false, true, false, None, false),
@@ -6028,7 +6040,7 @@ fn read_row(
         levitation,
         slow_falling,
         special,
-        night_aggro,
+        dark_aggro,
         standing: (special == Some(crate::hostile::Special::Swell)
             && view.hostile.fuse(body.id) > 0)
             || matches!(row.special_mob.as_deref(), Some(crate::special_mobs::Retained::Wither { invulnerable }) if *invulnerable > 0)
@@ -6367,7 +6379,11 @@ fn run_entity_phase(state: &mut TickState, sim: bool) -> Vec<Intent> {
         chunk_revision: &chunk_revision,
         unchanged_since,
         difficulty: state.difficulty,
-        night: crate::natural_spawn::is_night(state.day_time),
+        sky_darken: if state.dimension.has_weather() {
+            crate::light::sky_darken(state.day_time, state.rain_level, state.thunder_level)
+        } else {
+            15
+        },
     };
     system_graph::run(&ctx, &mut ordered);
     let scope_time = scope_start.elapsed();
@@ -6577,7 +6593,7 @@ struct StepCtx<'a> {
     /// World revision the previous entity phase read.
     unchanged_since: u64,
     difficulty: crate::survival::Difficulty,
-    night: bool,
+    sky_darken: u8,
 }
 
 fn step_entity(row: ReadRow, ctx: &StepCtx) -> (MoveWrite, Vec<RawIntent>) {
@@ -6783,12 +6799,26 @@ fn step_entity(row: ReadRow, ctx: &StepCtx) -> (MoveWrite, Vec<RawIntent>) {
                     .consider(&mut nearest, row.pos, sight, |(id, _)| *id != row.id);
             }
         }
-        if row.retain_target && !row.has_retained_target && (!row.night_aggro || ctx.night) {
+        let target_admitted = !row.dark_aggro
+                || ctx
+                    .entities
+                    .row(row.slot)
+                    .last_player_hit
+                    .is_some_and(|(_, tick)| ctx.tick.saturating_sub(tick) < 100)
+                || ctx
+                    .world
+                    .light_at(
+                        row.pos[0].floor() as i32,
+                        row.pos[1].floor() as i32,
+                        row.pos[2].floor() as i32,
+                    )
+                    .is_some_and(|(sky, block)| block.max(sky.saturating_sub(ctx.sky_darken)) < 8);
+        if row.retain_target && !row.has_retained_target && target_admitted {
             chase_target = nearest;
         }
         let mut acted = false;
         if let Some(((target, target_pos), dist)) = nearest
-            && (!row.night_aggro || ctx.night)
+            && target_admitted
         {
             look_target = Some(target_pos);
             if row.standing {

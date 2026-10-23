@@ -103,6 +103,11 @@ pub(crate) fn retains_target(blueprint: &MobBlueprint) -> bool {
 /// Exact one-target validation, including eligibility changes that must not
 /// leave creative, disconnected or dimension-transferred players attackable.
 pub(crate) fn refresh_targets(state: &mut TickState) {
+    let sky_darken = if state.dimension.has_weather() {
+        crate::light::sky_darken(state.day_time, state.rain_level, state.thunder_level)
+    } else {
+        15
+    };
     let mut targets = std::mem::take(&mut state.hostile.targets);
     targets.retain(|&actor, ((target, at), dist)| {
         let Some(slot) = state.entities.slot_of(actor) else {
@@ -116,8 +121,17 @@ pub(crate) fn refresh_targets(state: &mut TickState) {
         };
         if !retains_target(blueprint)
             || state.entities.row(slot).controls.no_ai
-            || (blueprint.capabilities.night_aggro_only
-                && !crate::natural_spawn::is_night(state.day_time))
+            || (blueprint.capabilities.dark_aggro_only
+                && !state.entities.row(slot).last_player_hit
+                    .is_some_and(|(_, tick)| state.tick.saturating_sub(tick) < 100)
+                && {
+                    let pos = state.entities.pos(slot);
+                    !state.world.light_at(
+                        pos[0].floor() as i32,
+                        pos[1].floor() as i32,
+                        pos[2].floor() as i32,
+                    ).is_some_and(|(sky, block)| block.max(sky.saturating_sub(sky_darken)) < 8)
+                })
             || (blueprint.category == crate::blueprint::MobCategory::Monster
                 && state.difficulty == Difficulty::Peaceful)
         {
@@ -214,11 +228,13 @@ impl HostileState {
 }
 
 pub(crate) fn swell_metadata_neutral(row: &crate::entities::ColdRow) -> bool {
-    row.appearance
-        .extra
-        .iter()
-        .find(|(index, _)| *index == CREEPER_SWELL_DIR_INDEX)
-        .is_none_or(|(_, value)| *value == EntityDataValue::VarInt(-1))
+    !row.controls.ignited
+        && row
+            .appearance
+            .extra
+            .iter()
+            .find(|(index, _)| *index == CREEPER_SWELL_DIR_INDEX)
+            .is_none_or(|(_, value)| *value == EntityDataValue::VarInt(-1))
 }
 
 /// One serial pass over this tick's active special mobs. NoAI bodies retain
@@ -535,6 +551,63 @@ pub(crate) fn launch_arrow(
 static CREEPER_WIRE_TYPE: std::sync::LazyLock<Option<u32>> =
     std::sync::LazyLock::new(|| crate::piglin::type_id_of("minecraft:creeper"));
 
+/// Native entity-use admission. The outer dispatcher checks reach and plugin
+/// custody; inventory debit and retained ignition are applied together here.
+pub(crate) fn ignite(
+    state: &mut TickState,
+    actor: EntityId,
+    target: EntityId,
+    hand: crate::boundary::Hand,
+) -> bool {
+    let Some(slot) = state.entities.slot_of(target) else {
+        return false;
+    };
+    let body = state.entities.body(slot);
+    let crate::entities::EntityKind::Mob { type_id } = body.kind else {
+        return false;
+    };
+    if !body.alive
+        || !state
+            .registry
+            .blueprint(type_id)
+            .is_some_and(|bp| bp.capabilities.explodes.is_some())
+    {
+        return false;
+    }
+    let Some(player) = state.players.get(&actor) else {
+        return false;
+    };
+    let held = &player.inventory.slots[crate::tick::held_slot_index(player, hand)];
+    let Some(name) = state.registry.items.name_of(held.item_id) else {
+        return false;
+    };
+    let tool = name.as_str() == "minecraft:flint_and_steel";
+    if held.is_empty() || (!tool && name.as_str() != "minecraft:fire_charge") {
+        return false;
+    }
+    if player.spectator() || player.vitals.is_dead() || player.item_on_cooldown(held.item_id) {
+        return true;
+    }
+    if tool {
+        let Ok(wear) = crate::copper::prepare_tool_wear(state, actor, hand) else {
+            return true;
+        };
+        crate::copper::apply_tool_wear(state, actor, wear);
+    } else {
+        if crate::tick::held_debit_below_floor(state, actor, hand, 1) {
+            return true;
+        }
+        let player = state.players.get_mut(&actor).expect("admitted player");
+        let connection = player.connection;
+        let effects = player.consume_held(hand, 1);
+        for change in effects.changes {
+            state.push_player(connection, change);
+        }
+    }
+    state.entities.row_mut(slot).controls.ignited = true;
+    true
+}
+
 /// Advance a swell fuse (vanilla `SwellGoal`): it starts within the
 /// blueprint's reach of a visible player, keeps burning while the player
 /// stays within 7 blocks in sight and loses a tick per tick otherwise. The
@@ -566,8 +639,8 @@ fn swell(
     let pos = state.entities.pos(slot);
     let fuse = state.hostile.fuse(id);
     let eye = [pos[0], pos[1] + height * 0.85, pos[2]];
-    let swelling =
-        nearest(state, id, targets, pos, FUSE_KEEP_DISTANCE).is_some_and(|(target, dist)| {
+    let swelling = row.controls.ignited
+        || nearest(state, id, targets, pos, FUSE_KEEP_DISTANCE).is_some_and(|(target, dist)| {
             dist <= FUSE_KEEP_DISTANCE
                 && (fuse > 0 || dist < start)
                 && sight_clear(state, eye, [target[0], target[1] + PLAYER_EYE, target[2]])

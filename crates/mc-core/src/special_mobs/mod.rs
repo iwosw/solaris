@@ -158,6 +158,7 @@ pub enum Potion {
     FireResistance,
     WaterBreathing,
     Swiftness,
+    Weakness,
 }
 impl Potion {
     fn name(self) -> &'static str {
@@ -169,6 +170,7 @@ impl Potion {
             Self::FireResistance => "fire_resistance",
             Self::WaterBreathing => "water_breathing",
             Self::Swiftness => "swiftness",
+            Self::Weakness => "weakness",
         }
     }
 }

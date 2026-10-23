@@ -875,7 +875,11 @@ fn full_step_without_early_rest(
         chunk_revision: &revision,
         unchanged_since: state.entity_phase_revision,
         difficulty: state.difficulty,
-        night: crate::natural_spawn::is_night(state.day_time),
+        sky_darken: if state.dimension.has_weather() {
+            crate::light::sky_darken(state.day_time, state.rain_level, state.thunder_level)
+        } else {
+            15
+        },
     };
     step_entity(row, &ctx)
 }

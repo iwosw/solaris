@@ -621,6 +621,124 @@ fn child_death_suppresses_table_loot_but_guaranteed_equipment_still_drops_once()
 }
 
 #[test]
+fn hostile_gap_baby_zombies_drop_ordinary_loot() {
+    let mut state = state();
+    let flesh = state
+        .registry
+        .items
+        .id_of(&id("minecraft:rotten_flesh"))
+        .unwrap();
+    let mut count = 0;
+    for _ in 0..32 {
+        let child = mob(&mut state, "minecraft:zombie", 20.0);
+        let slot = state.entities.slot_of(child).unwrap();
+        Arc::make_mut(&mut state.entities.row_mut(slot).appearance).baby = true;
+        state.merge_damage.push((
+            slot,
+            DamagePiece {
+                physical: None,
+                custom_armor: false,
+                amount: 100.0,
+                kind: DamageKind::Void,
+                source: None,
+            },
+        ));
+        let (_, _, spawned, _) = state.commit_merge_effects();
+        count += spawned
+            .iter()
+            .filter(|id| {
+                state
+                    .entities
+                    .row(state.entities.slot_of(**id).unwrap())
+                    .item
+                    .as_ref()
+                    .is_some_and(|stack| stack.item_id == flesh)
+            })
+            .count();
+    }
+    assert!(
+        count > 0,
+        "baby hostile loot must not use the baby-animal suppression"
+    );
+}
+
+#[test]
+fn hostile_gap_witches_resist_magic_but_not_physical_damage() {
+    let mut state = state();
+    for (kind, expected) in [
+        (DamageKind::Magic, 1.5),
+        (DamageKind::Poison, 1.5),
+        (DamageKind::Melee, 10.0),
+    ] {
+        let witch = mob(&mut state, "minecraft:witch", 26.0);
+        let slot = state.entities.slot_of(witch).unwrap();
+        state.merge_damage.push((
+            slot,
+            DamagePiece {
+                physical: None,
+                custom_armor: false,
+                amount: 10.0,
+                kind,
+                source: None,
+            },
+        ));
+        state.commit_merge_effects();
+        assert!(
+            (state.entities.row(slot).health - (26.0 - expected)).abs() < 0.001,
+            "{kind:?}"
+        );
+    }
+}
+
+#[test]
+fn hostile_gap_natural_equipment_adds_xp_but_picked_up_items_do_not() {
+    for chance in [0.085, 2.0] {
+        let mut state = state();
+        let zombie = mob(&mut state, "minecraft:zombie", 20.0);
+        let slot = state.entities.slot_of(zombie).unwrap();
+        let sword = state
+            .registry
+            .items
+            .id_of(&id("minecraft:iron_sword"))
+            .unwrap();
+        let tick = state.tick;
+        let row = state.entities.row_mut(slot);
+        Arc::make_mut(&mut row.appearance).equipment = Default::default();
+        Arc::make_mut(&mut row.appearance).equipment[0] = Some(ItemStack::new(sword, 1));
+        row.loot.drop_chances[0] = chance;
+        row.last_player_hit = Some((EntityId(999), tick));
+        state.merge_damage.push((
+            slot,
+            DamagePiece {
+                physical: None,
+                custom_armor: false,
+                amount: 100.0,
+                kind: DamageKind::Void,
+                source: None,
+            },
+        ));
+        state.commit_merge_effects();
+        let xp: i32 = state
+            .entities
+            .slots()
+            .filter_map(|slot| {
+                state
+                    .entities
+                    .row(slot)
+                    .appearance
+                    .experience_orb
+                    .map(|(value, count)| value * count)
+            })
+            .sum();
+        if chance > 1.0 {
+            assert_eq!(xp, 5);
+        } else {
+            assert!((6..=8).contains(&xp), "natural equipment bonus: {xp}");
+        }
+    }
+}
+
+#[test]
 fn environmental_finish_keeps_native_player_credit_until_exactly_one_hundred_ticks() {
     let mut state = state();
     crate::tick::run_tick(

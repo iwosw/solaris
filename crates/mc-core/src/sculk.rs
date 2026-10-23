@@ -614,15 +614,10 @@ pub(crate) fn death(state: &mut TickState, slot: crate::entities::EntitySlot) ->
         return None;
     };
     let xp = state.registry.blueprint(type_id).map_or(0, |b| {
-        row.loot.slime_size.map_or_else(
-            || {
-                crate::experience_orbs::mob_experience(
-                    &b.name,
-                    row.appearance.baby,
-                    state.tick ^ state.entities.body(slot).id.0 as u64,
-                )
-            },
-            i32::from,
+        crate::entity_loot::death_experience(
+            &b.name,
+            row,
+            state.tick ^ state.entities.body(slot).id.0 as u64,
         )
     });
     let id = state.entities.body(slot).id;

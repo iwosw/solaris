@@ -38,7 +38,8 @@ creeper and flies.
 | Capability | Executor | Vanilla users (built-in table) |
 | --- | --- | --- |
 | `burns_in_daylight` | `natural_spawn` sun ignition | zombie, zombie_villager, skeleton, stray, bogged, parched, phantom |
-| `night_aggro_only` | `tick::read_row` target gate | spider, cave_spider |
+| `dark_aggro_only` | `tick::read_row` local-light acquisition gate; recent player retaliation bypasses it | spider, cave_spider |
+| `resists_magic` | native damage merge: 85% reduction for magic, poison and thorns | witch |
 | `hurt_by_water` | `contact_hazards::hurt_by_water` (1 drowning damage per tick in water or rain) | enderman (vanilla also blaze, snow_golem, strider; see below) |
 | `fall_damage_immune` | `mob_fall::after_move` | 18 types of `#minecraft:fall_damage_immune` |
 | `climbs_walls` | `entity_motion::step` (0.2 blocks per tick) | spider, cave_spider |
@@ -252,7 +253,7 @@ than first building a target index. There are no persistent wake subscriptions.
   - dimension change
   - game mode or session lock changes
   - the subscriber's own movement
-  - day/night flips for `night_aggro_only`
+  - local block/sky light and weather/daylight changes for `dark_aggro_only`
   - difficulty set to peaceful
 
   Subscriptions that fire only when a target crosses a chunk boundary would miss

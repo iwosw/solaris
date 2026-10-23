@@ -799,11 +799,22 @@ fn valid_support(
                     )
                 });
     }
-    !state
+    state
         .registry
         .blocks
         .by_id(mc_world::BlockStateId(floor))
-        .is_some_and(|block| leaves.contains(&block.block.raw_id))
+        .is_some_and(|block| {
+            let name = block.block.id.path();
+            !leaves.contains(&block.block.raw_id)
+                && !matches!(name, "glass" | "tinted_glass")
+                && !name.ends_with("_stained_glass")
+                && mc_data::block_facts::has_full_sturdy_face(
+                    floor,
+                    &block.block.id,
+                    &block.properties,
+                    mc_data::block_facts::SturdyFace::Up,
+                )
+        })
 }
 
 fn admitted(

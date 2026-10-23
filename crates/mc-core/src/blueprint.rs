@@ -123,8 +123,10 @@ pub struct MobParams {
 pub struct Capabilities {
     /// Ignites under open sky by day (vanilla `isSunBurnTick` mobs).
     pub burns_in_daylight: bool,
-    /// Hostile only at night: by day it ignores players (vanilla spiders).
-    pub night_aggro_only: bool,
+    /// Reduces magic, poison and thorns damage by 85 percent (vanilla witch).
+    pub resists_magic: bool,
+    /// Acquires targets below local brightness eight; retaliation bypasses it.
+    pub dark_aggro_only: bool,
     /// One drowning damage per tick in water or rain (vanilla
     /// `isSensitiveToWater`).
     pub hurt_by_water: bool,
@@ -922,8 +924,8 @@ pub fn vanilla_blueprints(
         &[],
         false,
     );
-    // The spider melees like a zombie (faster, 2 damage); its night-only
-    // hostility is [`Capabilities::night_aggro_only`].
+    // The spider melees like a zombie (faster, 2 damage); its local-light
+    // hostility is [`Capabilities::dark_aggro_only`].
     push(
         "minecraft:spider",
         MobCategory::Monster,
@@ -1259,7 +1261,8 @@ fn vanilla_capabilities(blueprint: &mut MobBlueprint) {
                 | "minecraft:parched"
                 | "minecraft:phantom"
         ),
-        night_aggro_only: matches!(name, "minecraft:spider" | "minecraft:cave_spider"),
+        dark_aggro_only: matches!(name, "minecraft:spider" | "minecraft:cave_spider"),
+        resists_magic: name == "minecraft:witch",
         hurt_by_water: name == "minecraft:enderman",
         fall_damage_immune: FALL_DAMAGE_IMMUNE.contains(&name),
         climbs_walls: matches!(name, "minecraft:spider" | "minecraft:cave_spider"),

@@ -67,6 +67,45 @@ fn accepts(state: &TickState, name: &str, pos: [f64; 3], seed: u64) -> bool {
 }
 
 #[test]
+fn hostile_gap_spawn_support_rejects_glass_and_bottom_slabs() {
+    let mut state = flat("minecraft:plains", 65);
+    for (name, slab_type, allowed) in [
+        ("stone", None, true),
+        ("glass", None, false),
+        ("tinted_glass", None, false),
+        ("white_stained_glass", None, false),
+        ("stone_slab", Some("bottom"), false),
+        ("stone_slab", Some("top"), true),
+        ("stone_slab", Some("double"), true),
+    ] {
+        let name = mc_data::Identifier::parse(&format!("minecraft:{name}")).unwrap();
+        let block = state.registry.blocks.block(&name).unwrap();
+        let mut props = state
+            .registry
+            .blocks
+            .by_id(block.default)
+            .unwrap()
+            .properties
+            .clone();
+        if let Some(value) = slab_type {
+            props.iter_mut().find(|(key, _)| key == "type").unwrap().1 = value.into();
+        }
+        let floor = state
+            .registry
+            .blocks
+            .by_name_and_props(&name, &props)
+            .unwrap()
+            .0;
+        state.world.set_block(0, 64, 0, floor);
+        assert_eq!(
+            valid_support(&state, 0, 64, 0, MobCategory::Monster, &[]),
+            allowed,
+            "{name} {slab_type:?}"
+        );
+    }
+}
+
+#[test]
 fn hostile_columns_use_the_outer_128_block_area() {
     let mut outer = 0;
     for seed in 0..1024 {

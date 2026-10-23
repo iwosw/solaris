@@ -122,6 +122,7 @@ mod mob_equipment_pickup;
 pub(crate) mod mob_fall;
 pub(crate) mod mob_lanes;
 pub mod mob_loot;
+mod monster_spawner;
 pub mod mounts;
 pub(crate) mod native_checkpoint;
 pub mod natural_spawn;

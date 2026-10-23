@@ -406,6 +406,133 @@ fn spider_attacks_at_night_and_is_neutral_by_day() {
     assert_eq!(lost % 2.0, 0.0, "2 point bites, easy keeps 2");
 }
 
+#[test]
+fn hostile_gap_spiders_use_local_light_and_retaliate_in_bright_light() {
+    for name in ["minecraft:spider", "minecraft:cave_spider"] {
+        let (mut state, player, centre) = setup(0.0);
+        let stone = state.registry.states.stone;
+        for dx in -12..=12 {
+            for dz in -12..=12 {
+                state
+                    .world
+                    .set_block(centre[0] as i32 + dx, Y + 4, centre[2] as i32 + dz, stone);
+            }
+        }
+        state.world.fold_overlay();
+        assert!(state.brightness(centre[0] as i32, Y + 1, centre[2] as i32) < 8);
+        let mob = state.spawn_mob(
+            type_id(&state, name),
+            [centre[0] + 1.5, centre[1], centre[2]],
+            16.0,
+        );
+        for _ in 0..25 {
+            run_tick(&mut state, &[]);
+        }
+        assert!(
+            health(&state, player) < 20.0,
+            "{name} must attack in a daytime cave"
+        );
+        assert!(state.entities.slot_of(mob).is_some());
+
+        let (mut state, player, centre) = setup(0.0);
+        state.day_time = 18_000;
+        state.world.set_block(
+            centre[0] as i32 + 1,
+            Y + 1,
+            centre[2] as i32 + 1,
+            state.registry.states.torch,
+        );
+        state.world.fold_overlay();
+        let mob = state.spawn_mob(
+            type_id(&state, name),
+            [centre[0] + 1.5, centre[1], centre[2]],
+            16.0,
+        );
+        for _ in 0..25 {
+            run_tick(&mut state, &[]);
+        }
+        assert_eq!(
+            health(&state, player),
+            20.0,
+            "{name} must be neutral in torchlight"
+        );
+        let slot = state.entities.slot_of(mob).unwrap();
+        state.entities.row_mut(slot).last_player_hit = Some((player, state.tick));
+        for _ in 0..25 {
+            run_tick(&mut state, &[]);
+        }
+        assert!(
+            health(&state, player) < 20.0,
+            "{name} retaliates despite torchlight"
+        );
+    }
+}
+
+#[test]
+fn hostile_gap_manual_creeper_ignition_survives_target_departure() {
+    use crate::boundary::Hand;
+    for (name, hand, index) in [
+        ("minecraft:flint_and_steel", Hand::Main, 0),
+        (
+            "minecraft:fire_charge",
+            Hand::Off,
+            crate::inventory::OFF_HAND,
+        ),
+    ] {
+        let (mut state, player, centre) = setup(2.0);
+        let item = state
+            .registry
+            .items
+            .id_of(&mc_data::Identifier::parse(name).unwrap())
+            .unwrap();
+        state.players.get_mut(&player).unwrap().inventory.slots[index] =
+            mc_data::ItemStack::new(item, 2);
+        let creeper = state.spawn_mob(type_id(&state, "minecraft:creeper"), centre, 20.0);
+        run_tick(
+            &mut state,
+            &[PlayerInput::InteractEntity {
+                connection: ConnectionId(1),
+                target: creeper,
+                hand,
+                location: [0.0; 3],
+            }],
+        );
+        let held = &state.players[&player].inventory.slots[index];
+        if name.ends_with("flint_and_steel") {
+            assert_eq!(
+                held.damage,
+                Some(1),
+                "successful ignition wears the actual hand"
+            );
+        } else {
+            assert_eq!(held.count, 1, "successful ignition consumes one charge");
+        }
+        let controls = state
+            .entities
+            .row(state.entities.slot_of(creeper).unwrap())
+            .controls;
+        assert!(controls.ignited);
+        assert!(!crate::entity_controls::Controls::default().journal_eq(&controls));
+        assert_eq!(
+            crate::entity_controls::Controls::from_fields(&controls.to_fields()).unwrap(),
+            controls
+        );
+        let encoded = serde_json::to_vec(&controls).unwrap();
+        assert_eq!(
+            serde_json::from_slice::<crate::entity_controls::Controls>(&encoded).unwrap(),
+            controls
+        );
+        move_player(&mut state, player, [centre[0] - 20.0, centre[1], centre[2]]);
+        for _ in 0..FUSE_TICKS {
+            run_tick(&mut state, &[]);
+        }
+        assert!(
+            state.entities.slot_of_any(creeper).is_none(),
+            "manual ignition cannot unwind with target distance"
+        );
+    }
+}
+
 /// The creeper starts a fuse next to the player, swells (entity data the
 /// client animates from), then blasts: the platform cracks open, bedrock-class
 /// blocks survive and the player is hurt.

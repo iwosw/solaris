@@ -942,8 +942,7 @@ fn content_cache_selection_ignores_directories_without_a_cache() {
 /// Three template entities at the piece's local origin column: a villager that
 /// lands in the chunk being filled, a villager whose transformed *block* position
 /// is 40 blocks away (vanilla's `BoundingBox.isInside` drops it, and no chunk
-/// places it — the marker list is per chunk), and a zombie villager, which the
-/// lane does not spawn.
+/// places it — the marker list is per chunk), and a persistent zombie villager.
 #[test]
 fn village_pieces_place_their_villagers_as_chunk_inhabitants() {
     let seed = 7;
@@ -1022,10 +1021,20 @@ fn village_pieces_place_their_villagers_as_chunk_inhabitants() {
         z: chunk.1,
     });
     let markers = placed.generated_entities();
-    assert_eq!(markers.len(), 2, "villager and zombie villager placed; distant villager clipped");
+    assert_eq!(
+        markers.len(),
+        2,
+        "villager and zombie villager placed; distant villager clipped"
+    );
     let marker = &markers[0];
-    let zombie = markers.iter().find(|marker| marker.entity_type == "minecraft:zombie_villager").unwrap();
-    assert!(zombie.persistent, "template PersistenceRequired survives placement");
+    let zombie = markers
+        .iter()
+        .find(|marker| marker.entity_type == "minecraft:zombie_villager")
+        .unwrap();
+    assert!(
+        zombie.persistent,
+        "template PersistenceRequired survives placement"
+    );
     assert_eq!(marker.entity_type, "minecraft:villager");
     assert_eq!(marker.villager_kind, "desert");
     assert_eq!(marker.profession, "nitwit");
@@ -1077,9 +1086,8 @@ fn village_pieces_place_their_villagers_as_chunk_inhabitants() {
     }
 }
 
-/// Live proof over the real cache: a generated village carries its piece
-/// villagers as chunk inhabitant markers, and the closure reports the mobs the
-/// lane does not spawn.
+/// Live proof over the real cache: a generated village carries authored
+/// inhabitants, including ordinary non-villager mobs.
 ///
 /// The chunks the villager pieces land in are generated one at a time and their
 /// markers collected; generation is bounded to the pieces whose templates carry
@@ -1150,7 +1158,7 @@ fn live_village_populates_its_pieces_villagers() {
     }
 
     println!(
-        "{villager_pieces} pieces carry template entities; {} villagers placed",
+        "{villager_pieces} pieces carry template entities; {} inhabitants placed",
         markers.len()
     );
     assert!(
@@ -1163,7 +1171,14 @@ fn live_village_populates_its_pieces_villagers() {
     );
     let mut claims = BTreeSet::new();
     for marker in &markers {
-        assert_eq!(marker.entity_type, "minecraft:villager");
+        assert!(
+            claims.insert(marker.claim.clone()),
+            "two inhabitants share the claim {}",
+            marker.claim,
+        );
+        if marker.entity_type != "minecraft:villager" {
+            continue;
+        }
         assert!(
             ["plains", "desert", "savanna", "snow", "taiga"]
                 .contains(&marker.villager_kind.as_str()),
@@ -1198,31 +1213,7 @@ fn live_village_populates_its_pieces_villagers() {
             "a yaw that is not the authored yaw plus a quarter turn: {}",
             marker.yaw,
         );
-        assert!(
-            claims.insert(marker.claim.clone()),
-            "two villagers share the claim {}",
-            marker.claim,
-        );
     }
-
-    // The mobs the lane does not spawn are reported, not silently missing: the
-    // closure reaches them through the zombie town centres, the animal pens, the
-    // butcher shops, the meeting-point golems and the desert camel.
-    let unspawned = source.closure().unspawned_piece_mobs();
-    for mob in [
-        "minecraft:cat",
-        "minecraft:iron_golem",
-        "minecraft:zombie_villager",
-    ] {
-        assert!(
-            unspawned.contains(&mob),
-            "{mob} must be reported as unspawned; got {unspawned:?}",
-        );
-    }
-    assert!(
-        !unspawned.contains(&"minecraft:villager"),
-        "the villager is the one mob the lane does spawn",
-    );
 }
 
 /// The real `minecraft:villages` closure and a source that gates only on the

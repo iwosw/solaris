@@ -258,6 +258,49 @@ fn witch_selects_real_potion_payload_and_drinks_without_throwing() {
 }
 
 #[test]
+fn hostile_gap_witch_can_throw_weakness_at_close_poisoned_target() {
+    let (mut state, witch, player, _) = fixture("witch", 2.0);
+    effect(
+        &mut state,
+        player,
+        ActiveEffect::new(EffectId::Poison, 10000, 0),
+    );
+    advance(&mut state, witch, 0, GoalKind::Alchemist, player);
+    let mut weakness = 0;
+    for tick in (60..=6000).step_by(60) {
+        advance(&mut state, witch, tick, GoalKind::Alchemist, player);
+        weakness += usize::from(matches!(
+            state
+                .entities
+                .row(state.entities.slot_of(witch).unwrap())
+                .special_mob
+                .as_deref(),
+            Some(Retained::Witch(Potion::Weakness))
+        ));
+    }
+    assert!(
+        weakness > 0 && weakness < 100,
+        "close Weakness is a probabilistic choice"
+    );
+    effect(
+        &mut state,
+        player,
+        ActiveEffect::new(EffectId::Weakness, 10000, 0),
+    );
+    for tick in (6060..=6660).step_by(60) {
+        advance(&mut state, witch, tick, GoalKind::Alchemist, player);
+        assert!(!matches!(
+            state
+                .entities
+                .row(state.entities.slot_of(witch).unwrap())
+                .special_mob
+                .as_deref(),
+            Some(Retained::Witch(Potion::Weakness))
+        ));
+    }
+}
+
+#[test]
 fn witch_finishing_drink_restores_native_movement_attribute_not_blueprint_default() {
     let (mut state, witch, player, _) = fixture("witch", 9.0);
     let slot = state.entities.slot_of(witch).unwrap();

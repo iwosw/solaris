@@ -62,6 +62,20 @@ ordered scratch outputs retain the existing preparation/writeback barriers;
 the scheduler selects serial or data-parallel execution. Other tick stages
 remain owner-ordered, not a migrated general system graph.
 
+Ordinary monster spawners are native tick work indexed by chunk. Only spawners
+near live non-spectator players in active chunks advance; spawn attempts run on
+due deadlines and query local entity buckets. Activation, pause and delay reset
+write the existing opaque block-entity WAL, not a second persistence store or a
+per-tick countdown record. Unsupported custom spawn rules/weighted potentials
+fail chunk admission rather than silently changing their meaning.
+
+Structure templates carry typed inhabitant markers, authored persistence and
+rotation into native blueprint initialization. Placement claims and stable UUIDs
+share the existing entity checkpoint/WAL transaction; claims survive death so
+reloading a generated structure cannot resurrect its original inhabitants.
+Villager data uses its specialized initializer; unsupported entity types remain
+unclaimed, rather than being misrepresented as villagers.
+
 ## Threads and waiting
 
 The core owns its tick and long-lived data-parallel worker pool. The edge owns

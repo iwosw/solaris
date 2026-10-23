@@ -925,6 +925,10 @@ impl Chunk {
                     ("Z".into(), Tag::Double(inhabitant.position[2])),
                     ("PersistenceRequired".into(), Tag::Byte(i8::from(inhabitant.persistent))),
                     (
+                        "PersistenceRequired".into(),
+                        Tag::Byte(i8::from(inhabitant.persistent)),
+                    ),
+                    (
                         "VillagerKind".into(),
                         Tag::String(inhabitant.villager_kind.clone()),
                     ),
@@ -1032,7 +1036,8 @@ impl Chunk {
                     entity_type: string("Entity")?,
                     position: [double("X")?, double("Y")?, double("Z")?],
                     persistent: fields.iter().any(|(key, value)| {
-                        key == "PersistenceRequired" && matches!(value, Tag::Byte(value) if *value != 0)
+                        key == "PersistenceRequired"
+                            && matches!(value, Tag::Byte(value) if *value != 0)
                     }),
                     villager_kind: string("VillagerKind")?,
                     profession: string("Profession")?,

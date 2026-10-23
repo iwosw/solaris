@@ -246,7 +246,7 @@ fn vanilla_capability_tables_name_registered_blueprints() {
     };
     assert!(capable("minecraft:enderman").hurt_by_water);
     assert!(capable("minecraft:spider").climbs_walls);
-    assert!(capable("minecraft:cave_spider").night_aggro_only);
+    assert!(capable("minecraft:cave_spider").dark_aggro_only);
     assert!(capable("minecraft:phantom").burns_in_daylight);
     assert!(capable("minecraft:skeleton_horse").inverted_healing);
     assert_eq!(

@@ -1318,7 +1318,6 @@ impl PieceWriter for ChunkPieceWriter<'_> {
             .block_entities
             .insert(pos, entity.at_world_position(pos));
     }
-
     /// Preserve authored identity, persistence and villager data. Native mob
     /// blueprints own spawn initialization; generation never invents POI claims.
     fn set_entity(&mut self, placed: &PlacedEntity<'_>) {

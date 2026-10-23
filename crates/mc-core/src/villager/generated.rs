@@ -1,4 +1,4 @@
-//! Once-only village template inhabitants. Claims outlive entity death and
+//! Once-only structure template inhabitants. Claims outlive entity death and
 //! share the entity's journal/checkpoint transaction, so reload cannot duplicate.
 use super::{VillagerKind, VillagerProfession};
 use crate::{
@@ -24,26 +24,41 @@ pub(crate) fn load(state: &mut TickState, chunks: &[ChunkPos], changes: &mut Cha
             if state.generated_entity_claims.contains(&marker.claim) {
                 continue;
             }
-            let Some(kind) = VillagerKind::from_name(&marker.villager_kind) else {
-                continue;
-            };
-            let Some(profession) = VillagerProfession::from_name(&marker.profession) else {
-                continue;
-            };
             let Some(type_id) = mc_data::Identifier::parse(&marker.entity_type)
                 .ok()
                 .and_then(|id| state.registry.entity_types.id_of(&id))
             else {
                 continue;
             };
+            let Some(blueprint) = state.registry.blueprint(type_id) else {
+                continue;
+            };
             if !matches!(
                 marker.entity_type.as_str(),
                 "minecraft:villager" | "minecraft:zombie_villager"
             ) {
+                let health = blueprint.params.max_health;
+                let id = state.spawn_mob(type_id, marker.position, health);
+                let slot = state.entities.slot_of(id).expect("new entity");
+                state.entities.set_uuid(slot, generated_uuid(&marker.claim));
+                state
+                    .entities
+                    .set_rot(slot, marker.yaw, marker.pitch.clamp(-90.0, 90.0));
+                state.entities.row_mut(slot).persistent |= marker.persistent;
+                changes.entities_spawned.push(id);
+                state.generated_entity_claims.insert(marker.claim.clone());
+                state.new_generated_entity_claims.push(marker.claim);
                 continue;
             }
+            let Some(kind) = VillagerKind::from_name(&marker.villager_kind) else {
+                continue;
+            };
+            let Some(profession) = VillagerProfession::from_name(&marker.profession) else {
+                continue;
+            };
             let id = state.spawn_mob(type_id, marker.position, 20.0);
             let slot = state.entities.slot_of(id).expect("new entity");
+            state.entities.row_mut(slot).persistent |= marker.persistent;
             state.entities.set_uuid(slot, generated_uuid(&marker.claim));
             state
                 .entities
