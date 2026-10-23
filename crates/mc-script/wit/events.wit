@@ -118,7 +118,7 @@ interface events {
         /// change.
         player-unavailable,
         /// Never sent: a newer teleport supersedes an unconfirmed one, as in
-        /// vanilla. Kept so packages built against 0.7.0 still link.
+        /// vanilla. Reserved outcome; native supersession emits no result.
         teleport-pending,
         /// The simulation owner could not take the commit. The world did not
         /// change.
@@ -150,6 +150,22 @@ interface events {
         session: session-id,
         position: position,
         outcome: player-teleport-outcome,
+    }
+
+    enum entity-spawn-failure {
+        unknown-entity-type,
+        actor-unavailable,
+        busy,
+        runtime-unavailable,
+        rejected,
+    }
+    record entity-spawn-answered {
+        request: string,
+        session: session-id,
+        entity-type: string,
+        position: position,
+        /// None means committed; the result does not promise an fsync.
+        failure: option<entity-spawn-failure>,
     }
 
 
@@ -611,6 +627,7 @@ interface events {
         /// One death container the server created for a player whose drops it
         /// took custody of. Addressed to the declaring `death_graves` package.
         player-grave-created(player-grave-created),
+        entity-spawn-answered(entity-spawn-answered),
     }
 
     /// One batch of events for the plugin, in delivery order for this plugin.

@@ -20,7 +20,7 @@ fn write_package(root: &Path, id: &str, config: &str) {
     std::fs::create_dir_all(&directory).expect("package directory");
     std::fs::write(
         directory.join("plugin.toml"),
-        format!("id = \"{id}\"\nname = \"{id}\"\nversion = \"0.1.0\"\napi = \"0.7.0\"\n"),
+        format!("id = \"{id}\"\nname = \"{id}\"\nversion = \"0.1.0\"\napi = \"0.8.0\"\n"),
     )
     .expect("manifest");
     std::fs::write(directory.join("plugin.wasm"), component_bytes()).expect("artifact");
@@ -52,7 +52,7 @@ fn a_check_validates_the_real_component_without_touching_a_world() {
     assert_eq!(report.checked().len(), 1);
     let checked = &report.checked()[0];
     assert_eq!(checked.id, "hello");
-    assert_eq!(checked.api, "0.7.0");
+    assert_eq!(checked.api, "0.8.0");
     assert!(
         checked.plan.is_none(),
         "the example plugin plans no worldgen"

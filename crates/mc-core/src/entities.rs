@@ -1729,8 +1729,7 @@ fn motion_flags_for(
                 );
             if !chaser {
                 flags |= MOTION_WANDER_REST;
-            } else if blueprint.name != "minecraft:iron_golem"
-                && crate::piglin::name(type_id) != "minecraft:zoglin"
+            } else if !blueprint.capabilities.hunts_monsters && !blueprint.capabilities.hunts_living
             {
                 // Admission checks every applicable target table: players,
                 // and also residents for zombie/zombie-villager chasers.

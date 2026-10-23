@@ -51,6 +51,24 @@ pub(crate) fn apply(
     for (owner, item) in contribution.items() {
         validate_item(owner, item, client_bundles)?;
     }
+    let mut definitions = contribution
+        .mob_blueprints()
+        .map(|(owner, text)| {
+            let definition =
+                crate::blueprint::MobBlueprintDef::from_json(text).map_err(CoreError::Registry)?;
+            if definition.id.namespace() != owner {
+                return Err(CoreError::Registry(format!(
+                    "plugin {owner} cannot define mob {}",
+                    definition.id
+                )));
+            }
+            Ok(definition)
+        })
+        .collect::<Result<Vec<_>, CoreError>>()?;
+    definitions.sort_unstable_by(|left, right| left.id.cmp(&right.id));
+    for definition in definitions {
+        registry.register_blueprint(definition)?;
+    }
     // Deployment recipes carry the namespace/validation the host conversion
     // already enforced; identity collisions reject at admission below.
 
@@ -190,6 +208,8 @@ pub(crate) fn world_identity(registry: &CoreRegistry) -> Result<Vec<u8>, CoreErr
         crafting_recipes: Vec<String>,
         #[serde(skip_serializing_if = "Vec::is_empty")]
         block_tools: Vec<&'a mc_data::block_tools::BlockToolRule>,
+        #[serde(skip_serializing_if = "Vec::is_empty")]
+        mob_blueprints: Vec<String>,
         ore_profile: &'static str,
     }
 
@@ -235,6 +255,12 @@ pub(crate) fn world_identity(registry: &CoreRegistry) -> Result<Vec<u8>, CoreErr
             recipes
         },
         block_tools: registry.block_tools.rules().iter().collect(),
+        mob_blueprints: registry
+            .blueprints
+            .iter()
+            .filter(|(key, _)| key & crate::blueprint::CUSTOM_TYPE_FLAG != 0)
+            .map(|(_, blueprint)| format!("{blueprint:?}"))
+            .collect(),
         ore_profile: registry
             .plugin_ore_profile
             .map_or("vanilla", PluginWorldgenOreProfile::contract_name),

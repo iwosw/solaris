@@ -582,6 +582,31 @@ impl CoreRegistry {
             .map(|(_, blueprint)| blueprint)
     }
 
+    /// Resolve the native identity, including admitted plugin mob names.
+    #[must_use]
+    pub fn entity_type_id(&self, name: &str) -> Option<u32> {
+        self.blueprints
+            .iter()
+            .find(|(_, blueprint)| blueprint.name == name)
+            .map(|(key, _)| *key)
+            .or_else(|| {
+                Identifier::parse(name)
+                    .ok()
+                    .and_then(|id| self.entity_types.id_of(&id))
+            })
+    }
+
+    /// Native identity, never the presentation alias of a custom mob.
+    #[must_use]
+    pub fn entity_type_name(&self, type_id: u32) -> Option<&str> {
+        self.blueprint(type_id)
+            .map(|blueprint| blueprint.name.as_str())
+            .or_else(|| {
+                mc_data::entity_types::entity_type_contract_26_1_2_by_protocol_id(type_id)
+                    .map(|contract| contract.name)
+            })
+    }
+
     /// Admit one data-defined blueprint (ADR 0016) and return its key. Any
     /// bound violation, unknown reference or duplicate id is a load error.
     pub fn register_blueprint(

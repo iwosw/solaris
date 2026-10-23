@@ -23,7 +23,7 @@
     },
     "package_declarations": {
       "id": "inventory-compat",
-      "api": "0.7.0",
+      "api": "0.8.0",
       "events": [
         "player.joined",
         "player.left",

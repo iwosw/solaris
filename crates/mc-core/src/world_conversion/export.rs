@@ -716,7 +716,25 @@ fn export_entities(
         .iter_mut()
         .filter(|entity| entity.dimension == dimension)
     {
-        if let Some(tag) = entity.payload.take() {
+        if let Some(mut tag) = entity.payload.take() {
+            if let Tag::Compound(fields) = &mut tag {
+                if let Some(index) = fields
+                    .iter()
+                    .position(|(key, _)| key == "solaris:Presentation")
+                {
+                    let (_, presentation) = fields.remove(index);
+                    if !matches!(presentation, Tag::String(_)) {
+                        return Err(fail("custom mob export: invalid presentation id"));
+                    }
+                    let (_, id) = fields
+                        .iter_mut()
+                        .find(|(key, _)| key == "id")
+                        .ok_or_else(|| fail("custom mob export: missing id"))?;
+                    let native = std::mem::replace(id, presentation);
+                    fields.retain(|(key, _)| key != "solaris:MobBlueprint");
+                    fields.push(("solaris:MobBlueprint".into(), native));
+                }
+            }
             let x = entity.position.x;
             let z = entity.position.z;
             regions
@@ -820,3 +838,7 @@ fn merge_unknown(fresh: &mut Tag, old: Tag) -> Result<(), CoreError> {
     }
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "export_mob_tests.rs"]
+mod mob_tests;

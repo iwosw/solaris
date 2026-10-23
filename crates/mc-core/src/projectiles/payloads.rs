@@ -1044,6 +1044,18 @@ pub(crate) fn channeling(
     true
 }
 
+fn mob_capabilities(state: &TickState, target: EntityId) -> crate::blueprint::Capabilities {
+    state
+        .entities
+        .slot_of(target)
+        .and_then(|slot| match state.entities.body(slot).kind {
+            crate::entities::EntityKind::Mob { type_id } => state.registry.blueprint(type_id),
+            _ => None,
+        })
+        .map(|blueprint| blueprint.capabilities)
+        .unwrap_or_default()
+}
+
 /// Returns true when flight must remove the projectile after this impact.
 pub(crate) fn impact(
     state: &mut TickState,
@@ -1063,7 +1075,7 @@ pub(crate) fn impact(
                     .entities
                     .slot_of(id)
                     .map_or([0.0; 3], |slot| state.entities.vel(slot).map(|v| v / 20.0));
-                if entity_name(state, target) == Some("minecraft:blaze") {
+                if mob_capabilities(state, target).hurt_by_snowballs {
                     damage(
                         state,
                         intents,
@@ -1149,7 +1161,7 @@ pub(crate) fn impact(
                     && !(matches!(
                         record.kind,
                         ProjectileKind::WindCharge | ProjectileKind::BreezeWindCharge
-                    ) && entity_name(state, *target) == Some("minecraft:breeze"))
+                    ) && mob_capabilities(state, *target).ignores_wind_charges)
             }) {
                 let mut amount = match record.kind {
                     ProjectileKind::SmallFireball => 5.0,

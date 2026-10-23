@@ -214,7 +214,7 @@ mod world_structure_operations_tests;
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// The API version every deployed WebAssembly component package must request.
-pub const COMPONENT_PLUGIN_API_VERSION: ScriptApiVersion = ScriptApiVersion::new(0, 7, 0);
+pub const COMPONENT_PLUGIN_API_VERSION: ScriptApiVersion = ScriptApiVersion::new(0, 8, 0);
 
 /// Maximum entity types one plugin may allow-list for spawning.
 pub const MAX_SPAWN_ENTITY_TYPES: usize = 32;

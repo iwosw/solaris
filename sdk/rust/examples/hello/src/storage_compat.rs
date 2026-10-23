@@ -8,7 +8,7 @@
 
 use solaris_plugin_sdk::events::{OperationFailure, OperationOutcome, OperationPayload};
 use solaris_plugin_sdk::{
-    commands, log, storage, storage_get, Command, Event, Failure, LogLevel, StorageGetOutcome,
+    Command, Event, Failure, LogLevel, StorageGetOutcome, commands, log, storage, storage_get,
 };
 
 /// The key the legacy standalone compare-and-swap wrote. This fixture only reads

@@ -49,7 +49,7 @@ fn write_package(root: &Path, id: &str, config: &str) {
     std::fs::create_dir_all(&directory).expect("package directory");
     std::fs::write(
         directory.join("plugin.toml"),
-        format!("id = \"{id}\"\nname = \"{id}\"\nversion = \"0.1.0\"\napi = \"0.7.0\"\n"),
+        format!("id = \"{id}\"\nname = \"{id}\"\nversion = \"0.1.0\"\napi = \"0.8.0\"\n"),
     )
     .expect("manifest");
     std::fs::write(directory.join("plugin.wasm"), component_bytes()).expect("artifact");

@@ -1726,6 +1726,38 @@ fn contract_events(event: &ScriptEvent, tick: u64) -> Option<(EventContext, Vec<
                 None => PlayerTeleportOutcome::Committed,
             },
         })],
+        ScriptEventKind::EntitySpawnResult {
+            request_id,
+            player_id,
+            entity_type,
+            position,
+            failure,
+        } => {
+            use crate::bindings::exports::solaris::plugin::events::{
+                EntitySpawnAnswered, EntitySpawnFailure,
+            };
+            vec![Event::EntitySpawnAnswered(EntitySpawnAnswered {
+                request: request_id.clone(),
+                session: session_of(*player_id),
+                entity_type: entity_type.clone(),
+                position: Position {
+                    x: position.x(),
+                    y: position.y(),
+                    z: position.z(),
+                },
+                failure: failure.map(|failure| match failure {
+                    mc_script::ScriptEntitySpawnFailure::UnknownEntityType => {
+                        EntitySpawnFailure::UnknownEntityType
+                    }
+                    mc_script::ScriptEntitySpawnFailure::ActorUnavailable => {
+                        EntitySpawnFailure::ActorUnavailable
+                    }
+                    mc_script::ScriptEntitySpawnFailure::Busy => EntitySpawnFailure::Busy,
+                    mc_script::ScriptEntitySpawnFailure::Rejected => EntitySpawnFailure::Rejected,
+                    _ => EntitySpawnFailure::RuntimeUnavailable,
+                }),
+            })]
+        }
         // The two storage answers are the contract's typed results: the plugin
         // reads what the server committed, never what it hoped it committed.
         ScriptEventKind::PluginStorageGetResult {

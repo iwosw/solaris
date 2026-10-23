@@ -8,7 +8,7 @@
 /// the host asks a hook only for the packages an operator registered for that
 /// kind, and a component that implements both hooks and is registered for
 /// neither is never asked either of them.
-package solaris:plugin@0.7.0;
+package solaris:plugin@0.8.0;
 
 world plugin {
     import host;

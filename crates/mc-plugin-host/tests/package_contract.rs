@@ -70,7 +70,7 @@ const NO_FILES: &[(&str, &[u8])] = &[];
 fn a_component_package_loads_with_its_manifest_contract() {
     let root = package(
         &manifest(
-            "0.7.0",
+            "0.8.0",
             "events = [\"player.joined\"]\ncapabilities = [\"player_inventory\"]\nplayer_commands = [\"hello\"]\n",
         ),
         b"component-bytes",
@@ -102,7 +102,7 @@ fn the_component_contract_refuses_an_obsolete_api_version() {
 #[test]
 fn an_unknown_capability_is_refused_rather_than_ignored() {
     let root = package(
-        &manifest("0.7.0", "capabilities = [\"chat.send\"]\n"),
+        &manifest("0.8.0", "capabilities = [\"chat.send\"]\n"),
         b"component-bytes",
     );
     let error = load_package(root.path(), &PluginLimits::default())
@@ -117,7 +117,7 @@ fn an_unknown_capability_is_refused_rather_than_ignored() {
 fn an_entry_that_leaves_the_package_is_refused() {
     for entry in ["../outside.wasm", "/etc/passwd", ""] {
         let root = package(
-            &manifest("0.7.0", &format!("entry = \"{entry}\"\n")),
+            &manifest("0.8.0", &format!("entry = \"{entry}\"\n")),
             b"component-bytes",
         );
         let error = load_package(root.path(), &PluginLimits::default())
@@ -131,7 +131,7 @@ fn an_entry_that_leaves_the_package_is_refused() {
 
 #[test]
 fn an_artifact_past_the_bound_is_refused_before_compilation() {
-    let root = package(&manifest("0.7.0", ""), &vec![0_u8; 4096]);
+    let root = package(&manifest("0.8.0", ""), &vec![0_u8; 4096]);
     let limits = PluginLimits {
         artifact_bytes: 1024,
         ..PluginLimits::default()
@@ -146,7 +146,7 @@ fn an_artifact_past_the_bound_is_refused_before_compilation() {
 #[test]
 fn a_client_bundle_reaches_the_loader_as_validated_bytes() {
     let root = package_with(
-        &manifest("0.7.0", CLIENT_BUNDLE),
+        &manifest("0.8.0", CLIENT_BUNDLE),
         b"component-bytes",
         CLIENT_ARTIFACT_FILE,
     );
@@ -326,7 +326,7 @@ permissions = ["load_assets"]
     ];
 
     for (case, client, files, expected) in cases {
-        let root = package_with(&manifest("0.7.0", client), b"component-bytes", files);
+        let root = package_with(&manifest("0.8.0", client), b"component-bytes", files);
         let error = load_package(root.path(), &PluginLimits::default())
             .expect_err("a bundle that cannot be delivered must fail the package");
         assert!(
@@ -346,7 +346,7 @@ permissions = ["load_assets"]
 #[cfg(unix)]
 #[test]
 fn a_client_artifact_that_escapes_the_package_is_refused() {
-    let root = package(&manifest("0.7.0", CLIENT_BUNDLE), b"component-bytes");
+    let root = package(&manifest("0.8.0", CLIENT_BUNDLE), b"component-bytes");
     let outside = tempfile::tempdir().expect("outside directory");
     std::fs::write(outside.path().join("rich-content.zip"), CLIENT_ARTIFACT)
         .expect("outside artifact");
@@ -372,14 +372,14 @@ fn a_client_artifact_that_escapes_the_package_is_refused() {
 #[test]
 fn a_feature_capability_must_be_required_and_not_merely_declared() {
     let declared = "capabilities = [\"world_structures\"]\n";
-    let root = package(&manifest("0.7.0", declared), b"component-bytes");
+    let root = package(&manifest("0.8.0", declared), b"component-bytes");
     let error = load_package(root.path(), &PluginLimits::default())
         .expect_err("a feature capability without its feature must be refused");
     assert!(matches!(error, PackageError::Manifest { .. }));
 
     let root = package(
         &manifest(
-            "0.7.0",
+            "0.8.0",
             "capabilities = [\"world_structures\"]\nrequired_features = [\"world_structures\"]\n",
         ),
         b"component-bytes",
@@ -391,7 +391,7 @@ fn a_feature_capability_must_be_required_and_not_merely_declared() {
     );
 
     let root = package(
-        &manifest("0.7.0", "required_features = [\"unknown_feature\"]\n"),
+        &manifest("0.8.0", "required_features = [\"unknown_feature\"]\n"),
         b"component-bytes",
     );
     let error = load_package(root.path(), &PluginLimits::default())

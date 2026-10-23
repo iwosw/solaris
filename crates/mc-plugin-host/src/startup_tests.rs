@@ -39,6 +39,7 @@ fn contribution(plugin_id: &str) -> StartupContribution {
         ]),
         crafting_recipes: None,
         block_tools: None,
+        mob_blueprints: None,
     }
 }
 
@@ -146,5 +147,32 @@ fn crafting_recipes_and_block_tools_are_validated_against_declared_items() {
     assert!(matches!(
         convert_startup_contribution("chisel", &unknown_grant),
         Err(ContributionRefusal::InvalidBlockTool(_))
+    ));
+}
+
+#[test]
+fn mob_only_contributions_preserve_bounded_json_and_package_ownership() {
+    let mut value = contribution("sky-creeper");
+    value.items = None;
+    value.work_recipes = None;
+    let definition = include_str!("../../../sdk/rust/examples/sky-creeper/src/sky-creeper.json");
+    value.mob_blueprints = Some(vec![definition.into()]);
+    let validated = convert_startup_contribution("sky-creeper", &value).unwrap();
+    assert_eq!(validated.mob_blueprints(), &[definition]);
+    let mut deployment = super::DeploymentContribution::default();
+    deployment.record("sky-creeper", Some(&value));
+    assert_eq!(
+        deployment.mob_blueprints().collect::<Vec<_>>(),
+        vec![("sky-creeper", definition)]
+    );
+    value.mob_blueprints = Some(vec!["x".repeat(16 * 1024 + 1)]);
+    assert!(matches!(
+        convert_startup_contribution("sky-creeper", &value),
+        Err(ContributionRefusal::InvalidMobBlueprint(_))
+    ));
+    value.mob_blueprints = Some(vec![definition.into(); 65]);
+    assert!(matches!(
+        convert_startup_contribution("sky-creeper", &value),
+        Err(ContributionRefusal::InvalidMobBlueprint(_))
     ));
 }

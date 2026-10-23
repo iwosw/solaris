@@ -506,7 +506,7 @@ pub(crate) fn launch_arrow(
     record.mob_damage = true;
     if state.entities.slot_of(owner).is_some_and(|slot| {
         matches!(state.entities.body(slot).kind, crate::entities::EntityKind::Mob { type_id }
-            if state.registry.blueprint(type_id).is_some_and(|bp| bp.name == "minecraft:bogged"))
+            if state.registry.blueprint(type_id).is_some_and(|bp| bp.capabilities.poison_arrows))
     }) {
         let item = mc_data::Identifier::parse("minecraft:tipped_arrow").expect("vanilla item");
         let item_id = state.registry.items.id_of(&item)?;

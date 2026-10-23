@@ -138,7 +138,7 @@ fn write_package(root: &Path, owner: &Owner) {
     std::fs::write(
         directory.join("plugin.toml"),
         format!(
-            "id = \"{}\"\nname = \"{}\"\nversion = \"0.1.0\"\napi = \"0.7.0\"\n\
+            "id = \"{}\"\nname = \"{}\"\nversion = \"0.1.0\"\napi = \"0.8.0\"\n\
              events = [\"player.joined\", \"player.left\"]\nplayer_commands = [\"{}\"]\n",
             owner.id, owner.id, owner.command
         ),

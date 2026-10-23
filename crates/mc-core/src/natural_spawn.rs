@@ -879,7 +879,7 @@ fn admitted(
                 || !crate::command_rules::boolean(state, "spawn_monsters")
                 || match state.dimension {
                     crate::dimensions::Dimension::Overworld
-                        if blueprint.name == "minecraft:slime" =>
+                        if blueprint.capabilities.slime_spawn_rules =>
                     {
                         !hostile::slime_allowed(state, [x, y, z], brightness, rng)
                     }
@@ -889,10 +889,7 @@ fn admitted(
                             || u64::from(brightness) > rng.below(8)
                     }
                     crate::dimensions::Dimension::Nether => {
-                        !matches!(
-                            blueprint.name.as_str(),
-                            "minecraft:ghast" | "minecraft:magma_cube"
-                        ) && block > 11
+                        !blueprint.capabilities.ignores_nether_spawn_light && block > 11
                     }
                     crate::dimensions::Dimension::End => block > 7,
                 }

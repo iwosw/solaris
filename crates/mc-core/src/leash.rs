@@ -18,48 +18,10 @@ pub enum Action {
     Detach,
     Name,
 }
-fn leadable(name: &str) -> bool {
-    matches!(
-        name,
-        "minecraft:allay"
-            | "minecraft:armadillo"
-            | "minecraft:axolotl"
-            | "minecraft:bee"
-            | "minecraft:camel"
-            | "minecraft:cat"
-            | "minecraft:chicken"
-            | "minecraft:cow"
-            | "minecraft:dolphin"
-            | "minecraft:donkey"
-            | "minecraft:fox"
-            | "minecraft:frog"
-            | "minecraft:goat"
-            | "minecraft:hoglin"
-            | "minecraft:horse"
-            | "minecraft:iron_golem"
-            | "minecraft:llama"
-            | "minecraft:mooshroom"
-            | "minecraft:mule"
-            | "minecraft:ocelot"
-            | "minecraft:parrot"
-            | "minecraft:pig"
-            | "minecraft:polar_bear"
-            | "minecraft:rabbit"
-            | "minecraft:sheep"
-            | "minecraft:skeleton_horse"
-            | "minecraft:sniffer"
-            | "minecraft:snow_golem"
-            | "minecraft:strider"
-            | "minecraft:trader_llama"
-            | "minecraft:wolf"
-            | "minecraft:zoglin"
-            | "minecraft:zombie_horse"
-    )
-}
 pub(crate) fn action(
     row: &crate::entities::ColdRow,
     actor: Uuid,
-    kind: &str,
+    leashable: bool,
     held: &str,
     stack: &ItemStack,
 ) -> Option<Action> {
@@ -69,7 +31,7 @@ pub(crate) fn action(
     if row.entity_life.leash == Some(Holder::Entity(actor)) {
         return Some(Action::Detach);
     }
-    if held == "minecraft:lead" && leadable(kind) && row.entity_life.leash.is_none() {
+    if held == "minecraft:lead" && leashable && row.entity_life.leash.is_none() {
         return Some(Action::Attach);
     }
     None

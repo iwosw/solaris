@@ -144,6 +144,121 @@ pub struct Capabilities {
     pub follows_adults: bool,
     /// Reciprocal partner/offspring rule for a different blueprint.
     pub crossbreed: Option<Crossbreed>,
+    pub leashable: bool,
+    pub ageable: bool,
+    pub milkable: bool,
+    pub equipment_pickup: bool,
+    pub prefers_gold_equipment: bool,
+    pub prefers_trident: bool,
+    pub breeding: BreedingRule,
+    pub equipment: EquipmentLoadout,
+    pub poison_melee: bool,
+    pub poison_arrows: bool,
+    pub hurt_by_snowballs: bool,
+    pub ignores_wind_charges: bool,
+    pub splits_on_death: bool,
+    pub slime_spawn_rules: bool,
+    pub ignores_nether_spawn_light: bool,
+    pub hunts_villagers: bool,
+    pub hunts_monsters: bool,
+    pub hunts_living: bool,
+    pub ignored_by_monster_hunters: bool,
+    pub ignored_by_living_hunters: bool,
+    pub guard_hostile: bool,
+    pub taming: TamingProfile,
+    pub riding: RidingProfile,
+    pub food: Option<MobFood>,
+    pub size_profile: SizeProfile,
+    pub equine_body_armor: bool,
+}
+
+/// Shared eligibility for breeding, independent of client presentation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BreedingRule {
+    #[default]
+    Unrestricted,
+    TamedStanding,
+    TamedHealthyUnmounted,
+    Sterile,
+}
+
+/// Native randomized equipment policies. Draw order is part of vanilla behavior.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EquipmentLoadout {
+    #[default]
+    None,
+    BowArmor,
+    RareToolArmor,
+    StoneSword,
+    GoldSwordOrCrossbow,
+    GoldSword,
+    GoldAxe,
+    IronAxe,
+    Crossbow,
+    BoundIronSword,
+    Aquatic,
+}
+
+/// Size-scaled stats. Metadata requires the Slime presentation layout.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SizeProfile {
+    #[default]
+    None,
+    Slime,
+    Armored,
+}
+
+/// Native tame/feed families; wire metadata remains presentation-specific.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TamingProfile {
+    #[default]
+    None,
+    BonePet,
+    FishPet,
+    SeedPet,
+    TrustFish,
+    Equine,
+    PackEquine,
+    SterileEquine,
+}
+
+impl TamingProfile {
+    pub(crate) fn equine(self) -> bool {
+        matches!(self, Self::Equine | Self::PackEquine | Self::SterileEquine)
+    }
+    pub(crate) fn collared(self) -> bool {
+        matches!(self, Self::BonePet | Self::FishPet)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RidingProfile {
+    #[default]
+    None,
+    Saddle,
+    TamedSaddle,
+    Unsteered,
+    Unsaddlable,
+    CarrotStick,
+    FungusStick,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MobFood {
+    Wolf,
+    Cat,
+    Parrot,
+    Horse,
+    Llama,
+    Pig,
+    Strider,
+    Camel,
 }
 
 /// Both parents must declare the same offspring and each other's key.
@@ -381,6 +496,18 @@ impl MobBlueprintDef {
                 "more than {} data-defined blueprints",
                 limits::MAX_CUSTOM_BLUEPRINTS
             ));
+        }
+        if self.capabilities.size_profile != SizeProfile::None
+            && !matches!(
+                self.presents_as.as_str(),
+                "minecraft:slime" | "minecraft:magma_cube"
+            )
+        {
+            return Err("size_profile requires slime or magma_cube presentation".into());
+        }
+        if self.capabilities.splits_on_death && self.capabilities.size_profile == SizeProfile::None
+        {
+            return Err("splits_on_death requires size_profile".into());
         }
         if self.id.namespace() == "minecraft" {
             return Err("the minecraft namespace is reserved".into());
@@ -1171,6 +1298,199 @@ fn vanilla_capabilities(blueprint: &mut MobBlueprint) {
         temptable: blueprint.has_goal(GoalKind::Breed) && !blueprint.breed_food.is_empty(),
         follows_adults: blueprint.has_goal(GoalKind::Breed) && blueprint.offspring.is_some(),
         crossbreed: None,
+        leashable: matches!(
+            name,
+            "minecraft:allay"
+                | "minecraft:armadillo"
+                | "minecraft:axolotl"
+                | "minecraft:bee"
+                | "minecraft:camel"
+                | "minecraft:cat"
+                | "minecraft:chicken"
+                | "minecraft:cow"
+                | "minecraft:dolphin"
+                | "minecraft:donkey"
+                | "minecraft:fox"
+                | "minecraft:frog"
+                | "minecraft:goat"
+                | "minecraft:hoglin"
+                | "minecraft:horse"
+                | "minecraft:iron_golem"
+                | "minecraft:llama"
+                | "minecraft:mooshroom"
+                | "minecraft:mule"
+                | "minecraft:ocelot"
+                | "minecraft:parrot"
+                | "minecraft:pig"
+                | "minecraft:polar_bear"
+                | "minecraft:rabbit"
+                | "minecraft:sheep"
+                | "minecraft:skeleton_horse"
+                | "minecraft:sniffer"
+                | "minecraft:snow_golem"
+                | "minecraft:strider"
+                | "minecraft:trader_llama"
+                | "minecraft:wolf"
+                | "minecraft:zoglin"
+                | "minecraft:zombie_horse"
+        ),
+        ageable: matches!(
+            name,
+            "minecraft:sheep"
+                | "minecraft:cow"
+                | "minecraft:mooshroom"
+                | "minecraft:chicken"
+                | "minecraft:pig"
+                | "minecraft:goat"
+                | "minecraft:rabbit"
+                | "minecraft:camel"
+                | "minecraft:armadillo"
+                | "minecraft:axolotl"
+                | "minecraft:bee"
+                | "minecraft:cat"
+                | "minecraft:wolf"
+                | "minecraft:horse"
+                | "minecraft:donkey"
+                | "minecraft:mule"
+                | "minecraft:llama"
+                | "minecraft:trader_llama"
+                | "minecraft:ocelot"
+                | "minecraft:fox"
+                | "minecraft:hoglin"
+                | "minecraft:strider"
+                | "minecraft:dolphin"
+                | "minecraft:nautilus"
+                | "minecraft:zombie_nautilus"
+                | "minecraft:happy_ghast"
+                | "minecraft:sniffer"
+                | "minecraft:panda"
+                | "minecraft:polar_bear"
+                | "minecraft:turtle"
+        ),
+        milkable: matches!(
+            name,
+            "minecraft:cow" | "minecraft:goat" | "minecraft:mooshroom"
+        ),
+        equipment_pickup: matches!(
+            name,
+            "minecraft:zombie"
+                | "minecraft:zombie_villager"
+                | "minecraft:husk"
+                | "minecraft:drowned"
+                | "minecraft:zombified_piglin"
+                | "minecraft:skeleton"
+                | "minecraft:wither_skeleton"
+                | "minecraft:stray"
+                | "minecraft:bogged"
+                | "minecraft:parched"
+                | "minecraft:piglin"
+        ),
+        prefers_gold_equipment: name == "minecraft:piglin",
+        prefers_trident: name == "minecraft:drowned",
+        breeding: match name {
+            "minecraft:wolf" | "minecraft:cat" => BreedingRule::TamedStanding,
+            "minecraft:horse"
+            | "minecraft:donkey"
+            | "minecraft:llama"
+            | "minecraft:trader_llama" => BreedingRule::TamedHealthyUnmounted,
+            "minecraft:mule" | "minecraft:parrot" => BreedingRule::Sterile,
+            _ => BreedingRule::Unrestricted,
+        },
+        equipment: match name {
+            "minecraft:skeleton" | "minecraft:stray" | "minecraft:bogged" => {
+                EquipmentLoadout::BowArmor
+            }
+            "minecraft:zombie" | "minecraft:husk" | "minecraft:zombie_villager" => {
+                EquipmentLoadout::RareToolArmor
+            }
+            "minecraft:wither_skeleton" => EquipmentLoadout::StoneSword,
+            "minecraft:piglin" => EquipmentLoadout::GoldSwordOrCrossbow,
+            "minecraft:zombified_piglin" => EquipmentLoadout::GoldSword,
+            "minecraft:piglin_brute" => EquipmentLoadout::GoldAxe,
+            "minecraft:vindicator" => EquipmentLoadout::IronAxe,
+            "minecraft:pillager" => EquipmentLoadout::Crossbow,
+            "minecraft:vex" => EquipmentLoadout::BoundIronSword,
+            "minecraft:drowned" => EquipmentLoadout::Aquatic,
+            _ => EquipmentLoadout::None,
+        },
+        poison_melee: name == "minecraft:cave_spider",
+        poison_arrows: name == "minecraft:bogged",
+        hurt_by_snowballs: name == "minecraft:blaze",
+        ignores_wind_charges: name == "minecraft:breeze",
+        splits_on_death: matches!(name, "minecraft:slime" | "minecraft:magma_cube"),
+        slime_spawn_rules: name == "minecraft:slime",
+        ignores_nether_spawn_light: matches!(name, "minecraft:ghast" | "minecraft:magma_cube"),
+        size_profile: match name {
+            "minecraft:slime" => SizeProfile::Slime,
+            "minecraft:magma_cube" => SizeProfile::Armored,
+            _ => SizeProfile::None,
+        },
+        equine_body_armor: matches!(name, "minecraft:horse" | "minecraft:zombie_horse"),
+        hunts_villagers: matches!(name, "minecraft:zombie" | "minecraft:zombie_villager"),
+        hunts_monsters: name == "minecraft:iron_golem",
+        hunts_living: name == "minecraft:zoglin",
+        ignored_by_monster_hunters: name == "minecraft:creeper",
+        ignored_by_living_hunters: matches!(
+            name,
+            "minecraft:zoglin" | "minecraft:creeper" | "minecraft:armor_stand"
+        ),
+        guard_hostile: matches!(
+            name,
+            "minecraft:zombie"
+                | "minecraft:husk"
+                | "minecraft:drowned"
+                | "minecraft:zombie_villager"
+                | "minecraft:skeleton"
+                | "minecraft:stray"
+                | "minecraft:bogged"
+                | "minecraft:wither_skeleton"
+                | "minecraft:pillager"
+                | "minecraft:vindicator"
+                | "minecraft:evoker"
+                | "minecraft:ravager"
+                | "minecraft:vex"
+                | "minecraft:witch"
+                | "minecraft:spider"
+                | "minecraft:cave_spider"
+                | "minecraft:creeper"
+                | "minecraft:silverfish"
+                | "minecraft:endermite"
+                | "minecraft:slime"
+                | "minecraft:magma_cube"
+                | "minecraft:blaze"
+                | "minecraft:phantom"
+                | "minecraft:piglin_brute"
+        ),
+        taming: match name {
+            "minecraft:wolf" => TamingProfile::BonePet,
+            "minecraft:cat" => TamingProfile::FishPet,
+            "minecraft:parrot" => TamingProfile::SeedPet,
+            "minecraft:ocelot" => TamingProfile::TrustFish,
+            "minecraft:horse" | "minecraft:donkey" => TamingProfile::Equine,
+            "minecraft:mule" => TamingProfile::SterileEquine,
+            "minecraft:llama" | "minecraft:trader_llama" => TamingProfile::PackEquine,
+            _ => TamingProfile::None,
+        },
+        riding: match name {
+            "minecraft:horse" | "minecraft:donkey" | "minecraft:mule" => RidingProfile::TamedSaddle,
+            "minecraft:llama" | "minecraft:trader_llama" => RidingProfile::Unsteered,
+            "minecraft:pig" => RidingProfile::CarrotStick,
+            "minecraft:strider" => RidingProfile::FungusStick,
+            "minecraft:camel" | "minecraft:skeleton_horse" => RidingProfile::Saddle,
+            "minecraft:zombie_horse" => RidingProfile::Unsaddlable,
+            _ => RidingProfile::None,
+        },
+        food: match name {
+            "minecraft:wolf" => Some(MobFood::Wolf),
+            "minecraft:cat" => Some(MobFood::Cat),
+            "minecraft:parrot" => Some(MobFood::Parrot),
+            "minecraft:horse" | "minecraft:donkey" | "minecraft:mule" => Some(MobFood::Horse),
+            "minecraft:llama" | "minecraft:trader_llama" => Some(MobFood::Llama),
+            "minecraft:pig" => Some(MobFood::Pig),
+            "minecraft:strider" => Some(MobFood::Strider),
+            "minecraft:camel" => Some(MobFood::Camel),
+            _ => None,
+        },
     };
     blueprint.params.armor = match name {
         "minecraft:zombie"

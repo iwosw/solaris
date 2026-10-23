@@ -143,7 +143,7 @@ pub(crate) fn accepted_hit(state: &mut TickState, slot: EntitySlot, source: Opti
     if state
         .registry
         .blueprint(type_id)
-        .is_none_or(|bp| bp.name != "minecraft:cave_spider")
+        .is_none_or(|bp| !bp.capabilities.poison_melee)
     {
         return;
     }
@@ -468,10 +468,10 @@ pub fn set_size(state: &mut TickState, slot: EntitySlot, size: u8, heal: bool) {
     let Some(bp) = state.registry.blueprint(type_id) else {
         return;
     };
-    if !matches!(bp.name.as_str(), "minecraft:slime" | "minecraft:magma_cube") {
+    if bp.capabilities.size_profile == crate::blueprint::SizeProfile::None {
         return;
     }
-    let magma = bp.name == "minecraft:magma_cube";
+    let magma = bp.capabilities.size_profile == crate::blueprint::SizeProfile::Armored;
     let (body, row) = state.entities.parts_mut(slot);
     row.loot.slime_size = Some(size);
     for (name, base) in [
@@ -517,14 +517,14 @@ pub(crate) fn restore(state: &mut TickState, slot: EntitySlot) {
     let Some(bp) = state.registry.blueprint(type_id) else {
         return;
     };
-    let name = bp.name.as_str();
+    let size_profile = bp.capabilities.size_profile;
     let (armor, knockback_resistance) = (bp.params.armor, bp.params.knockback_resistance);
     let width = bp.half_width;
     let height = bp.height;
     let speed = f64::from(bp.params.speed) / 10.0;
     let damage = f64::from(bp.params.attack_damage);
     let sight = f64::from(bp.sensors.sight_range);
-    if matches!(name, "minecraft:slime" | "minecraft:magma_cube") {
+    if size_profile != crate::blueprint::SizeProfile::None {
         let size = state.entities.row(slot).loot.slime_size.unwrap_or(1);
         state.entities.set_half_width(slot, width * f64::from(size));
     }
@@ -538,7 +538,7 @@ pub(crate) fn restore(state: &mut TickState, slot: EntitySlot) {
     }
     row.loot.base_armor = armor;
     row.loot.base_knockback_resistance = knockback_resistance;
-    if matches!(name, "minecraft:slime" | "minecraft:magma_cube") {
+    if size_profile != crate::blueprint::SizeProfile::None {
         let size = row.loot.slime_size.unwrap_or(1);
         row.loot.slime_size = Some(size);
         body.height = height * f64::from(size);
@@ -551,10 +551,10 @@ pub(crate) fn restore(state: &mut TickState, slot: EntitySlot) {
     let rules = state.registry.item_rules();
     row.speed = (effective_attribute(&rules, row, "movement_speed", speed) * 10.0) as f32;
     row.attack_damage = effective_attribute(&rules, row, "attack_damage", damage) as f32;
-    if name == "minecraft:magma_cube" {
+    if size_profile == crate::blueprint::SizeProfile::Armored {
         row.attack_damage += 2.0;
     }
-    if name == "minecraft:slime" && row.loot.slime_size == Some(1) {
+    if size_profile == crate::blueprint::SizeProfile::Slime && row.loot.slime_size == Some(1) {
         row.attack_damage = 0.0;
     }
     row.sight_range = effective_attribute(&rules, row, "follow_range", sight) as f32;
@@ -565,9 +565,10 @@ pub(crate) fn restore(state: &mut TickState, slot: EntitySlot) {
 pub(crate) fn initialize(state: &mut TickState, slot: EntitySlot) {
     restore(state, slot);
     if let EntityKind::Mob { type_id } = state.entities.body(slot).kind
-        && state.registry.blueprint(type_id).is_some_and(|bp| {
-            matches!(bp.name.as_str(), "minecraft:slime" | "minecraft:magma_cube")
-        })
+        && state
+            .registry
+            .blueprint(type_id)
+            .is_some_and(|bp| bp.capabilities.size_profile != crate::blueprint::SizeProfile::None)
     {
         let seed = state.entities.row(slot).uuid.as_u128() as u64;
         set_size(state, slot, 1 << (mix(seed) % 3), true);
@@ -732,7 +733,11 @@ pub(crate) fn commit_death(
             }
         }
     }
-    if matches!(name, "minecraft:slime" | "minecraft:magma_cube") && size > 1 {
+    if registry
+        .blueprint(type_id)
+        .is_some_and(|bp| bp.capabilities.splits_on_death)
+        && size > 1
+    {
         let count = 2 + mix(seed) % 3;
         let offset = state.entities.body(slot).half_width;
         let parent = state.entities.row(slot);

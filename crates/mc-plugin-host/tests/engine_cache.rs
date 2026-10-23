@@ -183,9 +183,9 @@ fn engine_cache_child(cache_home: &Path, out: &Path) {
     let limits = PluginLimits::default();
     let bytes = component_bytes();
     let production = engine(&limits).expect("the production engine builds");
-    let compiled = CompiledPlugin::compile(&production, &bytes, &limits, "0.7.0")
+    let compiled = CompiledPlugin::compile(&production, &bytes, &limits, "0.8.0")
         .expect("the fixture compiles on a production engine");
-    assert_eq!(compiled.api_version(), "0.7.0");
+    assert_eq!(compiled.api_version(), "0.8.0");
     std::fs::write(
         out,
         cache_entries(cache_home).saturating_sub(before).to_string(),

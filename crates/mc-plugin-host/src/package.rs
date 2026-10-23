@@ -62,6 +62,9 @@ pub struct PackageManifest {
     /// Capability names, using the contract's own vocabulary.
     #[serde(default)]
     pub capabilities: Vec<String>,
+    /// Exact vanilla or admitted custom identities this package may spawn.
+    #[serde(default)]
+    pub spawn_entity_types: Vec<String>,
     /// Feature-capability names whose authored data this package needs.
     ///
     /// Core reads this before a world opens, so it is the package's own
@@ -268,6 +271,9 @@ pub fn load_package(root: &Path, limits: &PluginLimits) -> Result<LoadedPackage,
                 path: manifest_path.clone(),
                 message: format!("unknown capability {capability:?}"),
             })?;
+    }
+    for entity_type in &parsed.spawn_entity_types {
+        manifest = manifest.declare_spawn_entity_type(entity_type);
     }
     for root_command in &parsed.player_commands {
         manifest = manifest.declare_player_command_root(root_command);

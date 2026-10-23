@@ -208,6 +208,15 @@ fn convert(
                 })?,
             )?,
         }),
+        Command::SpawnEntity(spawn) => Ok(ScriptCommand::SpawnEntity {
+            request_id: spawn.request,
+            actor: ScriptPlayerId::new(spawn.session),
+            entity_type: spawn.entity_type,
+            position: ScriptPosition::try_new(spawn.position.x, spawn.position.y, spawn.position.z)
+                .ok_or(AdapterError::InvalidCommand {
+                    field: "entity spawn position",
+                })?,
+        }),
         // A batch is converted mutation by mutation against nothing but the
         // server's own DTO: no revision, key, value or mutation is invented, added
         // or reordered by the host beyond the canonicalization the DTO itself

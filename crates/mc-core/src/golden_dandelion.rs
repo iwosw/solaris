@@ -29,16 +29,13 @@ pub(crate) fn interact(
     let EntityKind::Mob { type_id } = body.kind else {
         return false;
     };
-    let Some(contract) = mc_data::entity_types::entity_type_contract_26_1_2_by_protocol_id(type_id)
-    else {
+    let registry = std::sync::Arc::clone(&state.registry);
+    let Some(name) = registry.entity_type_name(type_id) else {
         return false;
     };
-    let name = contract.name;
-    let ageable = crate::entity_life::old_ageable(name)
-        || state
-            .registry
-            .blueprint(type_id)
-            .is_some_and(|b| b.offspring.is_some());
+    let ageable = registry
+        .blueprint(type_id)
+        .is_some_and(|b| b.offspring.is_some() || b.capabilities.ageable);
     if !body.alive
         || (!ageable && name != "minecraft:tadpole")
         || (!row.appearance.baby && name != "minecraft:tadpole")

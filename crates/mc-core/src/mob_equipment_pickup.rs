@@ -7,23 +7,6 @@ use crate::tick::TickState;
 use mc_data::ItemStack;
 use std::sync::Arc;
 
-fn supported(name: &str) -> bool {
-    matches!(
-        name,
-        "minecraft:zombie"
-            | "minecraft:zombie_villager"
-            | "minecraft:husk"
-            | "minecraft:drowned"
-            | "minecraft:zombified_piglin"
-            | "minecraft:skeleton"
-            | "minecraft:wither_skeleton"
-            | "minecraft:stray"
-            | "minecraft:bogged"
-            | "minecraft:parched"
-            | "minecraft:piglin"
-    )
-}
-
 fn tagged(rules: &ItemRules<'_>, stack: &ItemStack, tag: &str) -> bool {
     rules
         .tags
@@ -71,7 +54,7 @@ fn equal_item_better(new: &ItemStack, old: &ItemStack) -> bool {
 /// tools, damage within a weapon class, durability/enchantment for equal items.
 fn better(
     registry: &crate::registry::CoreRegistry,
-    mob: &str,
+    capabilities: crate::blueprint::Capabilities,
     new: &ItemStack,
     old: Option<&ItemStack>,
 ) -> bool {
@@ -86,7 +69,7 @@ fn better(
     if new_facts.armor.is_some() && cursed(old, "minecraft:binding_curse") {
         return false;
     }
-    if mob == "minecraft:piglin" {
+    if capabilities.prefers_gold_equipment {
         let new_gold = tagged(&rules, new, "minecraft:piglin_loved");
         let old_gold = tagged(&rules, old, "minecraft:piglin_loved");
         if new_gold != old_gold {
@@ -95,7 +78,7 @@ fn better(
     }
     let new_name = item_name(&rules, new);
     let old_name = item_name(&rules, old);
-    if mob == "minecraft:drowned" && (new_name == "trident" || old_name == "trident") {
+    if capabilities.prefers_trident && (new_name == "trident" || old_name == "trident") {
         return new_name == "trident"
             && (old_name != "trident" || new.damage.unwrap_or(0) < old.damage.unwrap_or(0));
     }
@@ -173,7 +156,7 @@ pub(crate) fn run(state: &mut TickState, changes: &mut ChangeSet) {
             state
                 .registry
                 .blueprint(type_id)
-                .is_some_and(|bp| supported(&bp.name))
+                .is_some_and(|bp| bp.capabilities.equipment_pickup)
         })
         .into_iter()
         .filter_map(|slot| {
@@ -206,7 +189,7 @@ pub(crate) fn run(state: &mut TickState, changes: &mut ChangeSet) {
         let EntityKind::Mob { type_id } = body.kind else {
             continue;
         };
-        let name = registry.blueprint(type_id).unwrap().name.as_str();
+        let capabilities = registry.blueprint(type_id).unwrap().capabilities;
         candidates.clear();
         candidates.extend(state.spawn_census.nearby_entities(p, reach + 1.0));
         for item in candidates.iter().copied() {
@@ -242,7 +225,7 @@ pub(crate) fn run(state: &mut TickState, changes: &mut ChangeSet) {
             };
             if !better(
                 &state.registry,
-                name,
+                capabilities,
                 offered,
                 state.entities.row(collector_slot).appearance.equipment[index].as_ref(),
             ) {

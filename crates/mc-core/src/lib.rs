@@ -25,6 +25,8 @@ mod block_tools_tests;
 pub mod blocks;
 pub mod blueprint;
 mod books;
+#[cfg(test)]
+mod blueprint_family_tests;
 pub mod bossbar;
 mod bottles;
 pub mod boundary;
@@ -131,6 +133,8 @@ pub mod placement;
 pub(crate) mod plants;
 pub mod player;
 mod plugin;
+#[cfg(test)]
+mod plugin_blueprint_tests;
 mod plugin_graves;
 mod plugin_inventories;
 mod plugin_npcs;

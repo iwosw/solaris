@@ -60,7 +60,7 @@ fn write_package_with(root: &Path, manifest_extra: &str) {
     std::fs::write(
         directory.join("plugin.toml"),
         format!(
-            "id = \"hello\"\nname = \"Hello\"\nversion = \"0.1.0\"\napi = \"0.7.0\"\nevents = [\"player.joined\"]\nplayer_commands = [\"hello\"]\n{manifest_extra}"
+            "id = \"hello\"\nname = \"Hello\"\nversion = \"0.1.0\"\napi = \"0.8.0\"\nevents = [\"player.joined\"]\nplayer_commands = [\"hello\"]\n{manifest_extra}"
         ),
     )
     .expect("manifest");
@@ -153,7 +153,7 @@ async fn a_guest_that_exhausts_its_startup_budget_refuses_the_deployment() {
     std::fs::create_dir_all(&doomed).expect("package directory");
     std::fs::write(
         doomed.join("plugin.toml"),
-        "id = \"doomed\"\nname = \"Doomed\"\nversion = \"0.1.0\"\napi = \"0.7.0\"\nevents = [\"player.joined\"]\n",
+        "id = \"doomed\"\nname = \"Doomed\"\nversion = \"0.1.0\"\napi = \"0.8.0\"\nevents = [\"player.joined\"]\n",
     )
     .expect("manifest");
     std::fs::write(doomed.join("plugin.wasm"), component_bytes()).expect("artifact");

@@ -25,35 +25,10 @@ fn hostile(state: &TickState, slot: EntitySlot) -> bool {
         return false;
     };
     state.entities.body(slot).alive
-        && state.registry.blueprint(type_id).is_some_and(|b| {
-            matches!(
-                b.name.as_str(),
-                "minecraft:zombie"
-                    | "minecraft:husk"
-                    | "minecraft:drowned"
-                    | "minecraft:zombie_villager"
-                    | "minecraft:skeleton"
-                    | "minecraft:stray"
-                    | "minecraft:bogged"
-                    | "minecraft:wither_skeleton"
-                    | "minecraft:pillager"
-                    | "minecraft:vindicator"
-                    | "minecraft:evoker"
-                    | "minecraft:ravager"
-                    | "minecraft:vex"
-                    | "minecraft:witch"
-                    | "minecraft:spider"
-                    | "minecraft:cave_spider"
-                    | "minecraft:creeper"
-                    | "minecraft:silverfish"
-                    | "minecraft:endermite"
-                    | "minecraft:slime"
-                    | "minecraft:magma_cube"
-                    | "minecraft:blaze"
-                    | "minecraft:phantom"
-                    | "minecraft:piglin_brute"
-            )
-        })
+        && state
+            .registry
+            .blueprint(type_id)
+            .is_some_and(|b| b.capabilities.guard_hostile)
 }
 
 /// Order goal is recomputed without random allocation or unbounded scans. A

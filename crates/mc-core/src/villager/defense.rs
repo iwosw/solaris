@@ -59,8 +59,8 @@ pub(crate) fn targets(state: &mut TickState) -> Vec<(EntityId, [f64; 3])> {
             |type_id| {
                 registry.blueprint(type_id).is_some_and(|blueprint| {
                     (blueprint.category == crate::blueprint::MobCategory::Monster
-                        && blueprint.name != "minecraft:creeper")
-                        || blueprint.name == "minecraft:iron_golem"
+                        && !blueprint.capabilities.ignored_by_monster_hunters)
+                        || blueprint.capabilities.hunts_monsters
                 })
             },
             slots,
@@ -79,7 +79,7 @@ pub(crate) fn targets(state: &mut TickState) -> Vec<(EntityId, [f64; 3])> {
         };
         if state.registry.blueprint(type_id).is_some_and(|blueprint| {
             blueprint.category == crate::blueprint::MobCategory::Monster
-                && blueprint.name != "minecraft:creeper"
+                && !blueprint.capabilities.ignored_by_monster_hunters
         }) {
             out.push((body.id, state.entities.pos(slot)));
         }
@@ -139,7 +139,7 @@ pub(crate) fn targets(state: &mut TickState) -> Vec<(EntityId, [f64; 3])> {
             let body = state.entities.body(slot);
             let row = state.entities.row(slot);
             if body.alive
-                && matches!(body.kind, EntityKind::Mob { type_id } if state.registry.blueprint(type_id).is_some_and(|b| b.name == "minecraft:iron_golem"))
+                && matches!(body.kind, EntityKind::Mob { type_id } if state.registry.blueprint(type_id).is_some_and(|b| b.capabilities.hunts_monsters))
                 && let Some((attacker, at)) = row.last_player_hit
                 && by_id.contains(&attacker)
                 && state.tick.saturating_sub(at) < 100

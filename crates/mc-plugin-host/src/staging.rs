@@ -111,6 +111,7 @@ fn command_text_bytes(command: &Command) -> usize {
         // A teleport carries no text either: the correlation id is its only
         // string and the coordinates are numbers.
         Command::TeleportPlayer(teleport) => teleport.request.len(),
+        Command::SpawnEntity(spawn) => spawn.request.len().max(spawn.entity_type.len()),
         // A batch carries many strings rather than one, and the DTO already bounds
         // every one of them: at most 16 keys of 128 bytes and 16 values of 4096, so
         // the whole batch is at most ~66 KiB by construction. This per-command text

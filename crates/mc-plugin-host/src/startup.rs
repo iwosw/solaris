@@ -163,6 +163,8 @@ pub enum ContributionRefusal {
     InvalidCraftingRecipe(String),
     #[error("block tool declaration {0}")]
     InvalidBlockTool(String),
+    #[error("mob blueprint declaration {0}")]
+    InvalidMobBlueprint(String),
 }
 
 /// The distinct native startup domains one configure response contributes.
@@ -173,6 +175,7 @@ pub struct ValidatedStartupContribution {
     work_recipes: Vec<mc_data::recipes::work::WorkRecipe>,
     crafting_recipes: Vec<mc_data::recipes::Recipe>,
     block_tools: Vec<mc_data::block_tools::BlockToolRule>,
+    mob_blueprints: Vec<String>,
 }
 
 impl ValidatedStartupContribution {
@@ -205,6 +208,11 @@ impl ValidatedStartupContribution {
     #[must_use]
     pub fn block_tools(&self) -> &[mc_data::block_tools::BlockToolRule] {
         &self.block_tools
+    }
+
+    #[must_use]
+    pub fn mob_blueprints(&self) -> &[String] {
+        &self.mob_blueprints
     }
 }
 
@@ -273,8 +281,14 @@ pub fn convert_startup_contribution(
     let work_recipes = convert_work_recipes(plugin_id, contribution, &items)?;
     let crafting_recipes = convert_crafting_recipes(contribution, &items)?;
     let block_tools = convert_block_tools(plugin_id, contribution, &items)?;
+    let mob_blueprints = contribution.mob_blueprints.as_deref().unwrap_or_default();
+    if mob_blueprints.len() > 64 || mob_blueprints.iter().any(|text| text.len() > 16 * 1024) {
+        return Err(ContributionRefusal::InvalidMobBlueprint(
+            "at most 64 definitions of 16384 bytes each".to_owned(),
+        ));
+    }
     let items = items.into_custom_items();
-    if rules.is_none() && items.is_empty() && work_recipes.is_empty() {
+    if rules.is_none() && items.is_empty() && work_recipes.is_empty() && mob_blueprints.is_empty() {
         return Err(ContributionRefusal::Invalid(GameplayRulesError::NoCategory));
     }
     Ok(ValidatedStartupContribution {
@@ -283,6 +297,7 @@ pub fn convert_startup_contribution(
         work_recipes,
         crafting_recipes,
         block_tools,
+        mob_blueprints: mob_blueprints.to_vec(),
     })
 }
 
@@ -736,6 +751,14 @@ impl PackageContribution {
         }
     }
 
+    #[must_use]
+    pub fn mob_blueprints(&self) -> &[String] {
+        match &self.outcome {
+            ContributionOutcome::Configured(content) => content.mob_blueprints(),
+            ContributionOutcome::NoContribution | ContributionOutcome::Refused(_) => &[],
+        }
+    }
+
     /// The refusal, when the package declared a contribution the contract will not
     /// take.
     #[must_use]
@@ -812,6 +835,15 @@ impl DeploymentContribution {
         self.packages
             .iter()
             .flat_map(|package| package.block_tools())
+    }
+
+    pub fn mob_blueprints(&self) -> impl Iterator<Item = (&str, &str)> {
+        self.packages.iter().flat_map(|package| {
+            package
+                .mob_blueprints()
+                .iter()
+                .map(move |text| (package.id(), text.as_str()))
+        })
     }
 
     /// Record what one package's `configure` answered.

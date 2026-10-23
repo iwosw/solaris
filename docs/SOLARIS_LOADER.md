@@ -41,7 +41,7 @@ history and release version are independent of core: a server tag is not a
 Loader revision. Alpha protocol and bundle contracts can change between
 revisions. Current Loader wire protocol is **3** with artifact index schema 2,
 with no protocol-1/2 compatibility path. The server plugin frontend is the WASM
-component API `0.7.0`; the Luau `0.6.0` frontend is retired
+component API `0.8.0`; the Luau `0.6.0` frontend is retired
 ([PLUGINS.md](PLUGINS.md)). The plugin API version does not
 change the client wire protocol or artifact schema.
 Declared keyboard actions leave vanilla movement, menus, screenshots and

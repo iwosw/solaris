@@ -1,7 +1,7 @@
 # Plugins
 
 Solaris production plugins are Wasmtime components implementing the versioned
-WIT contract `solaris:plugin@0.7.0`. The host crate is
+WIT contract `solaris:plugin@0.8.0`. The host crate is
 `crates/mc-plugin-host`; the WIT source is `crates/mc-script/wit`; Rust guest
 source and the SDK live in the separate `sdk/rust/` workspace. The server
 loads a compiled component artifact. It neither compiles guest source nor
@@ -27,7 +27,7 @@ plugins/
 `plugin.toml` declares the package identity, API version, subscriptions,
 command roots, requested capabilities, and optional client, world-generation,
 or precommit declarations. `plugin.wasm` is a WebAssembly **component** for
-`solaris:plugin@0.7.0`, not an unencoded core Wasm module. `config.toml` is
+`solaris:plugin@0.8.0`, not an unencoded core Wasm module. `config.toml` is
 optional opaque package configuration: the host passes its text to the guest,
 which defines and validates its own settings.
 The host opens configuration relative to the package directory, refuses symlinks
@@ -189,7 +189,7 @@ capabilities, or player commands:
 id = "hello"
 name = "Hello"
 version = "0.1.0"
-api = "0.7.0"
+api = "0.8.0"
 ```
 
 The optional `entry` names a component file inside the package and defaults to
@@ -254,7 +254,7 @@ internal host types into a guest or rely on a host implementation detail.
 WIT record layout changes require regenerating both host and guest bindings.
 Rebuild every guest that uses `client-presentation` after the optional marker
 position extension; an older component's record layout is not a compatible
-fallback, even when its package version is still `solaris:plugin@0.7.0`.
+fallback. Rebuild every guest against `solaris:plugin@0.8.0`.
 
 ## Lifecycle and configuration
 
@@ -314,6 +314,42 @@ together against the world and inventory they were planned on. Protection zones
 and reach are checked by the same early use gate as block placement; plugin
 before-build hooks do not cover it, like hoes. The `chisel` package in
 `solaris-default-plugins` is the reference user.
+
+## Custom native mobs
+
+API **0.8.0** adds `mob-blueprints: option<list<string>>` to the configure
+contribution. Each string is a strict `MobBlueprintDef` JSON object (see
+[ADR 0016](decisions/0016-mob-capabilities.md)); a package may contribute up to
+64 strings, each at most 16 KiB, and the complete registry allows 64 custom
+types. Each id must use its defining plugin's namespace. Definitions are sorted
+by id before registration and pinned into the world contract. Changing or
+removing them refuses an existing world rather than reinterpreting stored mobs.
+
+`sdk/rust/examples/sky-creeper` is a complete Rust guest: it contributes
+`sky-creeper:sky_creeper`, presented as a vanilla creeper, with flying movement,
+a 20-tick non-griefing explosion and water/rain damage. Its `/sky-creeper`
+command spawns one near the calling player through the normal native owner:
+
+```toml
+player_commands = ["sky-creeper"]
+spawn_entity_types = ["sky-creeper:sky_creeper"]
+```
+
+The guest `spawn-entity` command carries a request id, live player session,
+namespaced entity type and position in that player's dimension. The manifest
+allow-list authorizes type names, not bypasses of session or capacity checks.
+`entity-spawn-answered` reports success (`failure = none`) or a typed refusal.
+Each defining plugin has a 1024-live-custom-mob limit across dimensions; splitters
+reserve descendant capacity as described in ADR 0016. Custom types have no natural
+spawn weight. Native checkpoints retain their custom identity; Anvil export uses
+the vanilla presentation id and a `solaris:MobBlueprint` marker, not custom
+gameplay on a vanilla server.
+
+**Rebuild all guests for 0.8.0.** The Rust SDK workspace version is 0.8.0.
+Regenerate WIT bindings, add `mob_blueprints: None` to existing full
+`StartupContribution` literals, update manifest `api`, and rebuild/re-encode
+every component. This also applies to `../solaris-default-plugins`; no 0.7.0
+component or old record-layout shim is accepted.
 
 ## Events, commands, and capability boundaries
 

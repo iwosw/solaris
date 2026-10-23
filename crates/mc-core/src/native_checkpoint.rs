@@ -271,9 +271,26 @@ pub(crate) struct RecoveredWorld {
 }
 
 pub(crate) fn recover_offline(config: &CoreConfig) -> Result<RecoveredWorld, CoreError> {
-    let registry = Arc::new(crate::registry::CoreRegistry::load(
-        config.vanilla_data_dir.as_deref(),
-    )?);
+    let mut registry = crate::registry::CoreRegistry::load(config.vanilla_data_dir.as_deref())?;
+    // Offline recovery resolves the same pinned native types as live startup.
+    // No tick events are started and no guest command is applied.
+    let runtime = crate::plugin::PluginRuntime::open(config)?;
+    match &runtime {
+        Some(runtime) => crate::plugin_startup::apply(
+            &mut registry,
+            runtime.contribution(),
+            runtime.ore_profile(),
+            runtime.client_bundles(),
+        )?,
+        None => crate::plugin_startup::apply(
+            &mut registry,
+            &mc_plugin_host::DeploymentContribution::default(),
+            None,
+            &[],
+        )?,
+    }
+    drop(runtime);
+    let registry = Arc::new(registry);
     let path = config.world_dir.join("native/state.redb");
     if !path.is_file() {
         return Err(import_required(config));

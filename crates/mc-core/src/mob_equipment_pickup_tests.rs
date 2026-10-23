@@ -87,12 +87,13 @@ fn supported_humanoids_collect_armor_and_keep_other_collectors_out() {
         // The supported mobs are no longer in this collector's reach.
         for slot in state.entities.slots().collect::<Vec<_>>() {
             if state.entities.body(slot).id != id
-                && supported(match state.entities.body(slot).kind {
-                    EntityKind::Mob { type_id } => {
-                        state.registry.blueprint(type_id).unwrap().name.as_str()
-                    }
-                    _ => "",
-                })
+                && match state.entities.body(slot).kind {
+                    EntityKind::Mob { type_id } => state
+                        .registry
+                        .blueprint(type_id)
+                        .is_some_and(|bp| bp.capabilities.equipment_pickup),
+                    _ => false,
+                }
             {
                 state.entities.set_pos(slot, [100.0, 201.0, 100.0]);
             }
@@ -205,9 +206,18 @@ fn comparisons_follow_armor_weapon_and_piglin_preferences() {
             false,
         ),
     ];
+    let capabilities = |name| {
+        let key = state.registry.entity_type_id(name).unwrap();
+        state.registry.blueprint(key).unwrap().capabilities
+    };
     for (mob, new, old, expected) in cases {
         assert_eq!(
-            better(&state.registry, mob, &stack(new), Some(&stack(old))),
+            better(
+                &state.registry,
+                capabilities(mob),
+                &stack(new),
+                Some(&stack(old))
+            ),
             expected,
             "{mob}: {new} over {old}"
         );
@@ -216,7 +226,7 @@ fn comparisons_follow_armor_weapon_and_piglin_preferences() {
     enchant(&mut old, "minecraft:binding_curse");
     assert!(!better(
         &state.registry,
-        "minecraft:zombie",
+        capabilities("minecraft:zombie"),
         &stack("minecraft:diamond_helmet"),
         Some(&old)
     ));
@@ -225,14 +235,14 @@ fn comparisons_follow_armor_weapon_and_piglin_preferences() {
     let mut new = old.clone();
     assert!(!better(
         &state.registry,
-        "minecraft:skeleton",
+        capabilities("minecraft:skeleton"),
         &new,
         Some(&old)
     ));
     new.damage = Some(10);
     assert!(better(
         &state.registry,
-        "minecraft:skeleton",
+        capabilities("minecraft:skeleton"),
         &new,
         Some(&old)
     ));
@@ -240,7 +250,7 @@ fn comparisons_follow_armor_weapon_and_piglin_preferences() {
     enchant(&mut new, "minecraft:power");
     assert!(better(
         &state.registry,
-        "minecraft:skeleton",
+        capabilities("minecraft:skeleton"),
         &new,
         Some(&old)
     ));

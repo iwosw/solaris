@@ -136,7 +136,7 @@ fails closed. Earth WorldPlan remains proposed for this runtime (ADR 0012).
 ## Plugins and Loader
 
 `mc-plugin-host` executes independently built Wasmtime components implementing
-`solaris:plugin@0.7.0`; `mc-script` owns runtime-independent values, capabilities
+`solaris:plugin@0.8.0`; `mc-script` owns runtime-independent values, capabilities
 and admission. `[plugins].directory` selects the exact deployment. Invalid
 packages and unsupported declarations refuse startup. Legacy per-deployment
 strict/expected/grants/reload settings are not current configuration.

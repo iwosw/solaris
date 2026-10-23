@@ -111,7 +111,7 @@ fn guest(config: &str) -> PluginInstance<Services> {
     let limits = PluginLimits::default();
     let bytes = component_bytes();
     let engine = mc_plugin_host::engine(&limits).expect("engine");
-    let compiled = mc_plugin_host::CompiledPlugin::compile(&engine, &bytes, &limits, "0.7.0")
+    let compiled = mc_plugin_host::CompiledPlugin::compile(&engine, &bytes, &limits, "0.8.0")
         .expect("compile");
     let linker = mc_plugin_host::linker::<Services>(&engine).expect("linker");
     let _ = PluginStartup::instantiate(
@@ -139,7 +139,7 @@ fn guest(config: &str) -> PluginInstance<Services> {
             config,
             InitContext {
                 plugin_id: "hello".to_owned(),
-                api_version: "0.7.0".to_owned(),
+                api_version: "0.8.0".to_owned(),
                 world_fingerprint: String::new(),
             },
         )
@@ -515,7 +515,7 @@ fn write_package(root: &Path, id: &str, manifest_extra: &str, config: &str) {
     std::fs::write(
         directory.join("plugin.toml"),
         format!(
-            "id = \"{id}\"\nname = \"{id}\"\nversion = \"0.1.0\"\napi = \"0.7.0\"\n\
+            "id = \"{id}\"\nname = \"{id}\"\nversion = \"0.1.0\"\napi = \"0.8.0\"\n\
              events = [\"player.joined\", \"operation.result\"]\n\
              player_commands = [\"{id}\"]\n{manifest_extra}"
         ),

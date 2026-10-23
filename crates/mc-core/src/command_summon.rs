@@ -179,8 +179,7 @@ pub(crate) fn prepare(
     let ageable = state
         .registry
         .blueprint(type_id)
-        .is_some_and(|b| b.offspring.is_some());
-    let ageable = ageable || crate::entity_life::old_ageable(name);
+        .is_some_and(|b| b.offspring.is_some() || b.capabilities.ageable);
     let mut fields = Vec::with_capacity(authored.len());
     for (key, value) in authored {
         if fields.iter().any(|(seen, _)| seen == key) {

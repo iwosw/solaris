@@ -2,9 +2,9 @@
 
 **Date:** 2026-10-23
 
-**Status:** Accepted. Layer 1 implemented. Layer 2 (registration through plugins and
-data files) is next. Sensors step 1 is implemented. Layer 3 (Wasm capability code)
-and persistent sensor subscriptions are proposed only.
+**Status:** Accepted. Layers 1 and 2 (plugin registration) and Sensors step 1
+implemented. Operator data-directory loading, Layer 3 (Wasm capability code)
+and persistent sensor subscriptions remain proposals.
 
 ## Context
 
@@ -49,6 +49,14 @@ creeper and flies.
 | `temptable` | `tick::passive_follow` reads the existing resolved `breed_food` and both player hands | built-in breeding animals |
 | `follows_adults` | `tick::passive_follow` queries existing chunk membership for nearby same-blueprint adults | built-in breeding animals |
 | `crossbreed {partner, offspring}` | `entity_life::breeding` resolves reciprocal parent pairs; merge revalidates readiness, distance and child type | horse + donkey -> mule |
+| `leashable`, `taming`, `food`, `breeding` | leash/taming/entity life | original leadable, pet and equine families |
+| `riding`, `equine_body_armor` | mounts | pig/strider steering; equine/camel/llama saddling and riding |
+| `ageable`, `milkable` | entity life, golden dandelion, capture/replay | original ageable list; cow and goat |
+| `equipment`, `equipment_pickup`, `prefers_gold_equipment`, `prefers_trident` | equipment initialization and pickup | original loadout families, with RNG draw order retained |
+| `poison_melee`, `poison_arrows`, `hurt_by_snowballs`, `ignores_wind_charges` | melee/ranged/projectile payloads | cave spider, bogged, blaze, breeze |
+| `size_profile`, `splits_on_death` | entity loot | slime and magma cube; size metadata requires their presentation layout |
+| `slime_spawn_rules`, `ignores_nether_spawn_light` | natural spawning | slime; magma cube and ghast |
+| `hunts_villagers`, `hunts_monsters`, `hunts_living`, `ignored_by_monster_hunters`, `ignored_by_living_hunters`, `guard_hostile` | target tables and villager defense | zombie family, golem, zoglin and original guards' hostile list |
 
 The original layer-1 capabilities reused working code. No capability was invented
 without one: there is no `fire_immune`, because `mc-core` never consumed the data
@@ -105,9 +113,9 @@ Limits that follow from presenting as a vanilla type:
   the mob presents as a creeper; any other presentation keeps the fuse on the
   server. Writing a creeper field into another type's layout would break client
   decoding.
-- Vanilla kill and riding statistics and plugin event `entity_type` names are
-  vanilla-typed. A custom key reports none of them; it does not report the
-  presentation type's.
+- Vanilla kill/riding statistics stay vanilla-typed: a custom key does not
+  impersonate its presentation type. Plugin entity events report the custom
+  namespaced id.
 
 ### Validation: bounded, fail closed
 
@@ -135,7 +143,7 @@ rejected definition adds nothing to the registry.
 | `loot_table` | must exist in the vanilla entity loot catalog | — |
 | `id` | not in the `minecraft` namespace, ≤ 128 bytes, unique | — |
 
-Data-defined blueprints get `spawn_weight = 0`: no natural spawning in layer 1.
+Data-defined blueprints get `spawn_weight = 0`: no natural spawning.
 
 ### Data sources
 
@@ -146,16 +154,22 @@ Data-defined blueprints get `spawn_weight = 0`: no natural spawning in layer 1.
   plugin startup contribution's work recipes and block tools as JSON strings.
   `MobBlueprintDef::from_json` plus `CoreRegistry::register_blueprint` is the only
   admission path.
-- **Layer 2:** two sources, one validator. (1) Plugins: add
-  `mob-blueprints: option<list<string>>` to the WIT `startup-contribution`, beside
-  `block-tools`, and admit them in `plugin_startup::apply` under the existing
-  package admission. (2) An operator data directory, read at `Core::open` before
-  world admission. The startup admission must order definitions deterministically
-  (sorted by id). It must also add the admitted definitions to
-  `plugin_startup::world_identity`, so reopening a world with a different blueprint
-  set fails closed instead of remapping persisted keys. Neither source adds a
-  runtime: blueprints are data, and spawns enter as intents through the existing
-  admission.
+- **Layer 2 plugins:** `solaris:plugin@0.8.0` adds
+  `mob-blueprints: option<list<string>>` to `startup-contribution`. The host bounds
+  each package to 64 JSON strings of at most 16 KiB. Core requires every id's
+  namespace to equal the defining plugin id, sorts the complete deployment by id,
+  and admits it before opening a world. `world_identity` pins the effective
+  definitions and custom keys; changed or removed definitions refuse reopening.
+  The field is omitted when empty, retaining identity bytes for vanilla worlds.
+  Native capture/replay stores the custom id; Anvil export writes `presents_as`
+  and retains the custom name in `solaris:MobBlueprint`. Anvil remains a vanilla
+  interchange format, not the native custom-behavior restart path.
+- **Operator data directory:** proposed separately, not part of plugin loading.
+  It would use the same validator and deterministic startup ordering.
+- The Rust SDK example `sdk/rust/examples/sky-creeper` contributes a flying,
+  exploding, water-sensitive creeper. `/sky-creeper` returns the typed guest
+  `spawn-entity` command. Its manifest declares `spawn_entity_types`, and the
+  owner returns an `entity-spawn-answered` result after native admission.
 
 ### Cost accounting
 
@@ -169,14 +183,15 @@ entity pass in `explosion::hurt_entities` is O(entities in the world) per blast,
 the same as for vanilla creepers today. The fuse floor and population limits
 bound it.
 
-Population is bounded only by existing paths. Data-defined types never spawn
-naturally (weight 0). Plugin `SpawnEntity` goes through the existing command
-admission: `PluginLimits::commands_per_call` (32 per callback) and the
-`MAX_SPAWN_ENTITY_TYPES` allow-list (32). Today **no per-plugin live-population
-cap exists**. Before layer 2 accepts plugin-defined types, it must add one, for
-example a maximum number of live data-defined mobs per owning plugin, refused at
-`SpawnEntity` admission. That cap is host-side accounting next to
-`PluginLimits::hostcall_bytes`, not guest fuel.
+Data-defined types never spawn naturally (weight 0). Plugin `SpawnEntity` uses
+the existing command bounds and the `MAX_SPAWN_ENTITY_TYPES` allow-list (32).
+Native admission additionally limits each defining plugin namespace to 1024 live
+custom mobs across dimensions, regardless of the requesting plugin. Dead rows
+release credit. Splitting mobs reserve their maximum descendants: admission
+reserves 16 for an initial size-4 splitter, and existing splitters cost size².
+At most four half-sized children replace a parent, so splitting cannot exceed the
+live bound. This is conservative admission, not guest fuel or a claim that every
+allowed population meets the tick budget.
 
 ### Layer 3 sketch (not implemented)
 
@@ -274,20 +289,20 @@ not a claim of equivalence with unconditional nearest-target switching.
 - `CoreRegistry::blueprint` is O(1) through a dense index instead of a linear
   scan. Registry mutation goes through `register_blueprint` (and the test-only
   `retain_blueprints`), which rebuilds the index.
-- Layer 2 must persist data-defined identities before it makes them reachable in
-  production. Today `core.rs::entity_capture_record` and Anvil export name
-  entities through the vanilla contract and would drop a custom key. The journal
-  persists raw keys, which `world_identity` must pin.
+- Native capture and journal recovery resolve custom names through the blueprint
+  registry; startup identity pins those keys. Offline recovery loads the same
+  deployment definitions before decoding entities. Anvil export maps custom
+  records to their vanilla presentation id instead of dropping them.
 
 ## Appendix: type-decision inventory (`286c275c`)
 
 Dispositions:
 
-- **C**: converted to a capability or parameter in layer 1.
+- **C**: converted to a capability or parameter in layers 1–2.
 - **U**: unique boss or special mechanic, kept.
 - **P**: bound to presentation, NBT or wire layout; correctly keyed on the vanilla
   type.
-- **D**: shared family deferred to a later capability.
+- Former **D** shared families are now **C**; unique sub-mechanics remain **U**.
 
 The full site list, one row per function, is in
 `.analysis/codex-logs/Capabilities/inventory-sites.tsv` (ignored, local).
@@ -312,17 +327,17 @@ end crystal and armor stand.
 | `special_mobs/raiders.rs:24-61,113` | raid roles | pillager, vindicator, evoker, illusioner, ravager, witch | U |
 | `shrieker.rs:525`, `creaking.rs:10`, `entities.rs:1654` | warden summon; creaking heart, no motion rest | — | U |
 | `bees.rs:13-1186`, `allay.rs:15-344`, `copper_golem.rs:16-672`, `dolphin.rs:18-297`, `tick.rs:6643` | hive, delivery, sorting, dolphin drive/toys | — | U |
-| `piglin.rs:36-93`; `tick.rs:5598-5606,5744-5758,6464`; `entities.rs:1720-1735`; `tick.rs:6050-6057` | target classes: piglins, zombies hunt villagers, golems hunt monsters, zoglins, villager attackers; adult-only piglin chase | zombie+zombie_villager; iron_golem | D (target classes become sensor interests) |
-| `villager/conversion.rs:21-77,195`, `villager/defense.rs:62-142`, `villager/soldier.rs:31-54`, `villager/brain.rs:2617`, `villager/shepherd.rs:37`, `tick/merchant.rs:25`, `mob_lanes.rs:44-251`, `plugin_npcs.rs:428`, `settlements/autonomy.rs:128` | villager life, zombie infection, golems ignore creepers, guards' hostile list, traders | 24 hostile types (guards) | U/D |
-| `mob_lanes.rs:21,366`, `golems.rs:57-81` | snow golem trails; golem build patterns | iron/snow golem | U |
-| `hostile.rs:399`, `entity_loot.rs:146`, `projectiles/payloads.rs:1043,1129`, `effects_trigger.rs:61,104` | bogged poison arrows, cave spider poison, snowballs hurt blaze, breeze ignores wind charges, infested/oozing spawns | — | D (on-hit effect, projectile vulnerability) |
-| `entity_loot.rs:471-474,526-570,731`; `tick.rs:5745-5747`; `natural_spawn.rs:882-892` | slime size (entity data 16, `Size`), split on death, size-1 harmless; slime-chunk and nether light rules | slime, magma_cube; ghast | P (size) / D (split, spawn rules) |
+| `piglin.rs`; `tick.rs`; `entities.rs` | villager/monster/living target classes and exclusions | zombie family, golem, zoglin | C; piglin bartering/adult anger stays U |
+| `villager/defense.rs`, `villager/soldier.rs`; villager life modules | guards' hostile list and golem monster exclusions; villager retained state | original hostile list | C for target classes; villager life, infection and trades U |
+| `mob_lanes.rs`, `golems.rs` | snow golem trails; golem build patterns | iron/snow golem | U |
+| `hostile.rs`, `entity_loot.rs`, `projectiles/payloads.rs`, `effects_trigger.rs` | poison attacks and projectile vulnerability | bogged, cave spider, blaze, breeze | C; infested/oozing are effect-defined spawn identities (P), not mob-family dispatch |
+| `entity_loot.rs`; `tick.rs`; `natural_spawn.rs` | size-scaled stats, split on death, slime-chunk/nether light rules | slime, magma cube, ghast | C; size metadata/NBT layout P |
 | `blueprint.rs` wool, `settlements/construction_availability.rs:141`, `core.rs:2662-2722` | sheep wool data index 18, capture | — | P |
 | `command_summon.rs:198-494`, `dimensions_recovery.rs:37-227`, `journal.rs:2162-2325`, `entities.rs:1548-1551`, `entity_life.rs:156,638-645`, `projectiles/payloads.rs:850`, `world_conversion/census.rs:262`, `villager/generated.rs:41` | summon NBT keys, retained NBT, egg/tadpole clocks, hatching | chicken, tadpole, villager, … | P |
 | `statistics.rs:153-165,216`, `advancements.rs:231-239`, `plugin.rs:2443,2544` | vanilla stat ids, advancement predicates, plugin event names | 14 rideables | P |
-| `taming.rs:56-396` | tame, sit, collar, inherit | cat, wolf, parrot, horses, llamas, fox, ocelot | D |
-| `leash.rs:24-56` | leadable | 33 types | D |
-| `mounts.rs:57-538` | rideable, saddle, steering item | pig, strider, camel, horses, llamas | D |
-| `entity_life.rs:100-106,303-334,555,806-835`, `golden_dandelion.rs:43-76` | breeding gated by taming, milking, ageable list | 30 ageable species | D |
-| `mob_equipment.rs:103-255`, `mob_equipment_pickup.rs:13-98` | spawn equipment, item pickup | zombies, skeletons, piglins, illagers, vex | D |
+| `taming.rs` | tame, sit, collar, equine feed/inherit | original pet/equine families | C; fox trust inheritance and presentation/NBT indices U/P |
+| `leash.rs` | leadable | original 33 types | C |
+| `mounts.rs` | riding, saddle, steering item, equine armor | original mount families | C; wolf armor repair and caravan/camel unique actions U |
+| `entity_life.rs`, `golden_dandelion.rs` | breeding eligibility, milking, ageability | original species lists | C; egg/tadpole/sniffer clocks and retained variant fields U/P |
+| `mob_equipment.rs`, `mob_equipment_pickup.rs` | loadout, pickup, gold/trident preferences | original equipment families | C |
 | `species.rs:105-217,321-441`, `blueprint.rs:348-677`, `registry.rs:420-426`, `trial_spawner.rs:119` | construction-time vanilla tables and defaults | — | data, already blueprint fields |

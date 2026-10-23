@@ -20,7 +20,7 @@ fn package(root: &Path, bytes: &[u8]) {
     std::fs::create_dir_all(&directory).unwrap();
     std::fs::write(
         directory.join("plugin.toml"),
-        "id='hello'\nname='Hello'\nversion='0.1.0'\napi='0.7.0'\nplayer_commands=['hello']\n",
+        "id='hello'\nname='Hello'\nversion='0.1.0'\napi='0.8.0'\nplayer_commands=['hello']\n",
     )
     .unwrap();
     std::fs::write(directory.join("plugin.wasm"), bytes).unwrap();
@@ -31,7 +31,7 @@ fn hook_package(root: &Path, directory_name: &str, id: &str, hooks: &str, bytes:
     std::fs::create_dir_all(&directory).unwrap();
     std::fs::write(
         directory.join("plugin.toml"),
-        format!("id={id:?}\nname={id:?}\nversion='0.1.0'\napi='0.7.0'\nhooks=[{hooks}]\n"),
+        format!("id={id:?}\nname={id:?}\nversion='0.1.0'\napi='0.8.0'\nhooks=[{hooks}]\n"),
     )
     .unwrap();
     std::fs::write(directory.join("plugin.wasm"), bytes).unwrap();

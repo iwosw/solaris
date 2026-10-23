@@ -22,10 +22,10 @@
 //! every other event, so the ledger state machine and the menu it tracks have one
 //! implementation and the zone path only decides when to ask for that market.
 
-use crate::inventory_storage::{Trade, ROOT};
-use crate::{corner, upsert_zone, ZONE_DIMENSION};
+use crate::inventory_storage::{ROOT, Trade};
+use crate::{ZONE_DIMENSION, corner, upsert_zone};
 use solaris_plugin_sdk::events::{CommandInvoked, ZoneCommandOutcome};
-use solaris_plugin_sdk::{log, message_player, Command, Event, Failure, LogLevel};
+use solaris_plugin_sdk::{Command, Event, Failure, LogLevel, log, message_player};
 
 /// The one `trade` action this fixture answers itself. Every other action of the
 /// root belongs to the inventory/storage fixture, which is told this name so it

@@ -5361,6 +5361,8 @@ struct ReadRow {
     love: u32,
     is_enderman: bool,
     is_iron_golem: bool,
+    hunts_villagers: bool,
+    hunts_living: bool,
     is_slime_size_one: bool,
     /// Blueprint locomotion capabilities read by the motion step.
     climbs_walls: bool,
@@ -5787,17 +5789,17 @@ impl PrepSummary {
             summary.has_dolphin |= row.movement == crate::blueprint::MovementClass::Swimmer
                 && crate::dolphin::is_dolphin(row.type_id);
             if row.chaser && row.alive {
-                if crate::piglin::is_iron_golem_type(row.type_id) {
+                if row.is_iron_golem {
                     summary.consumers[3] += 1;
                 } else if crate::piglin::is_piglin_type(row.type_id) {
                     summary.consumers[1] += 1;
                 } else {
                     summary.consumers[0] += 1;
                 }
-                if crate::piglin::hunts_villagers_type(row.type_id) {
+                if row.hunts_villagers {
                     summary.consumers[2] += 1;
                 }
-                if crate::piglin::is_zoglin_type(row.type_id) {
+                if row.hunts_living {
                     summary.consumers[4] += 1;
                 }
             }
@@ -5867,7 +5869,7 @@ fn admit_slot(
                 || !matches!(
                     view.bodies[index].kind,
                     EntityKind::Mob { type_id }
-                        if crate::piglin::hunts_villagers_type(type_id)
+                        if view.registry.blueprint(type_id).is_some_and(|bp| bp.capabilities.hunts_villagers)
                 )),
     ) {
         resting.push(slot);
@@ -5949,10 +5951,10 @@ fn read_row(
         | EntityKind::ExperienceOrb { type_id } => type_id,
         EntityKind::Player { .. } => u32::MAX,
     };
-    let is_iron_golem = crate::piglin::is_iron_golem_type(type_id);
+    let is_iron_golem = blueprint.is_some_and(|bp| bp.capabilities.hunts_monsters);
     let is_slime_size_one = row.loot.slime_size == Some(1)
-        && matches!(body.kind, EntityKind::Mob { type_id }
-            if crate::piglin::name(type_id) == "minecraft:slime");
+        && blueprint
+            .is_some_and(|bp| bp.capabilities.size_profile == crate::blueprint::SizeProfile::Slime);
     let has_effects = flags & MOTION_EFFECTS != 0;
     let chaser = chaser
         && !row.controls.no_ai
@@ -6015,6 +6017,8 @@ fn read_row(
         love: row.love,
         is_enderman,
         is_iron_golem,
+        hunts_villagers: blueprint.is_some_and(|bp| bp.capabilities.hunts_villagers),
+        hunts_living: blueprint.is_some_and(|bp| bp.capabilities.hunts_living),
         is_slime_size_one,
         climbs_walls: blueprint.is_some_and(|blueprint| blueprint.capabilities.climbs_walls),
         aquatic_control: blueprint.map_or(crate::species::AquaticControl::Other, |blueprint| {
@@ -6226,7 +6230,7 @@ fn run_entity_phase(state: &mut TickState, sim: bool) -> Vec<Intent> {
         };
         return Vec::new();
     }
-    let golem_targets = if crate::piglin::iron_golem_present(state) {
+    let golem_targets = if consumers[3] != 0 {
         crate::villager::defense::targets(state)
     } else {
         Vec::new()
@@ -6266,7 +6270,7 @@ fn run_entity_phase(state: &mut TickState, sim: bool) -> Vec<Intent> {
     } else {
         Vec::new()
     };
-    let zoglin_targets: Vec<_> = if crate::piglin::zoglin_present(state) {
+    let zoglin_targets: Vec<_> = if consumers[4] != 0 {
         state
             .entities
             .slots()
@@ -6277,15 +6281,17 @@ fn run_entity_phase(state: &mut TickState, sim: bool) -> Vec<Intent> {
                 };
                 (body.alive
                     && state.entities.row(slot).health > 0.0
-                    && mc_data::entity_types::entity_type_contract_26_1_2_by_protocol_id(type_id)
-                        .is_some_and(|contract| {
-                            contract.behavior.archetype
-                                == mc_data::entity_types::EntityArchetype::Living
-                        })
-                    && !matches!(
-                        crate::piglin::name(type_id),
-                        "minecraft:zoglin" | "minecraft:creeper" | "minecraft:armor_stand"
-                    ))
+                    && mc_data::entity_types::entity_type_contract_26_1_2_by_protocol_id(
+                        crate::blueprint::wire_type_id(type_id),
+                    )
+                    .is_some_and(|contract| {
+                        contract.behavior.archetype
+                            == mc_data::entity_types::EntityArchetype::Living
+                    })
+                    && !state
+                        .registry
+                        .blueprint(type_id)
+                        .is_some_and(|bp| bp.capabilities.ignored_by_living_hunters))
                 .then(|| (body.id, state.entities.pos(slot)))
             })
             .collect()
@@ -6748,7 +6754,7 @@ fn step_entity(row: ReadRow, ctx: &StepCtx) -> (MoveWrite, Vec<RawIntent>) {
         } else {
             row.sight_range
         });
-        let hunts_villagers = crate::piglin::hunts_villagers_type(row.type_id);
+        let hunts_villagers = row.hunts_villagers;
         let golem = row.is_iron_golem;
         let players = if crate::piglin::is_piglin_type(row.type_id) {
             &ctx.piglin_targets
@@ -6783,7 +6789,7 @@ fn step_entity(row: ReadRow, ctx: &StepCtx) -> (MoveWrite, Vec<RawIntent>) {
                             }))
                     });
             }
-            if crate::piglin::is_zoglin_type(row.type_id) {
+            if row.hunts_living {
                 ctx.zoglin_targets
                     .consider(&mut nearest, row.pos, sight, |(id, _)| *id != row.id);
             }

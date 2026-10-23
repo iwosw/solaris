@@ -13,7 +13,7 @@ use mc_script::{
 };
 use wasm_encoder::reencode::{Error as ReencodeError, Reencode};
 
-const CLEANUP: &str = "cabi_post_solaris:plugin/events@0.7.0#on-events";
+const CLEANUP: &str = "cabi_post_solaris:plugin/events@0.8.0#on-events";
 const PLAYER: &str = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
 
 struct TrapCleanup {
@@ -150,7 +150,7 @@ async fn cleanup_trap_publishes_nothing_and_another_guest_keeps_its_command() {
         let package = root.path().join(id);
         std::fs::create_dir(&package).unwrap();
         std::fs::write(package.join("plugin.toml"), format!(
-            "id = \"{id}\"\nname = \"{id}\"\nversion = \"0.1.0\"\napi = \"0.7.0\"\nevents = [\"player.joined\"]\nplayer_commands = [\"{command}\"]\n"
+            "id = \"{id}\"\nname = \"{id}\"\nversion = \"0.1.0\"\napi = \"0.8.0\"\nevents = [\"player.joined\"]\nplayer_commands = [\"{command}\"]\n"
         )).unwrap();
         std::fs::write(package.join("plugin.wasm"), bytes).unwrap();
         std::fs::write(package.join("config.toml"), config).unwrap();

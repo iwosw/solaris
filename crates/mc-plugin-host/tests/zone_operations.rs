@@ -35,7 +35,7 @@ fn write_package(root: &Path, id: &str, zones: bool) {
     std::fs::write(
         directory.join("plugin.toml"),
         format!(
-            "id = \"{id}\"\nname = \"{id}\"\nversion = \"0.1.0\"\napi = \"0.7.0\"\n\
+            "id = \"{id}\"\nname = \"{id}\"\nversion = \"0.1.0\"\napi = \"0.8.0\"\n\
              events = [\"player.joined\", \"zone.command_result\"]\n\
              player_commands = [\"{id}\"]\n{capabilities}"
         ),

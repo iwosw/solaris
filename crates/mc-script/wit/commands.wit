@@ -45,6 +45,16 @@ interface commands {
         session: session-id,
     }
 
+    /// Spawn a blueprint in the actor session's dimension. Requires the exact
+    /// entity id in the package's spawn_entity_types allow-list. Admission can
+    /// refuse occupied space or the defining plugin's live-mob cap.
+    record spawn-entity {
+        request: string,
+        session: session-id,
+        entity-type: string,
+        position: position,
+    }
+
     /// One read of this plugin's own durable storage. The host binds the owner;
     /// a plugin cannot name another plugin's key.
     record storage-get {
@@ -560,5 +570,6 @@ interface commands {
         /// identity, so a request arriving after that connection ended is refused
         /// rather than retargeted to a later session.
         client-presentation(client-command),
+        spawn-entity(spawn-entity),
     }
 }

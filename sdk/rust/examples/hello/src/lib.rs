@@ -49,11 +49,11 @@ use solaris_plugin_sdk::events::{
 };
 use solaris_plugin_sdk::operation_types::OperationFailure;
 use solaris_plugin_sdk::{
-    broadcast, commands, disconnect_player, export_plugin, lifecycle, list_online_players, log,
-    message_player, storage, storage_cas, storage_get, types, BuildContext, BuildDecision,
-    BuildResult, Command, Config, DamageContext, DamageDecision, DamageResult, Event, EventContext,
-    Failure, InitContext, InventoryClick, LogLevel, Plugin, StartupContribution, StorageCasOutcome,
-    StorageFailure, StorageGetOutcome,
+    BuildContext, BuildDecision, BuildResult, Command, Config, DamageContext, DamageDecision,
+    DamageResult, Event, EventContext, Failure, InitContext, InventoryClick, LogLevel, Plugin,
+    StartupContribution, StorageCasOutcome, StorageFailure, StorageGetOutcome, broadcast, commands,
+    disconnect_player, export_plugin, lifecycle, list_online_players, log, message_player, storage,
+    storage_cas, storage_get, types,
 };
 
 mod audit_events;
@@ -670,6 +670,7 @@ fn placement_contribution() -> StartupContribution {
         work_recipes: None,
         crafting_recipes: None,
         block_tools: None,
+        mob_blueprints: None,
     }
 }
 
@@ -730,6 +731,7 @@ impl Plugin for Hello {
                         work_recipes: None,
                         crafting_recipes: None,
                         block_tools: None,
+                        mob_blueprints: None,
                     }
                 }))
             }
@@ -752,6 +754,7 @@ impl Plugin for Hello {
                 work_recipes: None,
                 crafting_recipes: None,
                 block_tools: None,
+                mob_blueprints: None,
             })),
             // The one probe that the two phases do not share a store: this mode
             // answers a valid contribution like `placement` and writes a marker

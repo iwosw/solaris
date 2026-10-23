@@ -40,32 +40,11 @@ pub(crate) fn is_piglin_type(type_id: u32) -> bool {
     Some(type_id) == *PIGLIN_TYPE
 }
 
-static ZOGLIN_TYPE: std::sync::LazyLock<Option<u32>> =
-    std::sync::LazyLock::new(|| type_id_of("minecraft:zoglin"));
 static HOGLIN_TYPE: std::sync::LazyLock<Option<u32>> =
     std::sync::LazyLock::new(|| type_id_of("minecraft:hoglin"));
-static IRON_GOLEM_TYPE: std::sync::LazyLock<Option<u32>> =
-    std::sync::LazyLock::new(|| type_id_of("minecraft:iron_golem"));
-static ZOMBIE_TYPE: std::sync::LazyLock<Option<u32>> =
-    std::sync::LazyLock::new(|| type_id_of("minecraft:zombie"));
-static ZOMBIE_VILLAGER_TYPE: std::sync::LazyLock<Option<u32>> =
-    std::sync::LazyLock::new(|| type_id_of("minecraft:zombie_villager"));
-
-pub(crate) fn is_zoglin_type(type_id: u32) -> bool {
-    Some(type_id) == *ZOGLIN_TYPE
-}
 
 pub(crate) fn is_hoglin_type(type_id: u32) -> bool {
     Some(type_id) == *HOGLIN_TYPE
-}
-
-pub(crate) fn is_iron_golem_type(type_id: u32) -> bool {
-    Some(type_id) == *IRON_GOLEM_TYPE
-}
-
-/// Zombies and zombie villagers hunt villagers as well as players.
-pub(crate) fn hunts_villagers_type(type_id: u32) -> bool {
-    Some(type_id) == *ZOMBIE_TYPE || Some(type_id) == *ZOMBIE_VILLAGER_TYPE
 }
 
 /// Whether a row of the species exists in the store (the type lane, dead rows
@@ -73,14 +52,6 @@ pub(crate) fn hunts_villagers_type(type_id: u32) -> bool {
 /// built each entity phase, which only that species' rows consume.
 pub(crate) fn piglin_present(state: &TickState) -> bool {
     (*PIGLIN_TYPE).is_some_and(|id| state.entities.mob_slots(id).next().is_some())
-}
-
-pub(crate) fn zoglin_present(state: &TickState) -> bool {
-    (*ZOGLIN_TYPE).is_some_and(|id| state.entities.mob_slots(id).next().is_some())
-}
-
-pub(crate) fn iron_golem_present(state: &TickState) -> bool {
-    (*IRON_GOLEM_TYPE).is_some_and(|id| state.entities.mob_slots(id).next().is_some())
 }
 
 /// Cheap kind gate: entity-dense reject before gamerule/activity/registry work.

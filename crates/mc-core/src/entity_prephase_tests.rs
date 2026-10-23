@@ -15,7 +15,9 @@ fn species_id_helpers_match_contract_and_blueprint_names() {
             name == "minecraft:piglin"
         );
         assert_eq!(
-            crate::piglin::is_zoglin_type(type_id),
+            registry
+                .blueprint(type_id)
+                .is_some_and(|bp| bp.capabilities.hunts_living),
             name == "minecraft:zoglin"
         );
         assert_eq!(
@@ -24,11 +26,15 @@ fn species_id_helpers_match_contract_and_blueprint_names() {
         );
         let blueprint = registry.blueprint(type_id).map_or("", |b| b.name.as_str());
         assert_eq!(
-            crate::piglin::is_iron_golem_type(type_id),
+            registry
+                .blueprint(type_id)
+                .is_some_and(|bp| bp.capabilities.hunts_monsters),
             blueprint == "minecraft:iron_golem"
         );
         assert_eq!(
-            crate::piglin::hunts_villagers_type(type_id),
+            registry
+                .blueprint(type_id)
+                .is_some_and(|bp| bp.capabilities.hunts_villagers),
             matches!(blueprint, "minecraft:zombie" | "minecraft:zombie_villager")
         );
     }

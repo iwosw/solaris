@@ -2257,19 +2257,15 @@ impl EntityStateImage {
             crate::armor_stand::validate_fields(&record.extra_fields)?;
         }
         let ageable = registry
-            .entity_types
-            .id_of(
-                &mc_data::Identifier::parse(&record.id)
-                    .map_err(|err| CoreError::Storage(err.to_string()))?,
-            )
+            .entity_type_id(&record.id)
             .and_then(|id| registry.blueprint(id))
             .is_some_and(|blueprint| {
-                blueprint
-                    .goals
-                    .iter()
-                    .any(|goal| goal.kind == crate::blueprint::GoalKind::Breed)
+                blueprint.capabilities.ageable
+                    || blueprint
+                        .goals
+                        .iter()
+                        .any(|goal| goal.kind == crate::blueprint::GoalKind::Breed)
             });
-        let ageable = ageable || crate::entity_life::old_ageable(&record.id);
         let (entity_life, love) = crate::entity_life::from_record(record, ageable);
         let mut image = Self {
             age: if ageable { 0 } else { record.age.max(0) as u32 },

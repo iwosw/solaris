@@ -2208,7 +2208,7 @@ fn player_context_rejects_oversized_identity_and_nonfinite_coordinates() {
 
 #[test]
 fn component_api_version_requires_the_current_contract_version() {
-    assert_eq!(COMPONENT_PLUGIN_API_VERSION, ScriptApiVersion::new(0, 7, 0));
+    assert_eq!(COMPONENT_PLUGIN_API_VERSION, ScriptApiVersion::new(0, 8, 0));
     for requested in [
         ScriptApiVersion::new(0, 0, 0),
         ScriptApiVersion::new(0, 4, 9),

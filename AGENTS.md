@@ -135,7 +135,7 @@ python3 -m tools.harness run correctness                  # L2: major phase/code
   `x-ui-pro/`, `YOLO_MODE.md`, `log.log`, `opencode.json` overlays or other ignored agent/tool artifacts unless explicitly requested.
 - This repo owns core Rust/runtime and canonical harness. `../solaris-loader` owns Java/client scenarios
   (`SOLARIS_LOADER_ROOT` override allowed); never duplicate a client-mod source tree here.
-- `../solaris-default-plugins` owns first-party Wasmtime packages (`solaris:plugin@0.7.0`), deployed via `[plugins].directory`;
+- `../solaris-default-plugins` owns first-party Wasmtime packages (`solaris:plugin@0.8.0`), deployed via `[plugins].directory`;
   no compiled-in package list or `plugins.bundled` compatibility path. Core production builds require neither sibling;
   integration gates require the sibling they exercise. Each sibling owns its README/AGENTS/Git metadata;
   creating it locally never authorizes staging, commits, remotes, pushes or publication.

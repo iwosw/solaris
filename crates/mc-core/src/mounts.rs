@@ -50,16 +50,11 @@ pub(crate) fn name(state: &TickState, slot: EntitySlot) -> &'static str {
         .and_then(mc_data::entity_types::entity_type_contract_26_1_2_by_protocol_id)
         .map_or("", |contract| contract.name)
 }
-fn mount_type(kind: &str) -> bool {
-    crate::taming::horse(kind)
-        || matches!(
-            kind,
-            "minecraft:pig"
-                | "minecraft:strider"
-                | "minecraft:camel"
-                | "minecraft:skeleton_horse"
-                | "minecraft:zombie_horse"
-        )
+fn capabilities(state: &TickState, slot: EntitySlot) -> crate::blueprint::Capabilities {
+    type_id(state.entities.body(slot))
+        .and_then(|key| state.registry.blueprint(key))
+        .map(|blueprint| blueprint.capabilities)
+        .unwrap_or_default()
 }
 pub(crate) fn vehicle(state: &TickState, actor: EntityId) -> Option<EntitySlot> {
     let actor = state.entities.row(state.entities.slot_of(actor)?);
@@ -96,6 +91,7 @@ fn action(
     held: &ItemStack,
     secondary: bool,
 ) -> Option<Action> {
+    use crate::blueprint::RidingProfile;
     let body = state.entities.body(target);
     let row = state.entities.row(target);
     if !body.alive {
@@ -108,7 +104,11 @@ fn action(
     } else {
         state.registry.items.name_of(held.item_id)?.as_str()
     };
-    if let Some(action) = crate::leash::action(row, uuid, kind, item, held) {
+    let capabilities = type_id(body)
+        .and_then(|id| state.registry.blueprint(id))
+        .map(|blueprint| blueprint.capabilities)
+        .unwrap_or_default();
+    if let Some(action) = crate::leash::action(row, uuid, capabilities.leashable, item, held) {
         return Some(Action::Leash(action));
     }
     let adult = crate::entity_life::adult(row);
@@ -116,15 +116,10 @@ fn action(
     if adult {
         if item == "minecraft:saddle"
             && row.loot.saddle.is_none()
-            && ((crate::taming::horse(kind)
-                && row.entity_life.tamed
-                && !matches!(kind, "minecraft:llama" | "minecraft:trader_llama"))
+            && ((capabilities.riding == RidingProfile::TamedSaddle && row.entity_life.tamed)
                 || matches!(
-                    kind,
-                    "minecraft:pig"
-                        | "minecraft:strider"
-                        | "minecraft:camel"
-                        | "minecraft:skeleton_horse"
+                    capabilities.riding,
+                    RidingProfile::Saddle | RidingProfile::CarrotStick | RidingProfile::FungusStick
                 ))
         {
             return Some(Action::Saddle);
@@ -147,7 +142,7 @@ fn action(
                     | "minecraft:diamond_horse_armor"
                     | "minecraft:netherite_horse_armor"
             )
-            && matches!(kind, "minecraft:horse" | "minecraft:zombie_horse")
+            && capabilities.equine_body_armor
             && row.entity_life.tamed
             && row.loot.body_armor.is_none()
         {
@@ -166,8 +161,7 @@ fn action(
         }
         if item == "minecraft:shears"
             && row.loot.body_armor.is_some()
-            && ((kind == "minecraft:wolf" && owner)
-                || matches!(kind, "minecraft:horse" | "minecraft:zombie_horse"))
+            && ((kind == "minecraft:wolf" && owner) || capabilities.equine_body_armor)
         {
             return Some(Action::Strip);
         }
@@ -178,17 +172,22 @@ fn action(
     if secondary && row.entity_life.mount.rider == Some(uuid) {
         return Some(Action::Dismount);
     }
-    let food = !held.is_empty() && crate::taming::food(state, kind, held.item_id);
-    if let Some(action) = crate::taming::action(state, uuid, body, row, kind, item, food) {
+    let food = !held.is_empty() && crate::taming::food(state, capabilities.food, held.item_id);
+    if let Some(action) =
+        crate::taming::action(state, uuid, body, row, capabilities.taming, item, food)
+    {
         return Some(Action::Taming(action));
     }
     if adult
         && !secondary
         && !food
-        && (mount_type(kind) || crate::vehicles::rideable(state, target))
+        && (capabilities.riding != RidingProfile::None || crate::vehicles::rideable(state, target))
         && row.entity_life.mount.rider.is_none()
         && vehicle(state, actor).is_none()
-        && (!matches!(kind, "minecraft:pig" | "minecraft:strider") || row.loot.saddle.is_some())
+        && (!matches!(
+            capabilities.riding,
+            RidingProfile::CarrotStick | RidingProfile::FungusStick
+        ) || row.loot.saddle.is_some())
     {
         return Some(Action::Ride);
     }
@@ -520,10 +519,10 @@ fn controllable(state: &TickState, slot: EntitySlot, actor: EntityId) -> bool {
         return false;
     }
     let row = state.entities.row(slot);
-    let kind = name(state, slot);
+    let capabilities = capabilities(state, slot);
     if row.loot.saddle.is_none()
-        || matches!(kind, "minecraft:llama" | "minecraft:trader_llama")
-        || (crate::taming::horse(kind) && !row.entity_life.tamed)
+        || capabilities.riding == crate::blueprint::RidingProfile::Unsteered
+        || (capabilities.taming.equine() && !row.entity_life.tamed)
     {
         return false;
     }
@@ -533,9 +532,9 @@ fn controllable(state: &TickState, slot: EntitySlot, actor: EntityId) -> bool {
     if player.spectator() || player.vitals.is_dead() {
         return false;
     }
-    let stick = match kind {
-        "minecraft:pig" => "minecraft:carrot_on_a_stick",
-        "minecraft:strider" => "minecraft:warped_fungus_on_a_stick",
+    let stick = match capabilities.riding {
+        crate::blueprint::RidingProfile::CarrotStick => "minecraft:carrot_on_a_stick",
+        crate::blueprint::RidingProfile::FungusStick => "minecraft:warped_fungus_on_a_stick",
         _ => return true,
     };
     [
@@ -650,11 +649,10 @@ pub(crate) fn tick(state: &mut TickState, changes: &mut ChangeSet) {
             clear_rider(state, slot);
             continue;
         }
-        let kind = name(state, slot);
+        let equine = capabilities(state, slot).taming.equine();
         let row = state.entities.row_mut(slot);
         row.entity_life.mounted = true;
-        if crate::taming::horse(kind) && !row.entity_life.tamed && crate::taming::roll(row, 50) == 0
-        {
+        if equine && !row.entity_life.tamed && crate::taming::roll(row, 50) == 0 {
             let success = crate::taming::roll(row, 100) < u32::from(row.entity_life.taming.temper);
             if success {
                 row.entity_life.tamed = true;

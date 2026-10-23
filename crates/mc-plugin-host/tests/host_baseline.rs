@@ -40,7 +40,7 @@ use mc_script::{ScriptCommand, ScriptEvent, ScriptPlayerContext, ScriptPlayerId}
 const PLUGIN_ID: &str = "hello";
 
 /// The contract version the fixture artifact is compiled as.
-const API_VERSION: &str = "0.7.0";
+const API_VERSION: &str = "0.8.0";
 
 /// The player the baseline batch describes. A fixed id, so the guest lifts and
 /// matches the same string every iteration.

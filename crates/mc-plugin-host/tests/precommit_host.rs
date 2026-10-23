@@ -24,7 +24,7 @@ fn write_package(root: &Path, id: &str, config: &str) {
     std::fs::write(
         directory.join("plugin.toml"),
         format!(
-            "id = {id:?}\nname = {id:?}\nversion = \"0.1.0\"\napi = \"0.7.0\"\nhooks = [\"before-build\", \"before-damage\"]\n"
+            "id = {id:?}\nname = {id:?}\nversion = \"0.1.0\"\napi = \"0.8.0\"\nhooks = [\"before-build\", \"before-damage\"]\n"
         ),
     )
     .expect("manifest");

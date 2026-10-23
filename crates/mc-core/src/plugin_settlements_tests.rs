@@ -88,7 +88,7 @@ fn consumer() -> PluginInstance<Services> {
     let limits = PluginLimits::default();
     let host_engine = engine(&limits).expect("engine");
     let compiled =
-        CompiledPlugin::compile(&host_engine, &bytes, &limits, "0.7.0").expect("compile");
+        CompiledPlugin::compile(&host_engine, &bytes, &limits, "0.8.0").expect("compile");
     let host_linker = linker::<Services>(&host_engine).expect("linker");
     let contribution = PluginStartup::instantiate(
         &host_linker,
@@ -119,7 +119,7 @@ fn consumer() -> PluginInstance<Services> {
             CONSUMER_CONFIG,
             InitContext {
                 plugin_id: "consumer".to_owned(),
-                api_version: "0.7.0".to_owned(),
+                api_version: "0.8.0".to_owned(),
                 world_fingerprint: String::new(),
             },
         )

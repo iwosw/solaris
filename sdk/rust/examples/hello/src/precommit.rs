@@ -82,8 +82,8 @@ use std::collections::VecDeque;
 
 use solaris_plugin_sdk::events::CommandInvoked;
 use solaris_plugin_sdk::{
-    log, message_player, BuildContext, BuildDecision, Command, Config, DamageContext,
-    DamageDecision, DamageTarget, Event, Failure, HookActor, InitContext, LogLevel,
+    BuildContext, BuildDecision, Command, Config, DamageContext, DamageDecision, DamageTarget,
+    Event, Failure, HookActor, InitContext, LogLevel, log, message_player,
 };
 
 /// The command root this fixture answers when `root` is absent.

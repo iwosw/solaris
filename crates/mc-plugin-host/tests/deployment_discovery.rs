@@ -13,7 +13,7 @@ fn write_package(root: &Path, id: &str, manifest_extra: &str) {
     std::fs::write(
         directory.join("plugin.toml"),
         format!(
-            "id = \"{id}\"\nname = \"{id}\"\nversion = \"0.1.0\"\napi = \"0.7.0\"\n{manifest_extra}"
+            "id = \"{id}\"\nname = \"{id}\"\nversion = \"0.1.0\"\napi = \"0.8.0\"\n{manifest_extra}"
         ),
     )
     .expect("manifest");
@@ -116,7 +116,7 @@ fn two_packages_with_one_id_are_refused_in_both_modes() {
         std::fs::create_dir_all(&second).expect("second package");
         std::fs::write(
             second.join("plugin.toml"),
-            "id = \"alpha\"\nname = \"alpha\"\nversion = \"0.2.0\"\napi = \"0.7.0\"\n",
+            "id = \"alpha\"\nname = \"alpha\"\nversion = \"0.2.0\"\napi = \"0.8.0\"\n",
         )
         .expect("second manifest");
         std::fs::write(second.join("plugin.wasm"), b"component-bytes").expect("artifact");

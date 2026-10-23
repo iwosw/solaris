@@ -74,9 +74,9 @@
 
 use solaris_plugin_sdk::events::{CommandInvoked, InventoryMenuClicked, InventoryStorageOutcome};
 use solaris_plugin_sdk::{
-    close_inventory_menu, inventory_storage_transaction, log, message_player, open_inventory_menu,
-    storage, storage_get, Command, Event, Failure, InventoryClick, InventoryMenuSlot,
-    InventoryResourceDelta, LogLevel, StorageGetOutcome, StorageMutation, StorageRecord,
+    Command, Event, Failure, InventoryClick, InventoryMenuSlot, InventoryResourceDelta, LogLevel,
+    StorageGetOutcome, StorageMutation, StorageRecord, close_inventory_menu,
+    inventory_storage_transaction, log, message_player, open_inventory_menu, storage, storage_get,
 };
 
 /// The command root the package's manifest declares for this fixture.

@@ -100,15 +100,17 @@ pub(crate) fn can_breed_in(
     let Some(blueprint) = registry.blueprint(type_id) else {
         return false;
     };
-    match blueprint.name.as_str() {
-        "minecraft:wolf" | "minecraft:cat" => row.entity_life.tamed && !row.entity_life.sitting,
-        "minecraft:horse" | "minecraft:donkey" | "minecraft:llama" | "minecraft:trader_llama" => {
+    match blueprint.capabilities.breeding {
+        crate::blueprint::BreedingRule::TamedStanding => {
+            row.entity_life.tamed && !row.entity_life.sitting
+        }
+        crate::blueprint::BreedingRule::TamedHealthyUnmounted => {
             row.entity_life.tamed
                 && !row.entity_life.mounted
                 && row.health >= blueprint.params.max_health
         }
-        "minecraft:mule" | "minecraft:parrot" => false,
-        _ => true,
+        crate::blueprint::BreedingRule::Sterile => false,
+        crate::blueprint::BreedingRule::Unrestricted => true,
     }
 }
 
@@ -153,14 +155,21 @@ pub fn restore_appearance(body: &crate::entities::Body, row: &mut ColdRow) {
     let EntityKind::Mob { type_id } = body.kind else {
         return;
     };
-    let Some(contract) = mc_data::entity_types::entity_type_contract_26_1_2_by_protocol_id(type_id)
-    else {
+    let Some(contract) = mc_data::entity_types::entity_type_contract_26_1_2_by_protocol_id(
+        crate::blueprint::wire_type_id(type_id),
+    ) else {
         return;
     };
     if old_ageable(contract.name) || contract.name == "minecraft:tadpole" {
         crate::golden_dandelion::sync(row);
     }
-    crate::taming::restore(row, contract.name);
+    // Custom tame-health attributes were captured natively; presentation alone
+    // must never grant a wolf's gameplay health to a custom blueprint.
+    crate::taming::restore(
+        row,
+        contract.name,
+        type_id & crate::blueprint::CUSTOM_TYPE_FLAG == 0 && contract.name == "minecraft:wolf",
+    );
     if contract.behavior.metadata_schema.as_str() == "MushroomCow" {
         let appearance = Arc::make_mut(&mut row.appearance);
         appearance.extra.retain(|(index, _)| *index != 18);
@@ -310,10 +319,7 @@ fn harvest(
     let name = state.registry.items.name_of(held.item_id)?.as_str();
     if name == "minecraft:bucket"
         && adult(row)
-        && matches!(
-            blueprint.name.as_str(),
-            "minecraft:cow" | "minecraft:goat" | "minecraft:mooshroom"
-        )
+        && blueprint.capabilities.milkable
         && item(state, "minecraft:milk_bucket").is_some()
     {
         return Some(Harvest::Milk);

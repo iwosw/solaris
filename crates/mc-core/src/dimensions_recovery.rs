@@ -31,22 +31,20 @@ pub(crate) fn validate_entity(
         .uuid
         .parse::<uuid::Uuid>()
         .map_err(|err| invalid(format!("invalid UUID: {err}")))?;
-    let contract =
-        mc_data::entity_types::entity_type_contract_26_1_2_by_protocol_id(record.type_id)
-            .ok_or_else(|| invalid("unknown entity type-id".into()))?;
-    if matches!(
-        contract.name,
-        "minecraft:item_frame" | "minecraft:glow_item_frame"
-    ) {
+    let name = state
+        .registry
+        .entity_type_name(record.type_id)
+        .ok_or_else(|| invalid("unknown entity type-id".into()))?;
+    if matches!(name, "minecraft:item_frame" | "minecraft:glow_item_frame") {
         crate::item_frame::validate_image(record)?;
     }
-    if record.state.bee.is_some() && contract.name != "minecraft:bee" {
+    if record.state.bee.is_some() && name != "minecraft:bee" {
         return Err(invalid(
             "Bee: retained state incompatible with entity type".into(),
         ));
     }
     if let Some(allay) = &record.state.allay {
-        if contract.name != "minecraft:allay" {
+        if name != "minecraft:allay" {
             return Err(invalid(
                 "Allay: retained state incompatible with entity type".into(),
             ));
@@ -90,11 +88,11 @@ pub(crate) fn validate_entity(
                 projectile.stack.item_id
             )));
         }
-        if contract.name != projectile.kind.name() {
+        if name != projectile.kind.name() {
             return Err(invalid(format!(
                 "projectile kind {} disagrees with entity type {}",
                 projectile.kind.name(),
-                contract.name
+                name
             )));
         }
     }
@@ -149,8 +147,7 @@ pub(crate) fn hydrate_entity(
     let invalid =
         |reason: String| CoreError::Storage(format!("native entity {}: {reason}", record.uuid));
     let type_id = registry
-        .entity_types
-        .id_of(&mc_data::Identifier::parse(record.id.clone()).map_err(|e| invalid(e.to_string()))?)
+        .entity_type_id(&record.id)
         .ok_or_else(|| invalid("unknown type".into()))?;
     let wire_id = record.wire_id;
     if wire_id <= 0 || base.entities.contains_key(&wire_id) {

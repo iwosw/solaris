@@ -104,6 +104,9 @@ interface lifecycle {
         /// the clicked block (replacement state, durability wear, item grant).
         /// At most 1024 strings totaling 1 MiB, validated at startup.
         block-tools: option<list<string>>,
+        /// Native MobBlueprintDef JSON; at most 64 strings of 16 KiB each.
+        /// Ids belong to the contributing plugin's namespace.
+        mob-blueprints: option<list<string>>,
     }
 
     /// Values the host fixes for the instance, independent of the package.

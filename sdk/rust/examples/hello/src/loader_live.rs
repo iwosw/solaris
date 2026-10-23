@@ -53,7 +53,7 @@ use solaris_plugin_sdk::events::{
     ClientViewOpened, ClientViewOutcome, CommandInvoked, EventContext, LoaderItemGrantFailure,
     LoaderItemGrantOutcome, LoaderItemGrantResult, LoaderViewAction, ViewFailure,
 };
-use solaris_plugin_sdk::{log, types, Command, Event, Failure, LogLevel};
+use solaris_plugin_sdk::{Command, Event, Failure, LogLevel, log, types};
 
 /// What one refused view open is logged with, so an operator reading the server
 /// log sees which request the owner rejected and why rather than a bare silence.

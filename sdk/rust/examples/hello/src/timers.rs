@@ -14,7 +14,7 @@
 //! there would make both harder to read.
 
 use solaris_plugin_sdk::events::TimerFired;
-use solaris_plugin_sdk::{broadcast, cancel_timer, schedule_timer, Command, Event};
+use solaris_plugin_sdk::{Command, Event, broadcast, cancel_timer, schedule_timer};
 
 /// The contract's bound on one callback's batch, and therefore the most timers
 /// one fill callback may schedule. The fixture stays inside it: answering more

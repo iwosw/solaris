@@ -129,6 +129,7 @@ fn no_categories() -> StartupContribution {
         work_recipes: None,
         crafting_recipes: None,
         block_tools: None,
+        mob_blueprints: None,
     }
 }
 
@@ -263,6 +264,7 @@ fn one_tree(spacing: u32) -> StartupContribution {
         work_recipes: None,
         crafting_recipes: None,
         block_tools: None,
+        mob_blueprints: None,
     }
 }
 
@@ -315,6 +317,7 @@ fn component_rules_fingerprint_matches_its_independent_construction() {
         work_recipes: None,
         crafting_recipes: None,
         block_tools: None,
+        mob_blueprints: None,
     };
     let from_component = convert_startup_contribution("planner", &plan)
         .expect("a plan inside every bound is accepted")
@@ -394,6 +397,7 @@ fn a_value_wider_than_its_contract_field_is_refused_rather_than_truncated() {
         work_recipes: None,
         crafting_recipes: None,
         block_tools: None,
+        mob_blueprints: None,
     };
 
     // 272 truncated to a byte is 16, which is a legal water depth: this is the
@@ -485,6 +489,7 @@ fn a_contribution_that_breaks_an_enforced_bound_is_refused_with_the_check_that_r
         work_recipes: None,
         crafting_recipes: None,
         block_tools: None,
+        mob_blueprints: None,
     };
     convert_startup_contribution("planner", &declarations(64))
         .expect("64 tree declarations are the bound");
@@ -514,6 +519,7 @@ fn a_contribution_that_breaks_an_enforced_bound_is_refused_with_the_check_that_r
         work_recipes: None,
         crafting_recipes: None,
         block_tools: None,
+        mob_blueprints: None,
     };
     convert_startup_contribution("planner", &spawn_group("creature", 1, 4))
         .expect("a supported group is accepted");
@@ -598,7 +604,7 @@ fn write_package(root: &Path, id: &str, config: &str) {
     std::fs::create_dir_all(&directory).expect("package directory");
     std::fs::write(
         directory.join("plugin.toml"),
-        format!("id = \"{id}\"\nname = \"{id}\"\nversion = \"0.1.0\"\napi = \"0.7.0\"\n"),
+        format!("id = \"{id}\"\nname = \"{id}\"\nversion = \"0.1.0\"\napi = \"0.8.0\"\n"),
     )
     .expect("manifest");
     std::fs::write(directory.join("plugin.wasm"), component_bytes()).expect("artifact");

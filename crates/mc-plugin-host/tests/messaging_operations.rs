@@ -28,7 +28,7 @@ fn start(reason_bytes: usize, commands: usize) -> (tempfile::TempDir, PluginHost
     std::fs::create_dir(&package).unwrap();
     std::fs::write(
         package.join("plugin.toml"),
-        "id = \"hello\"\nname = \"Hello\"\nversion = \"0.1.0\"\napi = \"0.7.0\"\nevents = [\"player.joined\"]\n",
+        "id = \"hello\"\nname = \"Hello\"\nversion = \"0.1.0\"\napi = \"0.8.0\"\nevents = [\"player.joined\"]\n",
     )
     .unwrap();
     std::fs::write(package.join("plugin.wasm"), fixture::component_bytes()).unwrap();

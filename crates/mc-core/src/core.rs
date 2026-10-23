@@ -2770,18 +2770,18 @@ fn entity_capture_record(
         | EntityKind::ExperienceOrb { type_id } => type_id,
         EntityKind::Player { .. } => return None,
     };
-    let name = mc_data::entity_types::entity_type_contract_26_1_2_by_protocol_id(type_id)
-        .map(|contract| contract.name.to_owned())?;
+    let name = view.registry.entity_type_name(type_id)?.to_owned();
     let tick = view.tick;
     let rot = view.entities.rot(slot);
     let pos = view.entities.pos(slot);
     let vel = view.entities.vel(slot);
     let sheep_wool = (name == "minecraft:sheep").then(|| crate::tick::wool_of(&row.appearance));
     let ageable = view.registry.blueprint(type_id).is_some_and(|blueprint| {
-        blueprint
-            .goals
-            .iter()
-            .any(|goal| goal.kind == crate::blueprint::GoalKind::Breed)
+        blueprint.capabilities.ageable
+            || blueprint
+                .goals
+                .iter()
+                .any(|goal| goal.kind == crate::blueprint::GoalKind::Breed)
     });
     let mut extra_fields = row
         .villager
@@ -2794,6 +2794,15 @@ fn entity_capture_record(
     extra_fields.extend(
         crate::journal::EntityStateImage::from_row(body, row).to_fields(&view.registry.blocks),
     );
+    if type_id & crate::blueprint::CUSTOM_TYPE_FLAG != 0 {
+        let presentation = view
+            .registry
+            .entity_type_name(crate::blueprint::wire_type_id(type_id))?;
+        extra_fields.push((
+            "solaris:Presentation".into(),
+            mc_nbt::Tag::String(presentation.into()),
+        ));
+    }
     if let Some(extras) = extras {
         extra_fields.extend(extras.before_allay.iter().cloned());
     }

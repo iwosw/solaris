@@ -61,7 +61,7 @@ pub fn horse(name: &str) -> bool {
     )
 }
 
-pub(crate) fn food(state: &TickState, name: &str, item: u32) -> bool {
+pub(crate) fn food(state: &TickState, food: Option<crate::blueprint::MobFood>, item: u32) -> bool {
     static TAGS: std::sync::LazyLock<(mc_data::Identifier, [mc_data::Identifier; 8])> =
         std::sync::LazyLock::new(|| {
             (
@@ -75,17 +75,10 @@ pub(crate) fn food(state: &TickState, name: &str, item: u32) -> bool {
                 }),
             )
         });
-    let index = match name {
-        "minecraft:wolf" => 0,
-        "minecraft:cat" => 1,
-        "minecraft:parrot" => 2,
-        "minecraft:horse" | "minecraft:donkey" | "minecraft:mule" => 3,
-        "minecraft:llama" | "minecraft:trader_llama" => 4,
-        "minecraft:pig" => 5,
-        "minecraft:strider" => 6,
-        "minecraft:camel" => 7,
-        _ => return false,
+    let Some(food) = food else {
+        return false;
     };
+    let index = food as usize;
     let Ok(item) = i32::try_from(item) else {
         return false;
     };
@@ -102,29 +95,31 @@ pub(crate) fn action(
     actor: Uuid,
     body: &crate::entities::Body,
     row: &ColdRow,
-    name: &str,
+    profile: crate::blueprint::TamingProfile,
     held: &str,
     food: bool,
 ) -> Option<Action> {
+    use crate::blueprint::TamingProfile;
     let pet = &row.entity_life.taming;
     if pet.owner.is_none()
-        && ((name == "minecraft:wolf" && held == "minecraft:bone")
-            || (name == "minecraft:cat" && matches!(held, "minecraft:cod" | "minecraft:salmon"))
-            || (name == "minecraft:parrot" && food))
+        && ((profile == TamingProfile::BonePet && held == "minecraft:bone")
+            || (profile == TamingProfile::FishPet
+                && matches!(held, "minecraft:cod" | "minecraft:salmon"))
+            || (profile == TamingProfile::SeedPet && food))
     {
-        return Some(Action::Tame(if name == "minecraft:parrot" {
+        return Some(Action::Tame(if profile == TamingProfile::SeedPet {
             10
         } else {
             3
         }));
     }
-    if name == "minecraft:ocelot"
+    if profile == TamingProfile::TrustFish
         && !pet.trusting
         && matches!(held, "minecraft:cod" | "minecraft:salmon")
     {
         return Some(Action::Trust);
     }
-    if matches!(name, "minecraft:cat" | "minecraft:wolf")
+    if profile.collared()
         && pet.owner == Some(actor)
         && let Some(color) = crate::blueprint::DYE_COLORS.iter().position(|color| {
             held.strip_prefix("minecraft:")
@@ -134,8 +129,8 @@ pub(crate) fn action(
     {
         return (color as u8 != pet.collar).then_some(Action::Collar(color as u8));
     }
-    if matches!(name, "minecraft:cat" | "minecraft:wolf") && row.entity_life.tamed && food {
-        let maximum = if name == "minecraft:wolf" {
+    if profile.collared() && row.entity_life.tamed && food {
+        let maximum = if profile == TamingProfile::BonePet {
             40.0
         } else {
             max_health(state, body, row)
@@ -150,20 +145,25 @@ pub(crate) fn action(
                 .food;
             return Some(Action::Heal {
                 maximum,
-                amount: food as f32 * if name == "minecraft:cat" { 2.0 } else { 1.0 },
+                amount: food as f32
+                    * if profile == TamingProfile::FishPet {
+                        2.0
+                    } else {
+                        1.0
+                    },
             });
         }
     }
     if matches!(
-        name,
-        "minecraft:wolf" | "minecraft:cat" | "minecraft:parrot"
+        profile,
+        TamingProfile::BonePet | TamingProfile::FishPet | TamingProfile::SeedPet
     ) && pet.owner == Some(actor)
         && !food
     {
         return Some(Action::Sit);
     }
-    if horse(name) {
-        let llama = matches!(name, "minecraft:llama" | "minecraft:trader_llama");
+    if profile.equine() {
+        let llama = profile == TamingProfile::PackEquine;
         let (heal, growth, temper, breed) = match (llama, held) {
             (true, "minecraft:wheat") => (2.0, 200, 3, false),
             (true, "minecraft:hay_block") => (10.0, 1800, 6, true),
@@ -182,7 +182,7 @@ pub(crate) fn action(
             || row.entity_life.child_ticks > 0
             || (!row.entity_life.tamed && pet.temper < 100)
             || (breed
-                && name != "minecraft:mule"
+                && profile != TamingProfile::SterileEquine
                 && row.entity_life.tamed
                 && crate::entity_life::can_feed(body, row))
         {
@@ -190,7 +190,7 @@ pub(crate) fn action(
                 heal,
                 growth,
                 temper,
-                breed: breed && name != "minecraft:mule",
+                breed: breed && profile != TamingProfile::SterileEquine,
             });
         }
     }
@@ -221,7 +221,9 @@ fn max_health(state: &TickState, body: &crate::entities::Body, row: &ColdRow) ->
 }
 pub(crate) fn apply(state: &mut TickState, slot: EntitySlot, actor: Uuid, action: &Action) {
     let maximum = max_health(state, state.entities.body(slot), state.entities.row(slot));
-    let wolf = crate::mounts::name(state, slot) == "minecraft:wolf";
+    let wolf = crate::mounts::type_id(state.entities.body(slot))
+        .and_then(|key| state.registry.blueprint(key))
+        .is_some_and(|bp| bp.capabilities.taming == crate::blueprint::TamingProfile::BonePet);
     let mut half_width = None;
     let (body, row) = state.entities.parts_mut(slot);
     let event = match *action {
@@ -311,13 +313,20 @@ pub(crate) fn apply(state: &mut TickState, slot: EntitySlot, actor: Uuid, action
     }
 }
 pub(crate) fn sync(state: &mut TickState, slot: EntitySlot) {
-    let name = crate::mounts::name(state, slot);
+    let key = crate::mounts::type_id(state.entities.body(slot));
+    let name = key
+        .map(crate::blueprint::wire_type_id)
+        .and_then(mc_data::entity_types::entity_type_contract_26_1_2_by_protocol_id)
+        .map_or("", |contract| contract.name);
+    let bone_pet = key
+        .and_then(|key| state.registry.blueprint(key))
+        .is_some_and(|bp| bp.capabilities.taming == crate::blueprint::TamingProfile::BonePet);
     let row = state.entities.row_mut(slot);
-    restore(row, name);
+    restore(row, name, bone_pet);
     state.appearance_changed.push(state.entities.body(slot).id);
 }
-pub(crate) fn restore(row: &mut ColdRow, name: &str) {
-    if name == "minecraft:wolf" && row.entity_life.tamed {
+pub(crate) fn restore(row: &mut ColdRow, name: &str, bone_pet: bool) {
+    if bone_pet && row.entity_life.tamed {
         wolf_health(row);
     }
     let life = &row.entity_life;
@@ -385,15 +394,15 @@ pub(crate) fn inherit(
         .row(state.entities.slot_of(second)?)
         .entity_life
         .taming;
-    let name = mc_data::entity_types::entity_type_contract_26_1_2_by_protocol_id(type_id)?.name;
-    if matches!(name, "minecraft:wolf" | "minecraft:cat") {
+    let blueprint = state.registry.blueprint(type_id)?;
+    if blueprint.capabilities.taming.collared() {
         return Some(TamingState {
             owner: first.owner,
             collar: first.collar,
             ..Default::default()
         });
     }
-    if name == "minecraft:fox" {
+    if blueprint.name == "minecraft:fox" {
         let mut trusted: Vec<_> = [first.love_cause, second.love_cause]
             .into_iter()
             .flatten()

@@ -14,28 +14,10 @@ use crate::tick::{TickState, run_tick};
 /// flags, shown to clients as a creeper. Fuse, power and griefing differ from
 /// the vanilla creeper so the test proves the blueprint values are read.
 fn sky_creeper() -> serde_json::Value {
-    serde_json::json!({
-        "id": "example:sky_creeper",
-        "presents_as": "minecraft:creeper",
-        "category": "monster",
-        "movement": "flyer",
-        "goals": [
-            {"priority": 0, "kind": "flee_fire"},
-            {"priority": 1, "kind": "swell"},
-            {"priority": 2, "kind": "melee_chase"},
-            {"priority": 3, "kind": "wander"}
-        ],
-        "sight_range": 16.0,
-        "attack_reach": 3.0,
-        "max_health": 20.0,
-        "speed": 4.7,
-        "attack_damage": 0.0,
-        "loot_table": "minecraft:entities/creeper",
-        "capabilities": {
-            "hurt_by_water": true,
-            "explodes": {"power": 2.0, "fuse_ticks": 20, "griefing": false}
-        }
-    })
+    serde_json::from_str(include_str!(
+        "../../../sdk/rust/examples/sky-creeper/src/sky-creeper.json"
+    ))
+    .unwrap()
 }
 
 fn definition(value: &serde_json::Value) -> MobBlueprintDef {

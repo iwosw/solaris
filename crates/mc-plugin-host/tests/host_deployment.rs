@@ -49,7 +49,7 @@ fn write_package(root: &Path, id: &str, declarations: &str) {
     std::fs::write(
         directory.join("plugin.toml"),
         format!(
-            "id = \"{id}\"\nname = \"{id}\"\nversion = \"0.1.0\"\napi = \"0.7.0\"\n{declarations}"
+            "id = \"{id}\"\nname = \"{id}\"\nversion = \"0.1.0\"\napi = \"0.8.0\"\n{declarations}"
         ),
     )
     .expect("manifest");
@@ -340,7 +340,7 @@ async fn restart_only_reload_contract_keeps_the_running_generation_active() {
     let host = start(root.path(), &["reloadable"]);
     std::fs::write(
         root.path().join("reloadable/plugin.toml"),
-        "id = \"reloadable\"\nname = \"reloadable\"\nversion = \"0.2.0\"\napi = \"0.7.0\"\nplayer_commands = [\"different-root\"]\n",
+        "id = \"reloadable\"\nname = \"reloadable\"\nversion = \"0.2.0\"\napi = \"0.8.0\"\nplayer_commands = [\"different-root\"]\n",
     )
     .expect("candidate manifest");
 

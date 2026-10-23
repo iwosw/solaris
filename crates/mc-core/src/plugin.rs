@@ -1910,9 +1910,12 @@ fn execute(
             position,
             ..
         } => {
-            let type_id = mc_data::Identifier::parse(entity_type)
-                .ok()
-                .and_then(|id| state.registry.entity_types.id_of(&id));
+            let type_id = state.registry.entity_type_id(entity_type);
+            if type_id.is_some_and(|key| custom_mob_cap_reached(state, key)) {
+                return admitted
+                    .entity_spawn_result(Some(mc_script::ScriptEntitySpawnFailure::Busy))
+                    .ok();
+            }
             let failure = if let Some(type_id) = type_id {
                 if let Some(world) = player_world_mut(state, ConnectionId(actor.value())) {
                     let at = [position.x(), position.y(), position.z()];
@@ -1965,6 +1968,62 @@ fn execute(
         ScriptCommand::SetWorldBlock { .. } => execute_world_block_set(state, admitted),
         _ => crate::plugin_player::execute(state, admitted),
     }
+}
+
+/// Native work is charged to the defining namespace across dimensions, regardless
+/// of which plugin requested the spawn. Dead rows release credit.
+const MAX_CUSTOM_MOBS_PER_PLUGIN: usize = 1024;
+
+fn custom_mob_cap_reached(state: &TickState, key: u32) -> bool {
+    if key & crate::blueprint::CUSTOM_TYPE_FLAG == 0 {
+        return false;
+    }
+    let Some(owner) = state
+        .registry
+        .entity_type_name(key)
+        .and_then(|name| name.split_once(':').map(|(owner, _)| owner))
+    else {
+        return true;
+    };
+    // Reserve all possible descendants of a sized splitter (size²); each split
+    // produces at most four half-sized children and cannot increase this charge.
+    let reserve = if state
+        .registry
+        .blueprint(key)
+        .is_some_and(|bp| bp.capabilities.splits_on_death)
+    {
+        16
+    } else {
+        1
+    };
+    let mut used = reserve;
+    for world in std::iter::once(state).chain(state.other_dimensions.values().map(|world| &**world))
+    {
+        for slot in world.entities.slots() {
+            let body = world.entities.body(slot);
+            let crate::entities::EntityKind::Mob { type_id } = body.kind else {
+                continue;
+            };
+            if !body.alive || type_id & crate::blueprint::CUSTOM_TYPE_FLAG == 0 {
+                continue;
+            }
+            let Some(blueprint) = world.registry.blueprint(type_id) else {
+                continue;
+            };
+            if blueprint.name.split_once(':').map(|(owner, _)| owner) != Some(owner) {
+                continue;
+            }
+            used += if blueprint.capabilities.splits_on_death {
+                usize::from(world.entities.row(slot).loot.slime_size.unwrap_or(1)).pow(2)
+            } else {
+                1
+            };
+            if used > MAX_CUSTOM_MOBS_PER_PLUGIN {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 /// Seal durable callbacks under the completed tick's WAL batch. Observations
@@ -2439,8 +2498,7 @@ pub(crate) fn kill_event(
         let crate::entities::EntityKind::Mob { type_id } = row.kind else {
             return None;
         };
-        let entity_type =
-            mc_data::entity_types::entity_type_contract_26_1_2_by_protocol_id(type_id)?.name;
+        let entity_type = state.registry.entity_type_name(type_id)?;
         mc_script::ScriptEvent::try_player_entity_killed_with_context(
             mc_script::ScriptPlayerId::new(connection.0),
             context,
@@ -2540,8 +2598,7 @@ pub(crate) fn entity_interaction(
             | crate::entities::EntityKind::Item { type_id }
             | crate::entities::EntityKind::ExperienceOrb { type_id } => type_id,
         };
-        let entity_type =
-            mc_data::entity_types::entity_type_contract_26_1_2_by_protocol_id(type_id)?.name;
+        let entity_type = state.registry.entity_type_name(type_id)?;
         let hand = match hand {
             crate::boundary::Hand::Main => mc_script::ScriptInteractionHand::MainHand,
             crate::boundary::Hand::Off => mc_script::ScriptInteractionHand::OffHand,
@@ -2577,3 +2634,7 @@ pub(crate) fn entity_interaction(
 #[cfg(test)]
 #[path = "plugin_sessions_tests.rs"]
 mod sessions_tests;
+
+#[cfg(test)]
+#[path = "plugin_mob_cap_tests.rs"]
+mod mob_cap_tests;

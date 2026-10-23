@@ -96,48 +96,33 @@ fn enchant(state: &TickState, stack: &mut ItemStack, factor: f64, chance: f64, r
 
 pub(crate) fn initialize(state: &mut TickState, slot: EntitySlot, type_id: u32) {
     let registry = std::sync::Arc::clone(&state.registry);
-    let Some(name) = registry.blueprint(type_id).map(|b| b.name.as_str()) else {
+    use crate::blueprint::EquipmentLoadout;
+    let Some(loadout) = registry
+        .blueprint(type_id)
+        .map(|b| b.capabilities.equipment)
+    else {
         return;
     };
-    let skeleton = matches!(
-        name,
-        "minecraft:skeleton" | "minecraft:stray" | "minecraft:bogged"
-    );
-    let zombie = matches!(
-        name,
-        "minecraft:zombie" | "minecraft:husk" | "minecraft:zombie_villager"
-    );
-    if !(skeleton
-        || zombie
-        || matches!(
-            name,
-            "minecraft:wither_skeleton"
-                | "minecraft:piglin"
-                | "minecraft:zombified_piglin"
-                | "minecraft:piglin_brute"
-                | "minecraft:vindicator"
-                | "minecraft:pillager"
-                | "minecraft:vex"
-                | "minecraft:drowned"
-        ))
-    {
+    let skeleton = loadout == EquipmentLoadout::BowArmor;
+    let zombie = loadout == EquipmentLoadout::RareToolArmor;
+    if loadout == EquipmentLoadout::None {
         return;
     }
     let factor = factor(state, slot);
     let mut rng = rng(state, slot);
-    let held = match name {
-        "minecraft:skeleton" | "minecraft:stray" | "minecraft:bogged" => Some("minecraft:bow"),
-        "minecraft:wither_skeleton" => Some("minecraft:stone_sword"),
-        "minecraft:piglin" => Some(if rng.below(2) == 0 {
+    let held = match loadout {
+        EquipmentLoadout::BowArmor => Some("minecraft:bow"),
+        EquipmentLoadout::StoneSword => Some("minecraft:stone_sword"),
+        EquipmentLoadout::GoldSwordOrCrossbow => Some(if rng.below(2) == 0 {
             "minecraft:golden_sword"
         } else {
             "minecraft:crossbow"
         }),
-        "minecraft:zombified_piglin" => Some("minecraft:golden_sword"),
-        "minecraft:piglin_brute" => Some("minecraft:golden_axe"),
-        "minecraft:vindicator" => Some("minecraft:iron_axe"),
-        "minecraft:pillager" => Some("minecraft:crossbow"),
-        "minecraft:vex" => Some("minecraft:iron_sword"),
+        EquipmentLoadout::GoldSword => Some("minecraft:golden_sword"),
+        EquipmentLoadout::GoldAxe => Some("minecraft:golden_axe"),
+        EquipmentLoadout::IronAxe => Some("minecraft:iron_axe"),
+        EquipmentLoadout::Crossbow => Some("minecraft:crossbow"),
+        EquipmentLoadout::BoundIronSword => Some("minecraft:iron_sword"),
         _ if zombie
             && rng.unit()
                 < if state.difficulty == Difficulty::Hard {
@@ -207,16 +192,18 @@ pub(crate) fn initialize(state: &mut TickState, slot: EntitySlot, type_id: u32) 
             enchant(state, armor, factor, 0.5, &mut rng);
         }
     }
-    let shell = name == "minecraft:drowned" && rng.unit() < 0.03;
+    let shell = loadout == EquipmentLoadout::Aquatic && rng.unit() < 0.03;
     if shell {
         equipment[1] = stack(state, "minecraft:nautilus_shell");
     }
-    let pickup = name == "minecraft:piglin"
+    let pickup = loadout == EquipmentLoadout::GoldSwordOrCrossbow
         || ((skeleton
             || zombie
             || matches!(
-                name,
-                "minecraft:drowned" | "minecraft:zombified_piglin" | "minecraft:wither_skeleton"
+                loadout,
+                EquipmentLoadout::Aquatic
+                    | EquipmentLoadout::GoldSword
+                    | EquipmentLoadout::StoneSword
             ))
             && rng.unit() < 0.55 * factor);
     let row = state.entities.row_mut(slot);
@@ -230,7 +217,7 @@ pub(crate) fn initialize(state: &mut TickState, slot: EntitySlot, type_id: u32) 
     if shell {
         row.loot.drop_chances[1] = 2.0;
     }
-    if name == "minecraft:vex" {
+    if loadout == EquipmentLoadout::BoundIronSword {
         row.loot.drop_chances[0] = 0.0;
     }
     crate::entity_loot::restore(state, slot);
@@ -244,7 +231,7 @@ pub(crate) fn natural(state: &mut TickState, slot: EntitySlot) {
     if state
         .registry
         .blueprint(type_id)
-        .is_none_or(|b| b.name != "minecraft:drowned")
+        .is_none_or(|b| b.capabilities.equipment != crate::blueprint::EquipmentLoadout::Aquatic)
     {
         return;
     }

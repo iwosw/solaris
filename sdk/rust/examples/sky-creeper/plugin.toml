@@ -1,0 +1,6 @@
+id = "sky-creeper"
+name = "Sky Creeper"
+version = "0.8.0"
+api = "0.8.0"
+player_commands = ["sky-creeper"]
+spawn_entity_types = ["sky-creeper:sky_creeper"]

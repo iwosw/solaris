@@ -249,8 +249,13 @@ fn bootstrap_food_tags_cover_every_animal_interaction_species() {
             .items
             .id_of(&mc_data::Identifier::parse(format!("minecraft:{food}")).unwrap())
             .unwrap();
+        let key = state
+            .registry
+            .entity_type_id(&format!("minecraft:{species}"))
+            .unwrap();
+        let profile = state.registry.blueprint(key).unwrap().capabilities.food;
         assert!(
-            super::food(&state, &format!("minecraft:{species}"), item),
+            super::food(&state, profile, item),
             "bootstrap registry lacks canonical {species} food {food}"
         );
     }
