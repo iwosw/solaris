@@ -4093,6 +4093,8 @@ fn bounded_gossip_window_reaches_actors_beyond_the_first_priority_prefix() {
     let second = villager(&mut state, [105.0, 201.0, 8.5]);
     let mut cache = PoiCache::default();
     cache.refresh(&state);
+    begin_brain_tick(&mut state);
+    cache.prepare_brains(&mut state);
     interact_gossip(&mut state, &cache);
     assert_eq!(
         state
@@ -4136,6 +4138,8 @@ fn golem_gossip_summoning_requires_five_recently_sleeping_villagers() {
         // Try successive bounded decision windows: placement is deterministic,
         // but the first attempt intersects the summoner's body.
         for _ in 0..12 {
+            begin_brain_tick(&mut state);
+            cache.prepare_brains(&mut state);
             golems(&mut state, &mut cache, &mut changes);
             state.tick += 100;
             if !changes.entities_spawned.is_empty() {
@@ -4176,6 +4180,8 @@ fn golem_detection_uses_axis_aligned_range_and_ignores_dead_golems() {
         state.entities.body_mut(slot).alive = alive;
         let mut cache = PoiCache::default();
         cache.refresh(&state);
+        begin_brain_tick(&mut state);
+        cache.prepare_brains(&mut state);
         golems(&mut state, &mut cache, &mut ChangeSet::default());
         assert_eq!(
             state

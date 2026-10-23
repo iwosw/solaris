@@ -2588,7 +2588,8 @@ fn courtship(state: &mut TickState, cache: &mut PoiCache, changes: &mut ChangeSe
 }
 fn golem_eligible(v: &VillagerState, tick: u64) -> bool {
     v.age >= 0
-        && v.activity == Activity::Panic
+        && (v.activity == Activity::Panic
+            || (v.last_gossip > 0 && tick.saturating_sub(v.last_gossip) < 1_200))
         && v.last_slept
             .is_some_and(|last| tick.saturating_sub(last) < 24_000)
         && v.golem_detected_until.is_none_or(|until| tick > until)
@@ -2611,6 +2612,7 @@ fn golems(state: &mut TickState, cache: &mut PoiCache, changes: &mut ChangeSet) 
         if let Some(ids) = state.entities.brain_sensor_chunks().get(pos) {
             for &id in ids {
                 if let Some(slot) = state.entities.slot_of(id)
+                    && state.entities.body(slot).alive
                     && state.entities.body(slot).kind == (EntityKind::Mob { type_id })
                 {
                     cache.golems.push(slot);
@@ -2625,10 +2627,11 @@ fn golems(state: &mut TickState, cache: &mut PoiCache, changes: &mut ChangeSet) 
                 continue;
             }
             let pos = state.entities.pos(slot);
-            let nearby = cache
-                .golems
-                .iter()
-                .any(|&s| distance(pos, state.entities.pos(s)) <= 256.0);
+            let nearby = cache.golems.iter().any(|&s| {
+                pos.iter()
+                    .zip(state.entities.pos(s))
+                    .all(|(a, b)| (a - b).abs() <= 16.0)
+            });
             if nearby {
                 state
                     .entities
@@ -2658,6 +2661,12 @@ fn golems(state: &mut TickState, cache: &mut PoiCache, changes: &mut ChangeSet) 
             continue;
         }
         let origin = state.entities.pos(slot);
+        let required =
+            if state.entities.row(slot).villager.as_ref().unwrap().activity == Activity::Panic {
+                3
+            } else {
+                5
+            };
         let agrees = bodies_near(state, origin, 10.0, true)
             .filter(|&s| {
                 active(state, s)
@@ -2669,13 +2678,15 @@ fn golems(state: &mut TickState, cache: &mut PoiCache, changes: &mut ChangeSet) 
                         .zip(origin)
                         .all(|(a, b)| (a - b).abs() <= 10.0)
             })
-            .take(3)
+            .take(required)
             .count();
-        if agrees < 3
-            || cache
-                .golems
-                .iter()
-                .any(|&s| distance(origin, state.entities.pos(s)) <= 256.0)
+        if agrees < required
+            || cache.golems.iter().any(|&s| {
+                origin
+                    .iter()
+                    .zip(state.entities.pos(s))
+                    .all(|(a, b)| (a - b).abs() <= 16.0)
+            })
         {
             continue;
         }

@@ -320,13 +320,11 @@ pub(crate) fn work(state: &mut VillagerState, registry: &CoreRegistry, tick: u64
         return;
     }
     for offer in &mut state.offers {
-        if offer.uses > 0 {
-            offer.demand = offer
-                .demand
-                .saturating_add(offer.uses)
-                .saturating_sub(offer.max_uses - offer.uses);
-            offer.uses = 0;
-        }
+        offer.demand = offer
+            .demand
+            .saturating_add(offer.uses)
+            .saturating_sub(offer.max_uses - offer.uses);
+        offer.uses = 0;
     }
     state.restocks_today += 1;
     state.last_restock = now;
