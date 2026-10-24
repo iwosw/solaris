@@ -484,3 +484,49 @@ fn attached_firework_rides_owner_and_detaches_safely_when_owner_lost() {
             ))
     );
 }
+
+/// Live crash (model gallery, release 7e7ba958): one projectile pass snapshots
+/// its hittable bodies once. A projectile that leaves the store earlier in the
+/// pass swap-moves the last row; an armor stand that was that row must still
+/// be hit-tested by identity, not through its old dense slot (index == len).
+#[test]
+fn armor_stand_moved_by_an_earlier_projectile_removal_stays_hittable() {
+    let (mut state, _, centre) = setup();
+    let mut expiring = ProjectileState::new(ProjectileKind::Arrow, None, arrow_stack(&state));
+    expiring.age = 1200;
+    let expiring = launch(
+        &mut state,
+        expiring,
+        [centre[0] + 3.0, centre[1] + 2.0, centre[2]],
+        [0.0; 3],
+    )
+    .expect("launch expiring arrow");
+    let record = ProjectileState::new(ProjectileKind::Arrow, None, arrow_stack(&state));
+    let flying = launch(
+        &mut state,
+        record,
+        [centre[0] - 3.0, centre[1] + 2.0, centre[2]],
+        [0.0; 3],
+    )
+    .expect("launch flying arrow");
+    let stand_type = state
+        .registry
+        .entity_types
+        .id_of(&Identifier::parse("minecraft:armor_stand").unwrap())
+        .unwrap();
+    let stand = state.spawn_mob(stand_type, [centre[0], centre[1], centre[2] + 4.0], 20.0);
+    let stand_slot = state.entities.slot_of(stand).unwrap();
+    assert_eq!(
+        stand_slot.0 as usize,
+        state.entities.len() - 1,
+        "stand is the last row"
+    );
+    let mut intents = Vec::new();
+    super::flight::run(&mut state, &mut intents, [expiring, flying].into_iter());
+    assert!(
+        state.entities.slot_of(expiring).is_none(),
+        "expired arrow left the store"
+    );
+    assert!(state.entities.slot_of(flying).is_some());
+    assert!(state.entities.slot_of(stand).is_some());
+}

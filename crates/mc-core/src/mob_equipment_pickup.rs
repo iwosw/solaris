@@ -266,7 +266,7 @@ fn debit(state: &mut TickState, slot: EntitySlot, changes: &mut ChangeSet) {
     let item = row.item.as_mut().expect("validated item custody");
     item.count -= 1;
     if item.count == 0 {
-        state.entities.remove(slot);
+        state.remove_entity(slot);
         changes.entities_removed.push(id);
     } else {
         if let Some(stack) = &mut item.stack {

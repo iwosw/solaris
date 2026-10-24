@@ -3215,7 +3215,7 @@ pub(crate) fn tick(state: &mut TickState, changes: &mut ChangeSet) {
         let row = state.entities.row(slot);
         if matches!(body.kind, EntityKind::Item { .. }) && !body.alive && row.item.is_none() {
             let id = body.id;
-            state.entities.remove(slot);
+            state.remove_entity(slot);
             changes.entities_removed.push(id);
         }
     }

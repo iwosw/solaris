@@ -806,6 +806,10 @@ Tick `t -> t+1`:
   Spawn, swap-remove and dimension transfer move every column together.
   `body_mut` and mixed `parts_mut` retain the same journal/motion/brain/wire
   custody as `row_mut`; serial motion writeback retains its narrower air-only
+  Tick-time removal goes through `TickState::remove_entity`, which repairs
+  staged merge slots after compaction. Projectile hit candidates retain entity
+  identity, not dense armor-stand slots, across earlier projectile removals;
+  deployment hit tests resolve the current slot immediately before access.
   durable mark and transient-timer policy. Journal image schemas do not change.
   Contact classification and pickup selection borrow body/position slices.
   Quiet contact survivors still read cold appearance serially, because burning

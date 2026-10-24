@@ -1138,7 +1138,7 @@ pub(crate) fn commit(state: &mut TickState, changes: &mut ChangeSet) {
         let row = state.entities.row(slot);
         let bee = row.bee.as_ref().expect("bee owner");
         if bee.stung && bee.sting_ticks >= 1200 {
-            state.entities.remove(slot);
+            state.remove_entity(slot);
             changes.entities_removed.push(id);
             continue;
         }
@@ -1235,7 +1235,7 @@ pub(crate) fn commit(state: &mut TickState, changes: &mut ChangeSet) {
             minimum: 2400,
         });
         persist(state, pos, hive);
-        state.entities.remove(slot);
+        state.remove_entity(slot);
         changes.entities_removed.push(id);
     }
     state.hives = hives;

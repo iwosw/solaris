@@ -289,7 +289,7 @@ pub(crate) fn tick(state: &mut TickState, changes: &mut ChangeSet) {
             continue;
         }
         if let Some(slot) = state.entities.slot_of(id) {
-            state.entities.remove(slot);
+            state.remove_entity(slot);
             changes.entities_removed.push(id);
         }
     }
