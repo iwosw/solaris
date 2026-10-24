@@ -2586,12 +2586,36 @@ fn courtship(state: &mut TickState, cache: &mut PoiCache, changes: &mut ChangeSe
         }
     }
 }
-fn golem_eligible(v: &VillagerState, tick: u64) -> bool {
+/// Vanilla `wantsToSpawnGolem`: slept within a day and saw no golem recently.
+fn wants_golem(v: &VillagerState, tick: u64) -> bool {
     v.age >= 0
-        && v.activity == Activity::Panic
         && v.last_slept
             .is_some_and(|last| tick.saturating_sub(last) < 24_000)
         && v.golem_detected_until.is_none_or(|until| tick > until)
+}
+/// Willing villagers (summoner included) a summon needs: three around a
+/// panicking villager, five around one that gossiped at a meeting within the
+/// gossip interval.
+fn golem_quorum(v: &VillagerState, tick: u64) -> Option<usize> {
+    if !wants_golem(v, tick) {
+        return None;
+    }
+    match v.activity {
+        Activity::Panic => Some(3),
+        Activity::Meet if tick.saturating_sub(v.last_gossip) < 1_200 => Some(5),
+        _ => None,
+    }
+}
+/// Vanilla's golem sensor box: 16 blocks along each axis.
+fn golem_near(state: &TickState, cache: &PoiCache, pos: [f64; 3]) -> bool {
+    cache.golems.iter().any(|&s| {
+        state
+            .entities
+            .pos(s)
+            .iter()
+            .zip(pos)
+            .all(|(a, b)| (a - b).abs() <= 16.0)
+    })
 }
 fn golems(state: &mut TickState, cache: &mut PoiCache, changes: &mut ChangeSet) {
     if !state.tick.is_multiple_of(100) || cache.actors().is_empty() {
@@ -2624,12 +2648,7 @@ fn golems(state: &mut TickState, cache: &mut PoiCache, changes: &mut ChangeSet) 
             if !active(state, slot) || !cache.admitted(slot) {
                 continue;
             }
-            let pos = state.entities.pos(slot);
-            let nearby = cache
-                .golems
-                .iter()
-                .any(|&s| distance(pos, state.entities.pos(s)) <= 256.0);
-            if nearby {
+            if golem_near(state, cache, state.entities.pos(slot)) {
                 state
                     .entities
                     .row_mut(slot)
@@ -2648,20 +2667,18 @@ fn golems(state: &mut TickState, cache: &mut PoiCache, changes: &mut ChangeSet) 
             break;
         }
         let slot = cache.actors()[(start + offset) % count];
-        if !active(state, slot)
-            || !cache.admitted(slot)
-            || !golem_eligible(
-                state.entities.row(slot).villager.as_ref().unwrap(),
-                state.tick,
-            )
-        {
+        if !active(state, slot) || !cache.admitted(slot) {
             continue;
         }
+        let v = state.entities.row(slot).villager.as_ref().unwrap();
+        let Some(quorum) = golem_quorum(v, state.tick) else {
+            continue;
+        };
         let origin = state.entities.pos(slot);
         let agrees = bodies_near(state, origin, 10.0, true)
             .filter(|&s| {
                 active(state, s)
-                    && golem_eligible(state.entities.row(s).villager.as_ref().unwrap(), state.tick)
+                    && wants_golem(state.entities.row(s).villager.as_ref().unwrap(), state.tick)
                     && state
                         .entities
                         .pos(s)
@@ -2669,14 +2686,9 @@ fn golems(state: &mut TickState, cache: &mut PoiCache, changes: &mut ChangeSet) 
                         .zip(origin)
                         .all(|(a, b)| (a - b).abs() <= 10.0)
             })
-            .take(3)
+            .take(quorum)
             .count();
-        if agrees < 3
-            || cache
-                .golems
-                .iter()
-                .any(|&s| distance(origin, state.entities.pos(s)) <= 256.0)
-        {
+        if agrees < quorum || golem_near(state, cache, origin) {
             continue;
         }
         let mut spawn = None;
