@@ -843,6 +843,32 @@ mod tests {
     }
 
     #[test]
+    fn setblock_snbt_installs_native_chest_contents_and_replaces_same_block() {
+        let (mut state, actor) = fixture();
+        for count in [7, 3] {
+            apply(
+                &mut state,
+                actor,
+                &format!("setblock 1 200 0 chest{{Items:[{{Slot:0b,id:\"minecraft:diamond\",count:{count}}}]}}"),
+            )
+            .unwrap();
+            let slots = &state.block_entities[&(1, 200, 0)].slots;
+            assert_eq!(slots[0].count, count);
+            assert_eq!(
+                state.registry.items.name_of(slots[0].item_id).unwrap().as_str(),
+                "minecraft:diamond"
+            );
+        }
+        let before = state.block_entities[&(1, 200, 0)].slots.clone();
+        assert!(apply(
+            &mut state,
+            actor,
+            "setblock 1 200 0 chest{Items:[{Slot:0b,id:\"minecraft:dirt\",count:9}]} keep"
+        ).is_err());
+        assert_eq!(state.block_entities[&(1, 200, 0)].slots, before);
+    }
+
+    #[test]
     fn fill_outline_hollow_keep_and_filter_have_distinct_footprints() {
         for mode in ["outline", "hollow", "keep", "replace stone"] {
             let (mut state, actor) = fixture();

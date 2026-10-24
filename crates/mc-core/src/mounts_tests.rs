@@ -97,6 +97,27 @@ fn equip(state: &mut TickState, actor: EntityId, target: EntityId, item: &str) {
     run_tick(state, &[use_entity(target)]);
 }
 #[test]
+fn mount_inventory_opens_for_each_tamed_mount() {
+    let (mut state, actor, pos) = fixture();
+    for name in ["horse", "donkey", "mule", "llama", "camel"] {
+        let mount = spawn(&mut state, name, pos);
+        let target_slot = slot(&state, mount);
+        state.entities.row_mut(target_slot).entity_life.tamed = true;
+        run_tick(
+            &mut state,
+            &[PlayerInput::InteractEntitySecondary {
+                connection: ConnectionId(1),
+                target: mount,
+                hand: Hand::Main,
+                location: [0.0; 3],
+            }],
+        );
+        assert!(state.players[&actor].open.is_some(), "{name} inventory");
+        let window = state.players[&actor].open.as_ref().unwrap().window;
+        run_tick(&mut state, &[PlayerInput::ContainerClose { connection: ConnectionId(1), window }]);
+    }
+}
+#[test]
 fn saddle_equip_revalidation_strip_and_death_do_not_duplicate() {
     let (mut state, actor, pos) = fixture();
     let pig = spawn(&mut state, "pig", pos);

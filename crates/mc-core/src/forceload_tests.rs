@@ -281,6 +281,29 @@ fn forced_chunks_stay_loaded_and_simulated_with_no_player() {
 }
 
 #[test]
+fn forced_neighbour_ticks_blocks_but_freezes_entity_motion_and_age() {
+    let mut state = state();
+    run(&mut state, "forceload add 160 160");
+    let want = state.desired_chunks();
+    state.world.ensure_blocking(&want);
+    state.refresh_active_chunks(state.tick);
+    let centre = state.spawn_mob(state.registry.cow_type_id, [168.5, 200.0, 168.5], 10.0);
+    let neighbour = state.spawn_mob(state.registry.cow_type_id, [184.5, 200.0, 168.5], 10.0);
+    let neighbour_slot = state.entities.slot_of(neighbour).unwrap();
+    let before = state.entities.pos(neighbour_slot);
+    let age = state.entities.row(neighbour_slot).age;
+    for _ in 0..4 {
+        run_tick(&mut state, &[]);
+    }
+    let neighbour_slot = state.entities.slot_of(neighbour).unwrap();
+    assert_eq!(state.entities.pos(neighbour_slot), before);
+    assert_eq!(state.entities.row(neighbour_slot).age, age);
+    assert!(state.world.is_active(11, 10), "level 32 still ticks blocks");
+    let centre_slot = state.entities.slot_of(centre).unwrap();
+    assert!(state.entities.pos(centre_slot)[1] < 200.0);
+}
+
+#[test]
 fn forced_tickets_are_journaled_once_and_removal_leaves_a_tombstone() {
     use crate::journal::JournalEntry;
     let mut state = state();
