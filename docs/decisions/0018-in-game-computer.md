@@ -161,19 +161,33 @@ Measured per viewer (2026-10-23; own server, two real windowed clients on privat
 owner sharing a scripted 1280x720 test source scaled to 640x360, one granted looking viewer;
 payload bytes of the `solaris:screen` messages counted by the clients, 14-24 s windows after the
 opening key frame; client repo `tools/screen_codec_live.py`, receipts kept outside the repository
-in `solaris-work/evidence/screen-codec/{jpeg,h264}`). The software-rendered owner produces about 3 to 5 new
-captures per second, so JPEG fps below 5 is the capture rate, not a limit:
+in `solaris-work/evidence/screen-codec/{jpeg,h264-v1,h264-2000000,h264-4000000}`). The
+software-rendered owner produces only about 3 to 5 new captures per second, so every
+"pictures/s" below is delivered pictures, bounded by that capture rate, not by the protocol's 5.
+Each cell is bytes/s, delivered pictures/s, bytes per delivered picture.
 
-| content | JPEG q60 (before) | H.264 (after) | factor |
-|---|---|---|---|
-| static desktop | 282 KB/s (2.5 pictures/s) | 4 KB/s (1 key frame in 24 s) | ~70x |
-| scrolling text (high-entropy glyph noise, worst plausible text) | 440 KB/s (3.9/s) | 48 KB/s (0.8/s, bitrate-capped) | ~9x |
-| video-like moving gradient | 72 KB/s (3.6/s) | 12 KB/s (4/s) | ~6x |
-| full-frame noise (incompressible) | 194 KB/s (3.4/s) | 49 KB/s (0.4/s, bitrate-capped) | ~4x |
+| content | JPEG q60 (before) | H.264 cap 0.5 Mbit/s | H.264 cap 2 Mbit/s | H.264 cap 4 Mbit/s (default) |
+|---|---|---|---|---|
+| static desktop | 282 KB/s, 2.5/s, 114 KB | 4 KB/s, 0.04/s, 95 KB (one key frame) | 3 KB/s, 0.04/s, 76 KB | 3 KB/s, 0.04/s, 77 KB |
+| scrolling text (glyph noise, harsher than real text) | 440 KB/s, 3.9/s, 114 KB | 48 KB/s, 0.8/s, 62 KB | 196 KB/s, 2.6/s, 74 KB | 268 KB/s, 4.3/s, 63 KB |
+| video-like moving gradient | 72 KB/s, 3.6/s, 20 KB | 12 KB/s, 4.0/s, 3 KB | 9 KB/s, 4.0/s, 2 KB | 10 KB/s, 4.5/s, 2 KB |
+| full-frame noise (incompressible) | 194 KB/s, 3.4/s, 58 KB (JPEG halves the size to fit 128 KiB) | 49 KB/s, 0.4/s, 115 KB | 195 KB/s, 2.0/s, 97 KB | 350 KB/s, 3.5/s, 99 KB (full 640x360) |
 
-The H.264 encoder runs at a 500 kbit/s ceiling with frame skipping, so incompressible or
-very busy content lowers the picture rate instead of the traffic; the server relays the same
-bytes to every viewer, so 50 viewers of a static screen cost about 200 KB/s instead of 14 MB/s.
+Tradeoff, stated plainly. The first measurement (0.5 Mbit/s cap) overstated the saving on busy
+content: there the encoder's rate control skipped pictures, so scrolling text and noise were
+delivered at 0.8 and 0.4 pictures/s against JPEG's 3.9 and 3.4, i.e. fewer frames, not just
+cheaper ones. With the cap raised to 4 Mbit/s H.264 delivers at least JPEG's picture rate
+(4.3 vs 3.9 for scrolling, 3.5 vs 3.4 for noise) and the honest saving is: scrolling text
+268 vs 440 KB/s (-39 %, 63 vs 114 KB per picture, ~1.8x), moving video 10 vs 72 KB/s (~7x), static
+desktop 3 vs 282 KB/s (~90x, because an unchanged picture is not sent; the JPEG baseline resent
+an identical 114 KB picture 2.5 times a second), and noise costs more than the JPEG baseline
+(350 vs 194 KB/s) because that JPEG was downscaled to fit 128 KiB while H.264 stays at full
+640x360. The cap is a ceiling for pathological content: below roughly 3 Mbit/s scrolling
+content drops under JPEG's picture rate. The default is therefore 4 Mbit/s (500 KB/s per
+viewer at most, half of the server's 1 MiB/s owner budget); a single owner screen is thus worth
+its saving mainly for static and video-like desktops, and 50 viewers of a static screen cost
+about 150 KB/s instead of 14 MB/s. Scrolling text still produced a key frame on about half of
+its pictures (`rx_keys` 123 of 255 over a run), so large-motion content remains the weakest case.
 Looking away then back restarted the stream from a key frame (`rx_keys` rose, viewer resumed).
 
 ### Screen audio
