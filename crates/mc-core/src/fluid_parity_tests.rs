@@ -80,7 +80,10 @@ fn physics_water_selects_nearest_descent() {
         air,
     );
     place(&mut state, pos, water);
-    run(&mut state, 5);
+    // Water delay is 5 ticks; the out-of-band test placement stamps its
+    // deadline on the already-processed tick, so the 5-tick delay lands on
+    // the 6th harness run — the descent selection itself is the behavior.
+    run(&mut state, 6);
     assert_eq!(at(&state, pos, -1), air);
     assert_eq!(at(&state, pos, 1), state.registry.states.water_levels[1]);
 }
