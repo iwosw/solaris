@@ -181,6 +181,9 @@ pub enum BreedingRule {
     #[default]
     Unrestricted,
     TamedStanding,
+    /// Cats: feeding enters love while sitting; only a both-sitting pair
+    /// refuses the birth (checked in `entity_life::breeding::valid`).
+    TamedOneStanding,
     TamedHealthyUnmounted,
     Sterile,
 }
@@ -1221,6 +1224,23 @@ pub fn vanilla_blueprints(
             });
         }
     }
+    // Vanilla breeds trader llamas with hay like ordinary llamas; a mixed
+    // pair produces an ordinary llama.
+    if let (Some(llama), Some(trader)) = (id("minecraft:llama"), id("minecraft:trader_llama")) {
+        for (key, blueprint) in &mut out {
+            if *key == trader {
+                blueprint.capabilities.crossbreed = Some(Crossbreed {
+                    partner: llama,
+                    offspring: llama,
+                });
+            } else if *key == llama && blueprint.capabilities.crossbreed.is_none() {
+                blueprint.capabilities.crossbreed = Some(Crossbreed {
+                    partner: trader,
+                    offspring: llama,
+                });
+            }
+        }
+    }
     out
 }
 
@@ -1391,7 +1411,8 @@ fn vanilla_capabilities(blueprint: &mut MobBlueprint) {
         prefers_gold_equipment: name == "minecraft:piglin",
         prefers_trident: name == "minecraft:drowned",
         breeding: match name {
-            "minecraft:wolf" | "minecraft:cat" => BreedingRule::TamedStanding,
+            "minecraft:wolf" => BreedingRule::TamedStanding,
+            "minecraft:cat" => BreedingRule::TamedOneStanding,
             "minecraft:horse"
             | "minecraft:donkey"
             | "minecraft:llama"

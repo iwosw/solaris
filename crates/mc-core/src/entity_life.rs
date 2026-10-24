@@ -85,7 +85,54 @@ pub fn breed_ready(body: &crate::entities::Body, row: &ColdRow) -> bool {
 
 /// Species prerequisites from OLD passive_mobs authority; no session state.
 pub fn can_breed(state: &TickState, body: &crate::entities::Body, row: &ColdRow) -> bool {
-    can_breed_in(&state.registry, body, row)
+    if !can_breed_in(&state.registry, body, row) {
+        return false;
+    }
+    // Vanilla panda births require a non-shoot bamboo plant within 7x7x3.
+    // Love still applies without it; only the birth is gated.
+    let EntityKind::Mob { type_id } = body.kind else {
+        return false;
+    };
+    if state
+        .registry
+        .blueprint(type_id)
+        .is_some_and(|blueprint| blueprint.name == "minecraft:panda")
+    {
+        // Locate the mob's own position via its entity id scan.
+        let pos = state.entities.slots().find_map(|slot| {
+            (state.entities.body(slot).id == body.id).then(|| state.entities.pos(slot))
+        });
+        if let Some(pos) = pos {
+            return panda_bamboo_nearby(state, pos);
+        }
+    }
+    true
+}
+
+/// True when a non-shoot bamboo plant grows within 7x7x3 of `pos`.
+fn panda_bamboo_nearby(state: &TickState, pos: [f64; 3]) -> bool {
+    let cx = pos[0].floor() as i32;
+    let cy = pos[1].floor() as i32;
+    let cz = pos[2].floor() as i32;
+    for dx in -3..=3 {
+        for dy in -1..=1 {
+            for dz in -3..=3 {
+                let Some(current) = state.world.block_at(cx + dx, cy + dy, cz + dz) else {
+                    continue;
+                };
+                let Some(block) = state.registry.blocks.by_id(mc_world::BlockStateId(current))
+                else {
+                    continue;
+                };
+                // Shoots are the separate `bamboo_sapling` block; any grown
+                // bamboo plant counts.
+                if block.block.id.path() == "bamboo" {
+                    return true;
+                }
+            }
+        }
+    }
+    false
 }
 
 /// [`can_breed`] over the registry alone, for workers without a `TickState`.
@@ -103,6 +150,11 @@ pub(crate) fn can_breed_in(
     match blueprint.capabilities.breeding {
         crate::blueprint::BreedingRule::TamedStanding => {
             row.entity_life.tamed && !row.entity_life.sitting
+        }
+        crate::blueprint::BreedingRule::TamedOneStanding => {
+            // Vanilla feeds a sitting cat into love; only a both-sitting
+            // pair refuses the birth (checked in `breeding::valid`).
+            row.entity_life.tamed
         }
         crate::blueprint::BreedingRule::TamedHealthyUnmounted => {
             row.entity_life.tamed
@@ -264,6 +316,28 @@ pub fn breed(
             row.breed_cooldown = PARENT_COOLDOWN;
         }
     }
+    // Egg-laying species never spawn a live child: vanilla stages a sniffer
+    // egg item, turtle egg blocks, or frogspawn instead.
+    let (Some(a), Some(b)) = (
+        state.entities.slot_of(actor),
+        state.entities.slot_of(partner),
+    ) else {
+        return;
+    };
+    let (EntityKind::Mob { type_id: first }, EntityKind::Mob { type_id: second }) =
+        (state.entities.body(a).kind, state.entities.body(b).kind)
+    else {
+        return;
+    };
+    if let Some(birth) = breeding::egg_birth(&state.registry, first, second) {
+        stage_egg_birth(state, actor, partner, pos, birth, advancement_breeding);
+        if let Some(player) = breeder.and_then(|id| state.players.get_mut(&id)) {
+            player
+                .statistics
+                .increment_custom(mc_data::statistics::CustomStat::AnimalsBred, 1);
+        }
+        return;
+    }
     let health = state
         .registry
         .blueprint(type_id)
@@ -280,6 +354,194 @@ pub fn breed(
         player
             .statistics
             .increment_custom(mc_data::statistics::CustomStat::AnimalsBred, 1);
+    }
+}
+
+/// Stage a vanilla egg-laying birth at merge: sniffer egg item, turtle egg
+/// blocks on sand, or frogspawn on water. Parents already paid love/cooldown.
+fn stage_egg_birth(
+    state: &mut TickState,
+    actor: EntityId,
+    partner: EntityId,
+    pos: [f64; 3],
+    birth: breeding::EggBirth,
+    advancement_breeding: Option<(EntityId, serde_json::Value)>,
+) {
+    let _ = (actor, partner, advancement_breeding);
+    match birth {
+        breeding::EggBirth::SnifferEgg => {
+            if let Some(id) = Identifier::parse("minecraft:sniffer_egg")
+                .ok()
+                .and_then(|name| state.registry.items.id_of(&name))
+            {
+                state.merge_life_drops.push((pos, ItemStack::new(id, 1)));
+            }
+        }
+        breeding::EggBirth::TurtleEgg => {
+            stage_turtle_eggs(state, pos);
+        }
+        breeding::EggBirth::Frogspawn => {
+            stage_frogspawn(state, pos);
+        }
+    }
+}
+
+/// Turtle home-sand nesting: accumulate `turtle_egg` blocks (up to 4 eggs)
+/// on the sand below the birth midpoint; otherwise drop one egg item.
+fn stage_turtle_eggs(state: &mut TickState, pos: [f64; 3]) {
+    let cell = crate::boundary::BlockPos {
+        x: pos[0].floor() as i32,
+        y: pos[1].floor() as i32,
+        z: pos[2].floor() as i32,
+    };
+    for y in [cell.y, cell.y - 1, cell.y - 2] {
+        let at = crate::boundary::BlockPos { y, ..cell };
+        let Some(current) = state.world.block_at(at.x, at.y, at.z) else {
+            continue;
+        };
+        let path = state
+            .registry
+            .blocks
+            .by_id(mc_world::BlockStateId(current))
+            .map(|block| block.block.id.path().to_owned());
+        match path.as_deref() {
+            Some("turtle_egg") => {
+                let eggs = state
+                    .registry
+                    .blocks
+                    .by_id(mc_world::BlockStateId(current))
+                    .and_then(|block| {
+                        block
+                            .properties
+                            .iter()
+                            .find(|(key, _)| key == "eggs")
+                            .and_then(|(_, value)| value.parse::<u8>().ok())
+                    })
+                    .unwrap_or(1);
+                if eggs >= 4 {
+                    return;
+                }
+                let next = state
+                    .registry
+                    .blocks
+                    .by_id(mc_world::BlockStateId(current))
+                    .and_then(|block| {
+                        let mut props: Vec<(String, String)> = block
+                            .properties
+                            .iter()
+                            .map(|(key, value)| {
+                                if key == "eggs" {
+                                    (key.clone(), (eggs + 1).to_string())
+                                } else {
+                                    (key.clone(), value.clone())
+                                }
+                            })
+                            .collect();
+                        props.sort();
+                        state
+                            .registry
+                            .blocks
+                            .by_name_and_props(&block.block.id, &props)
+                            .map(|id| id.0)
+                    });
+                if let Some(next) = next {
+                    state.merge_block_writes.push((at, next));
+                }
+                return;
+            }
+            Some("sand" | "red_sand" | "suspicious_sand") => {
+                let above = crate::boundary::BlockPos { y: y + 1, ..at };
+                if state.world.block_at(above.x, above.y, above.z)
+                    != Some(state.registry.states.air)
+                {
+                    return;
+                }
+                if let Some(name) = Identifier::parse("minecraft:turtle_egg").ok()
+                    && let Some(block) = state.registry.blocks.block(&name)
+                {
+                    state.merge_block_writes.push((above, block.default.0));
+                }
+                return;
+            }
+            _ => continue,
+        }
+    }
+    // No home sand in reach: vanilla still lays; drop one egg item.
+    if let Some(id) = Identifier::parse("minecraft:turtle_egg")
+        .ok()
+        .and_then(|name| state.registry.items.id_of(&name))
+    {
+        state.merge_life_drops.push((pos, ItemStack::new(id, 1)));
+    }
+}
+
+/// Frogspawn floats on the water surface nearest the birth midpoint.
+fn stage_frogspawn(state: &mut TickState, pos: [f64; 3]) {
+    let cell = crate::boundary::BlockPos {
+        x: pos[0].floor() as i32,
+        y: pos[1].floor() as i32,
+        z: pos[2].floor() as i32,
+    };
+    for radius in 0i32..=4 {
+        for dx in -radius..=radius {
+            for dz in -radius..=radius {
+                if dx.abs().max(dz.abs()) != radius {
+                    continue;
+                }
+                for dy in [-1, 0, 1, -2, 2] {
+                    let at = crate::boundary::BlockPos {
+                        x: cell.x + dx,
+                        y: cell.y + dy,
+                        z: cell.z + dz,
+                    };
+                    let Some(current) = state.world.block_at(at.x, at.y, at.z) else {
+                        continue;
+                    };
+                    let is_water = state
+                        .registry
+                        .blocks
+                        .by_id(mc_world::BlockStateId(current))
+                        .is_some_and(|block| block.block.id.path() == "water");
+                    if !is_water {
+                        continue;
+                    }
+                    let above = crate::boundary::BlockPos { y: at.y + 1, ..at };
+                    if state.world.block_at(above.x, above.y, above.z)
+                        != Some(state.registry.states.air)
+                    {
+                        continue;
+                    }
+                    if let Some(name) = Identifier::parse("minecraft:frogspawn").ok()
+                        && let Some(block) = state.registry.blocks.block(&name)
+                    {
+                        state.merge_block_writes.push((above, block.default.0));
+                        return;
+                    }
+                }
+            }
+        }
+    }
+    // No water in reach: keep the birth visible as an egg item, else a tadpole.
+    if let Some(id) = Identifier::parse("minecraft:frogspawn")
+        .ok()
+        .and_then(|name| state.registry.items.id_of(&name))
+    {
+        state.merge_life_drops.push((pos, ItemStack::new(id, 1)));
+    } else if let Some(name) = Identifier::parse("minecraft:tadpole").ok()
+        && let Some(tadpole) = state.registry.entity_types.id_of(&name)
+    {
+        let health = state
+            .registry
+            .blueprint(tadpole)
+            .map_or(3.0, |blueprint| blueprint.params.max_health);
+        state.merge_spawns.push(crate::tick::MergeSpawn {
+            pos,
+            type_id: tadpole,
+            health,
+            taming: None,
+            wool: None,
+            advancement_breeding: None,
+        });
     }
 }
 
@@ -470,11 +732,15 @@ pub fn interact(
         && blueprint.has_goal(crate::blueprint::GoalKind::Breed)
         && !held.is_empty()
         && blueprint.breed_food.contains(&held.item_id)
+        && axolotl_bucket_remainder(state, body, row, &held).is_none_or(|_| true)
     {
         IntentKind::FeedAnimal { target }
     } else {
         return;
     };
+    // Vanilla returns a water bucket after an axolotl eats a tropical fish
+    // bucket: the food is consumed but its bucket is not destroyed.
+    let remainder = axolotl_bucket_remainder(state, body, row, &held);
     let take = if matches!(kind, IntentKind::FeedAnimal { .. }) {
         i32::from(!creative)
     } else {
@@ -494,12 +760,39 @@ pub fn interact(
                 expect_item: held.item_id,
                 expect_count: held.count,
                 take,
-                put_item: None,
-                put_count: 0,
+                put_item: remainder,
+                put_count: i32::from(remainder.is_some() && !creative && held.count == 1),
             }],
             ..Default::default()
         },
     });
+}
+
+/// Water bucket remainder when an adult axolotl eats a tropical fish bucket.
+fn axolotl_bucket_remainder(
+    state: &TickState,
+    body: &crate::entities::Body,
+    row: &ColdRow,
+    held: &ItemStack,
+) -> Option<u32> {
+    let EntityKind::Mob { type_id } = body.kind else {
+        return None;
+    };
+    let blueprint = state.registry.blueprint(type_id)?;
+    if blueprint.name != "minecraft:axolotl" || !adult(row) {
+        return None;
+    }
+    let fish = state
+        .registry
+        .items
+        .id_of(&Identifier::parse("minecraft:tropical_fish_bucket").ok()?)?;
+    if held.item_id != fish {
+        return None;
+    }
+    state
+        .registry
+        .items
+        .id_of(&Identifier::parse("minecraft:water_bucket").ok()?)
 }
 
 pub fn apply(state: &mut TickState, actor: EntityId, plan: &HarvestPlan) {
