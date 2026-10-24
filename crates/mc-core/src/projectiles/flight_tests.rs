@@ -61,6 +61,38 @@ fn arrow_stack(state: &TickState) -> ItemStack {
 }
 
 #[test]
+fn weak_arrow_removes_fresh_armor_stand() {
+    // ARMOR-STAND-PROJECTILE-BREAK through the existing arrow flight path:
+    // a low-damage unenchanted arrow must break a fresh stand outright.
+    let (mut state, player, centre) = setup();
+    let stand_type = state
+        .registry
+        .entity_types
+        .id_of(&Identifier::parse("minecraft:armor_stand").unwrap())
+        .unwrap();
+    let stand = state.spawn_mob(stand_type, [centre[0] + 2.0, centre[1], centre[2]], 20.0);
+    let owner = state
+        .entities
+        .row(state.entities.slot_of(player).unwrap())
+        .uuid;
+    let mut record = ProjectileState::new(ProjectileKind::Arrow, Some(owner), arrow_stack(&state));
+    record.damage = 1.0;
+    let projectile = launch(
+        &mut state,
+        record,
+        [centre[0], centre[1] + 0.7, centre[2]],
+        [3.0, 0.0, 0.0],
+    )
+    .unwrap();
+    run_tick(&mut state, &[]);
+    assert!(
+        state.entities.slot_of(stand).is_none(),
+        "weak arrow must break the stand outright"
+    );
+    let _ = projectile;
+}
+
+#[test]
 fn flight_hits_first_body_and_commits_punch_along_horizontal_flight() {
     let (mut state, player, centre) = setup();
     let cow = state
