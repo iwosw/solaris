@@ -1380,3 +1380,72 @@ fn tnt_cart_ignition_credits_used_once_and_broken_only_on_actual_durability_brea
         );
     }
 }
+
+#[test]
+fn hopper_pulling_from_a_container_vehicle_refreshes_its_open_menu() {
+    let mut s = fixture();
+    let viewer = player(&mut s, [2.5, 64.0, 0.5]);
+    let stone = block(&s, "stone", &[]);
+    s.world.set_block(2, 63, 0, stone);
+    s.world.set_block(0, 63, 0, stone);
+    let hopper = BlockPos { x: 0, y: 64, z: 0 };
+    let hopper_block = block(&s, "hopper", &[("facing", "down")]);
+    s.world
+        .set_block(hopper.x, hopper.y, hopper.z, hopper_block);
+    s.world.fold_overlay();
+    s.block_entities.insert(
+        (0, 64, 0),
+        crate::tick::BlockEntityState {
+            slots: vec![ItemStack::EMPTY; 5],
+            furnace: None,
+        },
+    );
+    run_tick(
+        &mut s,
+        &[PlayerInput::UseItemOn {
+            connection: ConnectionId(1),
+            hand: Hand::Main,
+            position: hopper,
+            face: 1,
+            cursor: [0.5; 3],
+            sequence: 1,
+        }],
+    );
+    let window = s.players[&viewer]
+        .open
+        .as_ref()
+        .expect("hopper menu")
+        .window;
+    let cart = mob(&mut s, "chest_minecart", [0.5, 65.0, 0.5]);
+    let apple = item(&s, "apple");
+    let slot = s.entities.slot_of(cart).unwrap();
+    s.entities
+        .row_mut(slot)
+        .entity_life
+        .vehicle
+        .as_mut()
+        .unwrap()
+        .slots[0] = ItemStack::new(apple, 3);
+    let mut refreshed = false;
+    for _ in 0..10 {
+        let (_, drains, _) = run_tick(&mut s, &[]);
+        refreshed |= drains
+            .iter()
+            .filter(|(connection, _)| *connection == ConnectionId(1))
+            .flat_map(|(_, changes)| changes)
+            .any(|change| match change {
+                crate::boundary::PlayerChange::MenuSlot {
+                    window: w, item, ..
+                } => *w == window && item.as_ref().is_some_and(|i| i.item_id == apple),
+                crate::boundary::PlayerChange::MenuContents {
+                    window: w, slots, ..
+                } => *w == window && slots.iter().flatten().any(|stack| stack.item_id == apple),
+                _ => false,
+            });
+        if s.block_entities[&(0, 64, 0)].slots[0].item_id == apple {
+            break;
+        }
+    }
+    assert_eq!(s.block_entities[&(0, 64, 0)].slots[0].item_id, apple);
+    assert!(refreshed, "the hopper viewer sees the pulled apple");
+}

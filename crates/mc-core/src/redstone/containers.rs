@@ -1004,8 +1004,12 @@ pub(super) fn run(
         if let Some(above) = super::offset(pos, (0, 1, 0)) {
             moved |= if kind(state, above).and_then(size).is_some() {
                 transfer_one(state, above, pos, (0, -1, 0), true)
+            } else if crate::vehicles::pull_into_hopper(state, above, pos) {
+                // The vehicle syncs its own viewers; the hopper's need the same notice.
+                changed(state, pos);
+                true
             } else {
-                crate::vehicles::pull_into_hopper(state, above, pos) || suction(state, pos, above)
+                suction(state, pos, above)
             };
         }
         if moved {
