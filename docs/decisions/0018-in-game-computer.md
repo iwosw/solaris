@@ -99,15 +99,17 @@ extending +X for sides 2/3 and +Z for 4/5), `u8 height` (1..=16, extending +Y), 
 Client -> server: `0 OPEN(id)` owner starts (within 8 blocks; every one of the width x height blocks must
 be a monitor, i.e. a `minecraft:black_glazed_terracotta` carrier state whose
 `facing` equals `side`; at most 4 per owner and 128 open screens; one owner per rectangle); `1 CLOSE(id)`;
-`2 FRAME_PART(id, u32 seq, u16 w, u16 h, u8 codec=0 JPEG, u8 idx, u8 count, bytes)`
+`2 FRAME_PART(id, u32 seq, u16 w, u16 h, u8 codec=1 H.264, u8 key, u8 idx, u8 count, bytes)`
 with every part carrying the full header, <=30000 data bytes per part (the
-serverbound payload limit is 32767), <=5 parts, <=131072 bytes, w<=640, h<=640;
+serverbound payload limit is 32767), <=5 parts, <=131072 bytes, w<=640, h<=640
+(`key` is 1 for a self-contained SPS/PPS + IDR picture, 0 for a delta; the JPEG codec 0 is gone);
 `3 REQUEST(id)` viewer asks the owner; `4 ANSWER(u32 request, u8 allow)`;
 `5 REVOKE(id, 16-byte viewer uuid)`; `6 LEAVE(id)` viewer drops permission and
 cancels its unanswered request to that owner (a later ANSWER grants nothing).
+`8 KEY_REQUEST(id)` a watching viewer could not decode and needs a key frame.
 
 Server -> client: `0 DEMAND(id, u8 on, u16 max_width=640, u8 fps=5)` to the owner;
-`1 FRAME(id, u32 seq, u16 w, u16 h, u8 codec, bytes)` reassembled, to viewers
+`1 FRAME(id, u32 seq, u16 w, u16 h, u8 codec, u8 key, bytes)` reassembled, to viewers
 only; `2 STOP(id, u8 reason)` 0 looked away, 1 owner closed, 2 revoked, 3 owner
 left; `3 REFUSED(id, u8 reason)` 0 not allowed, 1 not a monitor, 2 out of reach,
 3 too many, 4 taken, 5 bad frame, 6 no such screen, 7 repeat/rate limited;
@@ -115,7 +117,8 @@ left; `3 REFUSED(id, u8 reason)` 0 not allowed, 1 not a monitor, 2 out of reach,
 `5 PERMISSION(id, u8 allowed)` to the requester; `6 ACTIVE(id, u8 on)` to every
 native client in that dimension on open/close/owner leave, and as a snapshot
 when a native client joins or changes dimension.
-`7 AUDIO(id, u32 seq, opus)` to viewers only (see "Screen audio").
+`7 AUDIO(id, u32 seq, opus)` to viewers only (see "Screen audio");
+`8 KEYFRAME_REQUEST(id)` to the owner: the next picture must be a key frame.
 
 Permission is per (owner, viewer) and covers all of the owner's open screens;
 it ends on REVOKE/LEAVE, when the owner closes their last screen, or when
@@ -128,6 +131,65 @@ while DEMAND is on, only from the owner, within a 1 MiB/s byte budget (256 KiB
 burst); overflow frames are dropped, malformed or repeated unsolicited frames
 close the screen. A viewer's full reliable queue drops the frame, never the
 connection.
+
+### Screen video codec
+
+Pictures are H.264 (Cisco OpenH264, Constrained Baseline, `ScreenContentRealTime`, compiled from
+the bundled C++ source by the client so Linux and `x86_64-pc-windows-gnu` need no system library),
+one picture per FRAME, Annex B. The server still never decodes: it only reads the `key` flag.
+
+- **Key frames.** Deltas reference earlier pictures, so the relay tracks `needs_key` per
+  (viewer, screen). A viewer starts in it (new grant, looking again, joined mid-stream) and
+  receives no delta until the next key frame; a key frame goes to every watcher and clears it.
+  `DEMAND on` already asks the owner for a key frame first. A watcher that joins while DEMAND
+  is on makes the relay send `KEYFRAME_REQUEST` (at most one outstanding per screen, cleared by
+  the next key frame). TCP never loses a picture, but the relay can: a full viewer queue drops a
+  FRAME (`deliver` calls `Relay::frame_dropped`), an exhausted owner byte budget drops one
+  (`resync`); both put the affected viewers back in `needs_key` and request a key frame. A viewer
+  whose decoder fails sends `KEY_REQUEST` (only honoured while it is watching).
+- **No periodic key frames.** The transport is reliable and OpenH264 decoding is deterministic,
+  so there is no drift to correct; a key frame is sent only on demand (first picture, new
+  watcher, resync, resolution change, oversize restart). A fixed 2 s interval would cost a
+  full key frame every 10 pictures for nothing.
+- **Unchanged pictures cost nothing.** The owner downscales the capture to <=640 px (even
+  dimensions) and compares it with the last picture sent; identical pictures send no packet at
+  all (a requested key frame is still sent, from the retained last picture, so a static window
+  can be joined). Near-identical ones become tiny P-frames.
+- **Bounds.** If a picture exceeds 131072 bytes the owner restarts at 3/4 of the size with a
+  key frame instead of sending a partial reference chain.
+
+Measured per viewer (2026-10-23; own server, two real windowed clients on private Xvfb displays,
+owner sharing a scripted 1280x720 test source scaled to 640x360, one granted looking viewer;
+payload bytes of the `solaris:screen` messages counted by the clients, 14-24 s windows after the
+opening key frame; client repo `tools/screen_codec_live.py`, receipts kept outside the repository
+in `solaris-work/evidence/screen-codec/{jpeg,h264-v1,h264-2000000,h264-4000000}`). The
+software-rendered owner produces only about 3 to 5 new captures per second, so every
+"pictures/s" below is delivered pictures, bounded by that capture rate, not by the protocol's 5.
+Each cell is bytes/s, delivered pictures/s, bytes per delivered picture.
+
+| content | JPEG q60 (before) | H.264 cap 0.5 Mbit/s | H.264 cap 2 Mbit/s | H.264 cap 4 Mbit/s (default) |
+|---|---|---|---|---|
+| static desktop | 282 KB/s, 2.5/s, 114 KB | 4 KB/s, 0.04/s, 95 KB (one key frame) | 3 KB/s, 0.04/s, 76 KB | 3 KB/s, 0.04/s, 77 KB |
+| scrolling text (glyph noise, harsher than real text) | 440 KB/s, 3.9/s, 114 KB | 48 KB/s, 0.8/s, 62 KB | 196 KB/s, 2.6/s, 74 KB | 268 KB/s, 4.3/s, 63 KB |
+| video-like moving gradient | 72 KB/s, 3.6/s, 20 KB | 12 KB/s, 4.0/s, 3 KB | 9 KB/s, 4.0/s, 2 KB | 10 KB/s, 4.5/s, 2 KB |
+| full-frame noise (incompressible) | 194 KB/s, 3.4/s, 58 KB (JPEG halves the size to fit 128 KiB) | 49 KB/s, 0.4/s, 115 KB | 195 KB/s, 2.0/s, 97 KB | 350 KB/s, 3.5/s, 99 KB (full 640x360) |
+
+Tradeoff, stated plainly. The first measurement (0.5 Mbit/s cap) overstated the saving on busy
+content: there the encoder's rate control skipped pictures, so scrolling text and noise were
+delivered at 0.8 and 0.4 pictures/s against JPEG's 3.9 and 3.4, i.e. fewer frames, not just
+cheaper ones. With the cap raised to 4 Mbit/s H.264 delivers at least JPEG's picture rate
+(4.3 vs 3.9 for scrolling, 3.5 vs 3.4 for noise) and the honest saving is: scrolling text
+268 vs 440 KB/s (-39 %, 63 vs 114 KB per picture, ~1.8x), moving video 10 vs 72 KB/s (~7x), static
+desktop 3 vs 282 KB/s (~90x, because an unchanged picture is not sent; the JPEG baseline resent
+an identical 114 KB picture 2.5 times a second), and noise costs more than the JPEG baseline
+(350 vs 194 KB/s) because that JPEG was downscaled to fit 128 KiB while H.264 stays at full
+640x360. The cap is a ceiling for pathological content: below roughly 3 Mbit/s scrolling
+content drops under JPEG's picture rate. The default is therefore 4 Mbit/s (500 KB/s per
+viewer at most, half of the server's 1 MiB/s owner budget); a single owner screen is thus worth
+its saving mainly for static and video-like desktops, and 50 viewers of a static screen cost
+about 150 KB/s instead of 14 MB/s. Scrolling text still produced a key frame on about half of
+its pictures (`rx_keys` 123 of 255 over a run), so large-motion content remains the weakest case.
+Looking away then back restarted the stream from a key frame (`rx_keys` rose, viewer resumed).
 
 ### Screen audio
 
