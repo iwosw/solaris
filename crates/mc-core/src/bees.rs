@@ -733,38 +733,7 @@ fn flower_at(state: &TickState, cell: BlockPos) -> bool {
     {
         return false;
     }
-    matches!(
-        path,
-        "dandelion"
-            | "open_eyeblossom"
-            | "poppy"
-            | "blue_orchid"
-            | "allium"
-            | "azure_bluet"
-            | "red_tulip"
-            | "orange_tulip"
-            | "white_tulip"
-            | "pink_tulip"
-            | "oxeye_daisy"
-            | "cornflower"
-            | "lily_of_the_valley"
-            | "wither_rose"
-            | "torchflower"
-            | "sunflower"
-            | "lilac"
-            | "peony"
-            | "rose_bush"
-            | "pitcher_plant"
-            | "flowering_azalea"
-            | "flowering_azalea_leaves"
-            | "mangrove_propagule"
-            | "cherry_leaves"
-            | "pink_petals"
-            | "wildflowers"
-            | "chorus_flower"
-            | "spore_blossom"
-            | "cactus_flower"
-    )
+    flower(b)
 }
 
 fn nearby_flower(state: &TickState, p: [f64; 3]) -> Option<BlockPos> {
@@ -791,8 +760,8 @@ fn nearby_flower(state: &TickState, p: [f64; 3]) -> Option<BlockPos> {
 }
 
 /// Block-name leg of bee attraction (full 26.1.2 bee_attractive tag).
-/// Waterlogged/tall-half rules live in flower_at; the search path uses
-/// nearby_flower. Kept in sync: any tag member here must appear there.
+/// flower_at applies the waterlogged/tall-half rules then delegates here;
+/// the search path uses nearby_flower.
 fn flower(b: &mc_world::BlockState) -> bool {
     matches!(
         b.block.id.path(),
