@@ -753,7 +753,10 @@ fn tick_cell(
         "daylight_detector" => {
             let level = signal::daylight(state, pos, prop(block, "inverted") == Some("true"));
             change(state, writes, pos, "power", &level.to_string());
-            schedule_cell(state, pos, 20, 0);
+            // Periodic recheck on its own priority: an explicit wake
+            // (schedule priority 0) must never be swallowed by the queued
+            // 20-tick recheck — weather changes resample promptly.
+            schedule_cell(state, pos, 20, 1);
         }
         "composter" => {
             crate::composter::mature(state, pos, writes);
