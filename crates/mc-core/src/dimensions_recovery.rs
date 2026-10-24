@@ -38,6 +38,9 @@ pub(crate) fn validate_entity(
     if matches!(name, "minecraft:item_frame" | "minecraft:glow_item_frame") {
         crate::item_frame::validate_image(record)?;
     }
+    if name == "minecraft:painting" {
+        crate::painting::validate_image(record, &state.registry)?;
+    }
     if record.state.bee.is_some() && name != "minecraft:bee" {
         return Err(invalid(
             "Bee: retained state incompatible with entity type".into(),
@@ -184,6 +187,7 @@ pub(crate) fn hydrate_entity(
     let mut appearance = appearance_from_vanilla_entity(&record);
     crate::end_fight::native_appearance(&record, &mut appearance).map_err(invalid)?;
     crate::item_frame::native_appearance(&record, &mut appearance)?;
+    crate::painting::native_appearance(&record, &mut appearance, registry)?;
     if let Some(fight) = &mut base.end_fight {
         crate::end_fight::hydrate_native_entity(fight, &record).map_err(invalid)?;
     }

@@ -174,7 +174,11 @@ fn supported(state: &TickState, pos: BlockPos) -> bool {
 fn eternal(state: &TickState, pos: BlockPos) -> bool {
     offset(pos, [0, -1, 0])
         .and_then(|below| at(state, below))
-        .is_some_and(|block| block.block.id.path() == "netherrack")
+        .is_some_and(|block| {
+            matches!(block.block.id.path(), "netherrack" | "magma_block")
+                || (state.dimension == crate::dimensions::Dimension::End
+                    && block.block.id.path() == "bedrock")
+        })
 }
 
 fn normal_state(state: &TickState, pos: BlockPos, age: u8) -> u32 {

@@ -35,6 +35,7 @@ fn overlay(table: &mut toml::Table, text: &str) -> anyhow::Result<()> {
             "motd" => ("server", "motd", Value::String(value)),
             "max-players" => ("server", "max_players", integer(&key, &value)?),
             "enable-command-block" => ("server", "enable_command_block", boolean(&key, &value)?),
+            "spawn-protection" => ("server", "spawn_protection", integer(&key, &value)?),
             "view-distance" => ("server", "view_distance", integer(&key, &value)?),
             "simulation-distance" => ("server", "simulation_distance", integer(&key, &value)?),
             "accepts-transfers" => ("server", "accepts_transfers", boolean(&key, &value)?),

@@ -10,6 +10,8 @@ accepts_transfers = false
 # console commands and saves keep working; the first join resumes ticking.
 # Zero or negative never pauses (vanilla accepts -1).
 pause_when_empty_seconds = 60
+# Overworld spawn square radius; inactive with an empty ops.json. Operators bypass it.
+spawn_protection = 16
 # Opt-in per-tick input log (`<world_dir>/input-log/`) for replay from a
 # checkpoint. Logs player input as sent (auth commands and locked-session text
 # are withheld): treat the files as sensitive. Off by default.

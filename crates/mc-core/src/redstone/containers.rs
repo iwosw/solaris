@@ -113,6 +113,7 @@ fn size(name: &str) -> Option<usize> {
 
 pub(super) fn has_analog_output(name: &str) -> bool {
     size(name).is_some()
+        || crate::special_storage::owns(name)
         || crate::copper::family(name).is_some_and(|(family, _, _)| family == "copper_golem_statue")
 }
 
@@ -410,6 +411,9 @@ fn cells(state: &TickState, pos: BlockPos) -> Vec<BlockPos> {
 
 /// Container comparator strength uses the actual item stack limit, not 64.
 pub(super) fn signal(state: &TickState, pos: BlockPos) -> u8 {
+    if let Some(signal) = crate::special_storage::comparator(state, pos) {
+        return signal;
+    }
     if let Some(signal) = crate::jukebox::comparator(state, pos) {
         return signal;
     }

@@ -154,6 +154,14 @@ impl PlayerState {
         self.using.is_some()
     }
 
+    pub(crate) fn brush_use(&self, rules: &ItemRules<'_>) -> Option<(Hand, u32)> {
+        let using = self.using?;
+        let held = &self.inventory.slots[self.held_slot(using.hand)];
+        (!held.is_empty() && held.item_id == using.item_id
+            && rules.items.name_of(held.item_id).is_some_and(|id| id.as_str() == "minecraft:brush"))
+            .then_some((using.hand, using.elapsed))
+    }
+
     #[must_use]
     pub fn new(connection: ConnectionId, game_mode: GameMode) -> Self {
         Self {
@@ -956,6 +964,10 @@ impl PlayerState {
         else {
             return;
         };
+        if rules.items.name_of(held.item_id).is_some_and(|item| item.as_str() == "minecraft:brush") {
+            self.using = Some(ItemUse { hand, remaining: 200, elapsed: 0, item_id: held.item_id });
+            return;
+        }
         if rules
             .items
             .name_of(held.item_id)
@@ -1060,7 +1072,9 @@ impl PlayerState {
             return PlayerEffects::default();
         }
         self.using = None;
-        let before = self.snapshot();
+        if rules.items.name_of(held.item_id).is_some_and(|item| item.as_str() == "minecraft:brush") {
+            return PlayerEffects::default();
+        }
         let consumed = self.inventory.slots[slot].clone();
         self.statistics
             .increment(StatType::Used, consumed.item_id, 1);

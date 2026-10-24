@@ -187,6 +187,9 @@ pub struct ServerSection {
     /// Vanilla enable-command-block execution gate.
     #[serde(default)]
     pub enable_command_block: bool,
+    /// Vanilla Overworld protected spawn radius; inactive when ops.json is empty.
+    #[serde(default = "default_spawn_protection")]
+    pub spawn_protection: u32,
     /// Opt-in per-tick input log under `<world_dir>/input-log/` for replay
     /// from a checkpoint (see `docs/OPERATING.md`). Off by default.
     #[serde(default)]
@@ -207,6 +210,7 @@ impl Default for ServerSection {
             accepts_transfers: false,
             pause_when_empty_seconds: default_pause_when_empty_seconds(),
             enable_command_block: false,
+            spawn_protection: default_spawn_protection(),
             input_log: false,
             whitelist: None,
         }
@@ -586,6 +590,9 @@ fn default_pause_when_empty_seconds() -> i32 {
     // Vanilla 26.1.2 `server.properties` default.
     60
 }
+fn default_spawn_protection() -> u32 {
+    16
+}
 fn default_bind_address() -> String {
     "127.0.0.1".to_owned()
 }
@@ -733,6 +740,7 @@ fn unknown_leaves(table: &toml::Table) -> Vec<String> {
                 "accepts_transfers",
                 "pause_when_empty_seconds",
                 "enable_command_block",
+                "spawn_protection",
                 "input_log",
                 "whitelist",
             ],

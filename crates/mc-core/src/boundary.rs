@@ -55,6 +55,8 @@ pub enum PlayerInput {
 
     /// Trusted edge snapshot of this live connection's actual permission level.
     PermissionLevel { connection: ConnectionId, level: u8 },
+    /// Trusted complete persisted operator list, including offline operators.
+    SpawnProtectionOperators { operators: Vec<Uuid> },
     /// Trusted edge admission of this live connection's negotiated client view
     /// radius (already clamped by the edge; the core additionally caps it at
     /// the configured server view). Recorded before [`PlayerInput::Join`] and
@@ -342,6 +344,7 @@ impl PlayerInput {
 
     pub fn connection(&self) -> ConnectionId {
         match self {
+            Self::SpawnProtectionOperators { .. } => ConnectionId(0),
             Self::BuildPreviewFence { fence } => fence.connection(),
             Self::AuthorizedBuild { authorization } => authorization.connection(),
             Self::BuildResync { request } => request.connection(),
@@ -613,6 +616,8 @@ pub enum EntityDataValue {
     Boolean(bool),
     WeatheringCopper(u8),
     CopperGolemState(u8),
+    Direction(u8),
+    PaintingVariant(u32),
     String(String),
     BlockState(u32),
     Item(Option<ItemStack>),

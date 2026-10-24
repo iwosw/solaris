@@ -13,6 +13,7 @@ pub(super) fn refuse_input(state: &mut TickState, input: &PlayerInput) -> bool {
         | PlayerInput::Leave { .. }
         | PlayerInput::PluginClientReady { .. }
         | PlayerInput::PermissionLevel { .. }
+        | PlayerInput::SpawnProtectionOperators { .. }
         | PlayerInput::SetViewDistance { .. }
         | PlayerInput::SetLocale { .. }
         | PlayerInput::ConfirmTeleport { .. }
