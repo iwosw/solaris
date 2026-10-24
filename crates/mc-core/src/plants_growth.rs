@@ -280,7 +280,7 @@ pub(super) fn bonemeal(
             if Roll::new(seed).below(5) >= 2 {
                 return None;
             }
-            huge_fungus(read, at, name)
+            huge_fungus(read, at, name, seed)
         }
         "moss_block" => moss_spread(read, at, seed),
         "crimson_nylium" | "warped_nylium" => nylium_foliage(read, at, name, seed),
@@ -375,8 +375,10 @@ fn huge_mushroom(
     Some(edits)
 }
 
-/// Vanilla azalea fertilizer: an oak-like tree with azalea leaves. Needs a
-/// small soil patch and open air above; schematic, not bit-exact.
+/// Vanilla azalea fertilizer (`AzaleaTreeFeature`): a bending trunk
+/// 4-6 high with a further 1-2 sideways bend, foliage radius 3 height 2
+/// scattered around the upper trunk, dirt below turned to rooted dirt.
+/// Wiki-level shape, not bit-exact placement.
 fn azalea_tree(
     read: &Read<'_>,
     at: BlockPos,
@@ -386,7 +388,15 @@ fn azalea_tree(
     let blocks = &read.state.registry.blocks;
     let mut roll = Roll::new(seed);
     let height = 4 + roll.below(3) as i32;
-    for dy in 1..=height + 2 {
+    let bend = 1 + roll.below(2) as i32;
+    let bend_dx = roll.below(4) as i32 - 1;
+    let bend_dz = roll.below(4) as i32 - 1;
+    let (bend_dx, bend_dz) = if bend_dx == 0 && bend_dz == 0 {
+        (1, 0)
+    } else {
+        (bend_dx.clamp(-1, 1), bend_dz.clamp(-1, 1))
+    };
+    for dy in 1..=height + bend + 3 {
         if !air(read, BlockPos { y: at.y + dy, ..at }) {
             return None;
         }
@@ -397,28 +407,42 @@ fn azalea_tree(
     } else {
         named(read, "azalea_leaves")?
     };
+    let rooted = named(read, "rooted_dirt")?;
     let mut edits = Vec::new();
-    edits.push(edit(
-        at,
-        with_prop(blocks, named(read, "oak_log")?, "axis", "y")?,
-    ));
-    for dy in 1..=height {
+    // Dirt directly below the trunk becomes rooted dirt.
+    edits.push(edit(BlockPos { y: at.y - 1, ..at }, rooted));
+    edits.push(edit(at, log));
+    for dy in 1..height {
         edits.push(edit(BlockPos { y: at.y + dy, ..at }, log));
     }
-    for dy in (height - 2)..=(height + 1) {
-        let radius: i32 = if dy >= height { 1 } else { 2 };
+    // The bend leans sideways near the top.
+    let mut top = BlockPos { y: at.y + height, ..at };
+    for _ in 1..=bend {
+        top = BlockPos {
+            x: top.x + bend_dx,
+            y: top.y + 1,
+            z: top.z + bend_dz,
+        };
+        edits.push(edit(top, log));
+    }
+    // Foliage radius 3, height 2, scattered around the upper trunk.
+    for dy in -1i32..=1 {
+        let radius: i32 = if dy == 1 { 2 } else { 3 };
         for dx in -radius..=radius {
             for dz in -radius..=radius {
-                if dx == 0 && dz == 0 && dy <= height {
+                if dx == 0 && dz == 0 && dy <= 0 {
+                    continue;
+                }
+                if dx.abs() + dz.abs() + dy.abs() > 4 && roll.below(2) == 0 {
                     continue;
                 }
                 if dx.abs() == radius && dz.abs() == radius && roll.below(2) == 0 {
                     continue;
                 }
                 let cell = BlockPos {
-                    x: at.x + dx,
-                    y: at.y + dy,
-                    z: at.z + dz,
+                    x: top.x + dx,
+                    y: top.y + dy,
+                    z: top.z + dz,
                 };
                 if air(read, cell) {
                     edits.push(edit(cell, leaves));
@@ -454,15 +478,36 @@ fn mangrove_tree(read: &Read<'_>, at: BlockPos, seed: u64) -> Option<Vec<PlantBl
         return None;
     }
     let mut roll = Roll::new(seed);
+    // Vanilla checks up to ~15 high with horizontal room around the roots;
+    // height grows with the space the roots can spread into.
     let height = 4 + roll.below(3) as i32;
-    for dy in 1..=height + 1 {
+    for dy in 1..=height + 2 {
         if !air(read, BlockPos { y: at.y + dy, ..at }) {
             return None;
         }
     }
+    for dx in -3i32..=3 {
+        for dz in -3i32..=3 {
+            if !air(read, BlockPos { x: at.x + dx, y: at.y + height, z: at.z + dz }) {
+                return None;
+            }
+        }
+    }
     let log = with_prop(blocks, named(read, "mangrove_log")?, "axis", "y")?;
     let leaves = named(read, "mangrove_leaves")?;
+    let roots = named(read, "mangrove_roots")?;
     let mut edits = Vec::new();
+    // Prop roots spread sideways at the base before the trunk rises.
+    for (dx, dz) in [(-1, 0), (1, 0), (0, -1), (0, 1)] {
+        let foot = BlockPos {
+            x: at.x + dx,
+            y: at.y,
+            z: at.z + dz,
+        };
+        if air(read, foot) && roll.below(2) == 0 {
+            edits.push(edit(foot, roots));
+        }
+    }
     for dy in 0..=height {
         edits.push(edit(BlockPos { y: at.y + dy, ..at }, log));
     }
@@ -489,9 +534,10 @@ fn mangrove_tree(read: &Read<'_>, at: BlockPos, seed: u64) -> Option<Vec<PlantBl
     Some(edits)
 }
 
-/// Vanilla huge fungi: crimson/warped fungus on its own nylium grows a stem
-/// column with a wart cap. Schematic heights, not bit-exact.
-fn huge_fungus(read: &Read<'_>, at: BlockPos, name: &str) -> Option<Vec<PlantBlockEdit>> {
+/// Vanilla huge fungi (`HugeFungusFeature`): crimson/warped fungus on
+/// its own nylium grows a stem 4-13 high (1-in-12 doubles) with a wart hat
+/// reaching up to 3 out, radius varying by layer. Wiki-level shape.
+fn huge_fungus(read: &Read<'_>, at: BlockPos, name: &str, seed: u64) -> Option<Vec<PlantBlockEdit>> {
     let blocks = &read.state.registry.blocks;
     let (stem, cap, soil) = if name == "crimson_fungus" {
         ("crimson_stem", "nether_wart_block", "crimson_nylium")
@@ -502,7 +548,11 @@ fn huge_fungus(read: &Read<'_>, at: BlockPos, name: &str) -> Option<Vec<PlantBlo
     if path(read, below)? != soil {
         return None;
     }
-    let height = 5;
+    let mut roll = Roll::new(seed);
+    let mut height = 4 + roll.below(10) as i32;
+    if roll.below(12) == 0 {
+        height *= 2;
+    }
     for dy in 1..=height + 1 {
         if !air(read, BlockPos { y: at.y + dy, ..at }) {
             return None;
@@ -514,15 +564,27 @@ fn huge_fungus(read: &Read<'_>, at: BlockPos, name: &str) -> Option<Vec<PlantBlo
     for dy in 0..height {
         edits.push(edit(BlockPos { y: at.y + dy, ..at }, stem_id));
     }
-    for dx in -1..=1 {
-        for dz in -1..=1 {
-            let cell = BlockPos {
-                x: at.x + dx,
-                y: at.y + height,
-                z: at.z + dz,
-            };
-            if air(read, cell) {
-                edits.push(edit(cell, cap_id));
+    // Wart hat: wide flat brim low, narrowing peak above the stem top.
+    for (layer, radius) in [(0, 3i32), (1, 3), (2, 2), (3, 1)] {
+        for dx in -radius..=radius {
+            for dz in -radius..=radius {
+                if dx.abs() == radius && dz.abs() == radius {
+                    continue;
+                }
+                if layer > 0 && dx.abs() + dz.abs() > radius + 1 && roll.below(2) == 0 {
+                    continue;
+                }
+                if dx == 0 && dz == 0 && layer < 3 {
+                    continue;
+                }
+                let cell = BlockPos {
+                    x: at.x + dx,
+                    y: at.y + height - 1 + layer,
+                    z: at.z + dz,
+                };
+                if air(read, cell) {
+                    edits.push(edit(cell, cap_id));
+                }
             }
         }
     }
