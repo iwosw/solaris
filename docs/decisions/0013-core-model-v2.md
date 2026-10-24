@@ -141,14 +141,16 @@ server binary.
 
 ## Core stop diagnostics (2026-10-20)
 
-Every tick-owner stop records its cause at error level before dropping the
-broadcast sender: requested shutdown or fail-closed journal/plugin failure.
-The server records SIGINT/SIGTERM before joining the owners, not only after
-the final checkpoint, so a normal signal-driven stop cannot masquerade as an
-unexplained broadcast failure. Journal/native channel loss and flush failures
-also record their cause. Owner panics retain the standard panic hook and add
-an error-level record containing the thread, payload and source location;
-failed joins are not discarded. Error diagnostics include the source chain.
+Requested tick/journal/native shutdown records its cause at info level; an
+unexpected owner exit, channel loss, flush failure or fail-closed journal/plugin
+failure remains an error. The native writer receives an explicit FIFO shutdown
+message after the final journal flush, so an unexplained channel close is never
+mistaken for orderly completion. Edge classifies broadcast closure using the
+core handle's existing shutdown-request state, not by treating every closure as
+expected. SIGINT/SIGTERM are logged before joining the owners and after the final
+checkpoint. Owner panics retain the standard panic hook and add an error-level
+record containing the thread, payload and source location; failed joins are not
+discarded. Error diagnostics include the source chain.
 SIGKILL, process OOM kills and stack-overflow aborts cannot reliably execute
 Rust logging and still require the kernel/service-manager evidence.
 
@@ -804,12 +806,12 @@ Tick `t -> t+1`:
   `EntityKind` stays together in `Body` (72 bytes, rather than a mirrored
   64-byte kind-class layout); contact inputs occupy its first 64 bytes.
   Spawn, swap-remove and dimension transfer move every column together.
-  `body_mut` and mixed `parts_mut` retain the same journal/motion/brain/wire
-  custody as `row_mut`; serial motion writeback retains its narrower air-only
   Tick-time removal goes through `TickState::remove_entity`, which repairs
   staged merge slots after compaction. Projectile hit candidates retain entity
   identity, not dense armor-stand slots, across earlier projectile removals;
   deployment hit tests resolve the current slot immediately before access.
+  `body_mut` and mixed `parts_mut` retain the same journal/motion/brain/wire
+  custody as `row_mut`; serial motion writeback retains its narrower air-only
   durable mark and transient-timer policy. Journal image schemas do not change.
   Contact classification and pickup selection borrow body/position slices.
   Quiet contact survivors still read cold appearance serially, because burning
@@ -2130,12 +2132,6 @@ it disappears, so `/forceload remove` cannot be resurrected by a stale image.
   the explicit `world import-anvil` instruction. Only a genuinely empty
   directory receives a complete initial native DB checkpoint before owners
   start; a failed read is never fresh-world admission.
-- **Ordinary mob motion is checkpoint-durable only.** Position, velocity and
-  rotation of non-projectile mobs are not journaled (measured ~76 MB per tick at
-  50k mobs in the first journal format). After a crash mobs stand where the
-  committed checkpoint saw them, which can be inside something built later.
-  All captured mob motion is committed atomically with the other domains:
-  crashes cannot mix positions from partially written checkpoints.
 - **End dragon despawn ownership (2026-10-24).** Native dragons bypass generic
   natural despawning: local 26.1.2 `EnderDragon.checkDespawn` bytecode is an
   unconditional return, including on Peaceful. The End fight retains its dragon
@@ -2143,6 +2139,12 @@ it disappears, so `/forceload remove` cannot be resurrected by a stale image.
   Other monsters retain their ordinary Peaceful removal policy. This prevents
   newly dangling fight identities; it does not repair already corrupt checkpoints
   or relax native admission's missing-entity checks.
+- **Ordinary mob motion is checkpoint-durable only.** Position, velocity and
+  rotation of non-projectile mobs are not journaled (measured ~76 MB per tick at
+  50k mobs in the first journal format). After a crash mobs stand where the
+  committed checkpoint saw them, which can be inside something built later.
+  All captured mob motion is committed atomically with the other domains:
+  crashes cannot mix positions from partially written checkpoints.
   Other entity changes (spawn, removal, health, carried items, equipment,
   variant) and all player state including position are journaled as post-images;
   lifetime age is reconstructed from committed tick anchors. Replay reaches

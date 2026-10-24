@@ -51,6 +51,48 @@ fn native_writer_channel_close_logs_stop_cause() {
 }
 
 #[test]
+fn native_writer_explicit_shutdown_logs_info_without_waiting_for_channel_close() {
+    let root = tempfile::tempdir().unwrap();
+    let (sender, receiver) = std::sync::mpsc::channel();
+    sender.send(NativeWork::Shutdown).unwrap();
+    let log = capture(|| {
+        native_writer_loop(
+            root.path(),
+            receiver,
+            &std::sync::atomic::AtomicBool::new(false),
+            &AtomicU64::new(0),
+            &std::sync::atomic::AtomicBool::new(false),
+            CheckpointManifest::default(),
+        );
+    });
+    assert!(log.contains("INFO"), "{log}");
+    assert!(log.contains("native checkpoint writer stopped"), "{log}");
+    assert!(log.contains("shutdown requested"), "{log}");
+    assert!(!log.contains("ERROR"), "{log}");
+    drop(sender);
+}
+
+#[test]
+fn graceful_shutdown_state_distinguishes_expected_broadcast_close() {
+    let root = tempfile::tempdir().unwrap();
+    let config = CoreConfig::new(root.path().to_owned(), 42);
+    let core = Core::open(config.clone()).unwrap();
+    let mut output = core.subscribe();
+    assert!(!core.shutdown_requested());
+    core.shutdown();
+    assert!(core.shutdown_requested());
+    loop {
+        match output.blocking_recv() {
+            Ok(_) | Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
+            Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+        }
+    }
+    let restored = Core::open(config).expect("orderly shutdown retains a readable checkpoint");
+    assert!(!restored.shutdown_requested());
+    restored.shutdown();
+}
+
+#[test]
 fn panic_hook_logs_message_and_source_location() {
     stop::install_panic_hook();
     let log = capture(|| {

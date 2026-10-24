@@ -1400,6 +1400,15 @@ impl Core {
             .unwrap_or_else(|_| Err(CoreError::Storage("hot backup: the core stopped".into())))
     }
 
+    /// Whether graceful shutdown has been requested through this core handle.
+    pub fn shutdown_requested(&self) -> bool {
+        self.inner
+            .shutdown_tx
+            .lock()
+            .expect("core shutdown state")
+            .is_none()
+    }
+
     /// Graceful shutdown: signals the tick thread, then joins tick and
     /// journal in order. Returns only after the final journal flush (and any
     /// final checkpoint) is durable. Idempotent.
@@ -2258,7 +2267,7 @@ const GENERATED_SAVE_BATCH: usize = 64;
 
 /// Hand the remaining generated chunks to the journal thread, then stop it.
 fn send_shutdown(state: &mut TickState, work_tx: &std::sync::mpsc::SyncSender<JournalWork>) {
-    tracing::error!(
+    tracing::info!(
         tick = state.tick,
         cause = "shutdown requested",
         "core tick owner stopping"
@@ -3568,6 +3577,8 @@ enum NativeWork {
         job: BackupJob,
         through: u64,
     },
+    /// Explicit orderly termination, queued after the final journal flush.
+    Shutdown,
 }
 
 /// Journal thread: owns WAL appends and their fsyncs, and gates each
@@ -3710,8 +3721,16 @@ fn journal_loop(
                 JournalWork::Shutdown => {
                     if let Err(error) = writer.flush() {
                         tracing::error!(error = %stop::Chain(&error), "journal final flush failed");
+                        return;
                     }
-                    tracing::error!(cause = "shutdown requested", "core journal owner stopped");
+                    if native_tx.send(NativeWork::Shutdown).is_err() {
+                        tracing::error!(
+                            cause = "native writer channel closed",
+                            "journal shutdown handoff failed"
+                        );
+                        return;
+                    }
+                    tracing::info!(cause = "shutdown requested", "core journal owner stopped");
                     return;
                 }
             }
@@ -3746,8 +3765,7 @@ fn native_writer_loop(
     while let Ok(work) = work_rx.recv() {
         let notify = match &work {
             NativeWork::Checkpoint { job, .. } => Some((job.done.clone(), job.reply.clone())),
-            NativeWork::SaveGenerated(_) => None,
-            NativeWork::Backup { .. } => None,
+            NativeWork::SaveGenerated(_) | NativeWork::Backup { .. } | NativeWork::Shutdown => None,
         };
         let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             run_native_work(
@@ -3757,8 +3775,15 @@ fn native_writer_loop(
                 committed_tick,
                 &mut prev_manifest,
                 &mut block_log,
-            );
+            )
         }));
+        if matches!(outcome, Ok(std::ops::ControlFlow::Break(()))) {
+            tracing::info!(
+                cause = "shutdown requested",
+                "native checkpoint writer stopped"
+            );
+            return;
+        }
         if let Err(payload) = outcome {
             tracing::error!(
                 panic = stop::panic_message(&*payload),
@@ -3787,8 +3812,9 @@ fn run_native_work(
     committed_tick: &std::sync::atomic::AtomicU64,
     prev_manifest: &mut CheckpointManifest,
     block_log: &mut crate::block_log::Backlog,
-) {
+) -> std::ops::ControlFlow<()> {
     match work {
+        NativeWork::Shutdown => return std::ops::ControlFlow::Break(()),
         NativeWork::Checkpoint { mut job, plugins } => {
             let started = std::time::Instant::now();
             // Block-log rows join the table before the commit that may prune
@@ -3884,6 +3910,7 @@ fn run_native_work(
             let _ = job.reply.send(result);
         }
     }
+    std::ops::ControlFlow::Continue(())
 }
 
 /// Gate the WAL, commit every dimension/domain in one Immediate native txn,

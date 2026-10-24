@@ -2453,17 +2453,21 @@ fn spawn_pump(server: Arc<EdgeServer>) -> anyhow::Result<tokio::task::JoinHandle
                     continue;
                 }
                 Err(broadcast::error::RecvError::Closed) => {
-                    // The core stopped itself (journal or plugin failure,
-                    // fail closed). Its terminal reliable `Disconnect{reason}`
-                    // for every connection is still queued in the outbox:
-                    // route it so clients and the log see why, instead of
-                    // a bare socket close.
+                    // Drain terminal reliable disconnects before closing, both
+                    // for graceful shutdown and for an authoritative failure.
                     let (mut connections, _) = server.connections.routing_snapshot();
                     route_outbox(&server, &mut viewers, &mut connections);
-                    tracing::error!(
-                        connections = connections.len(),
-                        "core tick broadcast closed; core halted or stopped"
-                    );
+                    if server.hub.shutdown_requested() {
+                        tracing::info!(
+                            connections = connections.len(),
+                            "core tick broadcast closed after shutdown request"
+                        );
+                    } else {
+                        tracing::error!(
+                            connections = connections.len(),
+                            "core tick broadcast closed unexpectedly; core halted"
+                        );
+                    }
                     break;
                 }
             };
