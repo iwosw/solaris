@@ -685,6 +685,25 @@ fn placed_vines_attach_to_the_clicked_wall_and_can_spread() {
         "player-planted vine attaches east to the wall"
     );
     assert_eq!(held(&state, player).count, 1);
+    // Click the ceiling above an empty cell: the vine hangs overhead.
+    put(&mut state, 3, Y + 2, 6, wall);
+    give(&mut state, player, "vine", 1);
+    use_on(&mut state, 3, Y + 2, 6, 0);
+    assert_eq!(
+        at(&state, 3, Y + 1, 6),
+        block(
+            &state,
+            "vine",
+            &[
+                ("east", "false"),
+                ("north", "false"),
+                ("south", "false"),
+                ("up", "true"),
+                ("west", "false"),
+            ]
+        ),
+        "ceiling click hangs the vine overhead"
+    );
 }
 
 #[test]
