@@ -178,6 +178,9 @@ pub(in crate::tick) fn use_item_on(
     if crate::maps::banner::use_on(state, entity, *hand, *position) {
         return;
     }
+    if crate::chiseled_shelf::use_on(state, entity, *hand, *position, *face, *cursor) {
+        return;
+    }
     if crate::shelf::use_on(state, entity, *hand, *position, *face, *cursor) {
         return;
     }

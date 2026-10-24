@@ -254,6 +254,9 @@ pub(crate) fn use_on(
     let Some(block) = at(state, pos) else {
         return false;
     };
+    if crate::chiseled_shelf::is_chiseled(block.block.id.path()) {
+        return crate::chiseled_shelf::use_on(state, actor, hand, pos, face, cursor);
+    }
     if !is_shelf(block.block.id.path()) || hand != Hand::Main {
         return false;
     }

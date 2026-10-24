@@ -16,6 +16,7 @@ mod beacon;
 mod beacon_tests;
 pub mod bees;
 mod block_drop_context;
+pub mod chiseled_shelf;
 pub mod block_drops;
 mod block_entity_defaults;
 pub mod block_log;

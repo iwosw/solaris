@@ -459,3 +459,21 @@ fn powered_shelf_exchange_is_atomic_with_real_player_reservations() {
             .all(ItemStack::is_empty)
     );
 }
+
+#[test]
+fn chiseled_bookshelf_stores_and_returns_books() {
+    // CHISELED-BOOKSHELF through the block-use path: using a book on a
+    // chiseled bookshelf stores it; using the filled slot bare-handed
+    // returns it (vanilla 6-slot shelf).
+    let (mut state, actor) = fixture(None);
+    let id = block(&state, "chiseled_bookshelf", &[("facing", "south")]);
+    state.world.set_block(8, 201, 8, id);
+    state.world.fold_overlay();
+    let book = stack(&state, "book", 1);
+    state.players.get_mut(&actor).unwrap().inventory.slots[0] = book.clone();
+    assert!(use_on(&mut state, actor, Hand::Main, POS, 3, [0.5; 3]));
+    assert!(state.players[&actor].inventory.slots[0].is_empty());
+    state.players.get_mut(&actor).unwrap().inventory.slots[0] = ItemStack::EMPTY;
+    assert!(use_on(&mut state, actor, Hand::Main, POS, 3, [0.5; 3]));
+    assert_eq!(state.players[&actor].inventory.slots[0].count, 1);
+}
