@@ -999,11 +999,15 @@ pub(super) fn run(
         if let Some(travel) = travel
             && let Some(target) = super::offset(pos, travel)
         {
-            moved |= transfer_one(state, pos, target, travel, false);
+            moved |= transfer_one(state, pos, target, travel, false)
+                || (kind(state, target) == Some("composter")
+                    && feed_composter(state, pos, target));
         }
         if let Some(above) = super::offset(pos, (0, 1, 0)) {
-            moved |= if kind(state, above).and_then(size).is_some() {
-                transfer_one(state, above, pos, (0, -1, 0), true)
+            moved |= if kind(state, above).and_then(size).is_some()
+                || kind(state, above) == Some("composter")
+            {
+                take_composter(state, above, pos) || transfer_one(state, above, pos, (0, -1, 0), true)
             } else if crate::vehicles::pull_into_hopper(state, above, pos) {
                 // The vehicle syncs its own viewers; the hopper's need the same notice.
                 changed(state, pos);
@@ -1042,6 +1046,86 @@ pub(super) fn run(
     for pos in dirty {
         persist(state, position(pos));
     }
+}
+
+/// Hopper push into a composter below: one compostable item feeds the
+/// composter level (vanilla hopper automation); side/powered rules follow the
+/// ordinary push path (only the facing cell receives).
+fn feed_composter(state: &mut TickState, pos: BlockPos, target: BlockPos) -> bool {
+    // Only downward feeding admits compostables (vanilla hopper-below rule).
+    let Some(block) = state
+        .world
+        .block_at(pos.x, pos.y, pos.z)
+        .and_then(|id| state.registry.blocks.by_id(mc_world::BlockStateId(id)))
+    else {
+        return false;
+    };
+    if super::prop(block, "facing").unwrap_or("down") != "down" {
+        return false;
+    }
+    let Some(count) = size("hopper") else {
+        return false;
+    };
+    for index in 0..count {
+        let moving = state.block_entities[&key(pos)].slots[index].clone();
+        if moving.is_empty() || !can_debit(state, pos, index) {
+            continue;
+        }
+        // Compostable check mirrors the manual use path (chance table).
+        if !crate::composter::compostable(state, &moving) {
+            continue;
+        }
+        // Commit one item into the composter level.
+        let next = crate::composter::feed_level(state, target);
+        if next.is_none() {
+            // Full/ready composter: no debit, hopper keeps the item.
+            return false;
+        }
+        decrement_stack(
+            &mut state
+                .block_entities
+                .get_mut(&key(pos))
+                .expect("composter-feed custody")
+                .slots[index],
+        );
+        changed(state, pos);
+        changed(state, target);
+        state
+            .redstone_containers
+            .set_cooldown(key(pos), 8, state.tick);
+        return true;
+    }
+    false
+}
+
+/// Hopper extraction from a ready composter below/above: one bone meal
+/// moves into the hopper and the composter empties (vanilla automation).
+fn take_composter(state: &mut TickState, source: BlockPos, target: BlockPos) -> bool {
+    if kind(state, source) != Some("composter") {
+        return false;
+    }
+    if crate::composter::output_level(state, source) != Some(crate::composter::READY_LEVEL) {
+        return false;
+    }
+    let Some(bone_meal) = state
+        .registry
+        .items
+        .id_of(&mc_data::Identifier::parse("minecraft:bone_meal").expect("bone meal"))
+    else {
+        return false;
+    };
+    let moving = ItemStack::new(bone_meal, 1);
+    let Some((destination, slot)) = insertion_slot(state, target, &moving, (0, -1, 0)) else {
+        return false;
+    };
+    if destination != target {
+        return false;
+    }
+    insert(state, destination, slot, &moving, 1);
+    crate::composter::empty_level(state, source);
+    changed(state, source);
+    changed(state, target);
+    true
 }
 
 fn item_id(state: &TickState, name: &str) -> Option<u32> {
@@ -1217,9 +1301,16 @@ fn nonprojectile(
         Err(()) => return true,
         Ok(false) => {}
     }
-    // Vanilla dispenser behaviors before ordinary item ejection: glowstone
-    // charges a non-full respawn anchor; glass bottles/shears harvest a
-    // full beehive/bee nest.
+    // Vanilla dispenser behaviors before ordinary item ejection: vehicles
+    // place onto water/rails; glowstone charges a non-full respawn anchor;
+    // glass bottles/shears harvest a full beehive/bee nest; skulls/pumpkins
+    // complete golem/wither constructs.
+    if super::dispenser_vehicle::place(state, pos, target, index, spawned) {
+        return true;
+    }
+    if super::dispenser_construct::complete(state, pos, target, index, &held, writes, spawned) {
+        return true;
+    }
     if name == "glowstone" && super::dispenser_anchor::charge(state, pos, target, index, writes) {
         return true;
     }
@@ -1324,6 +1415,23 @@ fn nonprojectile(
         if let Some(new) = plan.new {
             super::set(state, writes, target, new);
             crate::fluids::schedule(state, &[(target, new)]);
+        }
+        // Mob buckets release the captured entity into the placed water.
+        if let Some(mob) = super::dispenser_blocks::mob_bucket_mob(name)
+            && let Some(type_id) = state.registry.entity_types.id_of(
+                &mc_data::Identifier::parse(mob).expect("bucket mob id"),
+            )
+        {
+            let id = state.spawn_mob(
+                type_id,
+                [
+                    f64::from(target.x) + 0.5,
+                    f64::from(target.y) + 0.5,
+                    f64::from(target.z) + 0.5,
+                ],
+                3.0,
+            );
+            spawned.push(id);
         }
         let slot = &mut state
             .block_entities

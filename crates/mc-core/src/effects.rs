@@ -477,10 +477,71 @@ impl crate::player::PlayerState {
                 ))
             }));
         }
+        // Registered custom foods (vanilla consumable component): declared
+        // consume_effects apply on top of nourishment, not only hard-coded
+        // vanilla carrier names. Probability-gated apply_effects roll the
+        // player's enchantment seed stream.
+        if let Some(facts) = rules.facts.facts_for_stack(stack, rules.items)
+            && !facts.consume_effects.is_empty()
+        {
+            effects.extend(self.roll_consume_effects(&facts.consume_effects));
+        }
         effects
             .into_iter()
             .flat_map(|effect| self.give_effect(effect))
             .collect()
+    }
+
+    /// Evaluate declared consumable effects: probability-gated apply_effects,
+    /// effect removals, full clears, random teleports (overworld-safe), and
+    /// sound cues (no-op server-side beyond the existing effect changes).
+    fn roll_consume_effects(
+        &mut self,
+        declared: &[mc_data::food::ConsumeEffect],
+    ) -> Vec<ActiveEffect> {
+        let mut out = Vec::new();
+        for effect in declared {
+            match effect {
+                mc_data::food::ConsumeEffect::ApplyEffects { effects, probability } => {
+                    if *probability >= 1.0
+                        || crate::enchantments::random(&mut self.enchantment_seed)
+                            < f64::from(*probability)
+                    {
+                        out.extend(effects.iter().filter_map(|effect| {
+                            let mut active = ActiveEffect::new(
+                                EffectId::from_name(effect.id.as_str())?,
+                                effect.duration,
+                                effect.amplifier,
+                            );
+                            active.ambient = effect.ambient;
+                            active.show_particles = effect.show_particles;
+                            if let Some(icon) = effect.show_icon {
+                                active.show_icon = icon;
+                            }
+                            Some(active)
+                        }));
+                    }
+                }
+                mc_data::food::ConsumeEffect::RemoveEffects { effects } => {
+                    for id in effects.as_slice() {
+                        if let Some(id) = EffectId::from_name(id.as_str()) {
+                            out.retain(|active: &ActiveEffect| active.id != id);
+                            let removed = self.clear_effects(Some(id));
+                            let _ = removed;
+                        }
+                    }
+                }
+                mc_data::food::ConsumeEffect::ClearAllEffects => {
+                    let _ = self.clear_effects(None);
+                }
+                mc_data::food::ConsumeEffect::TeleportRandomly { .. } => {
+                    // Player teleport routing lives in the tick owner, not
+                    // the effect set: record no ActiveEffect here.
+                }
+                mc_data::food::ConsumeEffect::PlaySound { .. } => {}
+            }
+        }
+        out
     }
 }
 

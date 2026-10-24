@@ -512,7 +512,7 @@ pub(crate) fn dispense(
         "minecraft:spectral_arrow" => Some(ProjectileKind::SpectralArrow),
         "minecraft:snowball" => Some(ProjectileKind::Snowball),
         "minecraft:egg" => Some(ProjectileKind::Egg),
-        "minecraft:ender_pearl" => Some(ProjectileKind::EnderPearl),
+        "minecraft:wind_charge" => Some(ProjectileKind::WindCharge),
         "minecraft:experience_bottle" => Some(ProjectileKind::ExperienceBottle),
         "minecraft:splash_potion" => Some(ProjectileKind::Potion),
         "minecraft:lingering_potion" => Some(ProjectileKind::LingeringPotion),

@@ -91,6 +91,55 @@ pub(crate) fn intercepts_placement(state: &TickState, pos: BlockPos, held: &Item
         && recipe(&state.registry.item_rules(), held).is_some()
 }
 
+/// Relight a dry extinguished campfire (flame-arrow impact). Waterlogged
+/// fires stay out. Returns true when the fire was relit.
+pub(crate) fn relight(state: &mut TickState, pos: BlockPos) -> bool {
+    let Some(current) = state.world.block_at(pos.x, pos.y, pos.z) else {
+        return false;
+    };
+    let Some(block) = state.registry.blocks.by_id(mc_world::BlockStateId(current)) else {
+        return false;
+    };
+    if !matches!(
+        block.block.id.as_str(),
+        "minecraft:campfire" | "minecraft:soul_campfire"
+    ) {
+        return false;
+    }
+    if block
+        .properties
+        .iter()
+        .any(|(key, value)| key == "waterlogged" && value == "true")
+    {
+        return false;
+    }
+    if lit(state, pos) != Some(false) {
+        return false;
+    }
+    let mut properties = block.properties.clone();
+    let Some((_, value)) = properties.iter_mut().find(|(key, _)| key == "lit") else {
+        return false;
+    };
+    *value = "true".to_owned();
+    let Some(next) = state
+        .registry
+        .blocks
+        .by_name_and_props(&block.block.id, &properties)
+    else {
+        return false;
+    };
+    state.world.set_block(pos.x, pos.y, pos.z, next.0);
+    state.merge_block_writes.push((
+        crate::boundary::BlockPos {
+            x: pos.x,
+            y: pos.y,
+            z: pos.z,
+        },
+        next.0,
+    ));
+    true
+}
+
 /// A food use owns the interaction even when the fire is unlit or full.
 pub(crate) fn use_food(
     state: &mut TickState,

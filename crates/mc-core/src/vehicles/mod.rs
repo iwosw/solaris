@@ -1,7 +1,7 @@
 //! Tick-owned boats and rail vehicles. Containers have one durable custody image.
 mod containers;
 mod loot;
-mod motion;
+pub(crate) mod motion;
 mod persistence;
 #[cfg(test)]
 #[path = "../vehicles_tests.rs"]

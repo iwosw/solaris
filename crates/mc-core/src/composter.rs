@@ -191,6 +191,48 @@ pub(crate) fn schedule_fill(state: &mut TickState, pos: BlockPos, maturing: bool
     }
 }
 
+/// Whether this stack can feed a composter (vanilla compostable table).
+pub(crate) fn compostable(state: &TickState, stack: &ItemStack) -> bool {
+    state
+        .registry
+        .items
+        .name_of(stack.item_id)
+        .and_then(|id| chance(&Identifier::parse(id.as_str()).ok()?))
+        .is_some()
+}
+
+/// Ready level constant for automation extraction.
+pub(crate) const READY_LEVEL: u8 = READY;
+
+/// Current level for automation gating (None when not a composter).
+pub(crate) fn output_level(state: &TickState, pos: BlockPos) -> Option<u8> {
+    level(state, pos)
+}
+
+/// Empty a harvested composter back to level 0.
+pub(crate) fn empty_level(state: &mut TickState, pos: BlockPos) {
+    if let Some(empty) = level_state(state, pos, 0) {
+        stage_level(state, pos, empty);
+    }
+}
+
+/// Automation feed: advance the composter level by one compostable layer and
+/// schedule maturation. Returns the new level, or None when the composter is
+/// full/ready (hopper must retain its item).
+pub(crate) fn feed_level(state: &mut TickState, pos: BlockPos) -> Option<u8> {
+    let current = level(state, pos)?;
+    if current >= FULL {
+        return None;
+    }
+    // Automation always advances one guaranteed layer per item (vanilla
+    // hopper-fed composters do not roll the manual chance per item here;
+    // the manual path keeps its own chance roll).
+    let next = level_state(state, pos, current + 1)?;
+    stage_level(state, pos, next);
+    schedule_fill(state, pos, current + 1 == FULL);
+    Some(current + 1)
+}
+
 /// Commits a use serially on the tick owner. Returning true prevents ordinary
 /// placement from also debiting the same held stack. Every composting attempt
 /// consumes its input, including failed chance rolls; full composters do not.

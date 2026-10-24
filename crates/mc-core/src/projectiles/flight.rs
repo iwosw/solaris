@@ -662,9 +662,15 @@ fn step(
         }
         if record.kind != ProjectileKind::Trident
             && (record.flame || state.entities.body(slot).burn_ticks != 0)
-            && crate::tnt::prime_block(state, block_position, 80).is_some()
         {
-            return true;
+            // Burning arrows ignite TNT, and relight a dry extinguished
+            // campfire (vanilla projectile ignition).
+            if crate::tnt::prime_block(state, block_position, 80).is_some() {
+                return true;
+            }
+            if crate::campfire::relight(state, block_position) {
+                return true;
+            }
         }
         record.stuck = true;
         record.critical = false;
