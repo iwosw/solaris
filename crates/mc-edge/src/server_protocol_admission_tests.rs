@@ -52,3 +52,14 @@ fn accept_exhaustion_waits_for_a_session_instead_of_stopping_the_server() {
     let broken = std::io::Error::from_raw_os_error(22); // EINVAL: listener broke
     assert_eq!(accept_failure(&broken, 3), AcceptFailure::Fatal);
 }
+
+#[test]
+fn screen_sharing_admits_native_and_fabric_loader_sessions() {
+    use mc_loader::LoaderPlatform;
+
+    assert!(supports_screen_sharing(Some(LoaderPlatform::Native)));
+    assert!(supports_screen_sharing(Some(LoaderPlatform::Fabric)));
+    assert!(!supports_screen_sharing(None));
+    assert!(!supports_screen_sharing(Some(LoaderPlatform::Forge)));
+    assert!(!supports_screen_sharing(Some(LoaderPlatform::NeoForge)));
+}

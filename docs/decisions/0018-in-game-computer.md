@@ -88,7 +88,8 @@ the permission is active **and** the viewer looks at the row does the server
 turn `DEMAND` on for the owner and relay frames to that viewer. No input from
 viewers exists in the protocol. `mc-edge` (`screen.rs` pure relay state,
 `screen_service.rs` delivery) is the only authority; it never decodes frames,
-sees only native-Loader clients and refuses everything else.
+admits negotiated native and Fabric Loader sessions and refuses vanilla clients
+and other Loader platforms. Platform admission does not bypass viewer consent.
 
 Play custom payload on both directions, big-endian: `u8 version=1, u8 kind, body`.
 `ScreenId` (16 bytes): `i32 x,y,z` of the min-coordinate anchor block, `u8 side`
@@ -115,8 +116,8 @@ left; `3 REFUSED(id, u8 reason)` 0 not allowed, 1 not a monitor, 2 out of reach,
 3 too many, 4 taken, 5 bad frame, 6 no such screen, 7 repeat/rate limited;
 `4 REQUESTED(id, u32 request, 16-byte uuid, u8 len, utf8 name)` to the owner;
 `5 PERMISSION(id, u8 allowed)` to the requester; `6 ACTIVE(id, u8 on)` to every
-native client in that dimension on open/close/owner leave, and as a snapshot
-when a native client joins or changes dimension.
+admitted native or Fabric client in that dimension on open/close/owner leave, and
+as a snapshot when an admitted client joins or changes dimension.
 `7 AUDIO(id, u32 seq, opus)` to viewers only (see "Screen audio");
 `8 KEYFRAME_REQUEST(id)` to the owner: the next picture must be a key frame.
 

@@ -2004,12 +2004,12 @@ async fn handle_connection(stream: TcpStream, server: Arc<EdgeServer>) -> anyhow
     };
     // Solaris Loader clients (native, or the Fabric mod that admitted the monitor
     // bundle's `solaris:screen` channel) take part in screen sharing.
-    let screen_client = config_outcome.loader_session.as_ref().is_some_and(|session| {
-        matches!(
-            session.platform(),
-            mc_loader::LoaderPlatform::Native | mc_loader::LoaderPlatform::Fabric
-        )
-    });
+    let screen_client = supports_screen_sharing(
+        config_outcome
+            .loader_session
+            .as_ref()
+            .map(|session| session.platform()),
+    );
     let screen = screen_client.then(|| {
         crate::screen_service::Connection::start(
             Arc::clone(&server),
@@ -2971,6 +2971,13 @@ pub fn msmp_allowed(cfg: &EdgeConfig) -> bool {
         .map(|address| address.ip().is_loopback())
         .unwrap_or_else(|_| cfg.msmp.bind_address == "localhost");
     is_loopback || cfg.msmp.allow_remote
+}
+
+fn supports_screen_sharing(platform: Option<mc_loader::LoaderPlatform>) -> bool {
+    matches!(
+        platform,
+        Some(mc_loader::LoaderPlatform::Native | mc_loader::LoaderPlatform::Fabric)
+    )
 }
 
 #[cfg(test)]
