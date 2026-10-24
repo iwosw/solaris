@@ -599,6 +599,21 @@ fn step(
                         ..Default::default()
                     },
                 });
+            } else if super::payloads::breaks_armor_stand(state, body.id)
+                && (record.kind.arrow() || record.kind == ProjectileKind::Trident)
+            {
+                // Vanilla ArmorStand.hurtServer: arrows and tridents always
+                // break the stand outright (ALWAYS_KILLS_ARMOR_STANDS tag).
+                super::damage(
+                    state,
+                    intents,
+                    id,
+                    body.id,
+                    1000.0,
+                    DamageKind::Projectile,
+                    Some(owner.unwrap_or(EntityId(0))),
+                    velocity,
+                );
             } else {
                 let amount = arrow_damage(state, id, body.id, record, velocity);
                 super::damage(

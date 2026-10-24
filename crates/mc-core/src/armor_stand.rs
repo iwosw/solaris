@@ -370,6 +370,22 @@ pub(crate) fn attack(
         return true;
     }
     if !creative {
+        // Vanilla breaking costs tool durability: one wear point on the
+        // held stack for the breaking hit.
+        let held_slot = usize::from(
+            state
+                .players
+                .get(&actor)
+                .map(|player| player.inventory.selected)
+                .unwrap_or(0)
+                .min(8),
+        );
+        let wear = crate::projectiles::weapons::plan_wear(state, actor, held_slot, 1);
+        if crate::projectiles::weapons::costs_allowed(state, actor, &[], held_slot, wear.as_ref())
+        {
+            crate::projectiles::weapons::apply_wear(state, actor, held_slot, wear);
+            crate::projectiles::weapons::sync(state, actor);
+        }
         let mut spawned = std::mem::take(&mut state.hostile.spawned);
         drop_items(state, slot, true, &mut spawned);
         state.hostile.spawned = spawned;

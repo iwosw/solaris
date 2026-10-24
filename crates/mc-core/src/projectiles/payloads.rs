@@ -111,6 +111,18 @@ fn entity_name(state: &TickState, id: EntityId) -> Option<&str> {
     }
 }
 
+/// Armor stands ignore ordinary potion sources (ArmorStand.isAffectedByPotions).
+fn potion_affected(state: &TickState, id: EntityId) -> bool {
+    if state
+        .entities
+        .slot_of(id)
+        .is_some_and(|slot| crate::armor_stand::is_stand(state, slot))
+    {
+        return false;
+    }
+    living(state, id)
+}
+
 fn living(state: &TickState, id: EntityId) -> bool {
     let Some(slot) = state.entities.slot_of(id) else {
         return false;
@@ -400,6 +412,10 @@ pub(crate) fn apply_potion(
     scale: f64,
     cloud: bool,
 ) {
+    // Armor stands ignore ordinary potion sources.
+    if !potion_affected(state, target) {
+        return;
+    }
     for mut effect in potion_effects(&record.stack) {
         if !matches!(effect.id, EffectId::InstantHealth | EffectId::InstantDamage) {
             effect.duration = if cloud {
@@ -1284,6 +1300,15 @@ pub(crate) fn channeling(
         .channeling_hits
         .insert((id, target), (position, record.owner));
     true
+}
+
+/// Whether this entity is an armor stand: arrows and tridents always
+/// break it (vanilla ALWAYS_KILLS_ARMOR_STANDS damage tag).
+pub(crate) fn breaks_armor_stand(state: &TickState, target: EntityId) -> bool {
+    state
+        .entities
+        .slot_of(target)
+        .is_some_and(|slot| crate::armor_stand::is_stand(state, slot))
 }
 
 fn mob_capabilities(state: &TickState, target: EntityId) -> crate::blueprint::Capabilities {

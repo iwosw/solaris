@@ -69,16 +69,12 @@ fn support(state: &TickState, position: BlockPos, face: u8) -> bool {
     let Some(block) = state.registry.blocks.by_id(mc_world::BlockStateId(id)) else {
         return false;
     };
-    use mc_data::block_facts::{SturdyFace, has_full_sturdy_face};
-    let sturdy = [
-        SturdyFace::Down,
-        SturdyFace::Up,
-        SturdyFace::North,
-        SturdyFace::South,
-        SturdyFace::West,
-        SturdyFace::East,
-    ][usize::from(face)];
-    has_full_sturdy_face(id, &block.block.id, &block.properties, sturdy)
+    // Vanilla ItemFrame.survives: the backing block is solid or a horizontal
+    // diode — partial blocks (chests, slabs, fences) admit frames; only air
+    // or non-solid backing rejects them.
+    state.registry.materials.classify(id) == mc_physics::BlockMaterial::Solid
+        || block.block.id.path().ends_with("repeater")
+        || block.block.id.path().ends_with("comparator")
 }
 fn frame_at(state: &TickState, position: BlockPos, face: u8) -> Option<EntitySlot> {
     let mut found = None;
@@ -392,13 +388,12 @@ fn drop_display(
     };
     let pos = state.entities.pos(slot);
     let appearance = Arc::make_mut(&mut state.entities.row_mut(slot).appearance);
+    // Vanilla retains frame rotation while the frame survives: only the
+    // displayed item is cleared, never the orientation.
     appearance
         .extra
-        .retain(|(index, _)| *index != ITEM && *index != ROTATION);
+        .retain(|(index, _)| *index != ITEM);
     appearance.extra.push((ITEM, EntityDataValue::Item(None)));
-    appearance
-        .extra
-        .push((ROTATION, EntityDataValue::VarInt(0)));
     if drop && crate::command_rules::boolean(state, "entity_drops") {
         spawned.push(crate::tick::spawn_item_entity(state, pos, item));
     }
