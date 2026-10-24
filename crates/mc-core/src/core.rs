@@ -2834,6 +2834,20 @@ fn group_entity_records(
     entities
 }
 
+/// Read one live entity through the same authoritative projection as checkpoints.
+pub(crate) fn entity_data_record(
+    state: &TickState,
+    slot: crate::entities::EntitySlot,
+) -> Option<mc_data::entity_nbt::VanillaEntity> {
+    let extras = entity_capture_extras(state, &[slot]);
+    let view = EntityCaptureView {
+        entities: &state.entities,
+        registry: &state.registry,
+        tick: crate::command_context::execution_tick(state),
+    };
+    entity_capture_record(&view, slot, capture_extras_for(&extras, 0)).map(|(_, record)| record)
+}
+
 /// One non-player entity's vanilla checkpoint record and its chunk, or `None`
 /// for players and entity types without a vanilla contract.
 fn entity_capture_record(
@@ -2996,6 +3010,17 @@ pub(crate) fn player_record_for(
     tick: u64,
 ) -> Option<crate::journal::ReplayPlayer> {
     player_record(state, id, tick, true)
+}
+
+pub(crate) fn player_data_tag(state: &TickState, id: EntityId) -> Result<mc_nbt::Tag, CoreError> {
+    let record = player_record(
+        state,
+        id,
+        crate::command_context::execution_tick(state),
+        false,
+    )
+    .ok_or_else(|| CoreError::Storage("Player is unavailable".into()))?;
+    crate::journal::player_query_tag(&record, &state.registry.items)
 }
 
 fn player_record(

@@ -109,7 +109,8 @@ pub(crate) fn execute_context(
     state: &mut TickState,
     text: &str,
     context: crate::command_context::Context,
-) -> Result<(), String> {
+    require_result: bool,
+) -> Result<crate::command_execution::CommandResult, String> {
     if !state.command_context.shared {
         return Err("Cross-world execution requires the shared tick boundary".into());
     }
@@ -133,7 +134,7 @@ pub(crate) fn execute_context(
         .changes
         .remove(&context.dimension)
         .unwrap_or_default();
-    crate::command_context::run(state, text, context, &mut changes);
+    let result = crate::command_context::native(state, text, context, &mut changes, require_result);
     sync_wire_ids(state);
     append_changes(
         state
@@ -153,7 +154,7 @@ pub(crate) fn execute_context(
     std::mem::swap(&mut state.datapacks, &mut original.datapacks);
     super::runtime::swap_globals(state, &mut original);
     state.other_dimensions.insert(context.dimension, original);
-    Ok(())
+    result
 }
 
 fn append_changes(target: &mut ChangeSet, mut source: ChangeSet) {
@@ -406,7 +407,7 @@ pub(crate) fn execute(
     state: &mut TickState,
     request: Request,
     changes: &mut BTreeMap<Dimension, ChangeSet>,
-) -> Result<(), String> {
+) -> Result<crate::command_execution::CommandResult, String> {
     if !matches!(request.command, Command::Teleport { .. }) {
         return super::commands::execute(state, request, changes);
     }
@@ -523,7 +524,9 @@ pub(crate) fn execute(
         &format!("commands.teleport.success.{kind}.{suffix}"),
         args,
     );
-    Ok(())
+    Ok(crate::command_execution::CommandResult::Success(
+        selected.len() as i32,
+    ))
 }
 
 fn refresh(world: &mut TickState, output: &mut TickOutput, mut changes: ChangeSet) {

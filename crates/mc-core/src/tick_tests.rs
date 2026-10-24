@@ -6587,7 +6587,7 @@ fn scoreboard_trigger_requires_enable_and_relocks_without_affecting_admin_scores
         else {
             panic!("scoreboard command")
         };
-        crate::scoreboard::execute(state, player, &command)
+        crate::scoreboard::execute(state, player, &command).0
     };
     run(&mut state, "scoreboard objectives add probe trigger", true);
     run(&mut state, "scoreboard players set Alice probe 7", true);

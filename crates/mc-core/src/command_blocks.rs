@@ -242,20 +242,20 @@ pub(crate) fn run(state: &mut TickState, changes: &mut ChangeSet) {
     state.command_blocks_due = due;
 }
 
-/// Narrow, validated /data block surface; other NBT owners are not bypassed.
+/// Restricted /data merge block surface; other NBT owners are never bypassed.
 pub(crate) fn data(
     state: &mut TickState,
     connection: ConnectionId,
     executor: EntityId,
     text: &str,
-) {
+) -> crate::command_execution::CommandResult {
     let result = (|| -> Result<String, String> {
         let mut words = text.split_whitespace();
         words.next();
-        let mode = words.next().ok_or("Expected get or merge")?;
-        if !matches!(mode, "get" | "merge") || words.next() != Some("block") {
+        let mode = words.next().ok_or("Expected merge")?;
+        if mode != "merge" || words.next() != Some("block") {
             return Err(
-                "Supported: data get|merge block <x> <y> <z> [compound] (command blocks only)"
+                "Supported writes: data merge block <x> <y> <z> <compound> (command blocks only)"
                     .into(),
             );
         }
@@ -283,9 +283,6 @@ pub(crate) fn data(
             return Err("Data editing currently supports command blocks only".into());
         }
         let mut fields = read(state, pos)?;
-        if mode == "get" {
-            return Ok(format!("{fields:?}"));
-        }
         if conditional(state, pos) {
             return Err("Conditional command blocks are not supported".into());
         }
@@ -303,6 +300,14 @@ pub(crate) fn data(
                 _ => return Err(format!("Unsupported command block field {key}")),
             }
         }
+        if !patch.iter().any(|(key, value)| {
+            fields
+                .iter()
+                .find(|(name, _)| name == key)
+                .is_none_or(|(_, old)| old != value)
+        }) {
+            return Err("The target block's data did not change".into());
+        }
         let old_auto = flag(&fields, "auto");
         for (key, value) in patch {
             put(&mut fields, &key, value);
@@ -315,12 +320,12 @@ pub(crate) fn data(
         }
         Ok("Command block data updated".into())
     })();
-    state.push_player(
-        connection,
-        PlayerChange::Chat {
-            message: result.unwrap_or_else(|error| error),
-        },
-    );
+    let (message, outcome) = match result {
+        Ok(message) => (message, crate::command_execution::CommandResult::Success(1)),
+        Err(message) => (message, crate::command_execution::CommandResult::Failed),
+    };
+    state.push_player(connection, PlayerChange::Chat { message });
+    outcome
 }
 
 #[cfg(test)]

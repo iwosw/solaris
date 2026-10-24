@@ -669,12 +669,13 @@ pub(crate) fn execute_command(
     connection: crate::boundary::ConnectionId,
     executor: crate::boundary::EntityId,
     command: &crate::commands::Command,
-) {
+) -> crate::command_execution::CommandResult {
+    use crate::command_execution::CommandResult::{Failed, Success, Unavailable};
     use crate::commands::Command;
     let (target, give, clear) = match command {
         Command::EffectGive { target, effect } => (target, Some(effect), None),
         Command::EffectClear { target, effect } => (target, None, Some(*effect)),
-        _ => return,
+        _ => return Unavailable,
     };
     let targets = crate::command_execution::resolve_target(state, executor, target);
     let mut affected = 0;
@@ -727,6 +728,11 @@ pub(crate) fn execute_command(
             },
         },
     );
+    if affected == 0 {
+        Failed
+    } else {
+        Success(affected)
+    }
 }
 
 pub(crate) fn run(state: &mut crate::tick::TickState, intents: &mut Vec<crate::intent::Intent>) {

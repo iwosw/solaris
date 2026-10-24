@@ -1,5 +1,6 @@
 //! Vanilla scoreboard and teams, owned by the v2 tick thread.
 use crate::boundary::{ConnectionId, EntityId, PlayerChange};
+use crate::command_execution::CommandResult;
 use crate::commands::{CommandError, Target};
 use crate::tick::TickState;
 use serde::{Deserialize, Serialize};
@@ -197,6 +198,13 @@ pub struct ScoreboardCommand {
 const USAGE: &str =
     "team <add|remove|empty|join|leave|list|modify> ... or scoreboard <objectives|players> ...";
 impl ScoreboardCommand {
+    pub(crate) fn supports_store_result(&self) -> bool {
+        self.root == "scoreboard"
+            && matches!(self.args.as_slice(), [players, operation, ..]
+                if players == "players"
+                    && matches!(operation.as_str(),
+                        "get" | "set" | "add" | "remove" | "reset" | "operation"))
+    }
     pub fn parse(root: &str, args: &[&str]) -> Result<Self, CommandError> {
         let valid = match (root, args) {
             ("team", ["add", _, ..]) => true,
@@ -349,6 +357,27 @@ fn publish(state: &mut TickState, events: Vec<ScoreboardEvent>) {
         }
     }
 }
+
+/// Apply an execute callback through the scoreboard's persistence/broadcast owner.
+pub(crate) fn store_result(state: &mut TickState, holders: &[String], objective: &str, value: i32) {
+    let mut events = Vec::with_capacity(holders.len());
+    for holder in holders {
+        state
+            .scoreboard
+            .scores
+            .entry(holder.clone())
+            .or_default()
+            .entry(objective.to_owned())
+            .or_default()
+            .value = value;
+        events.push(ScoreboardEvent::Score {
+            owner: holder.clone(),
+            objective: objective.to_owned(),
+            score: value,
+        });
+    }
+    publish(state, events);
+}
 fn holders(state: &TickState, executor: EntityId, input: &str) -> Result<Vec<String>, String> {
     if input == "*" {
         return Ok(state.scoreboard.scores.keys().cloned().collect());
@@ -397,18 +426,24 @@ fn slot(name: &str) -> Option<i32> {
             .map(|i| i as i32 + 3),
     }
 }
-pub fn execute(state: &mut TickState, executor: EntityId, command: &ScoreboardCommand) -> String {
+pub(crate) fn execute(
+    state: &mut TickState,
+    executor: EntityId,
+    command: &ScoreboardCommand,
+) -> (String, CommandResult) {
     match execute_inner(state, executor, command) {
-        Ok(message) | Err(message) => message,
+        Ok(reply) => reply,
+        Err(message) => (message, CommandResult::Failed),
     }
 }
 fn execute_inner(
     state: &mut TickState,
     executor: EntityId,
     command: &ScoreboardCommand,
-) -> Result<String, String> {
+) -> Result<(String, CommandResult), String> {
     if command.root == "trigger" {
-        return execute_trigger(state, executor, &command.args);
+        return execute_trigger(state, executor, &command.args)
+            .map(|message| (message, CommandResult::Unavailable));
     }
     let a = &command.args;
     let mut events = Vec::new();
@@ -430,32 +465,35 @@ fn execute_inner(
                 message = format!("Created team {}", a[1]);
             }
             "list" => {
-                return Ok(if a.len() == 1 {
-                    format!(
-                        "Teams: {}",
-                        state
-                            .scoreboard
-                            .teams
-                            .keys()
-                            .cloned()
-                            .collect::<Vec<_>>()
-                            .join(", ")
-                    )
-                } else {
-                    format!(
-                        "Members: {}",
-                        state
-                            .scoreboard
-                            .teams
-                            .get(&a[1])
-                            .ok_or("Unknown team")?
-                            .members
-                            .iter()
-                            .cloned()
-                            .collect::<Vec<_>>()
-                            .join(", ")
-                    )
-                });
+                return Ok((
+                    if a.len() == 1 {
+                        format!(
+                            "Teams: {}",
+                            state
+                                .scoreboard
+                                .teams
+                                .keys()
+                                .cloned()
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        )
+                    } else {
+                        format!(
+                            "Members: {}",
+                            state
+                                .scoreboard
+                                .teams
+                                .get(&a[1])
+                                .ok_or("Unknown team")?
+                                .members
+                                .iter()
+                                .cloned()
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        )
+                    },
+                    CommandResult::Unavailable,
+                ));
             }
             "remove" => {
                 state.scoreboard.teams.remove(&a[1]).ok_or("Unknown team")?;
@@ -578,15 +616,18 @@ fn execute_inner(
     } else if a[0] == "objectives" {
         match a[1].as_str() {
             "list" => {
-                return Ok(format!(
-                    "Objectives: {}",
-                    state
-                        .scoreboard
-                        .objectives
-                        .keys()
-                        .cloned()
-                        .collect::<Vec<_>>()
-                        .join(", ")
+                return Ok((
+                    format!(
+                        "Objectives: {}",
+                        state
+                            .scoreboard
+                            .objectives
+                            .keys()
+                            .cloned()
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    ),
+                    CommandResult::Unavailable,
                 ));
             }
             "add" => {
@@ -666,7 +707,7 @@ fn execute_inner(
         return execute_players(state, executor, a);
     }
     publish(state, events);
-    Ok(message)
+    Ok((message, CommandResult::Unavailable))
 }
 
 fn execute_trigger(
@@ -720,35 +761,38 @@ fn execute_players(
     state: &mut TickState,
     executor: EntityId,
     a: &[String],
-) -> Result<String, String> {
+) -> Result<(String, CommandResult), String> {
     if a[1] == "list" {
-        return Ok(if let Some(owner) = a.get(2) {
-            let names = holders(state, executor, owner)?;
-            if names.len() != 1 {
-                return Err("Expected one score holder".to_owned());
-            }
-            format!(
-                "Scores for {}: {:?}",
-                names[0],
-                state
-                    .scoreboard
-                    .scores
-                    .get(&names[0])
-                    .cloned()
-                    .unwrap_or_default()
-            )
-        } else {
-            format!(
-                "Score holders: {}",
-                state
-                    .scoreboard
-                    .scores
-                    .keys()
-                    .cloned()
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            )
-        });
+        return Ok((
+            if let Some(owner) = a.get(2) {
+                let names = holders(state, executor, owner)?;
+                if names.len() != 1 {
+                    return Err("Expected one score holder".to_owned());
+                }
+                format!(
+                    "Scores for {}: {:?}",
+                    names[0],
+                    state
+                        .scoreboard
+                        .scores
+                        .get(&names[0])
+                        .cloned()
+                        .unwrap_or_default()
+                )
+            } else {
+                format!(
+                    "Score holders: {}",
+                    state
+                        .scoreboard
+                        .scores
+                        .keys()
+                        .cloned()
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
+            },
+            CommandResult::Unavailable,
+        ));
     }
     let owners = holders(state, executor, &a[2])?;
     if owners.is_empty() {
@@ -764,7 +808,10 @@ fn execute_players(
             .get(&owners[0])
             .and_then(|s| s.get(&a[3]))
             .ok_or("Score is not set")?;
-        return Ok(format!("{} has {} [{}]", owners[0], score.value, a[3]));
+        return Ok((
+            format!("{} has {} [{}]", owners[0], score.value, a[3]),
+            CommandResult::Success(score.value),
+        ));
     }
     let objective = a.get(3);
     if let Some(objective) = objective {
@@ -815,6 +862,7 @@ fn execute_players(
         });
     }
     let mut events = Vec::new();
+    let mut total = 0_i32;
     for owner in &owners {
         if a[1] == "reset" {
             if let Some(obj) = objective {
@@ -918,6 +966,7 @@ fn execute_players(
                 _ => return Err("Unknown players command".to_owned()),
             };
         }
+        total = total.wrapping_add(value);
         next.entry(owner.clone())
             .or_default()
             .entry(obj.clone())
@@ -937,7 +986,15 @@ fn execute_players(
         }
     }
     publish(state, events);
-    Ok(format!("Updated scores for {} holders", owners.len()))
+    let result = match a[1].as_str() {
+        "reset" => CommandResult::Success(owners.len() as i32),
+        "enable" => CommandResult::Unavailable,
+        _ => CommandResult::Success(total),
+    };
+    Ok((
+        format!("Updated scores for {} holders", owners.len()),
+        result,
+    ))
 }
 /// Read-only criteria updated from authoritative player state, not client input.
 pub fn automatic(state: &mut TickState, deaths: &[EntityId], kills: &[(EntityId, EntityId)]) {

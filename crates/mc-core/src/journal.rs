@@ -1175,6 +1175,22 @@ pub(crate) fn player_to_tag(
     record: &ReplayPlayer,
     items: &mc_data::items::ItemRegistry,
 ) -> Result<mc_nbt::Tag, CoreError> {
+    player_image_to_tag(record, items, true)
+}
+
+/// Vanilla command image, without private custody, statistics or advancement documents.
+pub(crate) fn player_query_tag(
+    record: &ReplayPlayer,
+    items: &mc_data::items::ItemRegistry,
+) -> Result<mc_nbt::Tag, CoreError> {
+    player_image_to_tag(record, items, false)
+}
+
+fn player_image_to_tag(
+    record: &ReplayPlayer,
+    items: &mc_data::items::ItemRegistry,
+    persistent: bool,
+) -> Result<mc_nbt::Tag, CoreError> {
     use mc_data::player_nbt::{VanillaPlayer, player_to_fields};
     crate::ender_chest::contents(&record.opaque_player_fields, items)?;
     let mut opaque_fields = if record.opaque_player_fields.is_empty() {
@@ -1247,16 +1263,18 @@ pub(crate) fn player_to_tag(
     let mut warning = record.warden_warning;
     warning.advance_tick(record.tick);
     fields.push(("warden_spawn_tracker".into(), warning.nbt()));
-    fields.push((
-        "SolarisWardenWarning".into(),
-        mc_nbt::Tag::ByteArray(
-            serde_json::to_vec(&warning)
-                .map_err(|err| CoreError::Storage(format!("player warning: {err}")))?
-                .into_iter()
-                .map(|byte| byte as i8)
-                .collect(),
-        ),
-    ));
+    if persistent {
+        fields.push((
+            "SolarisWardenWarning".into(),
+            mc_nbt::Tag::ByteArray(
+                serde_json::to_vec(&warning)
+                    .map_err(|err| CoreError::Storage(format!("player warning: {err}")))?
+                    .into_iter()
+                    .map(|byte| byte as i8)
+                    .collect(),
+            ),
+        ));
+    }
     if let Some(pos) = record.current_impulse_impact_pos {
         fields.push((
             "current_explosion_impact_pos".into(),
@@ -1280,21 +1298,23 @@ pub(crate) fn player_to_tag(
         "DataVersion".into(),
         mc_nbt::Tag::Int(mc_world::anvil::TARGET_DATA_VERSION),
     ));
-    fields.push((
-        "SolarisStatistics".into(),
-        mc_nbt::Tag::ByteArray(
-            serde_json::to_vec(&record.statistics)
-                .map_err(|err| CoreError::Storage(format!("player statistics: {err}")))?
-                .into_iter()
-                .map(|byte| byte as i8)
-                .collect(),
-        ),
-    ));
-    // Solaris custody keys (vanilla ignores unknown keys).
-    for (key, value) in
-        solaris_custody_fields(items, &player).map_err(|err| CoreError::Storage(err.to_string()))?
-    {
-        fields.push((key, value));
+    if persistent {
+        fields.push((
+            "SolarisStatistics".into(),
+            mc_nbt::Tag::ByteArray(
+                serde_json::to_vec(&record.statistics)
+                    .map_err(|err| CoreError::Storage(format!("player statistics: {err}")))?
+                    .into_iter()
+                    .map(|byte| byte as i8)
+                    .collect(),
+            ),
+        ));
+        // Solaris custody keys (vanilla ignores unknown keys).
+        for (key, value) in solaris_custody_fields(items, &player)
+            .map_err(|err| CoreError::Storage(err.to_string()))?
+        {
+            fields.push((key, value));
+        }
     }
     if let Some(position) = record.respawn {
         fields.push((
@@ -1314,7 +1334,7 @@ pub(crate) fn player_to_tag(
             ]),
         ));
     }
-    if record.respawn.is_none() {
+    if persistent && record.respawn.is_none() {
         fields.push((
             "solaris:RespawnState".into(),
             mc_nbt::Tag::Compound(vec![
@@ -1331,34 +1351,36 @@ pub(crate) fn player_to_tag(
             ]),
         ));
     }
-    fields.push(("solaris:Tick".into(), mc_nbt::Tag::Long(record.tick as i64)));
-    fields.push((
-        "solaris:BurnTicks".into(),
-        mc_nbt::Tag::Long(i64::from(record.burn_ticks)),
-    ));
-    fields.push((
-        "SolarisAdvancements".into(),
-        // Vanilla's complete document can exceed NBT's 64 KiB string limit.
-        mc_nbt::Tag::ByteArray(
-            serde_json::to_vec(&record.advancement_progress)
-                .map_err(|err| CoreError::Storage(format!("player advancements: {err}")))?
-                .into_iter()
-                .map(|byte| byte as i8)
-                .collect(),
-        ),
-    ));
-    fields.push((
-        "SolarisUnlockedRecipes".into(),
-        mc_nbt::Tag::List(mc_nbt::ListTag {
-            element_type: mc_nbt::tag_type::STRING,
-            elements: record
-                .unlocked_recipes
-                .iter()
-                .cloned()
-                .map(mc_nbt::Tag::String)
-                .collect(),
-        }),
-    ));
+    if persistent {
+        fields.push(("solaris:Tick".into(), mc_nbt::Tag::Long(record.tick as i64)));
+        fields.push((
+            "solaris:BurnTicks".into(),
+            mc_nbt::Tag::Long(i64::from(record.burn_ticks)),
+        ));
+        fields.push((
+            "SolarisAdvancements".into(),
+            // Vanilla's complete document can exceed NBT's 64 KiB string limit.
+            mc_nbt::Tag::ByteArray(
+                serde_json::to_vec(&record.advancement_progress)
+                    .map_err(|err| CoreError::Storage(format!("player advancements: {err}")))?
+                    .into_iter()
+                    .map(|byte| byte as i8)
+                    .collect(),
+            ),
+        ));
+        fields.push((
+            "SolarisUnlockedRecipes".into(),
+            mc_nbt::Tag::List(mc_nbt::ListTag {
+                element_type: mc_nbt::tag_type::STRING,
+                elements: record
+                    .unlocked_recipes
+                    .iter()
+                    .cloned()
+                    .map(mc_nbt::Tag::String)
+                    .collect(),
+            }),
+        ));
+    }
     fields.extend(opaque_fields);
     Ok(mc_nbt::Tag::Compound(fields))
 }
