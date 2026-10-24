@@ -21,10 +21,11 @@ pub struct PluginLimits {
     /// Largest accepted component artifact, in bytes. Checked before compiling,
     /// because compilation is host work the guest's fuel does not pay for.
     pub artifact_bytes: usize,
-    /// Guest instructions allowed per callback.
+    /// Guest instruction allowance per callback; independent of host scheduling.
     pub fuel_per_call: u64,
-    /// Epoch ticks allowed per callback. One tick is the ticker interval, so this
-    /// is the wall-clock watchdog: a guest that blocks in a host call still ends.
+    /// Generous wall-clock hang guard in ticker intervals, not a CPU-work budget.
+    /// Includes descheduling and native imports; interruption is checked in Wasm,
+    /// so a blocked native import must return before the guard can trap.
     pub epoch_ticks_per_call: u64,
     /// Bytes one callback may hand the host, counted the way Wasmtime charges
     /// them: every list element at its canonical stride and every string at its
@@ -81,7 +82,9 @@ impl Default for PluginLimits {
         Self {
             artifact_bytes: 16 * 1024 * 1024,
             fuel_per_call: 50_000_000,
-            epoch_ticks_per_call: 4,
+            // 30 seconds at the production 25ms epoch interval. Fuel bounds guest
+            // work; the guard must tolerate native Argon2 and a descheduled worker.
+            epoch_ticks_per_call: 1_200,
             // Derived from what the contract itself admits rather than measured
             // from a workload: one callback may answer a batch of
             // `commands_per_call` commands, each at its text bound and each able

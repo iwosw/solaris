@@ -86,9 +86,8 @@ impl Default for HostQueues {
     }
 }
 
-/// How often the epoch watchdog advances. One tick is the resolution of every
-/// callback deadline: a guest that blocks past its deadline is interrupted at the
-/// next tick, whatever it is doing.
+/// How often the epoch watchdog advances. An expired deadline traps at the next
+/// Wasm epoch check; it cannot preempt a native host import while that import runs.
 pub const EPOCH_INTERVAL: Duration = Duration::from_millis(25);
 
 const CALLBACK_LATENCY_SAMPLE_CAPACITY: usize = 1_200;

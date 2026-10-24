@@ -385,7 +385,10 @@ async fn a_guest_blocked_in_a_host_import_is_ended_by_the_epoch_deadline() {
     write_package(root.path());
     std::fs::write(root.path().join("hello/config.toml"), "mode = \"block\"\n")
         .expect("blocking config");
-    let limits = PluginLimits::default();
+    let limits = PluginLimits {
+        epoch_ticks_per_call: 4,
+        ..PluginLimits::default()
+    };
     let packages = mc_plugin_host::discover(
         &DeploymentConfig {
             root: root.path().to_path_buf(),

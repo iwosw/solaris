@@ -20,6 +20,17 @@ retiring stores lose publication rights before shutdown. Configuration is opened
 descriptor-relative to the package directory without following symlinks, accepts
 only regular files, and enforces the text bound on actual reads.
 
+Execution budgets and required authentication (2026-10-24): ordinary callbacks
+are bounded by 50,000,000 guest fuel units. Epochs are a generous hang guard,
+not a CPU-work meter: the production 25 ms ticker grants 1,200 epochs (about
+30 seconds), including native imports and time the worker is descheduled.
+The former four-epoch allowance could retire a healthy authentication Store
+after its synchronous native Argon2id import returned on a busy host. Keep
+Argon2id's existing 19 MiB/two-pass/single-lane security parameters; guest fuel
+does not meter this separately parameter-bounded host work. Epoch interrupts
+are observed when execution returns to Wasm, not inside a blocked native import.
+Precommit hooks retain their caller's short absolute chain deadline.
+
 The body below preserves the evolving decision record, including historical
 v1 source paths/commands; present-tense v1 descriptions apply only to their era.
 
