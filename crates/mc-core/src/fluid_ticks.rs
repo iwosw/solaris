@@ -258,7 +258,7 @@ impl FluidTicks {
             .iter()
             .take_while(|(order, _)| order.0 <= now)
             .filter(|(_, tick)| {
-                world.is_active(tick.pos[0].div_euclid(16), tick.pos[2].div_euclid(16))
+                world.is_block_active(tick.pos[0].div_euclid(16), tick.pos[2].div_euclid(16))
                     && world
                         .block_at(tick.pos[0], tick.pos[1], tick.pos[2])
                         .is_some()

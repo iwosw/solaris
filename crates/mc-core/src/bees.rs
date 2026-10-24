@@ -949,7 +949,10 @@ pub(crate) fn run(
     let mut hives = std::mem::take(&mut state.hives);
     hives.retain(|&(x, y, z), hive| {
         let p = BlockPos { x, y, z };
-        if !state.world.is_active(x.div_euclid(16), z.div_euclid(16)) {
+        if !state
+            .world
+            .is_block_active(x.div_euclid(16), z.div_euclid(16))
+        {
             return true;
         }
         let level = honey(state, p);

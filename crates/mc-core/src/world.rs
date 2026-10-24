@@ -88,6 +88,8 @@ pub struct ChunkWorld {
     /// Parent-managed active membership (hysteresis set). `refresh_active_clock`
     /// reconciles it against residency; cached stationary ticks skip re-sends.
     active_set: HashSet<ChunkPos>,
+    /// Level-32 demand, excluding the entity-ticking set.
+    block_only: HashSet<ChunkPos>,
     /// Membership fence for lazy entity-clock mirrors. Content revisions and
     /// uninterrupted live accrual do not invalidate those mirrors.
     active_revision: u64,
@@ -452,6 +454,7 @@ impl ChunkWorld {
             activity_changes: HashMap::default(),
             sim_tick: 0,
             active_set: HashSet::default(),
+            block_only: HashSet::default(),
             active_revision: 0,
             block_entity_removed: Vec::new(),
             block_entity_replaced: HashSet::default(),
@@ -1457,6 +1460,13 @@ impl ChunkWorld {
     pub fn simulation_interval(&self, pos: ChunkPos, from: u64, to: u64) -> Option<(u64, u64)> {
         if to <= from {
             return None;
+    /// Blocks also tick in resident level-32 neighbours of forced tickets.
+    #[must_use]
+    pub fn is_block_active(&self, cx: i32, cz: i32) -> bool {
+        self.is_active(cx, cz)
+            || (self.block_only.contains(&ChunkPos { x: cx, z: cz }) && self.has_chunk(cx, cz))
+    }
+
         }
         let (start, end) = if let Some(Some(image)) = self.activity_changes.get(&pos) {
             if image.active {
@@ -1490,9 +1500,14 @@ impl ChunkWorld {
         self.refresh_active_clock(tick);
     }
 
-    /// Parent hysteresis input: stored membership, EMPTY until the first
-    /// `set_active_chunks` (resident or not). Copy refs, no allocation.
-    pub fn active_positions(&self) -> impl Iterator<Item = ChunkPos> + '_ {
+    pub(crate) fn set_block_only_chunks(&mut self, chunks: HashSet<ChunkPos>) {
+        if self.block_only != chunks {
+            self.active_revision += 1;
+            self.block_only = chunks;
+        }
+    }
+
+    pub(crate) fn entity_active_positions(&self) -> impl Iterator<Item = ChunkPos> + '_ {
         self.active_set.iter().copied()
     }
 
@@ -1516,6 +1531,11 @@ impl ChunkWorld {
     }
 
     /// Reconcile resident/active transitions and advance `last_sim` at `tick`
+    /// All ticking demand (resident or not), without duplicates.
+    pub fn active_positions(&self) -> impl Iterator<Item = ChunkPos> + '_ {
+        self.active_set.iter().chain(&self.block_only).copied()
+    }
+
     /// without taking a membership set. Parent's cached-basis fast path:
     /// stationary ticks skip the set rebuild and call this after ensure so
     /// newly admitted chunks with active demand activate in the same tick.
@@ -1626,6 +1646,22 @@ impl ChunkWorld {
     }
 
     /// Debt and effects are captured by the same tick WAL/checkpoint fence.
+        // Level 32 runs block time live, not entity time. Do not later replay
+        // those same ticks as whole-chunk catch-up when this chunk reaches 31.
+        // These anchors are rebuilt from persisted ticket demand on recovery.
+        for pos in &self.block_only {
+            if !chunks.contains_key(pos) {
+                continue;
+            }
+            let record = sim_debt.entry(*pos).or_insert(crate::debt::SimDebtRecord {
+                last_sim: tick,
+                remaining: 0,
+                dirty: false,
+                active: false,
+            });
+            record.last_sim = tick;
+            record.remaining = 0;
+        }
     pub(crate) fn consume_simulation_debt(&mut self, pos: ChunkPos, elapsed: u64) {
         let Some(debt) = self.sim_debt.get_mut(&pos) else {
             return;

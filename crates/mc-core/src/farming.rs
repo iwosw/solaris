@@ -158,7 +158,7 @@ impl FarmSections {
         self.active_chunks.extend(
             world
                 .chunks()
-                .filter(|chunk| world.is_active(chunk.pos.x, chunk.pos.z))
+                .filter(|chunk| world.is_block_active(chunk.pos.x, chunk.pos.z))
                 .map(|chunk| chunk.pos),
         );
         self.active_revision = Some(revision);

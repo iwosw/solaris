@@ -319,7 +319,7 @@ pub struct TickState {
     /// Client residency radius, independent of gameplay simulation.
     pub config_view_distance: i32,
     active_player_centers: Vec<ChunkPos>,
-    active_ticket_ranges: Vec<(ChunkPos, i32)>,
+    active_ticket_ranges: Vec<(ChunkPos, i32, i32)>,
     active_sim_radius: i32,
     pub registry: Arc<CoreRegistry>,
     pub(crate) datapacks: crate::datapacks::Runtime,
@@ -2204,7 +2204,7 @@ impl TickState {
                 .eq(self.active_player_centers.iter().copied())
             && self
                 .ticket_areas()
-                .map(|(center, _, radius)| (center, radius))
+                .map(|(center, _, blocks, entities)| (center, blocks, entities))
                 .eq(self.active_ticket_ranges.iter().copied())
         {
             self.world.refresh_active_clock(tick);
@@ -2214,7 +2214,7 @@ impl TickState {
         self.active_player_centers.extend(centers);
         let ranges: Vec<_> = self
             .ticket_areas()
-            .map(|(center, _, radius)| (center, radius))
+            .map(|(center, _, blocks, entities)| (center, blocks, entities))
             .collect();
         self.active_ticket_ranges = ranges;
         self.active_sim_radius = radius;
@@ -2225,7 +2225,7 @@ impl TickState {
                     active.insert(ChunkPos { x, z });
                 }
             }
-            for chunk in self.world.active_positions() {
+            for chunk in self.world.entity_active_positions() {
                 if (i64::from(chunk.x) - i64::from(center.x)).abs() <= i64::from(radius) + 1
                     && (i64::from(chunk.z) - i64::from(center.z)).abs() <= i64::from(radius) + 1
                 {
@@ -2233,9 +2233,15 @@ impl TickState {
                 }
             }
         }
-        for (center, _, radius) in self.ticket_areas() {
-            for z in center.z - radius..=center.z + radius {
-                for x in center.x - radius..=center.x + radius {
+        let mut block_only = HashSet::default();
+        for (center, _, blocks, entities) in self.ticket_areas() {
+            for z in center.z - blocks..=center.z + blocks {
+                for x in center.x - blocks..=center.x + blocks {
+                    block_only.insert(ChunkPos { x, z });
+                }
+            }
+            for z in center.z - entities..=center.z + entities {
+                for x in center.x - entities..=center.x + entities {
                     active.insert(ChunkPos { x, z });
                 }
             }
@@ -2249,6 +2255,8 @@ impl TickState {
         // Accumulation precedes commit's tick increment; interval boundaries
         // must use the output/WAL tick, including the first tick after recovery.
         let tick = self.tick + 1;
+        block_only.retain(|chunk| !active.contains(chunk));
+        self.world.set_block_only_chunks(block_only);
         // Forced chunks within the spawning sphere count too, independently
         // of the player's configured simulation radius.
         let radius = 8;
@@ -2324,7 +2332,7 @@ impl TickState {
                 }
             }
         }
-        for (centre, load, _) in self.ticket_areas() {
+        for (centre, load, _, _) in self.ticket_areas() {
             add(centre, load);
         }
         for chunk in self.world.active_positions().chain(self.world.dirty_pins()) {
@@ -4246,7 +4254,7 @@ pub(crate) fn tick_furnaces(
         }
         if !state
             .world
-            .is_active(pos.0.div_euclid(16), pos.2.div_euclid(16))
+            .is_block_active(pos.0.div_euclid(16), pos.2.div_euclid(16))
         {
             continue;
         }

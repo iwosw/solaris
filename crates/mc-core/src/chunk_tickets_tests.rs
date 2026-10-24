@@ -89,10 +89,11 @@ fn pearl_ticket_loads_five_by_five_and_simulates_three_by_three_without_the_owne
         for dx in -2..=2_i32 {
             assert!(state.world.has_chunk(20 + dx, dz), "loaded ({dx}, {dz})");
             assert_eq!(
-                state.world.is_active(20 + dx, dz),
+                state.world.is_block_active(20 + dx, dz),
                 dx.abs().max(dz.abs()) <= 1,
                 "simulated ({dx}, {dz})"
             );
+            assert_eq!(state.world.is_active(20 + dx, dz), dx == 0 && dz == 0);
         }
     }
     let before = height(&state, id);
@@ -288,13 +289,13 @@ fn ticket_areas_expand_forced_and_pearl_tickets_but_not_generic_ones() {
     pearl(&mut state, Some(owner), FAR);
     refresh(&mut state);
     let mut areas: Vec<_> = state.ticket_areas().collect();
-    areas.sort_by_key(|(chunk, _, _)| (chunk.x, chunk.z));
+    areas.sort_by_key(|(chunk, _, _, _)| (chunk.x, chunk.z));
     assert_eq!(
         areas,
         [
-            (ChunkPos { x: 1, z: 2 }, 2, 1),
-            (ChunkPos { x: 9, z: 9 }, 3, 3),
-            (ChunkPos { x: 20, z: 0 }, 2, 1),
+            (ChunkPos { x: 1, z: 2 }, 2, 1, 0),
+            (ChunkPos { x: 9, z: 9 }, 3, 3, 3),
+            (ChunkPos { x: 20, z: 0 }, 2, 1, 0),
         ]
     );
 }

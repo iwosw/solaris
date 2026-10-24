@@ -124,7 +124,10 @@ impl Spawner {
             pending: None,
         }
     }
-    fn decode(bytes: &[u8], items: &mc_data::items::ItemRegistry) -> Result<Self, String> {
+    pub(crate) fn decode(
+        bytes: &[u8],
+        items: &mc_data::items::ItemRegistry,
+    ) -> Result<Self, String> {
         let fields = nbt::decode(bytes)?;
         let data = SpawnerData::from_fields(fields)?;
         let pending = if let Some(fields) = nbt::compound(&data.fields, "solaris:ominous_item")? {
@@ -533,7 +536,7 @@ pub(crate) fn run(
         let pos = position(*key);
         if !state
             .world
-            .is_active(pos.x.div_euclid(16), pos.z.div_euclid(16))
+            .is_block_active(pos.x.div_euclid(16), pos.z.div_euclid(16))
         {
             return true;
         }

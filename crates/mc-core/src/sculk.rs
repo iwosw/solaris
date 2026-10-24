@@ -691,7 +691,7 @@ pub(crate) fn run(state: &mut TickState, writes: &mut Vec<(BlockPos, u32)>) {
         };
         if !state
             .world
-            .is_active(pos.x.div_euclid(16), pos.z.div_euclid(16))
+            .is_block_active(pos.x.div_euclid(16), pos.z.div_euclid(16))
         {
             return true;
         }

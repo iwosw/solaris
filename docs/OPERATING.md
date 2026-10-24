@@ -773,9 +773,9 @@ overworld; `/execute in` supplies an explicit dimension). A forced chunk is a pe
 (`minecraft:forced:<x>:<z>`, restored after restart and written to Anvil
 `chunk_tickets.dat` on export) with no player required: like vanilla's level-31
 `forced` ticket it keeps the chunk plus a two-chunk ring loaded and the chunk
-plus a one-chunk ring simulated, so a forced farm keeps running with nobody
-nearby. Native simulation is one set, so the ring simulates entities too (vanilla
-only ticks its blocks).
+plus a one-chunk ring block-ticking, so a forced farm keeps running with nobody
+nearby. Entities simulate only in the central chunk unless a player's simulation
+distance independently activates the neighboring chunk.
 
 Thrown ender pearls hold a vanilla `ender_pearl` ticket (same extents, 40-tick
 timeout refreshed while the pearl lives, never persisted) on their current chunk

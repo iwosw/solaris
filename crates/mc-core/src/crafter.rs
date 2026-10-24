@@ -604,7 +604,7 @@ pub(crate) fn advance(state: &mut TickState, writes: &mut Vec<(BlockPos, u32)>) 
             (crafter.settings.crafting_ticks_remaining > 0
                 && state
                     .world
-                    .is_active(key.0.div_euclid(16), key.2.div_euclid(16)))
+                    .is_block_active(key.0.div_euclid(16), key.2.div_euclid(16)))
             .then_some(*key)
         })
         .collect();
@@ -623,7 +623,7 @@ pub(crate) fn run(state: &mut TickState) {
         let pos = position(key);
         if !state
             .world
-            .is_active(pos.x.div_euclid(16), pos.z.div_euclid(16))
+            .is_block_active(pos.x.div_euclid(16), pos.z.div_euclid(16))
         {
             continue;
         }

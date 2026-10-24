@@ -268,9 +268,13 @@ fn forced_chunks_stay_loaded_and_simulated_with_no_player() {
                 "loaded ({dx}, {dz})"
             );
             assert_eq!(
-                state.world.is_active(chunk.x + dx, chunk.z + dz),
+                state.world.is_block_active(chunk.x + dx, chunk.z + dz),
                 dx.abs().max(dz.abs()) <= 1,
                 "simulated ({dx}, {dz})"
+            );
+            assert_eq!(
+                state.world.is_active(chunk.x + dx, chunk.z + dz),
+                dx == 0 && dz == 0
             );
         }
     }
@@ -298,7 +302,10 @@ fn forced_neighbour_ticks_blocks_but_freezes_entity_motion_and_age() {
     let neighbour_slot = state.entities.slot_of(neighbour).unwrap();
     assert_eq!(state.entities.pos(neighbour_slot), before);
     assert_eq!(state.entities.row(neighbour_slot).age, age);
-    assert!(state.world.is_active(11, 10), "level 32 still ticks blocks");
+    assert!(
+        state.world.is_block_active(11, 10),
+        "level 32 still ticks blocks"
+    );
     let centre_slot = state.entities.slot_of(centre).unwrap();
     assert!(state.entities.pos(centre_slot)[1] < 200.0);
 }

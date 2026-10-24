@@ -73,7 +73,7 @@ fn active_projection_tracks_membership_admission_and_preserves_chunk_order() {
     cache.refresh_active(&world);
     let ordered: Vec<_> = world
         .chunks()
-        .filter(|chunk| world.is_active(chunk.pos.x, chunk.pos.z))
+        .filter(|chunk| world.is_block_active(chunk.pos.x, chunk.pos.z))
         .map(|chunk| chunk.pos)
         .collect();
     assert_eq!(cache.active_chunks, ordered);

@@ -249,7 +249,7 @@ pub(crate) fn settle(state: &mut TickState, writes: &mut Vec<(crate::boundary::B
         state
             .world
             .active_positions()
-            .filter(|pos| state.world.is_active(pos.x, pos.z)),
+            .filter(|pos| state.world.is_block_active(pos.x, pos.z)),
     );
     chunks.sort_unstable_by_key(|pos| (pos.x, pos.z));
     for chunk in &chunks {

@@ -58,11 +58,11 @@ impl ChunkTickets {
 }
 
 impl TickState {
-    /// Every ticket as `(centre, loading radius, simulation radius)`.
+    /// Every ticket as `(centre, loading radius, block radius, entity radius)`.
     ///
-    /// Forced chunks and pearls use vanilla's level-31 extents; every other
-    /// ticket uses its single radius for both.
-    pub(crate) fn ticket_areas(&self) -> impl Iterator<Item = (ChunkPos, i32, i32)> + '_ {
+    /// Forced chunks and pearls use vanilla's level-31 extents; other
+    /// tickets use their single radius for all three demands.
+    pub(crate) fn ticket_areas(&self) -> impl Iterator<Item = (ChunkPos, i32, i32, i32)> + '_ {
         self.tickets
             .iter()
             .map(|(owner, &(centre, radius))| {
@@ -70,17 +70,19 @@ impl TickState {
                     (
                         centre,
                         crate::forceload::LOAD_RADIUS,
-                        crate::forceload::SIM_RADIUS,
+                        crate::forceload::BLOCK_RADIUS,
+                        crate::forceload::ENTITY_RADIUS,
                     )
                 } else {
-                    (centre, radius, radius)
+                    (centre, radius, radius, radius)
                 }
             })
             .chain(self.chunk_tickets.pearl_chunks().iter().map(|&centre| {
                 (
                     centre,
                     crate::forceload::LOAD_RADIUS,
-                    crate::forceload::SIM_RADIUS,
+                    crate::forceload::BLOCK_RADIUS,
+                    crate::forceload::ENTITY_RADIUS,
                 )
             }))
     }

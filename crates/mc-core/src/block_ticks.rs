@@ -312,7 +312,7 @@ impl BlockTicks {
         world: &crate::world::ChunkWorld,
     ) -> Vec<ScheduledBlockTick> {
         self.drain_ready(now, limit, |pos| {
-            world.is_active(pos.x.div_euclid(16), pos.z.div_euclid(16))
+            world.is_block_active(pos.x.div_euclid(16), pos.z.div_euclid(16))
                 && world.block_at(pos.x, pos.y, pos.z).is_some()
         })
     }

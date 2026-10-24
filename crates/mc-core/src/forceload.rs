@@ -8,8 +8,8 @@
 //! A forced chunk is the persisted native ticket `minecraft:forced:<x>:<z>`
 //! with radius 0 in the owning dimension's [`TickState::tickets`]. Checkpoints,
 //! the tick WAL and the Anvil `chunk_tickets.dat` conversion already carry it.
-//! Level 31 loads the chunk plus a two-chunk ring and simulates the chunk with
-//! its one-chunk ring (see [`LOAD_RADIUS`] / [`SIM_RADIUS`]).
+//! Level 31 ticks entities only in the centre, blocks through distance one,
+//! and loads chunks through distance two.
 
 use crate::boundary::ChunkPos;
 use crate::commands::{CommandError, Coord, coord};
@@ -24,10 +24,10 @@ const WORLD_LIMIT: i32 = 30_000_000;
 /// A level-31 ticket keeps this many chunks around its centre loaded
 /// (`FULL` level 33 is reached at distance 2).
 pub(crate) const LOAD_RADIUS: i32 = 2;
-/// Chunks within this distance of a level-31 ticket centre are simulated.
-/// Vanilla ticks blocks in the ring (level 32) and entities only in the
-/// centre; native simulation is one set, so the ring simulates entities too.
-pub(crate) const SIM_RADIUS: i32 = 1;
+/// Level 32 ticks blocks but not entities.
+pub(crate) const BLOCK_RADIUS: i32 = 1;
+/// Only level 31 ticks entities.
+pub(crate) const ENTITY_RADIUS: i32 = 0;
 
 const USAGE: &str =
     "forceload (add|remove) <from> [<to>] | forceload remove all | forceload query [<pos>]";

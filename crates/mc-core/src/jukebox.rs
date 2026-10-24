@@ -60,7 +60,10 @@ pub(crate) fn accepts(state: &TickState, stack: &ItemStack) -> bool {
     song(&state.registry.items, stack).is_some()
 }
 impl Jukebox {
-    fn decode(mut bytes: &[u8], items: &mc_data::items::ItemRegistry) -> Result<Self, CoreError> {
+    pub(crate) fn decode(
+        mut bytes: &[u8],
+        items: &mc_data::items::ItemRegistry,
+    ) -> Result<Self, CoreError> {
         let tag = mc_nbt::read_network(&mut bytes).map_err(|e| fail("Jukebox", &e.to_string()))?;
         if !bytes.is_empty() {
             return Err(fail("Jukebox", "trailing NBT bytes"));
@@ -314,7 +317,10 @@ pub(crate) fn run(
     let mut boxes = std::mem::take(&mut state.jukeboxes);
     boxes.retain(|&(x, y, z), value| {
         let pos = BlockPos { x, y, z };
-        if !state.world.is_active(x.div_euclid(16), z.div_euclid(16)) {
+        if !state
+            .world
+            .is_block_active(x.div_euclid(16), z.div_euclid(16))
+        {
             return true;
         }
         if block(state, pos).is_none_or(|b| b.block.id.path() != "jukebox") {

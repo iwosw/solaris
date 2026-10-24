@@ -1988,10 +1988,12 @@ Vanilla level-31 tickets (`chunk_tickets.rs`, `forceload.rs`; 26.1.2
 `TicketType.FORCED`/`ENDER_PEARL`, `ChunkMap.FORCED_TICKET_LEVEL`) reuse this
 model. `/forceload` persists a radius-0 ticket `minecraft:forced:<x>:<z>` in the
 owning dimension; forced and pearl tickets both expand to a two-chunk loading
-ring and a one-chunk simulation ring (vanilla loads FULL at distance 2 and ticks
-blocks at distance 1; native simulation is one set, so entities in the ring also
-tick). Pearl tickets are derived each tick from live pearls whose owner is online
-in any dimension, time out 40 ticks after the pearl leaves a chunk, are capped at
+ring and a one-chunk block-ticking ring. Only the ticket's center admits entity
+simulation; player simulation demand can independently activate neighboring entities.
+Block-only chunks advance their simulation anchor without accumulating entity catch-up
+debt, so promotion does not replay time during which entities were intentionally frozen.
+Pearl tickets are derived each tick from live pearls whose owner is online in any
+dimension, time out 40 ticks after the pearl leaves a chunk, are capped at
 32 distinct chunks per owner and are never journaled or checkpointed. A pearl
 whose owner is offline is parked in the checkpointed entity table instead of
 being moved into the player file. The WAL records durable ticket changes only:

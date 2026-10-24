@@ -326,7 +326,7 @@ pub(crate) fn run(
         };
         if !state
             .world
-            .is_active(pos.x.div_euclid(16), pos.z.div_euclid(16))
+            .is_block_active(pos.x.div_euclid(16), pos.z.div_euclid(16))
         {
             return true;
         }

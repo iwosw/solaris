@@ -310,7 +310,7 @@ pub(crate) fn run(state: &mut TickState, changes: &mut ChangeSet) {
         // RequiredPlayerRange is bounded to 32 at admission: at most 5x5 cells.
         for x in (px - 32).div_euclid(16)..=(px + 32).div_euclid(16) {
             for z in (pz - 32).div_euclid(16)..=(pz + 32).div_euclid(16) {
-                if !state.world.is_active(x, z) {
+                if !state.world.is_block_active(x, z) {
                     continue;
                 }
                 if let Some(entries) = spawners.chunks.get(&(x, z)) {
