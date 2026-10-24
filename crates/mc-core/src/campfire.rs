@@ -113,7 +113,10 @@ pub(crate) fn use_food(
     let Some(recipe) = recipe(&rules, held) else {
         return false;
     };
-    if !is_lit || player.game_mode == crate::commands::GameMode::Spectator {
+    // Vanilla preloads raw food onto an unlit campfire; cooking only
+    // resumes once relit (`run` pauses progress while unlit).
+    let _ = is_lit;
+    if player.game_mode == crate::commands::GameMode::Spectator {
         return true;
     }
     let RecipeKind::CampfireCooking(cooking) = &recipe.kind else {

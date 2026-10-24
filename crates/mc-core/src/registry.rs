@@ -36,6 +36,7 @@ pub(crate) const HAZARD_CACTUS: u8 = 0x08;
 pub(crate) const HAZARD_BERRY: u8 = 0x10;
 pub(crate) const HAZARD_CAMPFIRE: u8 = 0x20;
 pub(crate) const HAZARD_MAGMA: u8 = 0x40;
+pub(crate) const HAZARD_SOUL_CAMPFIRE: u8 = 0x80;
 
 /// Everything the tick reads but never writes.
 #[cfg_attr(test, derive(Clone))]
@@ -371,7 +372,11 @@ impl CoreRegistry {
                     .iter()
                     .any(|(name, value)| name == "lit" && value == "true")
             {
-                flags |= HAZARD_CAMPFIRE;
+                flags |= if name == "minecraft:soul_campfire" {
+                    HAZARD_SOUL_CAMPFIRE
+                } else {
+                    HAZARD_CAMPFIRE
+                };
             } else if name == "minecraft:magma_block" {
                 flags |= HAZARD_MAGMA;
             }

@@ -567,3 +567,29 @@ fn creative_composter_fill_retains_reserved_input() {
     assert_eq!(level(&state, POS), Some(1));
     assert_eq!(state.players[&actor].inventory.slots[0].count, 1);
 }
+
+#[test]
+fn omitted_java_flowers_compost_and_grass_block_does_not() {
+    // First layer from empty always succeeds; later layers are chance-gated.
+    for flower in [
+        "red_tulip",
+        "orange_tulip",
+        "white_tulip",
+        "pink_tulip",
+        "blue_orchid",
+        "allium",
+        "azure_bluet",
+        "lily_of_the_valley",
+    ] {
+        let (mut state, entity) = fixture(0);
+        give(&mut state, entity, flower, 1, Hand::Main);
+        let _ = run_tick(&mut state, &[use_input(0, Hand::Main)]);
+        assert_eq!(level(&state, POS), Some(1), "{flower} composts");
+        assert!(state.players[&entity].inventory.slots[0].is_empty());
+    }
+    // Java: grass blocks compost on Bedrock only: the level never rises.
+    let (mut state, entity) = fixture(0);
+    give(&mut state, entity, "grass_block", 1, Hand::Main);
+    let _ = run_tick(&mut state, &[use_input(0, Hand::Main)]);
+    assert_eq!(level(&state, POS), Some(0), "grass never composts");
+}
