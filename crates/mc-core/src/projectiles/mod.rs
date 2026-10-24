@@ -375,6 +375,17 @@ fn set_extra(
 pub(crate) fn touch(state: &mut TickState, id: EntityId) {
     state.appearance_changed.push(id);
 }
+/// Whether any live fishing hook is flying: only hooks collide with dropped
+/// items (vanilla hook-vs-item retrieval); other projectiles pass through.
+pub(crate) fn active_hook_present(state: &TickState) -> bool {
+    state.entities.slots().any(|slot| {
+        state.entities.body(slot).alive
+            && matches!(
+                state.entities.row(slot).projectile.as_deref().map(|record| &record.kind),
+                Some(ProjectileKind::FishingHook)
+            )
+    })
+}
 
 pub(crate) fn remove(state: &mut TickState, id: EntityId) {
     if let Some(slot) = state.entities.slot_of_any(id) {

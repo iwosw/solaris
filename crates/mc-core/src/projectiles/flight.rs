@@ -40,7 +40,12 @@ fn hittables(state: &TickState, bodies: &mut Vec<Hittable>) {
                 EntityKind::Mob { .. } => {
                     body.movement != crate::blueprint::MovementClass::Projectile
                 }
-                EntityKind::Item { .. } | EntityKind::ExperienceOrb { .. } => false,
+                // Fishing hooks retrieve dropped items (vanilla hook-vs-item
+                // collision); every other projectile passes through them.
+                EntityKind::Item { .. } => {
+                    crate::projectiles::active_hook_present(state)
+                }
+                EntityKind::ExperienceOrb { .. } => false,
             };
         hittable.then(|| {
             let pos = state.entities.pos(slot);

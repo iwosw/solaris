@@ -166,7 +166,17 @@ fn reel(state: &mut TickState, actor: EntityId, held_slot: usize, rod: &ItemStac
     } else {
         None
     };
-    let amount = if hooked_slot.is_some() {
+    // Vanilla durability: reeling a living entity costs 5; pulling a hooked
+    // dropped item costs 3 (mob retrieval is the 5-cost control).
+    let hooked_is_item = hooked_slot.is_some_and(|slot| {
+        matches!(
+            state.entities.body(slot).kind,
+            crate::entities::EntityKind::Item { .. }
+        )
+    });
+    let amount = if hooked_is_item {
+        3
+    } else if hooked_slot.is_some() {
         5
     } else if catch.is_some() {
         1
@@ -368,6 +378,27 @@ pub(crate) fn step(
         return record.stuck;
     }
     record.stuck = false;
+    // Underwater casts rise toward the surface until the block above is not
+    // water (vanilla bobber buoyancy); a ceiling keeps the hook in place.
+    let above_clear = state
+        .world
+        .block_at(
+            position[0].floor() as i32,
+            position[1].floor() as i32 + 1,
+            position[2].floor() as i32,
+        )
+        .is_none_or(|block| {
+            state.registry.materials.classify(block) != mc_physics::BlockMaterial::Water
+        });
+    if !above_clear {
+        let rise = state.entities.pos(slot);
+        // Move one block per tick would tunnel through the surface check; a
+        // gentle per-tick rise keeps the hook inside loaded water.
+        state.entities.set_pos(slot, [rise[0], rise[1] + 0.2, rise[2]]);
+        state.entities.set_vel(slot, [0.0; 3]);
+        metadata(state, id, None, false);
+        return true;
+    }
     let since = *fishing.water_since.get_or_insert(state.tick);
     if fishing.bite_until.is_some_and(|until| state.tick >= until) {
         fishing.water_since = Some(state.tick);

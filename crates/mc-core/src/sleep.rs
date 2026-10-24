@@ -61,6 +61,8 @@ fn is_bed(state: &TickState, pos: BlockPos) -> bool {
 }
 
 /// A monster whose box meets the box around `bed` that keeps sleepers up.
+/// Vanilla exempts slimes/magma cubes entirely and zombified piglins unless
+/// angered by a player; endermen still block sleep.
 fn monster_near(state: &TickState, bed: BlockPos) -> bool {
     let centre = [f64::from(bed.x) + 0.5, f64::from(bed.z) + 0.5];
     let floor = f64::from(bed.y);
@@ -69,12 +71,46 @@ fn monster_near(state: &TickState, bed: BlockPos) -> bool {
         if !row.alive || crate::natural_spawn::category_of(state, slot) != MobCategory::Monster {
             return false;
         }
+        if mob_exempt_from_bed_check(state, slot) {
+            return false;
+        }
         let at = state.entities.pos(slot);
         (at[0] - centre[0]).abs() < MONSTER_RANGE[0] + row.half_width
             && (at[2] - centre[1]).abs() < MONSTER_RANGE[0] + row.half_width
             && at[1] + row.height > floor - MONSTER_RANGE[1]
             && at[1] < floor + MONSTER_RANGE[1]
     })
+}
+
+/// Vanilla BedBlock monster exceptions: slimes and magma cubes never block
+/// sleep; zombified piglins block only while hostile to a player.
+fn mob_exempt_from_bed_check(state: &TickState, slot: crate::entities::EntitySlot) -> bool {
+    let crate::entities::EntityKind::Mob { type_id } = state.entities.body(slot).kind else {
+        return false;
+    };
+    let Some(blueprint) = state.registry.blueprint(type_id) else {
+        return false;
+    };
+    match blueprint.name.as_str() {
+        "minecraft:slime" | "minecraft:magma_cube" => true,
+        "minecraft:zombified_piglin" => !mob_hostile_to_players(state, slot),
+        _ => false,
+    }
+}
+
+/// Whether the mob is currently hostile to a player (its combat credit or
+/// recent player damage). Neutral mobs at peace do not block sleep.
+fn mob_hostile_to_players(state: &TickState, slot: crate::entities::EntitySlot) -> bool {
+    let row = state.entities.row(slot);
+    // Vanilla player-kill credit persists 100 ticks after a player hit: a
+    // piglin hurt by a player in that window counts as angered.
+    if row
+        .last_player_hit
+        .is_some_and(|(_, at)| state.tick.saturating_sub(at) <= 100)
+    {
+        return true;
+    }
+    row.last_hurt > 0.0
 }
 
 /// Publish the sleeping position (and pose) of `entity`.
@@ -138,6 +174,27 @@ pub(crate) fn use_bed(
         return true;
     }
     let [yaw, _, _] = state.entities.rot(slot);
+    // Vanilla sleeping distance: within 3 blocks of either half. Packet
+    // reach (4.5+1) can still target the bed from farther away.
+    if !creative {
+        let at = state.entities.pos(slot);
+        let near_half = |half: BlockPos| {
+            let dx = (f64::from(half.x) + 0.5 - at[0]).abs();
+            let dy = (f64::from(half.y) + 0.5 - at[1]).abs();
+            let dz = (f64::from(half.z) + 0.5 - at[2]).abs();
+            (dx * dx + dy * dy + dz * dz).sqrt() <= 3.0
+        };
+        if !near_half(clicked) && !near_half(head) {
+            say(state, connection, "You are too far away");
+            return true;
+        }
+        // Vanilla refuses entry when no wake-up space exists, instead of
+        // leaving the player sealed inside on exit.
+        if bed_exit(state, head, yaw).is_none() {
+            say(state, connection, "This bed is obstructed");
+            return true;
+        }
+    }
     if let Some(player) = state.players.get_mut(&entity) {
         player.respawn_point = Some([head.x, head.y, head.z]);
         player.respawn_dimension = state.dimension;
