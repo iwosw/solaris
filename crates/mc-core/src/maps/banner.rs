@@ -27,7 +27,9 @@ pub(crate) fn use_on(state: &mut TickState, actor: EntityId, hand: Hand, pos: Bl
     let Some(map) = state.maps.records.get_mut(&id) else {
         return true;
     };
-    if player.spectator() || map.locked || map.dimension != state.dimension {
+    // Locking freezes terrain pixels, never the explicit banner
+    // interaction (vanilla MapItem.useOn has no locked gate).
+    if player.spectator() || map.dimension != state.dimension {
         return true;
     }
     let scale = f64::from(1_u32 << map.scale);

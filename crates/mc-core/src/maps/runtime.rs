@@ -85,22 +85,45 @@ pub(super) fn difference(id: i32, map: &SavedMap, old: Option<&SavedMap>) -> Map
 // At most 1024 surface columns per dimension tick and 8 maps per cadence.
 // Missing columns remain unexplored: map use never generates or loads chunks.
 fn sample(state: &TickState, map: &SavedMap, index: usize) -> Option<u8> {
+    // Vanilla ceiling dimensions (Nether) map a generated dirt/stone noise
+    // pattern, not the physical roof terrain.
+    if map.dimension == crate::dimensions::Dimension::Nether {
+        return Some(nether_sample(state, map, index));
+    }
     let step = 1_i32 << map.scale;
     let x = map.center[0] + (index as i32 % 128 - 64) * step;
     let z = map.center[1] + (index as i32 / 128 - 64) * step;
     let geometry = state.world.geometry();
-    let mut counts = [0_u16; 64];
+    // Per-column surface color + height + water depth for brightness.
+    let mut cells: Vec<(u8, i32, u32)> = Vec::new();
     for dx in 0..step {
         for dz in 0..step {
+            let mut water_depth = 0_u32;
             for y in (geometry.min_y()..geometry.max_y()).rev() {
                 let raw = state.world.block_at(x + dx, y, z + dz)?;
                 let color = *state.registry.map_colors.get(raw as usize)?;
-                if color != 0 {
-                    counts[color as usize] += 1;
-                    break;
+                if color == 0 {
+                    continue;
                 }
+                let water = state.registry.materials.classify(raw)
+                    == mc_physics::BlockMaterial::Water;
+                if water {
+                    water_depth += 1;
+                    continue;
+                }
+                cells.push((color, y, water_depth));
+                break;
             }
         }
+    }
+    if cells.is_empty() {
+        return Some(0);
+    }
+    // Majority color wins (vanilla multiset); average height/depth decide
+    // the brightness of the winning color.
+    let mut counts = [0_u16; 64];
+    for (color, _, _) in &cells {
+        counts[*color as usize] += 1;
     }
     let color = counts
         .iter()
@@ -108,7 +131,84 @@ fn sample(state: &TickState, map: &SavedMap, index: usize) -> Option<u8> {
         .filter(|(_, count)| **count != 0)
         .max_by_key(|(_, count)| **count)
         .map_or(0, |(color, _)| color as u8);
-    Some(if color == 0 { 0 } else { color * 4 + 1 })
+    let (height_sum, depth_sum, n) = cells
+        .iter()
+        .filter(|(c, _, _)| *c == color)
+        .fold((0_i64, 0_u64, 0_u64), |(h, d, n), (_, y, depth)| {
+            (h + i64::from(*y), d + u64::from(*depth), n + 1)
+        });
+    let height = height_sum / n.max(1) as i64;
+    let depth = (depth_sum / n.max(1) as u64).min(8) as i32;
+    // Vanilla brightness: water depth darkens (depth>0), north height
+    // difference shades slopes, flat dry land stays base+1.
+    let north = north_height(state, map, index, step);
+    let shade = if depth > 0 {
+        // Deeper water renders darker; shallow water keeps base brightness.
+        if depth >= 3 { 0 } else { 1 }
+    } else if height > north {
+        2
+    } else if height < north {
+        0
+    } else {
+        1
+    };
+    Some(if color == 0 { 0 } else { color * 4 + shade as u8 })
+}
+
+/// Average surface height of the pixel row north of this pixel (for slope
+/// shading). Missing columns reuse the pixel's own height (flat).
+fn north_height(state: &TickState, map: &SavedMap, index: usize, step: i32) -> i64 {
+    let col = index % 128;
+    let row = index / 128;
+    if row == 0 {
+        return 0;
+    }
+    let geometry = state.world.geometry();
+    let nx = map.center[0] + (col as i32 - 64) * step;
+    let nz = map.center[1] + ((row - 1) as i32 - 64) * step;
+    let mut sum = 0_i64;
+    let mut n = 0_i64;
+    for dx in 0..step {
+        for dz in 0..step {
+            for y in (geometry.min_y()..geometry.max_y()).rev() {
+                let Some(raw) = state.world.block_at(nx + dx, y, nz + dz) else {
+                    continue;
+                };
+                let Some(color) = state.registry.map_colors.get(raw as usize) else {
+                    continue;
+                };
+                if *color == 0 {
+                    continue;
+                }
+                if state.registry.materials.classify(raw) == mc_physics::BlockMaterial::Water {
+                    continue;
+                }
+                sum += i64::from(y);
+                n += 1;
+                break;
+            }
+        }
+    }
+    if n == 0 { 0 } else { sum / n }
+}
+
+/// Vanilla ceiling-dimension pattern: pseudo-random dirt/stone map colors
+/// from the world seed and pixel position, not physical blocks.
+fn nether_sample(state: &TickState, map: &SavedMap, index: usize) -> u8 {
+    let step = 1_i32 << map.scale;
+    let x = map.center[0] + (index as i32 % 128 - 64) * step;
+    let z = map.center[1] + (index as i32 / 128 - 64) * step;
+    let mut seed = (state.world.seed() as u64)
+        .wrapping_add((x as u64) << 32 | (z as u32 as u64))
+        .wrapping_add(index as u64);
+    seed ^= seed >> 30;
+    seed = seed.wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    seed ^= seed >> 27;
+    seed = seed.wrapping_mul(0x94D0_49BB_1331_11EB);
+    seed ^= seed >> 31;
+    // Dirt/stone map colors with brightness variation (vanilla-like noise).
+    let base = if seed & 1 == 0 { 13_u8 } else { 11_u8 };
+    base * 4 + ((seed >> 7) % 3) as u8
 }
 
 pub(crate) fn tick(state: &mut TickState) {
@@ -116,7 +216,9 @@ pub(crate) fn tick(state: &mut TickState) {
         return;
     }
     let mut views: BTreeMap<i32, BTreeSet<ConnectionId>> = BTreeMap::new();
-    let mut markers: BTreeMap<i32, Vec<(f64, f64, f32, bool)>> = BTreeMap::new();
+    // Marker: x, z, rotation, frame flag, carrier-hidden, owner connection.
+    let mut markers: BTreeMap<i32, Vec<(f64, f64, f32, bool, bool, ConnectionId)>> =
+        BTreeMap::new();
     for (&entity, player) in &state.players {
         if player.spectator() {
             continue;
@@ -125,6 +227,16 @@ pub(crate) fn tick(state: &mut TickState) {
             continue;
         };
         let pos = state.entities.pos(slot);
+        // Vanilla pumpkin hiding: a carrier wearing a carved pumpkin is
+        // hidden from other players' maps (but keeps their own marker).
+        let hidden = player.inventory.slots.get(5).is_some_and(|stack| {
+            !stack.is_empty()
+                && state
+                    .registry
+                    .items
+                    .name_of(stack.item_id)
+                    .is_some_and(|id| id.as_str() == "minecraft:carved_pumpkin")
+        });
         // Vanilla multiplayer markers: a cloned map anywhere in the
         // inventory (not only held) makes its carrier visible.
         let mut seen = std::collections::BTreeSet::new();
@@ -140,6 +252,8 @@ pub(crate) fn tick(state: &mut TickState) {
                     pos[2],
                     state.entities.rot(slot)[0],
                     false,
+                    hidden,
+                    player.connection,
                 ));
             }
         }
@@ -184,7 +298,14 @@ pub(crate) fn tick(state: &mut TickState) {
                     5 => 270.0,
                     _ => 0.0,
                 };
-                let marker = (frame_pos[0].floor(), frame_pos[2].floor(), angle, true);
+                let marker = (
+                    frame_pos[0].floor(),
+                    frame_pos[2].floor(),
+                    angle,
+                    true,
+                    false,
+                    player.connection,
+                );
                 let entries = markers.entry(id).or_default();
                 if !entries.contains(&marker) {
                     entries.push(marker);
@@ -200,15 +321,52 @@ pub(crate) fn tick(state: &mut TickState) {
         let Some(mut map) = state.maps.records.remove(&id) else {
             continue;
         };
+        // Vanilla checkBanners: destroyed/changed banners lose their markers
+        // when the area remaps. Validate stored banners against loaded world
+        // state before sampling.
+        if !map.locked && map.dimension == state.dimension {
+            let stale: Vec<usize> = map
+                .banners
+                .iter()
+                .enumerate()
+                .filter(|(_, banner)| {
+                    let [x, y, z] = banner.pos;
+                    // Only loaded cells can evict; distant/unloaded markers persist.
+                    let Some(current) = state.world.block_at(x, y, z) else {
+                        return false;
+                    };
+                    let Some(block) = state.registry.blocks.by_id(mc_world::BlockStateId(current))
+                    else {
+                        return true;
+                    };
+                    let path = block.block.id.path();
+                    let color = path
+                        .strip_suffix("_wall_banner")
+                        .or_else(|| path.strip_suffix("_banner"));
+                    match color {
+                        Some(color) if color == banner.color => false,
+                        _ => true,
+                    }
+                })
+                .map(|(index, _)| index)
+                .collect();
+            if !stale.is_empty() {
+                let kept = Arc::make_mut(&mut map);
+                for index in stale.into_iter().rev() {
+                    kept.banners.remove(index);
+                }
+                state.maps.dirty.insert(id);
+            }
+        }
         // Vanilla mapping requires the map (or a clone) in a player's hand:
         // framed copies alone never sample terrain (they still deliver
         // pixels/markers to viewers). A held clone revisiting updates both.
         let holders = &markers[&id];
-        let held = holders.iter().any(|&(_, _, _, frame)| !frame);
+        let held = holders.iter().any(|&(_, _, _, frame, _, _)| !frame);
         if !map.locked && map.dimension == state.dimension && held {
             let cost = 1_usize << (2 * map.scale);
             let count = (budget / cost).min(128);
-            let (x, z, _, _) = holders
+            let (x, z, _, _, _, _) = holders
                 .iter()
                 .enumerate()
                 .filter(|(_, holder)| !holder.3)
@@ -254,7 +412,12 @@ pub(crate) fn tick(state: &mut TickState) {
                 .insert((connection, id), (Arc::clone(&map), state.tick));
             let mut update = difference(id, &map, old.as_ref().map(|(map, _)| map.as_ref()));
             if map.tracking && map.dimension == state.dimension {
-                for &(x, z, angle, frame) in &markers[&id] {
+                for &(x, z, angle, frame, hidden, owner) in &markers[&id] {
+                    // Pumpkin hiding is recipient-dependent: hidden carriers
+                    // stay visible on their own map, not on others'.
+                    if hidden && owner != connection {
+                        continue;
+                    }
                     let distance = (x - f64::from(map.center[0]))
                         .abs()
                         .max((z - f64::from(map.center[1])).abs())
