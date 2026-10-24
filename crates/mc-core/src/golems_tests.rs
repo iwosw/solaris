@@ -342,6 +342,7 @@ fn iron_ingot_repairs_golem_from_either_hand_without_overhealing() {
         for (health, spent) in [(85.0, 1), (100.0, 2), (100.0, 2)] {
             run_tick(&mut state, std::slice::from_ref(&input));
             assert_eq!(state.entities.row(slot).health, health);
+            assert_eq!(state.entities.row(slot).appearance.health, health);
             assert_eq!(
                 state.players[&actor].inventory.slots[index].count,
                 if creative { 3 } else { 3 - spent }

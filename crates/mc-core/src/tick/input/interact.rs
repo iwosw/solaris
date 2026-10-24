@@ -488,6 +488,10 @@ pub(in crate::tick) fn interact_entity(
         crate::plugin::entity_interaction(state, entity, *target, *hand, secondary, None);
         return;
     }
+    if crate::golems::repair(state, entity, *target, *hand) {
+        crate::plugin::entity_interaction(state, entity, *target, *hand, secondary, None);
+        return;
+    }
     if crate::hostile::ignite(state, entity, *target, *hand) {
         crate::plugin::entity_interaction(state, entity, *target, *hand, secondary, None);
         return;

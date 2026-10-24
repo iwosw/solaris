@@ -1,4 +1,4 @@
-//! Player-built iron and snow golems (vanilla `CarvedPumpkinBlock.trySpawnGolem`).
+//! Iron and snow golem construction and iron-ingot repair.
 //! Placing a carved pumpkin or jack o'lantern completes the pattern; the body
 //! and head are cleared with block-break particles and the golem is born in the
 //! same journal tick. Iron golems are marked `PlayerCreated`.
@@ -10,6 +10,61 @@ use mc_world::BlockStateId;
 
 /// `LevelEvent` for block-break particles and sound, data = block state id.
 const BLOCK_BREAK_EVENT: i32 = 2001;
+
+/// Vanilla `IronGolem.mobInteract`: heal 25, consuming only if health changes.
+pub(crate) fn repair(
+    state: &mut TickState,
+    actor: crate::boundary::EntityId,
+    target: crate::boundary::EntityId,
+    hand: crate::boundary::Hand,
+) -> bool {
+    let Some(slot) = state.entities.slot_of(target) else {
+        return false;
+    };
+    let body = state.entities.body(slot);
+    let crate::entities::EntityKind::Mob { type_id } = body.kind else {
+        return false;
+    };
+    if !body.alive || state.registry.entity_type_name(type_id) != Some("minecraft:iron_golem") {
+        return false;
+    }
+    let Some(player) = state.players.get(&actor) else {
+        return false;
+    };
+    let held_slot = crate::tick::held_slot_index(player, hand);
+    let held = &player.inventory.slots[held_slot];
+    if player.spectator()
+        || held.is_empty()
+        || state
+            .registry
+            .items
+            .name_of(held.item_id)
+            .is_none_or(|name| name.as_str() != "minecraft:iron_ingot")
+        || crate::tick::held_debit_below_floor(state, actor, hand, 1)
+    {
+        return false;
+    }
+    let Some(blueprint) = state.registry.blueprint(type_id) else {
+        return false;
+    };
+    let row = state.entities.row_mut(slot);
+    if row.health <= 0.0 || row.health >= blueprint.params.max_health {
+        return false;
+    }
+    row.health = (row.health + 25.0).min(blueprint.params.max_health);
+    std::sync::Arc::make_mut(&mut row.appearance).health = row.health;
+    state.appearance_changed.push(target);
+    let player = state.players.get_mut(&actor).expect("interacting player");
+    if !player.creative() {
+        mc_data::inventory_semantics_26_1_2::decrement_stack(
+            &mut player.inventory.slots[held_slot],
+        );
+    }
+    let connection = player.connection;
+    let contents = player.inventory_contents();
+    state.push_player(connection, contents);
+    true
+}
 
 struct Golem {
     entity: &'static str,
