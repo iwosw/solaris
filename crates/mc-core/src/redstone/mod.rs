@@ -392,7 +392,8 @@ pub(crate) fn charge_target(
         maxfrac = maxfrac.max((frac - 0.5).abs());
     }
     let ratio = ((0.5 - maxfrac) / 0.5).clamp(0.0, 1.0);
-    let power = (1 + (15.0 * ratio).ceil() as i64).clamp(1, 15);
+    // 1 + max(1, ceil(15 * ratio)): an edge hit (ratio 0) yields 2, never 1.
+    let power = (1 + (1_i64).max((15.0 * ratio).ceil() as i64)).clamp(1, 15);
     let mut properties = block.properties.clone();
     let Some((_, value)) = properties.iter_mut().find(|(key, _)| key == "power") else {
         return;
