@@ -532,8 +532,10 @@ fn bone_meal_reaches_column_tips_beyond_twenty_five_blocks() {
 #[test]
 fn kelp_grows_into_falling_water_and_turns_it_into_a_source() {
     let (mut state, player) = setup();
-    // A falling-water cell directly above a kelp tip.
+    // A top-poured column: source over falling water over a kelp tip.
+    let source = state.registry.states.water_levels[0];
     let falling = block(&state, "water", &[("level", "1")]);
+    put(&mut state, -3, Y + 3, 1, source);
     put(&mut state, -3, Y + 2, 1, falling);
     let tip = block(&state, "kelp", &[("age", "0")]);
     put(&mut state, -3, Y + 1, 1, tip);
@@ -546,6 +548,12 @@ fn kelp_grows_into_falling_water_and_turns_it_into_a_source() {
         block(&state, "kelp", &[("age", "1")])
     );
     assert_eq!(held(&state, player).count, 1);
+    // Sideways spread with air above is not a growable column.
+    let air = state.registry.states.air;
+    put(&mut state, -3, Y + 3, 1, air);
+    give(&mut state, player, "bone_meal", 1);
+    use_on(&mut state, -3, Y + 2, 1, 1);
+    assert_eq!(at(&state, -3, Y + 3, 1), state.registry.states.air);
 }
 
 #[test]

@@ -732,15 +732,17 @@ pub fn interact(
         && blueprint.has_goal(crate::blueprint::GoalKind::Breed)
         && !held.is_empty()
         && blueprint.breed_food.contains(&held.item_id)
-        && axolotl_bucket_remainder(state, body, row, &held).is_none_or(|_| true)
     {
         IntentKind::FeedAnimal { target }
     } else {
         return;
     };
     // Vanilla returns a water bucket after an axolotl eats a tropical fish
-    // bucket: the food is consumed but its bucket is not destroyed.
-    let remainder = axolotl_bucket_remainder(state, body, row, &held);
+    // bucket: the food is consumed but its bucket is not destroyed. A single
+    // bucket is swapped in hand; a stacked remainder rides merge_gives at
+    // merge (see the FeedAnimal arm) so it never overwrites the survivors.
+    let remainder =
+        axolotl_bucket_remainder(state, body, row, &held).filter(|_| held.count == 1);
     let take = if matches!(kind, IntentKind::FeedAnimal { .. }) {
         i32::from(!creative)
     } else {

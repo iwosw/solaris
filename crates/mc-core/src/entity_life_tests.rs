@@ -862,6 +862,24 @@ fn axolotl_tropical_fish_bucket_returns_a_water_bucket() {
 }
 
 #[test]
+fn axolotl_stacked_fish_buckets_keep_a_water_bucket_remainder() {
+    let (mut state, actor, pos) = fixture();
+    let id = spawn(&mut state, "axolotl", [pos[0], pos[1], pos[2] + 1.0]);
+    hold(&mut state, actor, "tropical_fish_bucket", 2);
+    run_tick(&mut state, &[use_animal(id)]);
+    let fish = item(&state, "tropical_fish_bucket");
+    let water = item(&state, "water_bucket");
+    let (fish_total, water_total): (i32, i32) =
+        state.players[&actor].inventory.slots.iter().fold((0, 0), |(f, w), stack| {
+            (
+                f + (stack.item_id == fish) as i32 * stack.count,
+                w + (stack.item_id == water) as i32 * stack.count,
+            )
+        });
+    assert_eq!((fish_total, water_total), (1, 1));
+}
+
+#[test]
 fn pandas_without_nearby_bamboo_cannot_breed() {
     let (mut state, _, pos) = fixture();
     let a = spawn(&mut state, "panda", pos);

@@ -473,7 +473,22 @@ pub(crate) fn accepted_use(state: &mut TickState, intent: &Intent, pos: BlockPos
         held,
     );
     // Tall-flower duplication: the plan edits nothing; the duplicate drops
-    // once the bone meal debit commits.
+    // only when the bone meal is actually paid (the debit commits with the
+    // intent, so a raced-out stack must not conjure a flower; creative pays
+    // nothing and still duplicates, as in vanilla).
+    let paid = intent.footprint.inv.iter().all(|claim| {
+        state.players.get(&claim.owner).is_some_and(|player| {
+            player.creative()
+                || player
+                    .inventory
+                    .slots
+                    .get(claim.slot as usize)
+                    .is_some_and(|stack| stack.count >= claim.take)
+        })
+    });
+    if !paid {
+        return;
+    }
     if let Some(current) = state.world.block_at(pos.x, pos.y, pos.z)
         && let Some(block) = state.registry.blocks.by_id(BlockStateId(current))
         && matches!(
