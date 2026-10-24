@@ -345,6 +345,24 @@ impl Click<'_, '_> {
             return false;
         }
         match (self.kind, self.slot_ref(index)) {
+            (MenuKind::Lectern, _) => return false,
+            (MenuKind::Mount { saddle, armor, .. }, SlotRef::Container(slot @ 0..=1)) => {
+                let name = self
+                    .rules
+                    .items
+                    .name_of(stack.item_id)
+                    .map(|id| id.path())
+                    .unwrap_or("");
+                return if slot == 0 {
+                    saddle && name == "saddle"
+                } else {
+                    match armor {
+                        super::MountArmor::None => false,
+                        super::MountArmor::Horse => name.ends_with("_horse_armor"),
+                        super::MountArmor::Llama => name.ends_with("_carpet"),
+                    }
+                };
+            }
             (MenuKind::Cartography, SlotRef::Grid(slot)) => {
                 return crate::maps::cartography::allowed(self.rules, slot, stack);
             }
@@ -397,6 +415,7 @@ impl Click<'_, '_> {
             (MenuKind::EnchantingTable, SlotRef::Grid(0))
                 | (MenuKind::BrewingStand, SlotRef::Container(0..=2))
                 | (MenuKind::Beacon, SlotRef::Grid(0))
+                | (MenuKind::Mount { .. }, SlotRef::Container(0..=1))
         ) {
             return 1;
         }
@@ -680,6 +699,22 @@ impl Click<'_, '_> {
         let mut stack = original.clone();
         let moved = match self.kind {
             MenuKind::Player => self.quick_move_player(index, &mut stack),
+            MenuKind::Lectern => false,
+            MenuKind::Mount { .. } => {
+                let end = self.kind.container_size();
+                if index < end {
+                    self.move_to(&mut stack, end, end + 36, true)
+                } else {
+                    self.move_to(&mut stack, 1, 2, false)
+                        || self.move_to(&mut stack, 0, 1, false)
+                        || self.move_to(&mut stack, 2, end, false)
+                        || if index < end + 27 {
+                            self.move_to(&mut stack, end + 27, end + 36, false)
+                        } else {
+                            self.move_to(&mut stack, end, end + 27, false)
+                        }
+                }
+            }
             MenuKind::CraftingTable => match index {
                 0 => self.move_to(&mut stack, 10, 46, true),
                 10..46 => {

@@ -210,12 +210,28 @@ pub enum MenuKind {
     Merchant,
     /// Beacon: one transient payment slot; effect selection is tick-owned.
     Beacon,
+    /// Lectern's read-only book slot, without a player-inventory tail.
+    Lectern,
+    /// Mount screen: saddle, body equipment, then three rows of cargo.
+    Mount {
+        entity: crate::boundary::EntityId,
+        columns: u8,
+        saddle: bool,
+        armor: MountArmor,
+    },
     /// Generic `rows` x 9 container (chest, barrel, double chest).
     Chest {
         rows: u8,
     },
     /// Furnace, smoker or blast furnace: 0 input, 1 fuel, 2 output.
     Furnace(CookingKind),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MountArmor {
+    None,
+    Horse,
+    Llama,
 }
 
 /// Where a menu slot index points.
@@ -232,7 +248,7 @@ impl MenuKind {
     #[must_use]
     pub fn menu_type(self) -> Option<u32> {
         match self {
-            Self::Player => None,
+            Self::Player | Self::Mount { .. } => None,
             Self::CraftingTable => Some(12),
             Self::Chest { rows } => Some(u32::from(rows.clamp(1, 6)) - 1),
             Self::Furnace(CookingKind::Furnace) => Some(14),
@@ -242,6 +258,7 @@ impl MenuKind {
             Self::Anvil => Some(8),
             // `javap MenuType`: beacon registers right after anvil.
             Self::Beacon => Some(9),
+            Self::Lectern => Some(17),
             Self::Grindstone => Some(15),
             Self::Merchant => Some(19),
             Self::Smithing => Some(21),
@@ -268,6 +285,8 @@ impl MenuKind {
             Self::Anvil | Self::Grindstone | Self::Merchant | Self::Cartography => 39,
             // `javap BeaconMenu`: SLOT_COUNT 1, player tail 1..37.
             Self::Beacon => 37,
+            Self::Lectern => 1,
+            Self::Mount { columns, .. } => 38 + usize::from(columns) * 3,
             Self::Smithing | Self::Loom => 40,
             Self::Stonecutter => 38,
             Self::Hopper | Self::BrewingStand => 41,
@@ -296,6 +315,8 @@ impl MenuKind {
             Self::Furnace(_) => 3,
             Self::Hopper | Self::BrewingStand => 5,
             Self::Dispenser | Self::Crafter => 9,
+            Self::Lectern => 1,
+            Self::Mount { columns, .. } => 2 + usize::from(columns) * 3,
         }
     }
 
@@ -311,6 +332,8 @@ impl MenuKind {
             Self::Smithing | Self::Loom => 3,
             Self::Stonecutter | Self::Beacon => 1,
             Self::Chest { .. }
+            | Self::Lectern
+            | Self::Mount { .. }
             | Self::Furnace(_)
             | Self::Hopper
             | Self::Dispenser
@@ -328,6 +351,7 @@ impl MenuKind {
             _ => None,
         };
         match self {
+            Self::Lectern => (index == 0).then_some(SlotRef::Container(0)),
             Self::Player => match index {
                 0 => Some(SlotRef::Result),
                 1..=4 => Some(SlotRef::Grid(index - 1)),
@@ -378,6 +402,7 @@ impl MenuKind {
                 _ => None,
             },
             Self::Chest { .. }
+            | Self::Mount { .. }
             | Self::Furnace(_)
             | Self::Hopper
             | Self::Dispenser

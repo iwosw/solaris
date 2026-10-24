@@ -339,6 +339,9 @@ pub fn decode_play_frame(
             PlayerCommandAction::StopSleeping => {
                 out.push(PlayerInput::LeaveBed { connection: conn });
             }
+            PlayerCommandAction::OpenInventory => {
+                out.push(PlayerInput::OpenMountInventory { connection: conn });
+            }
             action @ (PlayerCommandAction::StartSprinting | PlayerCommandAction::StopSprinting) => {
                 out.push(PlayerInput::Sprint {
                     connection: conn,

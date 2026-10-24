@@ -728,6 +728,24 @@ fn clientbound_open_screen_layout_matches_local_vanilla() {
 }
 
 #[test]
+fn clientbound_mount_screen_matches_local_vanilla() {
+    assert_eq!(ClientboundMountScreenOpen::ID, 0x29);
+    let packet = ClientboundMountScreenOpen {
+        container_id: 4,
+        columns: 5,
+        entity_id: 0x01020304,
+    };
+    let mut encoded = Vec::new();
+    packet.encode(&mut encoded).unwrap();
+    assert_eq!(encoded, [4, 5, 1, 2, 3, 4]);
+    assert_eq!(
+        ClientboundMountScreenOpen::decode(&mut encoded.as_slice()).unwrap(),
+        packet
+    );
+    assert!(ClientboundMountScreenOpen::decode(&mut &[4, 5, 1][..]).is_err());
+}
+
+#[test]
 fn serverbound_container_button_click_layout_matches_local_vanilla() {
     assert_eq!(ServerboundContainerButtonClick::ID, 0x11);
     let packet = ServerboundContainerButtonClick {

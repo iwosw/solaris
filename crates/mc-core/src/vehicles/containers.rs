@@ -131,17 +131,33 @@ pub(crate) fn click(
         .slots
         .clone();
     let registry = Arc::clone(&state.registry);
-    let p = state.players.get_mut(&player).unwrap();
+    let p = state.players.get(&player).unwrap();
     let connection = p.connection;
-    let effects = p.click(
-        &registry.item_rules(),
-        window,
-        state_id,
-        slot,
-        button,
-        mode,
-        &mut slots,
-    );
+    let native = |p: &mut crate::player::PlayerState, slots: &mut [mc_data::ItemStack]| {
+        p.click(
+            &registry.item_rules(),
+            window,
+            state_id,
+            slot,
+            button,
+            mode,
+            slots,
+        )
+    };
+    let effects = if crate::plugin_inventories::has_reservations_for_player(state, player) {
+        let plan = p.plan_inventory_transition(&slots, native);
+        if crate::plugin_inventories::below_player_floors(state, player, plan.player_slots()) {
+            p.inventory_transition_refused(&slots)
+        } else {
+            state
+                .players
+                .get_mut(&player)
+                .unwrap()
+                .apply_inventory_transition(plan, &mut slots)
+        }
+    } else {
+        native(state.players.get_mut(&player).unwrap(), &mut slots)
+    };
     let changed = effects.container_changed;
     if changed {
         state

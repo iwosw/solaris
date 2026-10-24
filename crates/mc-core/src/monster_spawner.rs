@@ -16,7 +16,7 @@ pub(crate) struct Spawners {
     scratch: Vec<Key>,
 }
 #[derive(Debug)]
-struct Spawner {
+pub(crate) struct Spawner {
     fields: Fields,
     type_id: u32,
     delay: u64,
@@ -40,7 +40,10 @@ fn short(fields: &Fields, key: &str, default: i16, min: i16, max: i16) -> Result
     Ok(value)
 }
 impl Spawner {
-    fn decode(bytes: &[u8], registry: &crate::registry::CoreRegistry) -> Result<Self, String> {
+    pub(crate) fn decode(
+        bytes: &[u8],
+        registry: &crate::registry::CoreRegistry,
+    ) -> Result<Self, String> {
         let fields = nbt::decode(bytes)?;
         let spawn = nbt::compound(&fields, "SpawnData")?.ok_or("SpawnData missing")?;
         let entity = nbt::compound(spawn, "entity")?.ok_or("SpawnData.entity missing")?;
@@ -157,6 +160,17 @@ pub(crate) fn hydrate_chunk(
         }
     }
     Ok(())
+}
+
+pub(crate) fn forget(spawners: &mut Spawners, pos: BlockPos) {
+    let key = (pos.x, pos.y, pos.z);
+    if let Some(entries) = spawners
+        .chunks
+        .get_mut(&(pos.x.div_euclid(16), pos.z.div_euclid(16)))
+    {
+        entries.remove(&key);
+    }
+    spawners.active.retain(|entry| *entry != key);
 }
 
 pub(crate) fn after_blocks(state: &mut TickState, writes: &[(BlockPos, u32)]) {

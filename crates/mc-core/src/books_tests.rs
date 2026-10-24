@@ -136,16 +136,34 @@ fn lectern_insert_read_turn_take_preserves_exact_book() {
     let want = state.desired_chunks();
     state.world.ensure_blocking(&want);
     let position = crate::boundary::BlockPos { x: 8, y: 65, z: 9 };
-    let lectern = state.registry.blocks.block(&Identifier::parse("minecraft:lectern").unwrap()).unwrap().default.0;
-    state.world.set_block(position.x, position.y, position.z, lectern);
+    let lectern = state
+        .registry
+        .blocks
+        .block(&Identifier::parse("minecraft:lectern").unwrap())
+        .unwrap()
+        .default
+        .0;
+    state
+        .world
+        .set_block(position.x, position.y, position.z, lectern);
     state.world.fold_overlay();
     let player_slot = state.entities.slot_of(actor).unwrap();
     state.entities.set_pos(player_slot, [8.5, 65.0, 8.5]);
-    edit(&mut state, ConnectionId(1), 0, &["first".into(), "second".into()], None);
+    edit(
+        &mut state,
+        ConnectionId(1),
+        0,
+        &["first".into(), "second".into()],
+        None,
+    );
     let book = state.players[&actor].inventory.slots[0].clone();
     let use_on = PlayerInput::UseItemOn {
-        connection: ConnectionId(1), hand: Hand::Main, position,
-        face: 1, cursor: [0.5; 3], sequence: 1,
+        connection: ConnectionId(1),
+        hand: Hand::Main,
+        position,
+        face: 1,
+        cursor: [0.5; 3],
+        sequence: 1,
     };
     run_tick(&mut state, &[use_on.clone()]);
     assert!(state.players[&actor].inventory.slots[0].is_empty());
@@ -153,7 +171,45 @@ fn lectern_insert_read_turn_take_preserves_exact_book() {
     let menu = state.players[&actor].open.as_ref().expect("lectern opens");
     assert_eq!(menu.kind.menu_type(), Some(17));
     let window = menu.window;
-    run_tick(&mut state, &[PlayerInput::ContainerButton { connection: ConnectionId(1), window, button: 2 }]);
-    run_tick(&mut state, &[PlayerInput::ContainerButton { connection: ConnectionId(1), window, button: 3 }]);
-    assert_eq!(state.players[&actor].inventory.slots.iter().filter(|stack| **stack == book).count(), 1);
+    assert_eq!(crate::lectern::comparator(&state, position), Some(1));
+    run_tick(
+        &mut state,
+        &[PlayerInput::ContainerButton {
+            connection: ConnectionId(1),
+            window,
+            button: 2,
+        }],
+    );
+    assert_eq!(crate::lectern::comparator(&state, position), Some(15));
+    run_tick(
+        &mut state,
+        &[PlayerInput::ContainerButton {
+            connection: ConnectionId(1),
+            window: window + 1,
+            button: 3,
+        }],
+    );
+    assert_eq!(
+        crate::lectern::comparator(&state, position),
+        Some(15),
+        "stale window cannot take"
+    );
+    run_tick(
+        &mut state,
+        &[PlayerInput::ContainerButton {
+            connection: ConnectionId(1),
+            window,
+            button: 3,
+        }],
+    );
+    assert_eq!(
+        state.players[&actor]
+            .inventory
+            .slots
+            .iter()
+            .filter(|stack| **stack == book)
+            .count(),
+        1
+    );
+    assert_eq!(crate::lectern::comparator(&state, position), Some(0));
 }

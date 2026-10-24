@@ -114,8 +114,105 @@ fn mount_inventory_opens_for_each_tamed_mount() {
         );
         assert!(state.players[&actor].open.is_some(), "{name} inventory");
         let window = state.players[&actor].open.as_ref().unwrap().window;
-        run_tick(&mut state, &[PlayerInput::ContainerClose { connection: ConnectionId(1), window }]);
+        run_tick(
+            &mut state,
+            &[PlayerInput::ContainerClose {
+                connection: ConnectionId(1),
+                window,
+            }],
+        );
     }
+}
+
+#[test]
+fn mount_inventory_equipment_cargo_and_ridden_open_share_native_custody() {
+    let (mut state, actor, pos) = fixture();
+    let mount = spawn(&mut state, "donkey", pos);
+    let target_slot = slot(&state, mount);
+    state.entities.row_mut(target_slot).entity_life.tamed = true;
+    equip(&mut state, actor, mount, "chest");
+    assert!(state.entities.row(target_slot).entity_life.mount.chested);
+    assert_eq!(
+        state
+            .entities
+            .row(target_slot)
+            .entity_life
+            .mount
+            .cargo
+            .len(),
+        15
+    );
+    run_tick(&mut state, &[use_entity(mount)]);
+    run_tick(
+        &mut state,
+        &[PlayerInput::OpenMountInventory {
+            connection: ConnectionId(1),
+        }],
+    );
+    let menu = state.players[&actor]
+        .open
+        .as_ref()
+        .expect("rider opens mount");
+    assert_eq!(menu.kind.container_size(), 17);
+    let window = menu.window;
+    hold(&mut state, actor, "diamond", 7);
+    let version = state.players[&actor].open.as_ref().unwrap().state_id;
+    menus::click(
+        &mut state,
+        actor,
+        window,
+        version,
+        44,
+        0,
+        crate::boundary::ClickMode::QuickMove,
+        &mut ChangeSet::default(),
+    );
+    assert!(state.players[&actor].inventory.slots[0].is_empty());
+    assert_eq!(
+        state.entities.row(target_slot).entity_life.mount.cargo[0].count,
+        7
+    );
+    let saved = serde_json::to_vec(&state.entities.row(target_slot).entity_life.mount).unwrap();
+    let restored: MountState = serde_json::from_slice(&saved).unwrap();
+    assert_eq!(
+        restored.cargo,
+        state.entities.row(target_slot).entity_life.mount.cargo
+    );
+    hold(&mut state, actor, "saddle", 1);
+    let version = state.players[&actor].open.as_ref().unwrap().state_id;
+    menus::click(
+        &mut state,
+        actor,
+        window,
+        version,
+        44,
+        0,
+        crate::boundary::ClickMode::QuickMove,
+        &mut ChangeSet::default(),
+    );
+    assert!(state.entities.row(target_slot).loot.saddle.is_some());
+    let version = state.players[&actor].open.as_ref().unwrap().state_id;
+    menus::click(
+        &mut state,
+        actor,
+        window,
+        version,
+        2,
+        0,
+        crate::boundary::ClickMode::QuickMove,
+        &mut ChangeSet::default(),
+    );
+    assert!(state.entities.row(target_slot).entity_life.mount.cargo[0].is_empty());
+    assert_eq!(
+        state.players[&actor]
+            .inventory
+            .slots
+            .iter()
+            .filter(|stack| !stack.is_empty())
+            .map(|stack| stack.count)
+            .sum::<i32>(),
+        7
+    );
 }
 #[test]
 fn saddle_equip_revalidation_strip_and_death_do_not_duplicate() {

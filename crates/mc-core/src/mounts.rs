@@ -7,6 +7,7 @@ use mc_data::ItemStack;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use uuid::Uuid;
+pub(crate) mod menus;
 pub(crate) mod persistence;
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -18,6 +19,10 @@ pub struct MountState {
     /// Reverse link is restart-local; the retained vehicle owns its rider UUID.
     #[serde(skip)]
     pub vehicle: Option<EntityId>,
+    pub cargo: Vec<ItemStack>,
+    pub chested: bool,
+    /// Llama cargo width; zero uses the ordinary one-column minimum.
+    pub strength: u8,
 }
 #[derive(Debug, Clone, PartialEq)]
 pub enum Action {
@@ -30,6 +35,8 @@ pub enum Action {
     Unsaddle,
     Ride,
     Dismount,
+    Inventory,
+    Chest,
 }
 #[derive(Debug, Clone, PartialEq)]
 pub struct Plan {
@@ -113,6 +120,23 @@ fn action(
     }
     let adult = crate::entity_life::adult(row);
     let owner = row.entity_life.taming.owner == Some(uuid);
+    if adult && row.entity_life.tamed && menus::kind(state, target).is_some() {
+        if secondary {
+            return Some(Action::Inventory);
+        }
+        if item == "minecraft:chest"
+            && matches!(
+                kind,
+                "minecraft:donkey"
+                    | "minecraft:mule"
+                    | "minecraft:llama"
+                    | "minecraft:trader_llama"
+            )
+            && !row.entity_life.mount.chested
+        {
+            return Some(Action::Chest);
+        }
+    }
     if adult {
         if item == "minecraft:saddle"
             && row.loot.saddle.is_none()
@@ -272,7 +296,7 @@ fn below_native_cost_floors(state: &TickState, actor: EntityId, plan: &Plan) -> 
     let consume = match &plan.action {
         Action::Taming(action) => !matches!(action, crate::taming::Action::Sit),
         Action::Leash(action) => !matches!(action, crate::leash::Action::Detach),
-        Action::Saddle | Action::Armor | Action::Repair => true,
+        Action::Saddle | Action::Armor | Action::Repair | Action::Chest => true,
         _ => false,
     };
     let wear = matches!(plan.action, Action::Strip | Action::Unsaddle);
@@ -303,6 +327,32 @@ pub(crate) fn apply(state: &mut TickState, actor: EntityId, plan: &Plan) {
     let mut consume = false;
     let mut wear = false;
     match &plan.action {
+        Action::Inventory => {
+            menus::open(state, actor, plan.target);
+            return;
+        }
+        Action::Chest => {
+            let columns = if matches!(
+                name(state, slot),
+                "minecraft:llama" | "minecraft:trader_llama"
+            ) {
+                state
+                    .entities
+                    .row(slot)
+                    .entity_life
+                    .mount
+                    .strength
+                    .clamp(1, 5)
+            } else {
+                5
+            };
+            let mount = &mut state.entities.row_mut(slot).entity_life.mount;
+            mount.chested = true;
+            mount
+                .cargo
+                .resize(usize::from(columns) * 3, ItemStack::EMPTY);
+            consume = true;
+        }
         Action::Taming(action) => {
             consume = !matches!(action, crate::taming::Action::Sit);
             crate::taming::apply(state, slot, uuid, action);
@@ -405,10 +455,33 @@ pub(crate) fn apply(state: &mut TickState, actor: EntityId, plan: &Plan) {
     appearance.body_armor = row.loot.body_armor.as_deref().cloned();
     appearance.health = row.health;
     state.appearance_changed.push(plan.target);
+    if menus::kind(state, slot).is_some() {
+        menus::sync(state, plan.target);
+    }
 }
 pub(crate) fn death(state: &mut TickState, slot: EntitySlot) {
     if let Some(rider) = rider(state, slot) {
         dismount(state, state.entities.body(rider).id);
+    }
+    let position = state.entities.pos(slot);
+    let mount = &mut state.entities.row_mut(slot).entity_life.mount;
+    let chested = std::mem::take(&mut mount.chested);
+    let cargo = std::mem::take(&mut mount.cargo);
+    state.merge_life_drops.extend(
+        cargo
+            .into_iter()
+            .filter(|stack| !stack.is_empty())
+            .map(|stack| (position, stack)),
+    );
+    if chested
+        && let Some(item) = state
+            .registry
+            .items
+            .id_of(&mc_data::Identifier::parse("minecraft:chest").unwrap())
+    {
+        state
+            .merge_life_drops
+            .push((position, ItemStack::new(item, 1)));
     }
 }
 pub(crate) fn status(state: &mut TickState, entity: EntityId, event: i8) {

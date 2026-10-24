@@ -124,6 +124,42 @@ pub(crate) fn from_fields(
     *life = result;
     Ok(())
 }
+
+/// Cargo indices start at zero in 26.1.2 (equipment is stored separately).
+pub(crate) fn cargo_from_record(
+    mount: &mut super::MountState,
+    items: &mc_data::items::ItemRegistry,
+    record: &mc_data::entity_nbt::VanillaEntity,
+) -> Result<(), CoreError> {
+    if !matches!(
+        record.id.as_str(),
+        "minecraft:donkey" | "minecraft:mule" | "minecraft:llama" | "minecraft:trader_llama"
+    ) {
+        return Ok(());
+    }
+    let fields = &record.extra_fields;
+    mount.chested = field(fields, "ChestedHorse")?
+        .map(|tag| integer(tag, "ChestedHorse"))
+        .transpose()?
+        .unwrap_or(0)
+        != 0;
+    mount.strength = field(fields, "Strength")?
+        .map(|tag| integer(tag, "Strength"))
+        .transpose()?
+        .unwrap_or(1)
+        .clamp(1, 5) as u8;
+    if mount.chested {
+        let columns = if record.id.ends_with("llama") {
+            mount.strength
+        } else {
+            5
+        };
+        mount.cargo =
+            mc_data::storage_blocks::decode_slots(fields, items, usize::from(columns) * 3)
+                .map_err(CoreError::Storage)?;
+    }
+    Ok(())
+}
 pub(crate) fn to_fields(life: &EntityLifeState) -> Vec<(String, Tag)> {
     let pet = &life.taming;
     let mut fields = Vec::new();

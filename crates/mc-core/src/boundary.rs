@@ -285,6 +285,8 @@ pub enum PlayerInput {
     RequestStats { connection: ConnectionId },
     /// The client left its bed (serverbound player command `StopSleeping`).
     LeaveBed { connection: ConnectionId },
+    /// Open the inventory of the mount currently ridden by this player.
+    OpenMountInventory { connection: ConnectionId },
     /// Chat message, already validated for length and characters by the edge.
     Chat {
         connection: ConnectionId,
@@ -387,6 +389,7 @@ impl PlayerInput {
             | Self::Respawn { connection }
             | Self::RequestStats { connection }
             | Self::LeaveBed { connection }
+            | Self::OpenMountInventory { connection }
             | Self::Chat { connection, .. }
             | Self::DialogClick { connection, .. }
             | Self::Command { connection, .. } => *connection,
@@ -897,6 +900,11 @@ pub enum PlayerChange {
         menu_type: u32,
         /// JSON text component, or a literal label (as for scoreboard text).
         title: String,
+    },
+    MountMenuOpened {
+        window: u8,
+        columns: u8,
+        entity: EntityId,
     },
     /// Show this inline dialog (`Dialog.DIRECT_CODEC` NBT from [`crate::dialog::Dialog::into_tag`]).
     ShowDialog {

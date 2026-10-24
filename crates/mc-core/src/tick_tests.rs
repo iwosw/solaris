@@ -5662,6 +5662,63 @@ fn predicted_table_use_waits_for_accepted_placement() {
         state.players[&player].open.as_ref().unwrap().kind,
         crate::inventory::MenuKind::CraftingTable
     );
+    let planks = state
+        .registry
+        .items
+        .id_of(&mc_data::Identifier::parse("minecraft:oak_planks").unwrap())
+        .unwrap();
+    state.players.get_mut(&player).unwrap().inventory.slots[0] =
+        mc_data::ItemStack::new(planks, 16);
+    let window = state.players[&player].open.as_ref().unwrap().window;
+    for slot in [37, 1] {
+        let state_id = state.players[&player].open.as_ref().unwrap().state_id;
+        let (_, drains, _) = run_tick(
+            &mut state,
+            &[PlayerInput::ContainerClick {
+                connection: ConnectionId(1),
+                window,
+                state_id,
+                slot,
+                button: 0,
+                mode: crate::boundary::ClickMode::Pickup,
+            }],
+        );
+        assert!(
+            state.players[&player].open.is_some(),
+            "crafting table closed on click {slot}"
+        );
+        assert!(
+            !drains
+                .iter()
+                .flat_map(|(_, changes)| changes)
+                .any(|change| matches!(change, PlayerChange::MenuClosed { .. }))
+        );
+        let menu = state.players[&player].open.as_ref().unwrap();
+        if slot == 37 {
+            assert_eq!(menu.carried, mc_data::ItemStack::new(planks, 16));
+        } else {
+            assert!(menu.carried.is_empty());
+            assert_eq!(menu.grid[0], mc_data::ItemStack::new(planks, 16));
+        }
+    }
+    run_tick(
+        &mut state,
+        &[PlayerInput::ContainerClose {
+            connection: ConnectionId(1),
+            window,
+        }],
+    );
+    assert!(state.players[&player].open.is_none());
+    assert_eq!(
+        state.players[&player]
+            .inventory
+            .slots
+            .iter()
+            .filter(|stack| stack.item_id == planks)
+            .map(|stack| stack.count)
+            .sum::<i32>(),
+        16
+    );
 }
 
 #[test]

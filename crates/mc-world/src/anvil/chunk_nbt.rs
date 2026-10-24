@@ -1370,7 +1370,7 @@ fn encode_brewing_stand(
     ]))
 }
 
-fn decode_furnace(
+pub fn decode_furnace(
     cmp: &[(String, Tag)],
     items: &ItemRegistry,
 ) -> Result<FurnaceBlockEntity, ChunkNbtError> {

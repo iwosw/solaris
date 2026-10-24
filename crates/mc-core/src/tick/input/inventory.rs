@@ -157,6 +157,12 @@ pub(in crate::tick) fn container_click(
     if state.entities.slot_of(entity).is_none() {
         return;
     }
+    if crate::mounts::menus::target(state, entity).is_some() {
+        crate::mounts::menus::click(
+            state, entity, *window, *state_id, *slot, *button, *mode, changes,
+        );
+        return;
+    }
     if crate::ender_chest::is_open(state, entity) {
         crate::ender_chest::click(
             state,
@@ -418,6 +424,9 @@ pub(in crate::tick) fn container_button(
         return;
     };
     if state.entities.slot_of(entity).is_none() {
+        return;
+    }
+    if crate::lectern::button(state, entity, *window, *button, changes) {
         return;
     }
     let bookshelves = stations::bookshelves_for_player(state, entity);

@@ -393,6 +393,7 @@ pub struct TickState {
     pub merge_broken: Vec<(EntityId, BlockPos, u32, Vec<mc_data::ItemStack>, i32)>,
     /// Command destroys use empty-tool loot regardless of sender game mode.
     pub(crate) merge_command_broken: Vec<(BlockPos, u32, Vec<mc_data::ItemStack>)>,
+    pub(crate) merge_command_block_entities: Vec<(BlockPos, crate::command_block_entity::Prepared)>,
     /// Container contents staged by merge for broken containers:
     /// ((x,y,z), slots). Commit spawns each non-empty slot as a drop,
     /// closes viewers, removes storage, marks dirty, stages the tombstone.
@@ -487,6 +488,7 @@ pub struct TickState {
     pub(crate) campfires: crate::campfire::Campfires,
     pub(crate) hives: crate::bees::Hives,
     pub(crate) jukeboxes: crate::jukebox::Jukeboxes,
+    pub(crate) lecterns: crate::lectern::Lecterns,
     pub(crate) brewing: crate::brewing::BrewingStands,
     pub(crate) crafters: crate::crafter::Crafters,
     pub(crate) merge_shulker_placements: Vec<crate::shulker::Placement>,
@@ -695,9 +697,11 @@ impl TickState {
             campfires: crate::campfire::Campfires::default(),
             hives: crate::bees::Hives::default(),
             jukeboxes: crate::jukebox::Jukeboxes::default(),
+            lecterns: crate::lectern::Lecterns::default(),
             brewing: crate::brewing::BrewingStands::default(),
             crafters: crate::crafter::Crafters::default(),
             merge_shulker_placements: Vec::new(),
+            merge_command_block_entities: Vec::new(),
             vibrations: crate::vibration::Bus::default(),
             sculk: crate::sculk::SculkState::default(),
             trial_spawners: Default::default(),
@@ -1704,6 +1708,7 @@ impl TickState {
             }
             self.brewing.remove(&(x, y, z));
             self.crafters.remove(&(x, y, z));
+            self.lecterns.remove(&(x, y, z));
             let pos = BlockPos { x, y, z };
             if self
                 .world
@@ -1719,6 +1724,10 @@ impl TickState {
             self.world.mark_block_entity_dirty(BlockPos { x, y, z });
             self.block_entity_removed.push((x, y, z));
         }
+        for (pos, image) in std::mem::take(&mut self.merge_command_block_entities) {
+            crate::command_block_entity::install(self, pos, image);
+        }
+        sync_chunk_block_entities(self);
         // Close every viewer of a broken container with a MenuClosed.
         for (viewer, (x, y, z)) in std::mem::take(&mut self.merge_closed_viewers) {
             if self.open_containers.remove(&viewer).is_none() {
@@ -2246,6 +2255,8 @@ impl TickState {
                 }
             }
         }
+        block_only.retain(|chunk| !active.contains(chunk));
+        self.world.set_block_only_chunks(block_only);
         self.world.set_active_chunks(active, tick);
     }
 
@@ -2255,8 +2266,6 @@ impl TickState {
         // Accumulation precedes commit's tick increment; interval boundaries
         // must use the output/WAL tick, including the first tick after recovery.
         let tick = self.tick + 1;
-        block_only.retain(|chunk| !active.contains(chunk));
-        self.world.set_block_only_chunks(block_only);
         // Forced chunks within the spawning sphere count too, independently
         // of the player's configured simulation radius.
         let radius = 8;
@@ -2797,6 +2806,7 @@ fn run_dimension_tick_inner<'a>(
         crate::special_mobs::raiders::run(state, &mut intents);
     }
     crate::vehicles::run(state, &mut intents, &mut changes);
+    crate::mounts::menus::maintain(state, &mut changes);
     if sim {
         crate::end_fight::run(state, &mut intents, &mut changes);
         crate::villager::soldier::attacks(state, &mut intents, &mut changes);
@@ -4194,9 +4204,11 @@ fn container_kind_for_state(
         "minecraft:crafting_table" => Some((
             crate::inventory::MenuKind::CraftingTable,
             "Crafting Table".to_owned(),
-            10,
+            // Grid/result custody belongs to this player's Menu, not the block.
+            0,
         )),
         "minecraft:beacon" => Some((crate::inventory::MenuKind::Beacon, "Beacon".into(), 0)),
+        "minecraft:lectern" => Some((crate::inventory::MenuKind::Lectern, "Lectern".into(), 1)),
         "minecraft:enchanting_table" => Some((
             crate::inventory::MenuKind::EnchantingTable,
             "Enchant".into(),
@@ -4485,6 +4497,12 @@ fn sync_chunk_block_entities(state: &mut TickState) {
             state.world.reject_resident(chunk_pos, error.to_string());
             continue;
         }
+        crate::lectern::hydrate_chunk(
+            &mut state.lecterns,
+            &mut state.block_entities,
+            &state.registry,
+            chunk,
+        );
         crate::jukebox::hydrate_chunk(
             &mut state.jukeboxes,
             &mut state.block_entities,
@@ -4549,7 +4567,7 @@ fn sync_chunk_block_entities(state: &mut TickState) {
 }
 
 /// Chunk slot shape -> core item stack.
-fn furnace_slot_to_stack(slot: &mc_world::FurnaceSlot) -> mc_data::ItemStack {
+pub(crate) fn furnace_slot_to_stack(slot: &mc_world::FurnaceSlot) -> mc_data::ItemStack {
     mc_data::ItemStack {
         count: slot.count,
         item_id: slot.item_id,
@@ -5058,6 +5076,21 @@ fn apply_inputs<'a>(
                 input::session::respawn(state, connection, changes)
             }
             PlayerInput::LeaveBed { connection } => input::movement::leave_bed(state, connection),
+            PlayerInput::OpenMountInventory { connection } => {
+                if let Some(actor) = state.connections.entity_of(*connection)
+                    && let Some(vehicle) = crate::mounts::vehicle(state, actor)
+                {
+                    let target = state.entities.body(vehicle).id;
+                    crate::mounts::interact(
+                        state,
+                        actor,
+                        target,
+                        crate::boundary::Hand::Main,
+                        true,
+                        intents,
+                    );
+                }
+            }
         }
     }
 }

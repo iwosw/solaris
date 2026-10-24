@@ -222,6 +222,142 @@ fn reserve_holds_real_stock_without_removing_or_reissuing_items() {
     );
 }
 #[test]
+fn entity_menu_clicks_preserve_reserved_player_inventory_and_resync() {
+    use crate::boundary::{ChangeSet, ClickMode, Hand, PlayerChange};
+    for mount_menu in [true, false] {
+        let (mut state, actor) = state();
+        let actor_slot = state.entities.slot_of(actor).unwrap();
+        let position = state.entities.pos(actor_slot);
+        let type_id = state
+            .registry
+            .entity_types
+            .id_of(
+                &Identifier::parse(if mount_menu {
+                    "minecraft:donkey"
+                } else {
+                    "minecraft:chest_minecart"
+                })
+                .unwrap(),
+            )
+            .unwrap();
+        let target = state.spawn_mob(type_id, [position[0] + 1.0, position[1], position[2]], 20.0);
+        let target_slot = state.entities.slot_of(target).unwrap();
+        if mount_menu {
+            let row = state.entities.row_mut(target_slot);
+            row.entity_life.tamed = true;
+            row.entity_life.mount.chested = true;
+            row.entity_life.mount.cargo = vec![ItemStack::EMPTY; 15];
+        }
+        crate::tick::run_tick(
+            &mut state,
+            &[PlayerInput::InteractEntitySecondary {
+                connection: ConnectionId(7),
+                target,
+                hand: Hand::Main,
+                location: [0.0; 3],
+            }],
+        );
+        let menu = state.players[&actor]
+            .open
+            .as_ref()
+            .expect("entity cargo menu");
+        let window = menu.window;
+        let state_id = menu.state_id;
+        let container_size = menu.kind.container_size();
+        let before_cursor = menu.carried.clone();
+        let mut emeralds = item(&state, 10);
+        emeralds.custom_name = Some("reserved cargo".into());
+        state.players.get_mut(&actor).unwrap().inventory.slots[9] = emeralds;
+        let held = reserve(&mut state, &player(), plan(10));
+        let before_inventory = state.players[&actor].inventory.clone();
+        let before_cargo = if mount_menu {
+            state
+                .entities
+                .row(target_slot)
+                .entity_life
+                .mount
+                .cargo
+                .clone()
+        } else {
+            state
+                .entities
+                .row(target_slot)
+                .entity_life
+                .vehicle
+                .as_ref()
+                .unwrap()
+                .slots
+                .clone()
+        };
+        let before_entities = state.entities.slots().count();
+        for mode in [ClickMode::Pickup, ClickMode::QuickMove, ClickMode::Throw] {
+            state.outbox.clear();
+            let mut changes = ChangeSet::default();
+            if mount_menu {
+                crate::mounts::menus::click(
+                    &mut state,
+                    actor,
+                    window,
+                    state_id,
+                    container_size as i16,
+                    0,
+                    mode,
+                    &mut changes,
+                );
+            } else {
+                crate::vehicles::click(
+                    &mut state,
+                    actor,
+                    window,
+                    state_id,
+                    container_size as i16,
+                    0,
+                    mode,
+                    &mut changes,
+                );
+            }
+            assert_eq!(state.players[&actor].inventory, before_inventory);
+            let menu = state.players[&actor].open.as_ref().unwrap();
+            assert_eq!(menu.carried, before_cursor);
+            assert_eq!(
+                state.entities.slots().count(),
+                before_entities,
+                "no drop escapes refusal"
+            );
+            assert_eq!(menu.state_id, state_id);
+            let cargo = if mount_menu {
+                &state.entities.row(target_slot).entity_life.mount.cargo
+            } else {
+                &state
+                    .entities
+                    .row(target_slot)
+                    .entity_life
+                    .vehicle
+                    .as_ref()
+                    .unwrap()
+                    .slots
+            };
+            assert_eq!(cargo, &before_cargo);
+            assert_eq!(
+                reservation(&state, "demo", &held.snapshot.reservation_ref)
+                    .unwrap()
+                    .snapshot,
+                held.snapshot
+            );
+            assert!(
+                state.outbox[&ConnectionId(7)].iter().any(|change| matches!(
+                    change, PlayerChange::MenuContents { window: actual, slots, cursor, .. }
+                        if *actual == window && slots.len() == container_size + 36
+                            && slots[container_size].as_ref() == Some(&before_inventory.slots[9])
+                            && cursor.is_none()
+                )),
+                "a refused click resyncs the exact reserved stack and empty cursor"
+            );
+        }
+    }
+}
+
+#[test]
 fn native_transfer_preserves_components_and_advances_both_fences() {
     let (mut state, entity) = state();
     let mut source = item(&state, 2);

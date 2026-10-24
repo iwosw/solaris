@@ -1421,6 +1421,26 @@ impl ChunkWorld {
         }
         self.mark_block_entity_dirty(pos);
     }
+    /// Replace imported shadows as well as opaque data when a command supplies a new image.
+    pub(crate) fn install_command_block_entity(&mut self, pos: mc_world::BlockPos, bytes: Vec<u8>) {
+        let chunk_pos = ChunkPos {
+            x: pos.x.div_euclid(16),
+            z: pos.z.div_euclid(16),
+        };
+        if !self.materialize(chunk_pos) {
+            return;
+        }
+        if let Some(chunk) = self.chunks.get_mut(&chunk_pos) {
+            let chunk = Arc::make_mut(chunk);
+            chunk.chests.remove(&pos);
+            chunk.furnaces.remove(&pos);
+            chunk.hoppers.remove(&pos);
+            chunk.brewing_stands.remove(&pos);
+            chunk.block_entities.insert(pos, bytes);
+        }
+        self.hydration_pending.insert(chunk_pos);
+        self.mark_block_entity_dirty(pos);
+    }
     /// Whether the chunk column `(cx, cz)` is resident (and legible).
     /// Unloaded columns block entity movement and never form a floor.
     #[must_use]
@@ -1438,6 +1458,13 @@ impl ChunkWorld {
         self.sim_debt
             .get(&ChunkPos { x: cx, z: cz })
             .is_some_and(|debt| debt.active)
+    }
+
+    /// Blocks also tick in resident level-32 neighbours of forced tickets.
+    #[must_use]
+    pub fn is_block_active(&self, cx: i32, cz: i32) -> bool {
+        self.is_active(cx, cz)
+            || (self.block_only.contains(&ChunkPos { x: cx, z: cz }) && self.has_chunk(cx, cz))
     }
 
     /// Match the active-position worklist and its authoritative simulation gate.
@@ -1460,13 +1487,6 @@ impl ChunkWorld {
     pub fn simulation_interval(&self, pos: ChunkPos, from: u64, to: u64) -> Option<(u64, u64)> {
         if to <= from {
             return None;
-    /// Blocks also tick in resident level-32 neighbours of forced tickets.
-    #[must_use]
-    pub fn is_block_active(&self, cx: i32, cz: i32) -> bool {
-        self.is_active(cx, cz)
-            || (self.block_only.contains(&ChunkPos { x: cx, z: cz }) && self.has_chunk(cx, cz))
-    }
-
         }
         let (start, end) = if let Some(Some(image)) = self.activity_changes.get(&pos) {
             if image.active {
@@ -1511,6 +1531,11 @@ impl ChunkWorld {
         self.active_set.iter().copied()
     }
 
+    /// All ticking demand (resident or not), without duplicates.
+    pub fn active_positions(&self) -> impl Iterator<Item = ChunkPos> + '_ {
+        self.active_set.iter().chain(&self.block_only).copied()
+    }
+
     /// Parent resident-union input: chunks pinning eviction (dirty, absent,
     /// debt or inhabited images). Duplicates possible; the caller dedups.
     pub fn dirty_pins(&self) -> impl Iterator<Item = ChunkPos> + '_ {
@@ -1531,11 +1556,6 @@ impl ChunkWorld {
     }
 
     /// Reconcile resident/active transitions and advance `last_sim` at `tick`
-    /// All ticking demand (resident or not), without duplicates.
-    pub fn active_positions(&self) -> impl Iterator<Item = ChunkPos> + '_ {
-        self.active_set.iter().chain(&self.block_only).copied()
-    }
-
     /// without taking a membership set. Parent's cached-basis fast path:
     /// stationary ticks skip the set rebuild and call this after ensure so
     /// newly admitted chunks with active demand activate in the same tick.
@@ -1626,6 +1646,22 @@ impl ChunkWorld {
             activity_changes.insert(*pos, Some(image));
             debt_changes.insert(*pos, image);
         }
+        // Level 32 runs block time live, not entity time. Do not later replay
+        // those same ticks as whole-chunk catch-up when this chunk reaches 31.
+        // These anchors are rebuilt from persisted ticket demand on recovery.
+        for pos in &self.block_only {
+            if !chunks.contains_key(pos) {
+                continue;
+            }
+            let record = sim_debt.entry(*pos).or_insert(crate::debt::SimDebtRecord {
+                last_sim: tick,
+                remaining: 0,
+                dirty: false,
+                active: false,
+            });
+            record.last_sim = tick;
+            record.remaining = 0;
+        }
     }
 
     pub(crate) fn simulation_debt(&self, pos: ChunkPos) -> u64 {
@@ -1646,22 +1682,6 @@ impl ChunkWorld {
     }
 
     /// Debt and effects are captured by the same tick WAL/checkpoint fence.
-        // Level 32 runs block time live, not entity time. Do not later replay
-        // those same ticks as whole-chunk catch-up when this chunk reaches 31.
-        // These anchors are rebuilt from persisted ticket demand on recovery.
-        for pos in &self.block_only {
-            if !chunks.contains_key(pos) {
-                continue;
-            }
-            let record = sim_debt.entry(*pos).or_insert(crate::debt::SimDebtRecord {
-                last_sim: tick,
-                remaining: 0,
-                dirty: false,
-                active: false,
-            });
-            record.last_sim = tick;
-            record.remaining = 0;
-        }
     pub(crate) fn consume_simulation_debt(&mut self, pos: ChunkPos, elapsed: u64) {
         let Some(debt) = self.sim_debt.get_mut(&pos) else {
             return;

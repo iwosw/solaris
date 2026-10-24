@@ -500,9 +500,9 @@ impl PlayerState {
         title: String,
         container: &[ItemStack],
     ) -> PlayerEffects {
-        let Some(menu_type) = kind.menu_type() else {
+        if kind == MenuKind::Player {
             return PlayerEffects::default();
-        };
+        }
         let mut effects = match self.open.as_ref().map(|menu| menu.window) {
             Some(window) => {
                 let mut closed = self.close(rules);
@@ -515,10 +515,19 @@ impl PlayerState {
         };
         self.last_window = self.last_window % MAX_WINDOW + 1;
         let menu = Menu::new(self.last_window, kind);
-        effects.changes.push(PlayerChange::MenuOpened {
-            window: menu.window,
-            menu_type,
-            title,
+        effects.changes.push(match kind {
+            MenuKind::Mount {
+                entity, columns, ..
+            } => PlayerChange::MountMenuOpened {
+                window: menu.window,
+                columns,
+                entity,
+            },
+            _ => PlayerChange::MenuOpened {
+                window: menu.window,
+                menu_type: kind.menu_type().expect("ordinary menu type"),
+                title,
+            },
         });
         effects
             .changes
@@ -546,7 +555,7 @@ impl PlayerState {
         let creative = self.creative();
         let spectator = self.spectator();
         let menu = self.open.as_mut().unwrap_or(&mut self.inventory_menu);
-        if spectator {
+        if spectator || menu.kind == MenuKind::Lectern {
             return PlayerEffects {
                 changes: vec![contents_change(menu, &self.inventory, container)],
                 ..PlayerEffects::default()

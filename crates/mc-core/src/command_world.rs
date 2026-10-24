@@ -12,6 +12,7 @@ use mc_world::{BlockRegistry, BlockStateId};
 pub struct BlockSpec {
     pub name: Identifier,
     pub properties: Vec<(String, String)>,
+    pub nbt: Option<Vec<u8>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -59,9 +60,17 @@ fn message(text: impl Into<String>) -> CommandError {
 }
 
 pub(crate) fn block_spec(word: &str) -> Result<BlockSpec, CommandError> {
-    if word.contains(['{', '}']) {
-        return Err(message("Block entity SNBT is not supported"));
-    }
+    let (word, nbt) = if let Some(start) = word.find('{') {
+        let tag = crate::command_snbt::parse(&word[start..]).map_err(message)?;
+        if !matches!(tag, mc_nbt::Tag::Compound(_)) {
+            return Err(message("Expected block entity compound"));
+        }
+        let mut bytes = Vec::new();
+        mc_nbt::write_network(&mut bytes, &tag).map_err(|error| message(error.to_string()))?;
+        (&word[..start], Some(bytes))
+    } else {
+        (word, None)
+    };
     let (name, properties) = match word.split_once('[') {
         Some((name, rest)) => {
             let rest = rest
@@ -98,6 +107,7 @@ pub(crate) fn block_spec(word: &str) -> Result<BlockSpec, CommandError> {
     Ok(BlockSpec {
         name: Identifier::parse(name).map_err(|_| message("Invalid block identifier"))?,
         properties,
+        nbt,
     })
 }
 
@@ -373,12 +383,15 @@ fn execute_inner(
             mode,
         } => {
             let pos = position(state, *pos, base, base_rotation, state.dimension.geometry())?;
+            let nbt = block.nbt.as_deref();
             let block = block.resolve(&state.registry.blocks)?;
+            let image = crate::command_block_entity::prepare(state, block, nbt).map_err(message)?;
             edit_region(
                 state,
                 pos,
                 pos,
                 block,
+                image,
                 &match mode {
                     SetMode::Replace => FillMode::Replace(None),
                     SetMode::Keep => FillMode::Keep,
@@ -400,11 +413,18 @@ fn execute_inner(
                 state.dimension.geometry(),
             )?;
             let to = position(state, *to, base, base_rotation, state.dimension.geometry())?;
+            let nbt = block.nbt.as_deref();
             let block = block.resolve(&state.registry.blocks)?;
+            let image = crate::command_block_entity::prepare(state, block, nbt).map_err(message)?;
             if let FillMode::Replace(Some(filter)) = mode {
                 filter.validate(&state.registry.blocks)?;
+                if filter.nbt.is_some() {
+                    return Err(message(
+                        "NBT predicates are not supported in fill replacement filters",
+                    ));
+                }
             }
-            edit_region(state, from, to, block, mode)
+            edit_region(state, from, to, block, image, mode)
         }
         WorldCommand::SpawnPoint {
             target,
@@ -471,6 +491,7 @@ fn edit_region(
     a: BlockPos,
     b: BlockPos,
     block: u32,
+    image: Option<crate::command_block_entity::Prepared>,
     mode: &FillMode,
 ) -> Result<String, CommandError> {
     let min = BlockPos {
@@ -529,7 +550,7 @@ fn edit_region(
                 };
                 let destroy =
                     matches!(mode, FillMode::Destroy) && !is_air(&state.registry.blocks, old);
-                if new != old || destroy {
+                if new != old || destroy || (new == block && image.is_some()) {
                     writes.push((pos, old, new, destroy));
                 }
             }
@@ -555,6 +576,16 @@ fn edit_region(
             })
         {
             state.stage_command_container_removal(pos);
+        }
+        state
+            .merge_command_block_entities
+            .retain(|(pending, _)| *pending != pos);
+        if new == block
+            && let Some(image) = &image
+        {
+            state
+                .merge_command_block_entities
+                .push((pos, image.clone()));
         }
         if let Some(index) = pending.get(&pos) {
             state.merge_block_writes[*index].1 = new;
@@ -749,6 +780,7 @@ mod tests {
         for command in [
             "setblock ~ ~1 ~ stone",
             "setblock 1 2 3 stone destroy",
+            "setblock 0 0 0 stone{foo:1}",
             "setblock ^1 ^2 ^3 stone",
             "setblock 1 2 3 grass_block[snowy=true] keep",
             "fill 0 0 0 2 2 2 stone replace dirt",
@@ -768,7 +800,7 @@ mod tests {
             parsed(command);
         }
         for (root, args) in [
-            ("setblock", vec!["0", "0", "0", "stone{foo:1}"]),
+            ("setblock", vec!["0", "0", "0", "stone{foo:"]),
             (
                 "setblock",
                 vec!["0", "0", "0", "grass_block[snowy=true,snowy=false]"],
@@ -852,19 +884,28 @@ mod tests {
                 &format!("setblock 1 200 0 chest{{Items:[{{Slot:0b,id:\"minecraft:diamond\",count:{count}}}]}}"),
             )
             .unwrap();
+            run_tick(&mut state, &[]);
             let slots = &state.block_entities[&(1, 200, 0)].slots;
             assert_eq!(slots[0].count, count);
             assert_eq!(
-                state.registry.items.name_of(slots[0].item_id).unwrap().as_str(),
+                state
+                    .registry
+                    .items
+                    .name_of(slots[0].item_id)
+                    .unwrap()
+                    .as_str(),
                 "minecraft:diamond"
             );
         }
         let before = state.block_entities[&(1, 200, 0)].slots.clone();
-        assert!(apply(
-            &mut state,
-            actor,
-            "setblock 1 200 0 chest{Items:[{Slot:0b,id:\"minecraft:dirt\",count:9}]} keep"
-        ).is_err());
+        assert!(
+            apply(
+                &mut state,
+                actor,
+                "setblock 1 200 0 chest{Items:[{Slot:0b,id:\"minecraft:dirt\",count:9}]} keep"
+            )
+            .is_err()
+        );
         assert_eq!(state.block_entities[&(1, 200, 0)].slots, before);
     }
 

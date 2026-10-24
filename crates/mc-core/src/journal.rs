@@ -2284,6 +2284,11 @@ impl EntityStateImage {
             ..Default::default()
         };
         crate::mounts::persistence::from_fields(&mut image.entity_life, &record.extra_fields)?;
+        crate::mounts::persistence::cargo_from_record(
+            &mut image.entity_life.mount,
+            &registry.items,
+            record,
+        )?;
         image.entity_life.age_lock = crate::golden_dandelion::from_fields(&record.extra_fields)?;
         if record.id == "minecraft:tadpole" {
             image.entity_life.age_lock.tadpole_age = u32::try_from(record.age).map_err(|_| {

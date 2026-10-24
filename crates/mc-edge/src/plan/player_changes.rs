@@ -529,6 +529,19 @@ fn plan_change(change: &PlayerChange, viewer: &mut ViewerState, out: &mut Vec<Pl
                 title_nbt: menu_title_nbt(title).unwrap_or_default(),
             },
         ),
+        PlayerChange::MountMenuOpened {
+            window,
+            columns,
+            entity,
+        } => push_reliable(
+            out,
+            conn,
+            &mc_protocol::packets::play::ClientboundMountScreenOpen {
+                container_id: i32::from(*window),
+                columns: i32::from(*columns),
+                entity_id: entity.0,
+            },
+        ),
         PlayerChange::MerchantOffers {
             window,
             offers,

@@ -105,6 +105,7 @@ pub(super) fn reactive(path: &str) -> bool {
             | "rail"
             | "note_block"
             | "jukebox"
+            | "lectern"
             | "sculk_sensor"
             | "calibrated_sculk_sensor"
     ) || path.ends_with("_door")
@@ -134,6 +135,13 @@ fn weak_output(state: &TickState, source: BlockPos, target: BlockPos) -> u8 {
     let path = block.block.id.path();
     match path {
         "redstone_block" => 15,
+        "lectern" => {
+            if prop(block, "powered") == Some("true") {
+                15
+            } else {
+                0
+            }
+        }
         "jukebox" => {
             if crate::jukebox::playing(state, source) {
                 15
@@ -658,6 +666,11 @@ fn tick_cell(
                 change(state, writes, pos, "powered", "true");
                 schedule_cell(state, pos, 2, 4);
             } else if tick.priority == 4 {
+                change(state, writes, pos, "powered", "false");
+            }
+        }
+        "lectern" => {
+            if tick.priority == 4 {
                 change(state, writes, pos, "powered", "false");
             }
         }

@@ -788,6 +788,23 @@ chunks at once, so a pearl cannon cannot demand an unbounded loaded area; excess
 pearls stay frozen outside simulation. Classic bubble-column stasis chambers
 need bubble-column entity physics, which Solaris does not simulate yet.
 
+## Native mount and lectern inventories
+
+Crafting-table grids are player-owned, not block storage: ordinary clicks keep
+the table open and closing it refunds the grid and cursor to that player.
+
+Sneak-use a tamed adult horse, donkey, mule, llama or camel to open its inventory;
+the inventory key also opens it while riding. Saddle/body equipment and chested
+donkey, mule or llama cargo remain owned by the entity and survive native saves.
+Mount and container-vehicle clicks honor plugin reservations on player inventory.
+A refused extraction, quick move or drop preserves player inventory, cursor and
+entity cargo, and returns an authoritative menu resynchronization.
+Lecterns accept writable and written books, expose page navigation and Take Book,
+and provide page-dependent comparator output plus a two-tick page-turn pulse.
+`/setblock` and fill placement accept block-entity SNBT, including container `Items`;
+supplied data replaces the target's native storage, including when the block state
+itself is unchanged. Position and block-entity identity come from the placement.
+
 ## Block log and rollback
 
 A CoreProtect-style log records who changed what: player, mob (`#creeper`,

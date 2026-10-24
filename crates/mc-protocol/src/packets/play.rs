@@ -129,13 +129,13 @@ pub use interaction::{
 };
 pub use inventory::{
     ClientboundContainerClose, ClientboundContainerSetContent, ClientboundContainerSetData,
-    ClientboundContainerSetSlot, ClientboundOpenScreen, ClientboundRecipeBookAdd,
-    ClientboundRecipeBookSettings, ClientboundSetCursorItem, ClientboundSetHeldSlot,
-    ClientboundUpdateRecipes, ContainerInput, HashedStack, HashedStackComponentHashes,
-    RecipeBookDisplay, RecipeBookEntry, RecipeBookIngredient, RecipeBookSlotDisplay,
-    RecipeBookType, RecipeBookTypeSettings, RecipePropertySet, ServerboundContainerButtonClick,
-    ServerboundContainerClick, ServerboundContainerClose, ServerboundPlaceRecipe,
-    ServerboundRecipeBookChangeSettings, ServerboundRecipeBookSeenRecipe,
+    ClientboundContainerSetSlot, ClientboundMountScreenOpen, ClientboundOpenScreen,
+    ClientboundRecipeBookAdd, ClientboundRecipeBookSettings, ClientboundSetCursorItem,
+    ClientboundSetHeldSlot, ClientboundUpdateRecipes, ContainerInput, HashedStack,
+    HashedStackComponentHashes, RecipeBookDisplay, RecipeBookEntry, RecipeBookIngredient,
+    RecipeBookSlotDisplay, RecipeBookType, RecipeBookTypeSettings, RecipePropertySet,
+    ServerboundContainerButtonClick, ServerboundContainerClick, ServerboundContainerClose,
+    ServerboundPlaceRecipe, ServerboundRecipeBookChangeSettings, ServerboundRecipeBookSeenRecipe,
     ServerboundSetCarriedItem, ServerboundSetCreativeModeSlot, StonecutterRecipeEntry,
 };
 pub use login_flow::{

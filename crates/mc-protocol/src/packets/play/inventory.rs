@@ -241,6 +241,33 @@ impl Packet for ClientboundOpenScreen {
     }
 }
 
+/// 26.1.2 ClientboundMountScreenOpenPacket: container id, cargo columns, entity id.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClientboundMountScreenOpen {
+    pub container_id: i32,
+    pub columns: i32,
+    pub entity_id: i32,
+}
+
+impl Packet for ClientboundMountScreenOpen {
+    const ID: i32 = 0x29;
+
+    fn encode<B: BufMut>(&self, buf: &mut B) -> Result<(), CodecError> {
+        buf.write_varint(self.container_id);
+        buf.write_varint(self.columns);
+        buf.put_i32(self.entity_id);
+        Ok(())
+    }
+
+    fn decode<B: Buf>(buf: &mut B) -> Result<Self, CodecError> {
+        Ok(Self {
+            container_id: buf.read_varint()?,
+            columns: buf.read_varint()?,
+            entity_id: buf.read_i32()?,
+        })
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HashedStackComponentHashes {
     pub added: Vec<(i32, i32)>,

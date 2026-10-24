@@ -64,9 +64,11 @@ fn strong(state: &TickState, source: BlockPos, target: BlockPos, wires: bool) ->
         "repeater" | "comparator" | "observer" => true,
         "redstone_torch" | "redstone_wall_torch" => offset(source, (0, 1, 0)) == Some(target),
         "lever" => support(source, block) == Some(target),
-        "detector_rail" | "trapped_chest" | "sculk_sensor" | "calibrated_sculk_sensor" => {
-            offset(source, (0, -1, 0)) == Some(target)
-        }
+        "detector_rail"
+        | "trapped_chest"
+        | "sculk_sensor"
+        | "calibrated_sculk_sensor"
+        | "lectern" => offset(source, (0, -1, 0)) == Some(target),
         _ if path.ends_with("_button") || path.ends_with("lightning_rod") => {
             support(source, block) == Some(target)
         }
@@ -148,6 +150,7 @@ pub(super) fn analog(state: &TickState, pos: BlockPos) -> Option<u8> {
         "beehive" | "bee_nest" => Some(number("honey_level")),
         "sculk_sensor" | "calibrated_sculk_sensor" => crate::sculk::comparator(state, pos),
         "jukebox" => crate::jukebox::comparator(state, pos),
+        "lectern" => crate::lectern::comparator(state, pos),
         _ if containers::has_analog_output(path) => Some(containers::signal(state, pos)),
         _ => None,
     }

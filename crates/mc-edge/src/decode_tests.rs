@@ -1058,6 +1058,15 @@ fn stop_sleeping_becomes_leave_bed() {
 }
 
 #[test]
+fn mounted_inventory_command_reaches_native_owner() {
+    let inputs = decode(0x2A, vec![1, 5, 0], &mut state()).unwrap();
+    assert!(matches!(
+        inputs.as_slice(),
+        [PlayerInput::OpenMountInventory { .. }]
+    ));
+}
+
+#[test]
 fn trailing_bytes_rejected() {
     let mut s = state();
     let mut bytes = body(&ServerboundAttack { entity_id: 1 });

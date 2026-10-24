@@ -181,6 +181,9 @@ pub(in crate::tick) fn use_item_on(
     if crate::shelf::use_on(state, entity, *hand, *position, *face, *cursor) {
         return;
     }
+    if crate::lectern::use_on(state, entity, *hand, *position, changes) {
+        return;
+    }
     if crate::ender_chest::open(state, entity, *connection, *position, changes) {
         return;
     }
