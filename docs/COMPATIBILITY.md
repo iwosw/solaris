@@ -39,6 +39,24 @@ are separated from open gaps. Unintegrated worker patches are not support claims
 See [DoD](DEFINITION_OF_DONE.md), [architecture](ARCHITECTURE.md) and
 [the historical ledger's runtime warning](VALIDATION_LEDGER.md#L1-L8).
 
+Current server-fixes behavior (source and focused regression scope, not live acceptance):
+
+- Command-driven container destruction settles drops, storage custody and viewer
+  closure before another input can click the removed inventory.
+- Hoppers pulling from container vehicles refresh their open viewer inventories.
+- Restored due gravity ticks activate unsupported falling blocks without requiring
+  a neighboring edit.
+- Iron-ingot interaction repairs a living iron golem by 25 health, capped at its
+  maximum; only a successful survival repair consumes an ingot. Both hands,
+  Creative repair and full-health no-op have focused regression coverage.
+- Mob melee damage scales with difficulty for player victims, including attacks
+  by natural iron golems; attacks on nonplayer mobs retain their base damage.
+- Without plugin-login arbitration, a newer same-UUID login disconnects the old
+  session and transfers its saved player state rather than duplicating inventory.
+- Play pick-item packets select or move an existing survival stack; Creative can
+  create the picked block item or entity spawn egg. Reach and reservation-floor
+  admission still apply. See [pick regressions](../crates/mc-core/src/tick/input/pick_item_tests.rs).
+
 ## Protocol, login, chat and commands
 
 | Player-visible feature area | Status | Evidence | Known gaps / audit finding IDs |
@@ -108,10 +126,10 @@ species is implicitly certified.
 | Guardians/elder guardians, shulkers, breeze | `partial` | [special attacks](../crates/mc-core/src/special_mobs_tests.rs); [authored elder-guardian/shulker inhabitants](../crates/mc-core/src/villager/generated_tests.rs); [modern structure contract](VILLAGE_GENERATION.md#modern-jigsaw-structures) | Monument and End-city inhabitants have native once-only identity/persistence; trial chamber templates now generate. Complete naturally generated encounters remain unverified; custom equipment/attachments are not covered by generic mob markers. |
 | Illagers/raiders: pillagers, vindicators, evokers, vexes, ravagers; raids | `partial` | [native raids](../crates/mc-core/src/raids_tests.rs); [authored pillager/vindicator/evoker inhabitants](../crates/mc-core/src/villager/generated_tests.rs); [classic structures](../crates/mc-worldgen/src/overworld_structures/catalog.rs) | Outposts and mansions generate with structure-native inhabitants using the blueprint/claim path. Complete vanilla-client raid/navigation/farm acceptance remains unproven. |
 | Warden/sculk and creaking | `partial` | [warden anger:82](../crates/mc-core/src/warden_tests.rs#L82), [sonic:393](../crates/mc-core/src/special_mobs_tests.rs#L393); [creaking gaze:33](../crates/mc-core/src/creaking_tests.rs#L33) | No full naturally generated encounter gate; underground sculk features absent ([W08]), pale-oak growth absent ([VB-23]). |
-| Iron/snow/copper golems | `partial` | [golems_tests.rs](../crates/mc-core/src/golems_tests.rs); [copper_tests.rs](../crates/mc-core/src/copper_tests.rs); [iron loot oracle](QUIRK_PARITY.md#L109-L115) | Iron-ingot healing, gossip summoning and attack damage/difficulty differ ([VC-11], [VC-12], [VC-16]). |
+| Iron/snow/copper golems | `partial` | [golems_tests.rs](../crates/mc-core/src/golems_tests.rs); [copper_tests.rs](../crates/mc-core/src/copper_tests.rs); [iron loot oracle](QUIRK_PARITY.md#L109-L115) | Gossip summoning now admits five willing villagers; panic requires three. Detection uses the 16-block per-axis volume. Iron-ingot healing and attack damage/difficulty differ ([VC-11], [VC-16]); real-client summoning proof remains pending. |
 | Wither boss | `partial` | [ritual, restart, heads, armor, grief, star:626](../crates/mc-core/src/special_mobs_tests.rs#L626); [LOS/immunity:988](../crates/mc-core/src/special_mobs_tests.rs#L988); [Nether structures](../crates/mc-worldgen/src/nether/structures.rs) | Native focused tests, not complete real-client boss acceptance. Fortress resources now generate, but recurring fortress-specific wither-skeleton spawning and a full natural skull-acquisition route remain unproven ([W02]). |
 | Bats/phantoms and command-only giant/illusioner | `partial` | [species list](../crates/mc-core/src/species_tests.rs#L10-L83); [giant:64](../crates/mc-core/src/rare_mobs_tests.rs#L64), [illusioner:136](../crates/mc-core/src/rare_mobs_tests.rs#L136) | Generic lifecycle and named special tests do not certify bat/phantom AI. Giant/illusioner command-only availability is not itself a vanilla gap. |
-| Villagers: jobs, beds, POIs, schedules, breeding, gossip, golems | `partial` | [villager/brain.rs](../crates/mc-core/src/villager/brain.rs); [villager persistence tests](../crates/mc-core/src/villager/persistence_tests.rs); [combat audit][combat-audit] | Missing gossip-triggered golems ([VC-12]); farmer harvest about 2.4× vanilla in [breeder oracle](QUIRK_PARITY.md#L127). Settlement residency is an extension, not vanilla proof. |
+| Villagers: jobs, beds, POIs, schedules, breeding, gossip, golems | `partial` | [villager/brain.rs](../crates/mc-core/src/villager/brain.rs); [villager persistence tests](../crates/mc-core/src/villager/persistence_tests.rs); [combat audit][combat-audit] | Gossip-triggered golem eligibility is implemented ([VC-12]); farmer harvest about 2.4× vanilla in [breeder oracle](QUIRK_PARITY.md#L127). Settlement residency is an extension, not vanilla proof. |
 | Villager/wandering-trader trade UI, offers, restock and prices | `partial` | [villager/trades_tests.rs](../crates/mc-core/src/villager/trades_tests.rs); [merchant_tests.rs](../crates/mc-core/src/tick/merchant_tests.rs); [trader persistence](../crates/mc-core/src/level_metadata_trader_tests.rs) | Native trading/restock coverage; complete vanilla offer/demand/discount/UI and survival acquisition gate not established. No dedicated audit ID. |
 
 ## Items, stations and containers
