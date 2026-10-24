@@ -1415,18 +1415,23 @@ fn flowerless_bee_finds_wither_rose_and_rejects_waterlogged() {
 fn flower_rules_exclude_waterlogged_and_tall_upper() {
     // BEE-FLOWER-TABLE waterlogged/tall-half rules (post-fix coverage).
     let mut state = state(None);
-    let torch = state
+    // mangrove_propagule is a waterloggable bee-attractive member.
+    let propagule = state
         .registry
         .blocks
         .by_name_and_props(
-            &Identifier::parse("minecraft:torchflower").unwrap(),
-            &[("waterlogged".into(), "true".into())],
-        );
-    if let Some(torch) = torch {
-        state.world.set_block(2, 201, 4, torch.0);
-        state.world.fold_overlay();
-        assert!(!flower_at(&state, BlockPos { x: 2, y: 201, z: 4 }));
-    }
+            &Identifier::parse("minecraft:mangrove_propagule").unwrap(),
+            &[
+                ("age".into(), "0".into()),
+                ("hanging".into(), "false".into()),
+                ("stage".into(), "0".into()),
+                ("waterlogged".into(), "true".into()),
+            ],
+        )
+        .expect("waterlogged propagule state");
+    state.world.set_block(2, 201, 4, propagule.0);
+    state.world.fold_overlay();
+    assert!(!flower_at(&state, BlockPos { x: 2, y: 201, z: 4 }));
     let lilac = state
         .registry
         .blocks
