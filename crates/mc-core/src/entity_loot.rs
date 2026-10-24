@@ -118,6 +118,11 @@ pub(crate) fn accepted_hit(state: &mut TickState, slot: EntitySlot, source: Opti
             | DamageSource::Sweep { attacker, .. },
         ) => attacker,
         Some(DamageSource::Projectile { owner, .. }) => owner,
+        Some(DamageSource::Command {
+            cause: Some((attacker, _)),
+            ..
+        }) => attacker,
+        Some(DamageSource::Command { cause: None, .. }) => return,
         None | Some(DamageSource::Explosion { .. }) => return,
     };
     if let Some(player) = state.players.get(&attacker) {
@@ -201,6 +206,22 @@ pub(crate) fn death_cause(
                 direct,
             }
         }
+        Some(DamageSource::Command { direct, cause, .. }) => {
+            if let Some((entity, type_id)) = direct {
+                let direct = loot_entity(state, entity).unwrap_or_else(|| {
+                    let contract =
+                        mc_data::entity_types::entity_type_contract_26_1_2_by_protocol_id(type_id)
+                            .expect("admitted command entity identity");
+                    EntityLootEntity::new(id(contract.name))
+                });
+                EntityLootAttack::Indirect {
+                    source: cause.and_then(|(entity, _)| loot_entity(state, entity)),
+                    direct,
+                }
+            } else {
+                EntityLootAttack::None
+            }
+        }
         None | Some(DamageSource::Explosion { .. }) => EntityLootAttack::None,
     };
     let credit = state
@@ -234,7 +255,7 @@ pub(crate) fn death_cause(
     if matches!(kind, DamageKind::Projectile | DamageKind::Fireball) {
         tags.insert(id("minecraft:is_projectile"));
     }
-    if kind == DamageKind::Void {
+    if kind.bypasses_invulnerability() {
         tags.insert(id("minecraft:bypasses_invulnerability"));
     }
     EntityDeathCause::new(tags, attack, credit)
@@ -433,7 +454,9 @@ fn reduce_damage_impl(
     breach: u32,
     physical: bool,
 ) -> f32 {
-    if kind == DamageKind::Void {
+    if kind.bypasses_invulnerability()
+        || matches!(kind, DamageKind::Starvation | DamageKind::SonicBoom)
+    {
         return amount;
     }
     let amount = if matches!(
@@ -481,7 +504,9 @@ fn reduce_damage_impl(
             | DamageKind::Lightning
             | DamageKind::HotFloor
             | DamageKind::Campfire => level("minecraft:fire_protection").saturating_mul(2),
-            DamageKind::Fall => level("minecraft:feather_falling").saturating_mul(3),
+            DamageKind::Fall | DamageKind::Stalagmite => {
+                level("minecraft:feather_falling").saturating_mul(3)
+            }
             DamageKind::Explosion => level("minecraft:blast_protection").saturating_mul(2),
             DamageKind::Fireball => level("minecraft:fire_protection")
                 .saturating_add(level("minecraft:projectile_protection"))

@@ -2594,6 +2594,7 @@ pub(crate) fn damage_attacker(
         crate::intent::DamageSource::Explosion { kill_credit, .. } => {
             kill_credit.map(|(source, _)| source)
         }
+        crate::intent::DamageSource::Command { cause, .. } => cause.map(|(entity, _)| entity),
     }
 }
 

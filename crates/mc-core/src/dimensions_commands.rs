@@ -22,6 +22,7 @@ pub(crate) fn target(command: &Command) -> Option<&Target> {
         | Command::TellRaw { target, .. }
         | Command::Title { target, .. } => Some(target),
         Command::Enchant(command) => Some(&command.target),
+        Command::Damage(command) => Some(&command.target),
         Command::World(crate::command_world::WorldCommand::SpawnPoint { target, .. }) => {
             Some(target)
         }
@@ -45,6 +46,7 @@ fn target_mut(command: &mut Command) -> &mut Target {
         | Command::TellRaw { target, .. }
         | Command::Title { target, .. } => target,
         Command::Enchant(command) => &mut command.target,
+        Command::Damage(command) => &mut command.target,
         _ => unreachable!("target-bearing native command"),
     }
 }

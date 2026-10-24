@@ -1065,6 +1065,7 @@ pub(crate) fn damage(
         ) => Some(attacker),
         Some(DamageSource::Projectile { owner, .. }) => Some(owner),
         Some(DamageSource::Explosion { kill_credit, .. }) => kill_credit.map(|(id, _)| id),
+        Some(DamageSource::Command { cause, .. }) => cause.map(|(id, _)| id),
         None => None,
     };
     let mut source_evidence = json!({});
@@ -1103,6 +1104,20 @@ pub(crate) fn damage(
                     .map_or(Value::Null, |contract| json!({"type":contract.name,"tags":entity_type_tags(state,contract.protocol_id)}));
         }
         source_evidence["direct_entity"] = direct;
+    } else if let Some(DamageSource::Command { direct, .. }) = source {
+        if let Some((entity, type_id)) = direct {
+            let mut evidence = entity_snapshot(state, entity);
+            if evidence.is_null() {
+                evidence = mc_data::entity_types::entity_type_contract_26_1_2_by_protocol_id(
+                    type_id,
+                )
+                .map_or(
+                    Value::Null,
+                    |contract| json!({"type":contract.name,"tags":entity_type_tags(state,type_id)}),
+                );
+            }
+            source_evidence["direct_entity"] = evidence;
+        }
     } else if let Some(attacker) = attacker {
         source_evidence["direct_entity"] = entity_snapshot(state, attacker);
     }

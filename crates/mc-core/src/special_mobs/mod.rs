@@ -394,7 +394,18 @@ pub(crate) fn beam(
             } else {
                 state.entities.row(slot).attack_damage + if elder { 3.0 } else { 1.0 }
             };
-            damage(state, intents, id, target, amount, DamageKind::Magic);
+            damage(
+                state,
+                intents,
+                id,
+                target,
+                amount,
+                if sonic {
+                    DamageKind::SonicBoom
+                } else {
+                    DamageKind::Magic
+                },
+            );
             if sonic {
                 attack.stage = 2;
                 attack.deadline = state.tick + 26;

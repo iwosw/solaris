@@ -47,6 +47,7 @@ pub mod command_border;
 pub mod command_bossbar;
 pub mod command_console;
 mod command_context;
+pub mod command_damage;
 mod command_data;
 pub mod command_enchant;
 mod command_execution;

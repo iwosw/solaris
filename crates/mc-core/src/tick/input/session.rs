@@ -325,7 +325,7 @@ pub(in crate::tick) fn join(
             state.push_player(
                 *connection,
                 PlayerChange::Died {
-                    message: "You died".to_owned(),
+                    message: mc_nbt::Tag::String(String::new()),
                 },
             );
         }

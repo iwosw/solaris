@@ -114,6 +114,7 @@ pub struct Team {
     pub friendly_fire: bool,
     pub see_friendly_invisibles: bool,
     pub nametag_visibility: i32,
+    pub death_message_visibility: i32,
     pub collision_rule: i32,
     pub prefix: String,
     pub suffix: String,
@@ -131,6 +132,7 @@ impl Team {
             friendly_fire: true,
             see_friendly_invisibles: true,
             nametag_visibility: 0,
+            death_message_visibility: 0,
             collision_rule: 0,
             prefix: String::new(),
             suffix: String::new(),
@@ -221,6 +223,7 @@ impl ScoreboardCommand {
                     | "friendlyFire"
                     | "seeFriendlyInvisibles"
                     | "nametagVisibility"
+                    | "deathMessageVisibility"
                     | "collisionRule",
                     _,
                 ],
@@ -231,10 +234,19 @@ impl ScoreboardCommand {
                     "objectives",
                     "add",
                     _,
-                    "dummy" | "trigger" | "deathCount" | "playerKillCount" | "health",
+                    "dummy" | "trigger" | "deathCount" | "playerKillCount" | "totalKillCount"
+                    | "health" | "food" | "air" | "armor" | "xp" | "level",
                     ..,
                 ],
             ) => true,
+            ("scoreboard", ["objectives", "add", _, criterion, ..])
+                if criterion
+                    .strip_prefix("teamkill.")
+                    .or_else(|| criterion.strip_prefix("killedByTeam."))
+                    .is_some_and(|color| COLORS.contains(&color)) =>
+            {
+                true
+            }
             ("scoreboard", ["objectives", "remove", _] | ["objectives", "list"]) => true,
             (
                 "scoreboard",
@@ -284,6 +296,15 @@ impl Scoreboard {
     pub fn permits_damage(&self, attacker: &str, victim: &str) -> bool {
         self.team_for(attacker)
             .is_none_or(|team| team.friendly_fire || !team.members.contains(victim))
+    }
+    pub(crate) fn permits_death_message(&self, victim: &str, recipient: &str) -> bool {
+        self.team_for(victim)
+            .is_none_or(|team| match team.death_message_visibility {
+                1 => false,
+                2 => team.members.contains(recipient),
+                3 => !team.members.contains(recipient),
+                _ => true,
+            })
     }
     pub fn snapshot_events(&self) -> Vec<ScoreboardEvent> {
         let mut events = Vec::new();
@@ -587,12 +608,17 @@ fn execute_inner(
                         team.see_friendly_invisibles =
                             value.parse().map_err(|_| "Expected true or false")?
                     }
-                    "nametagVisibility" => {
-                        team.nametag_visibility =
-                            ["always", "never", "hideForOtherTeams", "hideForOwnTeam"]
-                                .iter()
-                                .position(|s| *s == value)
-                                .ok_or("Unknown visibility")? as i32
+                    "nametagVisibility" | "deathMessageVisibility" => {
+                        let visibility = ["always", "never", "hideForOtherTeams", "hideForOwnTeam"]
+                            .iter()
+                            .position(|s| *s == value)
+                            .ok_or("Unknown visibility")?
+                            as i32;
+                        if a[2] == "nametagVisibility" {
+                            team.nametag_visibility = visibility;
+                        } else {
+                            team.death_message_visibility = visibility;
+                        }
                     }
                     "collisionRule" => {
                         team.collision_rule = ["always", "never", "pushOtherTeams", "pushOwnTeam"]
@@ -824,7 +850,12 @@ fn execute_players(
             if definition.criteria != "trigger" {
                 return Err("That objective is not a trigger".into());
             }
-        } else if a[1] != "reset" && !matches!(definition.criteria.as_str(), "dummy" | "trigger") {
+        } else if a[1] != "reset"
+            && matches!(
+                definition.criteria.as_str(),
+                "health" | "food" | "air" | "armor" | "xp" | "level"
+            )
+        {
             return Err("That objective is read-only".to_owned());
         }
     }
@@ -837,9 +868,9 @@ fn execute_players(
             return Err("Unknown source objective".to_owned());
         }
         if a[4] == "><"
-            && !matches!(
+            && matches!(
                 state.scoreboard.objectives[&a[6]].criteria.as_str(),
-                "dummy" | "trigger"
+                "health" | "food" | "air" | "armor" | "xp" | "level"
             )
         {
             return Err("Source objective is read-only".to_owned());
@@ -1018,10 +1049,67 @@ pub fn automatic(state: &mut TickState, deaths: &[EntityId], kills: &[(EntityId,
                 .and_then(|s| s.get(&objective))
                 .map(|score| score.value);
             let value = match criteria.as_str() {
-                "health" => player.vitals.health.ceil() as i32,
+                "health" => (player.vitals.health + player.active_effects.absorption).ceil() as i32,
+                "food" => player.vitals.food,
+                "air" => player.vitals.air,
+                "xp" => player.vitals.experience.total,
+                "level" => player.vitals.experience.level,
+                "armor" => {
+                    let rules = state.registry.item_rules();
+                    player.inventory.slots[36..40]
+                        .iter()
+                        .filter(|stack| !stack.is_empty())
+                        .filter_map(|stack| rules.facts.facts_for_stack(stack, rules.items))
+                        .filter_map(|facts| facts.armor.as_ref())
+                        .map(|armor| armor.armor)
+                        .sum::<f32>()
+                        .floor() as i32
+                }
                 "deathCount" if deaths.contains(id) => old.unwrap_or(0).wrapping_add(1),
-                "playerKillCount" => {
-                    let count = kills.iter().filter(|(killer, _)| killer == id).count() as i32;
+                "playerKillCount" | "totalKillCount" => {
+                    let count = kills
+                        .iter()
+                        .filter(|(killer, victim)| {
+                            killer == id
+                                && (criteria == "totalKillCount"
+                                    || state.players.contains_key(victim))
+                        })
+                        .count() as i32;
+                    if count == 0 {
+                        continue;
+                    }
+                    old.unwrap_or(0).wrapping_add(count)
+                }
+                criterion
+                    if criterion.starts_with("teamkill.")
+                        || criterion.starts_with("killedByTeam.") =>
+                {
+                    let (prefix, color) = criterion.split_once('.').expect("team criterion");
+                    let color = COLORS
+                        .iter()
+                        .position(|candidate| *candidate == color)
+                        .expect("validated team color") as i32;
+                    let count = kills
+                        .iter()
+                        .filter(|(killer, victim)| {
+                            let other = if prefix == "teamkill" {
+                                if killer != id {
+                                    return false;
+                                }
+                                victim
+                            } else {
+                                if victim != id {
+                                    return false;
+                                }
+                                killer
+                            };
+                            state
+                                .connections
+                                .name_of(*other)
+                                .and_then(|name| state.scoreboard.team_for(name))
+                                .is_some_and(|team| team.color == color)
+                        })
+                        .count() as i32;
                     if count == 0 {
                         continue;
                     }

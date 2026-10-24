@@ -15,18 +15,19 @@ use mc_protocol::packets::play::{
     ClientboundContainerClose, ClientboundContainerSetContent, ClientboundContainerSetData,
     ClientboundContainerSetSlot, ClientboundCooldown, ClientboundCustomPayload,
     ClientboundMerchantOffers, ClientboundMoveVehicle, ClientboundOpenScreen,
-    ClientboundOpenSignEditor, ClientboundPlayerAbilities, ClientboundRecipeBookAdd,
-    ClientboundRemoveEntityEffect, ClientboundRespawn, ClientboundSelectAdvancementsTab,
-    ClientboundSetActionBarText, ClientboundSetCursorItem, ClientboundSetEntityData,
-    ClientboundSetExperience, ClientboundSetHealth, ClientboundSetSubtitleText,
-    ClientboundSetTitleText, ClientboundSetTitlesAnimation, ClientboundShowDialog,
-    ClientboundSound, ClientboundSystemChat, ClientboundTickingState, ClientboundTickingStep,
-    ClientboundUpdateEntityAttributes, ClientboundUpdateEntityEffect, ENTITY_DATA_AIR_SUPPLY_INDEX,
-    EntityAttributeModifier, EntityAttributeSnapshot, EntityDataValue as WireEntityDataValue,
-    EntityEffectFlags, EntityEvent as WireEntityEvent, GameEvent, LevelEvent, MerchantItemCost,
-    MerchantOffer, MobEffectId, PLAYER_DATA_ABSORPTION_INDEX, PlayDisconnect, PlayerInfoActions,
-    PlayerInfoEntry, PlayerInfoRemove, PlayerInfoUpdate, RemoveEntities, SetEntityMotion,
-    SynchronizePlayerPosition, pack_block_pos,
+    ClientboundOpenSignEditor, ClientboundPlayerAbilities, ClientboundPlayerCombatKill,
+    ClientboundRecipeBookAdd, ClientboundRemoveEntityEffect, ClientboundRespawn,
+    ClientboundSelectAdvancementsTab, ClientboundSetActionBarText, ClientboundSetCursorItem,
+    ClientboundSetEntityData, ClientboundSetExperience, ClientboundSetHealth,
+    ClientboundSetSubtitleText, ClientboundSetTitleText, ClientboundSetTitlesAnimation,
+    ClientboundShowDialog, ClientboundSound, ClientboundSystemChat, ClientboundTickingState,
+    ClientboundTickingStep, ClientboundUpdateEntityAttributes, ClientboundUpdateEntityEffect,
+    ENTITY_DATA_AIR_SUPPLY_INDEX, EntityAttributeModifier, EntityAttributeSnapshot,
+    EntityDataValue as WireEntityDataValue, EntityEffectFlags, EntityEvent as WireEntityEvent,
+    GameEvent, LevelEvent, MerchantItemCost, MerchantOffer, MobEffectId,
+    PLAYER_DATA_ABSORPTION_INDEX, PlayDisconnect, PlayerInfoActions, PlayerInfoEntry,
+    PlayerInfoRemove, PlayerInfoUpdate, RemoveEntities, SetEntityMotion, SynchronizePlayerPosition,
+    pack_block_pos,
 };
 
 use super::{PlannedPacket, ViewerState, per_tick, push_reliable};
@@ -678,8 +679,19 @@ fn plan_change(change: &PlayerChange, viewer: &mut ViewerState, out: &mut Vec<Pl
                 experience_level: *level,
             },
         ),
-        // The client drives its death screen from its own health state.
-        PlayerChange::Died { message, .. } => push_chat(out, conn, message),
+        PlayerChange::Died { message } => {
+            let mut message_nbt = Vec::new();
+            if mc_nbt::write_network(&mut message_nbt, message).is_ok() {
+                push_reliable(
+                    out,
+                    conn,
+                    &ClientboundPlayerCombatKill {
+                        player_id: viewer.entity_id.0,
+                        message_nbt,
+                    },
+                );
+            }
+        }
         PlayerChange::WeatherChanged {
             raining,
             rain_level,

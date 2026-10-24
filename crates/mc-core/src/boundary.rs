@@ -965,7 +965,7 @@ pub enum PlayerChange {
         total: i32,
     },
     Died {
-        message: String,
+        message: mc_nbt::Tag,
     },
     /// Game mode changed (game event "change game mode" plus abilities).
     GameModeChanged {

@@ -18,6 +18,8 @@ mod cohort_tests;
 mod combat_parity_tests;
 #[path = "tick/craft_stations_tests.rs"]
 mod craft_stations_tests;
+#[path = "tick/damage_scoreboard_tests.rs"]
+mod damage_scoreboard_tests;
 #[path = "effects_trigger_tests.rs"]
 mod effects_trigger_tests;
 #[path = "elytra_tests.rs"]
@@ -5317,7 +5319,7 @@ fn keep_inventory_and_immediate_respawn_retain_xp_and_inventory_without_death_ch
             .any(|change| matches!(change, crate::boundary::PlayerChange::Respawned { .. }))
     );
     assert!(
-        !changes
+        changes
             .iter()
             .any(|change| matches!(change, crate::boundary::PlayerChange::Died { .. }))
     );

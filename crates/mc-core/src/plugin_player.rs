@@ -926,7 +926,7 @@ pub(crate) fn shields_damage(
             | DamageSource::Sweep { attacker, .. },
         ) => attacker,
         Some(DamageSource::Projectile { owner, .. }) => owner,
-        Some(DamageSource::Explosion { .. }) | None => return false,
+        Some(DamageSource::Explosion { .. } | DamageSource::Command { .. }) | None => return false,
     };
     if (target.0 as usize) >= state.entities.len() {
         return false;

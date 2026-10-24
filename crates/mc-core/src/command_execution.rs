@@ -1060,7 +1060,7 @@ pub(crate) fn execute(
                             physical: None,
                             custom_armor: false,
                             amount: f32::MAX,
-                            kind: crate::survival::DamageKind::Void,
+                            kind: crate::survival::DamageKind::GenericKill,
                             source: None,
                         },
                     ));
@@ -1077,6 +1077,14 @@ pub(crate) fn execute(
                 vec![targets_label(state, &targets)],
             );
             return Success(targets.len() as i32);
+        }
+        Command::Damage(command) => {
+            if let Err(failure) =
+                crate::command_damage::execute(state, connection, executor, command, changes)
+            {
+                error(state, connection, failure.message());
+                return Failed;
+            }
         }
         Command::World(command) => {
             return crate::command_world::execute(state, connection, executor, command, changes);

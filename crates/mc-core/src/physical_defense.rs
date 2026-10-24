@@ -745,6 +745,19 @@ fn native_impact(
             }),
             0.0,
         ),
+        Some(DamageSource::Command {
+            position, cause, ..
+        }) => (
+            position.unwrap_or(point),
+            cause
+                .and_then(|(entity, _)| state.entities.slot_of_any(entity))
+                .map(|slot| state.entities.row(slot).uuid),
+            if position.is_some() {
+                crate::combat::HIT_KNOCKBACK
+            } else {
+                0.0
+            },
+        ),
         None => (point, None, 0.0),
     };
     Some(PhysicalImpact {

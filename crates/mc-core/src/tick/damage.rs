@@ -22,6 +22,7 @@ impl TickState {
         let mut damage_by_slot: HashMap<EntitySlot, Vec<AdmittedDamage>> = HashMap::default();
         for (slot, piece) in std::mem::take(&mut self.merge_damage) {
             if crate::plugin_player::shields_damage(self, slot, piece.source) {
+                crate::command_damage::report(self, None, &piece, piece.amount, false);
                 continue;
             }
             damage_by_slot
@@ -37,17 +38,23 @@ impl TickState {
         let mut projectile_followups = Vec::new();
         for (slot, pieces) in &mut damaged {
             if (slot.0 as usize) >= self.entities.len() {
+                for (piece, (raw, _)) in pieces.iter() {
+                    crate::command_damage::report(self, None, piece, *raw, false);
+                }
                 pieces.clear();
                 continue;
             }
-            pieces.retain_mut(|(piece, _)| {
+            pieces.retain_mut(|(piece, (raw, _))| {
                 if matches!(
                     piece.source,
                     Some(crate::intent::DamageSource::Sweep { .. })
                 ) {
                     return true;
                 }
-                if !self.commit_damage_piece(*slot, piece, &mut events, &mut spawned) {
+                let accepted = self.commit_damage_piece(*slot, piece, &mut events, &mut spawned);
+                let target = self.entities.body(*slot).id;
+                crate::command_damage::report(self, Some(target), piece, *raw, accepted);
+                if !accepted {
                     return false;
                 }
                 if let Some(source) = piece.source {
@@ -107,12 +114,16 @@ impl TickState {
         }
         for (slot, mut piece) in std::mem::take(&mut self.merge_damage) {
             if crate::plugin_player::shields_damage(self, slot, piece.source) {
+                crate::command_damage::report(self, None, &piece, piece.amount, false);
                 continue;
             }
             let raw = piece.amount;
-            if (slot.0 as usize) >= self.entities.len()
-                || !self.commit_damage_piece(slot, &mut piece, &mut events, &mut spawned)
-            {
+            let accepted = (slot.0 as usize) < self.entities.len()
+                && self.commit_damage_piece(slot, &mut piece, &mut events, &mut spawned);
+            let target =
+                ((slot.0 as usize) < self.entities.len()).then(|| self.entities.body(slot).id);
+            crate::command_damage::report(self, target, &piece, raw, accepted);
+            if !accepted {
                 continue;
             }
             if let Some((_, pieces)) = damaged.iter_mut().find(|(target, _)| *target == slot) {
@@ -136,18 +147,6 @@ impl TickState {
                     .iter()
                     .rev()
                     .find_map(|(piece, _)| crate::statistics::kill_credit(self, piece.source));
-                let killer = pieces
-                    .iter()
-                    .rev()
-                    .find_map(|(piece, _)| match piece.source {
-                        Some(
-                            crate::intent::DamageSource::Melee { attacker, .. }
-                            | crate::intent::DamageSource::Mace { attacker, .. }
-                            | crate::intent::DamageSource::Sweep { attacker, .. },
-                        ) => Some(attacker),
-                        Some(crate::intent::DamageSource::Projectile { owner, .. }) => Some(owner),
-                        None | Some(crate::intent::DamageSource::Explosion { .. }) => None,
-                    });
                 let rules = self.registry.item_rules();
                 let mut died = false;
                 let mut health_changed = false;
@@ -186,6 +185,7 @@ impl TickState {
                         let resisted = if !matches!(
                             kind,
                             crate::survival::DamageKind::Void
+                                | crate::survival::DamageKind::GenericKill
                                 | crate::survival::DamageKind::Starvation
                         ) && player
                             .active_effects
@@ -344,6 +344,7 @@ impl TickState {
                 self.entities.row_mut(slot).health = health;
                 let last = pieces.len() - 1;
                 let last_damage_kind = pieces.last().map(|(piece, _)| piece.kind);
+                let last_damage_source = pieces.last().and_then(|(piece, _)| piece.source);
                 for (index, (piece, amounts)) in pieces.into_iter().enumerate() {
                     crate::advancements::damage(
                         self,
@@ -375,11 +376,7 @@ impl TickState {
                     crate::plugin::player_died(self, id);
                     events.push(EntityEvent::Death { entity: id });
                     crate::effects_trigger::death(self, id, &mut spawned);
-                    if let Some(killer) = killer.filter(|killer| *killer != id) {
-                        crate::scoreboard::automatic(self, &[id], &[(killer, id)]);
-                    } else {
-                        crate::scoreboard::automatic(self, &[id], &[]);
-                    }
+                    crate::scoreboard::automatic(self, &[id], &[]);
                     let keep_inventory = crate::command_rules::boolean(self, "keep_inventory");
                     // A deployed `death_graves` package takes custody of the drops
                     // this death would have scattered. `keepInventory` wins, as in
@@ -428,52 +425,25 @@ impl TickState {
                         if let Some(player) = self.players.get(&id) {
                             self.push_player(connection, player.health_change());
                         }
-                        if crate::command_rules::boolean(self, "show_death_messages") {
-                            let name = self.connections.name_of(id).unwrap_or("Player");
-                            let cause = match last_damage_kind {
-                                Some(crate::survival::DamageKind::Void) => {
-                                    "fell out of the world into the void"
-                                }
-                                Some(crate::survival::DamageKind::Fall) => {
-                                    "hit the ground too hard"
-                                }
-                                Some(crate::survival::DamageKind::Drowning) => "drowned",
-                                Some(crate::survival::DamageKind::Starvation) => "starved to death",
-                                Some(crate::survival::DamageKind::Lava) => "tried to swim in lava",
-                                Some(
-                                    crate::survival::DamageKind::OnFire
-                                    | crate::survival::DamageKind::InFire,
-                                ) => "burned to death",
-                                Some(crate::survival::DamageKind::Explosion) => "blew up",
-                                Some(crate::survival::DamageKind::Suffocation) => {
-                                    "suffocated in a wall"
-                                }
-                                Some(crate::survival::DamageKind::Projectile) => "was shot",
-                                Some(crate::survival::DamageKind::Melee) => "was slain",
-                                _ => "died",
-                            };
-                            let message = if let Some(attacker) =
-                                killer.and_then(|killer| self.connections.name_of(killer))
-                            {
-                                format!("{name} {cause} by {attacker}")
-                            } else {
-                                format!("{name} {cause}")
-                            };
-                            self.push_player(
-                                connection,
-                                PlayerChange::Died {
-                                    message: message.clone(),
-                                },
-                            );
-                            for recipient in self.connections.all_connections() {
-                                if recipient != connection {
-                                    self.outbox.entry(recipient).or_default().push(
-                                        PlayerChange::Chat {
-                                            message: message.clone(),
-                                        },
-                                    );
-                                }
-                            }
+                        let show = crate::command_rules::boolean(self, "show_death_messages");
+                        let message = if show {
+                            super::death_message::component(
+                                self,
+                                id,
+                                last_damage_kind.unwrap_or(crate::survival::DamageKind::Generic),
+                                last_damage_source,
+                            )
+                        } else {
+                            mc_nbt::Tag::String(String::new())
+                        };
+                        self.push_player(
+                            connection,
+                            PlayerChange::Died {
+                                message: message.clone(),
+                            },
+                        );
+                        if show {
+                            super::death_message::broadcast(self, id, message);
                         }
                     } else {
                         // Offline/dead-connection victim: drops still spawn
@@ -512,6 +482,7 @@ impl TickState {
                             | crate::intent::DamageSource::Mace { attacker, .. }
                             | crate::intent::DamageSource::Sweep { attacker, .. } => attacker,
                             crate::intent::DamageSource::Projectile { owner, .. } => owner,
+                            crate::intent::DamageSource::Command { cause, .. } => cause?.0,
                             crate::intent::DamageSource::Explosion { .. } => return None,
                         };
                         self.players.contains_key(&attacker).then_some(attacker)
@@ -592,17 +563,18 @@ impl TickState {
                     let absorption = row.active_effects.absorption;
                     let amount = row.active_effects.reduce_damage(piece.kind, reduced);
                     let absorbed = (absorption - row.active_effects.absorption).max(0.0);
-                    let resisted = if !matches!(
-                        piece.kind,
-                        crate::survival::DamageKind::Void | crate::survival::DamageKind::Starvation
-                    ) && row
-                        .active_effects
-                        .has(crate::effects::EffectId::Resistance)
-                    {
-                        (reduced - amount - absorbed).max(0.0)
-                    } else {
-                        0.0
-                    };
+                    let resisted =
+                        if !matches!(
+                            piece.kind,
+                            crate::survival::DamageKind::Void
+                                | crate::survival::DamageKind::GenericKill
+                                | crate::survival::DamageKind::Starvation
+                        ) && row.active_effects.has(crate::effects::EffectId::Resistance)
+                        {
+                            (reduced - amount - absorbed).max(0.0)
+                        } else {
+                            0.0
+                        };
                     let before_hit = row.health.max(0.0);
                     row.health -= if piece.kind == crate::survival::DamageKind::Poison {
                         amount.min((row.health - 1.0).max(0.0))
@@ -690,6 +662,9 @@ impl TickState {
                             crate::intent::DamageSource::Explosion { kill_credit, .. } => {
                                 kill_credit.map(|(id, _)| id)
                             }
+                            crate::intent::DamageSource::Command { cause, .. } => {
+                                cause.map(|(id, _)| id)
+                            }
                         })
                     {
                         let evidence = crate::advancements::entity_snapshot(self, id);
@@ -732,7 +707,7 @@ impl TickState {
         spawned: &mut Vec<EntityId>,
     ) -> bool {
         let victim = self.entities.body(slot).id;
-        if piece.kind != crate::survival::DamageKind::Void
+        if !piece.kind.bypasses_invulnerability()
             && self
                 .players
                 .get(&victim)
@@ -818,6 +793,10 @@ impl TickState {
             | crate::intent::DamageSource::Sweep { attacker, .. }
             | crate::intent::DamageSource::Projectile {
                 owner: attacker, ..
+            }
+            | crate::intent::DamageSource::Command {
+                cause: Some((attacker, _)),
+                ..
             },
         ) = piece.source
         {
@@ -860,7 +839,7 @@ impl TickState {
         if !crate::physical_defense::reduce_damage(self, slot, piece) {
             return false;
         }
-        if fresh && piece.kind != crate::survival::DamageKind::Void {
+        if fresh && !piece.kind.bypasses_invulnerability() {
             if let Some(source) = piece.source
                 && piece.kind != crate::survival::DamageKind::Thorns
             {
@@ -885,6 +864,10 @@ impl TickState {
                 kill_credit,
                 ..
             }) => (kill_credit.map(|(owner, _)| owner), source),
+            Some(crate::intent::DamageSource::Command { cause, direct, .. }) => (
+                cause.map(|(entity, _)| entity),
+                direct.map(|(entity, _)| entity),
+            ),
             None => (None, None),
         };
         // Vanilla broadcasts the damage event only for a fresh hit; a stronger
@@ -899,7 +882,14 @@ impl TickState {
                 ),
                 cause,
                 direct,
-                source_position: None,
+                source_position: match piece.source {
+                    Some(crate::intent::DamageSource::Command {
+                        direct: None,
+                        position,
+                        ..
+                    }) => position,
+                    _ => None,
+                },
             });
         }
         crate::enderman::hurt(self, slot, piece);
@@ -1007,6 +997,11 @@ impl TickState {
             Some(DamageSource::Explosion { position, .. }) => {
                 ([position[0] - pos[0], position[2] - pos[2]], None)
             }
+            Some(DamageSource::Command {
+                position: Some(position),
+                ..
+            }) => ([position[0] - pos[0], position[2] - pos[2]], None),
+            Some(DamageSource::Command { position: None, .. }) => return false,
             None => return false,
         };
         let yaw = f64::from(self.entities.rot(slot)[0]).to_radians();
@@ -1133,6 +1128,13 @@ impl TickState {
             crate::intent::DamageSource::Projectile { velocity, .. } => {
                 ([-velocity[0], -velocity[1]], 0.0, 0.0)
             }
+            crate::intent::DamageSource::Command { position, .. } => (
+                position.map_or([0.0; 2], |position| {
+                    [position[0] - pos[0], position[2] - pos[2]]
+                }),
+                0.0,
+                0.0,
+            ),
             crate::intent::DamageSource::Explosion { .. } => return,
         };
         // Vanilla randomizes a coincident source. A tick/id-derived angle

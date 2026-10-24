@@ -52,6 +52,7 @@ const ROOTS: &[(&str, u8)] = &[
     ("give", 2),
     ("clear", 2),
     ("kill", 2),
+    ("damage", 2),
     ("time", 2),
     ("weather", 2),
     ("difficulty", 2),
@@ -805,6 +806,32 @@ pub(crate) fn tree(op_level: u8, plugins: &[(String, u8)]) -> ClientboundCommand
     }
     if let Some(root) = t.root("kill", true) {
         t.argument(root, "targets", entities(false), true);
+    }
+    if let Some(root) = t.root("damage", false) {
+        let target = t.argument(root, "target", entities(true), false);
+        let amount = t.argument(
+            target,
+            "amount",
+            Parser::Float {
+                min: Some(0.0_f32.to_bits()),
+                max: None,
+            },
+            true,
+        );
+        let kind = t.argument(
+            amount,
+            "damageType",
+            Parser::Resource {
+                registry: identifier("damage_type"),
+            },
+            true,
+        );
+        let at = t.literal(kind, "at", false);
+        t.argument(at, "location", Parser::Vec3, true);
+        let by = t.literal(kind, "by", false);
+        let direct = t.argument(by, "entity", entities(true), true);
+        let from = t.literal(direct, "from", false);
+        t.argument(from, "cause", entities(true), true);
     }
     if let Some(root) = t.root("time", false) {
         let set = t.literal(root, "set", false);
@@ -1740,6 +1767,43 @@ pub(crate) fn suggestions(
         }
         return result;
     }
+    if root == "damage" {
+        match argument_index {
+            1 => {
+                for selector in ["@p", "@r", "@s", "@e[limit=1]"] {
+                    add(selector);
+                }
+                for name in player_names {
+                    add(name);
+                }
+            }
+            3 => {
+                for id in 0.. {
+                    let Some(name) = mc_data::required_registry_entry("damage_type", id) else {
+                        break;
+                    };
+                    if mc_core::survival::DamageKind::command_type(name.as_str()).is_some() {
+                        add(name.as_str());
+                    }
+                }
+            }
+            4 => {
+                add("at");
+                add("by");
+            }
+            5 | 7 if preceding.split_whitespace().nth(4) == Some("by") => {
+                for selector in ["@p", "@r", "@s", "@e[limit=1]"] {
+                    add(selector);
+                }
+                for name in player_names {
+                    add(name);
+                }
+            }
+            6 if preceding.split_whitespace().nth(4) == Some("by") => add("from"),
+            _ => {}
+        }
+        return result;
+    }
     let registry = match (root, second, argument_index) {
         ("give" | "clear", _, 2) | ("debug", Some("give"), 2) => Some(item_ids),
         ("summon", _, 1) => Some(entity_ids),
@@ -1808,6 +1872,53 @@ pub(crate) fn suggestions(
 mod tests {
     use super::*;
     use mc_protocol::Packet;
+
+    #[test]
+    fn damage_tree_and_permission_match_native_grammar() {
+        let packet = tree(2, &[]);
+        assert!(!permitted("damage @s 1", 1, &[]));
+        assert!(permitted("damage @s 1", 2, &[]));
+        assert_eq!(parser(&packet, &["damage", "target"]), entities(true));
+        assert_eq!(
+            parser(&packet, &["damage", "target", "amount"]),
+            Parser::Float {
+                min: Some(0.0_f32.to_bits()),
+                max: None
+            }
+        );
+        let kind = ["damage", "target", "amount", "damageType"];
+        assert_eq!(
+            parser(&packet, &kind),
+            Parser::Resource {
+                registry: identifier("damage_type")
+            }
+        );
+        assert!(node(&packet, &["damage", "target", "amount"]).executable);
+        assert!(node(&packet, &kind).executable);
+        assert_eq!(
+            parser(
+                &packet,
+                &["damage", "target", "amount", "damageType", "at", "location"]
+            ),
+            Parser::Vec3
+        );
+        assert_eq!(
+            parser(
+                &packet,
+                &[
+                    "damage",
+                    "target",
+                    "amount",
+                    "damageType",
+                    "by",
+                    "entity",
+                    "from",
+                    "cause"
+                ]
+            ),
+            entities(true)
+        );
+    }
 
     #[test]
     fn advancement_tree_covers_actions_scopes_and_greedy_criterion() {

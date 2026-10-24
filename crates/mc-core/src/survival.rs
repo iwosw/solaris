@@ -94,11 +94,67 @@ pub enum DamageKind {
     Poison,
     Wither,
     Magic,
-    /// Out of world and `/kill`: no reduction at all.
+    GenericKill,
+    Freeze,
+    FlyIntoWall,
+    Cramming,
+    SonicBoom,
+    IndirectMagic,
+    Stalagmite,
+    DragonBreath,
+    /// Out of world: bypasses invulnerability and all reductions.
     Void,
 }
 
 impl DamageKind {
+    /// Only admit identities whose behavior is owned by this damage pipeline.
+    pub fn command_type(name: &str) -> Option<(Self, &'static str)> {
+        match name {
+            "minecraft:player_attack" => return Some((Self::Melee, "minecraft:player_attack")),
+            "minecraft:arrow" => return Some((Self::Projectile, "minecraft:arrow")),
+            "minecraft:trident" => return Some((Self::Projectile, "minecraft:trident")),
+            "minecraft:thrown" => return Some((Self::Projectile, "minecraft:thrown")),
+            _ => {}
+        }
+        [
+            Self::Generic,
+            Self::Melee,
+            Self::Thorns,
+            Self::Fireball,
+            Self::Lightning,
+            Self::Explosion,
+            Self::InFire,
+            Self::OnFire,
+            Self::Lava,
+            Self::Suffocation,
+            Self::Cactus,
+            Self::SweetBerryBush,
+            Self::HotFloor,
+            Self::Campfire,
+            Self::Fall,
+            Self::FallingAnvil,
+            Self::FallingStalactite,
+            Self::Drowning,
+            Self::Starvation,
+            Self::Wither,
+            Self::Magic,
+            Self::GenericKill,
+            Self::Freeze,
+            Self::FlyIntoWall,
+            Self::Cramming,
+            Self::SonicBoom,
+            Self::IndirectMagic,
+            Self::Stalagmite,
+            Self::DragonBreath,
+            Self::Void,
+        ]
+        .into_iter()
+        .find_map(|kind| {
+            let identity = kind.type_name(None, false);
+            (identity == name).then_some((kind, identity))
+        })
+    }
+
     /// Shared vanilla damage identity for wire publication and advancement tags.
     pub(crate) fn type_name(
         self,
@@ -107,6 +163,7 @@ impl DamageKind {
     ) -> &'static str {
         use crate::intent::DamageSource;
         match (self, source) {
+            (_, Some(DamageSource::Command { damage_type, .. })) => damage_type,
             (Self::Melee, Some(DamageSource::Mace { attack, .. }))
                 if attack.fall_distance > 0.0 =>
             {
@@ -144,6 +201,14 @@ impl DamageKind {
             (Self::Wither, _) => "minecraft:wither",
             (Self::Poison | Self::Magic, _) => "minecraft:magic",
             (Self::Void, _) => "minecraft:out_of_world",
+            (Self::GenericKill, _) => "minecraft:generic_kill",
+            (Self::Freeze, _) => "minecraft:freeze",
+            (Self::FlyIntoWall, _) => "minecraft:fly_into_wall",
+            (Self::Cramming, _) => "minecraft:cramming",
+            (Self::SonicBoom, _) => "minecraft:sonic_boom",
+            (Self::IndirectMagic, _) => "minecraft:indirect_magic",
+            (Self::Stalagmite, _) => "minecraft:stalagmite",
+            (Self::DragonBreath, _) => "minecraft:dragon_breath",
             (Self::Thorns, _) => "minecraft:thorns",
             _ => "minecraft:generic",
         }
@@ -176,6 +241,14 @@ impl DamageKind {
                 | Self::Drowning
                 | Self::Starvation
                 | Self::Void
+                | Self::GenericKill
+                | Self::Freeze
+                | Self::FlyIntoWall
+                | Self::Cramming
+                | Self::SonicBoom
+                | Self::IndirectMagic
+                | Self::Stalagmite
+                | Self::DragonBreath
                 | Self::Poison
                 | Self::Wither
                 | Self::Magic
@@ -184,7 +257,7 @@ impl DamageKind {
     }
 
     pub(crate) fn bypasses_invulnerability(self) -> bool {
-        matches!(self, Self::Void)
+        matches!(self, Self::Void | Self::GenericKill)
     }
 
     /// Vanilla `damage_type` exhaustion, charged once per hit.
@@ -213,6 +286,14 @@ impl DamageKind {
             | Self::Wither
             | Self::Magic
             | Self::Suffocation
+            | Self::GenericKill
+            | Self::Freeze
+            | Self::FlyIntoWall
+            | Self::Cramming
+            | Self::SonicBoom
+            | Self::IndirectMagic
+            | Self::Stalagmite
+            | Self::DragonBreath
             | Self::Void => 0.0,
         }
     }
@@ -523,7 +604,9 @@ fn reduce_damage_impl(
     breach: u32,
     physical: bool,
 ) -> f32 {
-    if matches!(kind, DamageKind::Void | DamageKind::Starvation) {
+    if kind.bypasses_invulnerability()
+        || matches!(kind, DamageKind::Starvation | DamageKind::SonicBoom)
+    {
         return amount.max(0.0);
     }
     let amount = if matches!(
@@ -568,7 +651,9 @@ fn reduce_damage_impl(
             | DamageKind::Lightning
             | DamageKind::HotFloor
             | DamageKind::Campfire => 2 * enchantment_level(stack, "minecraft:fire_protection"),
-            DamageKind::Fall => 3 * enchantment_level(stack, "minecraft:feather_falling"),
+            DamageKind::Fall | DamageKind::Stalagmite => {
+                3 * enchantment_level(stack, "minecraft:feather_falling")
+            }
             DamageKind::Explosion => 2 * enchantment_level(stack, "minecraft:blast_protection"),
             DamageKind::Fireball => {
                 2 * (enchantment_level(stack, "minecraft:fire_protection")

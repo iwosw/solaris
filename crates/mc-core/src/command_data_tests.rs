@@ -267,6 +267,17 @@ fn execute_store_chains_results_success_and_failure_without_inventing_success() 
         state.day_time, before,
         "unsupported mutating producer must not execute"
     );
+    let health = query(&mut state, context, "data get entity @s Health").unwrap();
+    run(
+        &mut state,
+        context,
+        "execute store success score ok oracle run damage @s 1 minecraft:generic_kill",
+    );
+    assert_eq!(
+        query(&mut state, context, "data get entity @s Health").unwrap(),
+        health,
+        "damage without a typed result must be rejected before native admission"
+    );
     assert_eq!(score(&state, "ok"), 0);
     assert!(state.scoreboard_dirty);
     assert!(state.command_context.current.is_none());

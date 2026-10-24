@@ -52,6 +52,11 @@ pub(crate) fn accepted_hit(
             | DamageSource::Sweep { attacker, .. },
         ) => attacker,
         Some(DamageSource::Projectile { owner, .. }) => owner,
+        Some(DamageSource::Command {
+            cause: Some((attacker, _)),
+            ..
+        }) => attacker,
+        Some(DamageSource::Command { cause: None, .. }) => return,
         None | Some(DamageSource::Explosion { .. }) => return,
     };
     let body = state.entities.body(slot);

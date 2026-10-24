@@ -137,7 +137,7 @@ impl ActiveEffects {
     }
     /// Applied after armor/enchantment mitigation, before absorption.
     pub fn reduce_damage(&mut self, kind: DamageKind, amount: f32) -> f32 {
-        if kind == DamageKind::Void {
+        if kind.bypasses_invulnerability() {
             return amount;
         }
         if self.has(EffectId::FireResistance)

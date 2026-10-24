@@ -174,7 +174,7 @@ pub(crate) fn unlock_session(state: &mut TickState, connection: ConnectionId) {
             state.push_player(
                 connection,
                 crate::boundary::PlayerChange::Died {
-                    message: "You died".into(),
+                    message: mc_nbt::Tag::String(String::new()),
                 },
             );
         }

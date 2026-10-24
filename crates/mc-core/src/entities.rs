@@ -1077,7 +1077,7 @@ impl EntityStore {
         kind: crate::survival::DamageKind,
     ) -> f32 {
         let (body, row) = self.parts_mut(slot);
-        if kind == crate::survival::DamageKind::Void {
+        if kind.bypasses_invulnerability() {
             return amount;
         }
         if row.controls.invulnerable || tick < row.protected_until {

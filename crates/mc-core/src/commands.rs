@@ -207,6 +207,7 @@ pub enum Command {
     Kill {
         target: Target,
     },
+    Damage(crate::command_damage::DamageCommand),
     /// `time set` (`add == false`) or `time add`.
     Time {
         ticks: i64,
@@ -326,6 +327,7 @@ pub fn parse(command: &str, operator: bool) -> Result<Command, CommandError> {
         "clear" => parse_clear(args),
         "effect" => crate::effects::parse_command(args),
         "advancement" => parse_advancement(args),
+        "damage" => crate::command_damage::parse(args).map(Command::Damage),
         "kill" => match args {
             [] => Ok(Command::Kill {
                 target: Target::Executor,

@@ -297,6 +297,10 @@ impl Scoreboard {
                         value(VISIBILITY[team.nametag_visibility as usize]),
                     ),
                     (
+                        "DeathMessageVisibility".into(),
+                        value(VISIBILITY[team.death_message_visibility as usize]),
+                    ),
+                    (
                         "CollisionRule".into(),
                         value(COLLISION[team.collision_rule as usize]),
                     ),
@@ -424,9 +428,6 @@ impl Scoreboard {
         for tag in list(data, "Teams", tag_type::COMPOUND)? {
             let fields = compound(tag)?;
             let name = required_string(fields, "Name")?;
-            if optional_string(fields, "DeathMessageVisibility", "always")? != "always" {
-                return Err("unsupported scoreboard death message visibility".into());
-            }
             let mut team = Team {
                 display_name: optional_text(fields, "DisplayName", &name)?,
                 color: if field(fields, "TeamColor")?.is_none() {
@@ -439,6 +440,12 @@ impl Scoreboard {
                 nametag_visibility: named_index(
                     fields,
                     "NameTagVisibility",
+                    &VISIBILITY,
+                    "always",
+                )?,
+                death_message_visibility: named_index(
+                    fields,
+                    "DeathMessageVisibility",
                     &VISIBILITY,
                     "always",
                 )?,
@@ -496,6 +503,7 @@ mod tests {
                 friendly_fire: false,
                 see_friendly_invisibles: true,
                 nametag_visibility: 2,
+                death_message_visibility: 3,
                 collision_rule: 3,
                 prefix: "[R] ".into(),
                 suffix: "!".into(),

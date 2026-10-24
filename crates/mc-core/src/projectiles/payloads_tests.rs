@@ -317,7 +317,10 @@ fn channeling_trident_launch_and_victim_killed_before_bolt_hits_do_not_count_as_
 #[test]
 #[ignore = "requires local vanilla 26.1.2 advancement sidecars"]
 fn vanilla_very_very_frightening_requires_owned_accepted_lightning_villager() {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data/vanilla");
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../data/vanilla")
+        .canonicalize()
+        .expect("local vanilla 26.1.2 advancement sidecars");
     let mut tree = mc_data::advancements::AdvancementTree::load(&root).unwrap();
     let id = "minecraft:adventure/very_very_frightening";
     assert!(tree.definitions.contains_key(id));
@@ -515,7 +518,10 @@ fn splash_instant_healing_inverts_for_undead_and_keeps_direct_hit_strength() {
         Some(zombie),
         [0.0, 201.0, 0.0]
     ));
-    assert_eq!(damage_to(&intents, zombie), [(6.0, DamageKind::Magic)]);
+    assert_eq!(
+        damage_to(&intents, zombie),
+        [(6.0, DamageKind::IndirectMagic)]
+    );
     assert_eq!(state.entities.row(cow_slot).health, 8.0);
     assert!(
         state
@@ -580,7 +586,10 @@ fn lingering_cloud_serializes_timers_and_reapplication_identity_not_entity_id() 
     cloud.age = 10;
     state.tick = 110;
     assert!(step(&mut state, &mut intents, cloud_id, &mut cloud));
-    assert_eq!(damage_to(&intents, target), [(3.0, DamageKind::Magic)]);
+    assert_eq!(
+        damage_to(&intents, target),
+        [(3.0, DamageKind::IndirectMagic)]
+    );
     let ProjectileData::Cloud(data) = &cloud.data else {
         panic!("cloud");
     };
@@ -611,7 +620,10 @@ fn lingering_cloud_serializes_timers_and_reapplication_identity_not_entity_id() 
     state.tick = 210;
     cloud.age = 110;
     step(&mut state, &mut intents, cloud_id, &mut cloud);
-    assert_eq!(damage_to(&intents, replacement), [(3.0, DamageKind::Magic)]);
+    assert_eq!(
+        damage_to(&intents, replacement),
+        [(3.0, DamageKind::IndirectMagic)]
+    );
     state.tick = 710;
     cloud.age = 610;
     step(&mut state, &mut Vec::new(), cloud_id, &mut cloud);

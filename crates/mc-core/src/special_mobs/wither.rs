@@ -26,7 +26,7 @@ pub(crate) fn damage_allowed(row: &ColdRow, piece: &DamagePiece) -> bool {
     let Some(&Retained::Wither { invulnerable }) = row.special_mob.as_deref() else {
         return true;
     };
-    if piece.kind == DamageKind::Void {
+    if piece.kind.bypasses_invulnerability() {
         return true;
     }
     if invulnerable > 0 {

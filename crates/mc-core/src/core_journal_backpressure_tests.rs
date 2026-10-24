@@ -282,6 +282,7 @@ fn growing_nested_containers_reserve_their_heap_and_block_the_sender() {
         friendly_fire: true,
         see_friendly_invisibles: true,
         nametag_visibility: 0,
+        death_message_visibility: 0,
         collision_rule: 0,
         prefix: String::new(),
         suffix: String::new(),

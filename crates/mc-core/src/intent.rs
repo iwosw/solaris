@@ -99,6 +99,14 @@ pub enum DamageSource {
         /// Captured while the living source still exists (creepers leave before merge).
         kill_credit: Option<(EntityId, u32)>,
     },
+    /// Explicit `/damage` identity and attribution, captured before merge.
+    Command {
+        connection: crate::boundary::ConnectionId,
+        damage_type: &'static str,
+        direct: Option<(EntityId, u32)>,
+        cause: Option<(EntityId, u32)>,
+        position: Option<[f64; 3]>,
+    },
 }
 
 /// What the intent does once its footprint validates.

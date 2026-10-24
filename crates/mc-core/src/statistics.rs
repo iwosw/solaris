@@ -259,6 +259,9 @@ pub(crate) fn kill(state: &mut TickState, killer: Option<(EntityId, u32)>, victi
         })
         .and_then(|entity| living_type(state, entity).map(|type_id| (entity, type_id)));
     let killer = recent_player.or(killer);
+    if let Some((killer, _)) = killer.filter(|(id, _)| *id != victim) {
+        crate::scoreboard::automatic(state, &[], &[(killer, victim)]);
+    }
     if let Some(player) = state.players.get_mut(&victim)
         && let Some((_, type_id)) = killer
     {
@@ -291,6 +294,9 @@ pub(crate) fn attacker(source: Option<crate::intent::DamageSource>) -> Option<En
         crate::intent::DamageSource::Projectile { .. } => return None,
         crate::intent::DamageSource::Explosion { kill_credit, .. } => {
             return kill_credit.map(|(entity, _)| entity);
+        }
+        crate::intent::DamageSource::Command { cause, .. } => {
+            return cause.map(|(entity, _)| entity);
         }
     })
 }

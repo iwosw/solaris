@@ -319,7 +319,7 @@ fn deliver_effect(
                     id,
                     target,
                     amount,
-                    DamageKind::Magic,
+                    DamageKind::IndirectMagic,
                     owner,
                     [0.0; 3],
                 );
@@ -1335,7 +1335,7 @@ pub(crate) fn step(
                             id,
                             target,
                             6.0,
-                            DamageKind::Magic,
+                            DamageKind::IndirectMagic,
                             owner,
                             [0.0; 3],
                         );

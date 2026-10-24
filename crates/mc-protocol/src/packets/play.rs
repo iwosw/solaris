@@ -30,6 +30,8 @@ pub use advancements::{
     ClientboundSelectAdvancementsTab, ClientboundUpdateAdvancements, ServerboundSeenAdvancements,
 };
 mod boss_event;
+mod combat_kill;
+pub use combat_kill::ClientboundPlayerCombatKill;
 #[cfg(test)]
 mod component_security_tests;
 mod copied_components;

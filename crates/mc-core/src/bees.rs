@@ -1289,6 +1289,10 @@ pub(crate) fn accepted_hit(
                 owner: attacker, ..
             },
         ) => attacker,
+        Some(crate::intent::DamageSource::Command {
+            cause: Some((attacker, _)),
+            ..
+        }) => attacker,
         _ => return,
     };
     let Some(slot) = state.entities.slot_of(attacker) else {

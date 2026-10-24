@@ -176,7 +176,7 @@ fn parity_death_announced_to_other_players() {
     hit(&mut state, player, DamageKind::Void, None);
     state.commit_merge_effects();
     assert!(state.outbox[&ConnectionId(2)].iter().any(
-        |change| matches!(change, PlayerChange::Chat { message } if message.contains("void"))
+        |change| matches!(change, PlayerChange::StyledChat { content } if format!("{content:?}").contains("death.attack.outOfWorld"))
     ));
 }
 

@@ -35,6 +35,7 @@ mod auth;
 pub(crate) use auth::unlock_session;
 mod container_access;
 mod damage;
+mod death_message;
 mod elytra;
 mod input;
 pub(crate) mod merchant;
