@@ -10,7 +10,6 @@ use crate::tick::TickState;
 const SCARE_DISTANCE: f64 = 7.0;
 const SCARE_DISTANCE_V: f64 = 2.0;
 const CHECK_INTERVAL: u64 = 10;
-const SCUTE_PERIOD: u32 = 6_000;
 
 /// Deterministic stagger for the scute countdown (vanilla
 /// pickNextScuteDropTime is 6000 + nextInt(6000) ticks).
@@ -24,7 +23,7 @@ fn scute_period(id: crate::boundary::EntityId, drops: u32) -> u32 {
     6_000 + (h % 6_000) as u32
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ArmadilloState {
     pub rolled: bool,
@@ -38,17 +37,7 @@ pub struct ArmadilloState {
     pub seeded: bool,
 }
 
-impl Default for ArmadilloState {
-    fn default() -> Self {
-        Self {
-            rolled: false,
-            scute_ticks: 0,
-            drops: 0,
-            calm_ticks: 0,
-            seeded: false,
-        }
-    }
-}
+
 
 pub(crate) fn is_armadillo(state: &TickState, type_id: u32) -> bool {
     state.registry.blueprint(type_id).is_some_and(|b| b.name == "minecraft:armadillo")
