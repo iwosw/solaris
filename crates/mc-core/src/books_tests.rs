@@ -165,7 +165,7 @@ fn lectern_insert_read_turn_take_preserves_exact_book() {
         cursor: [0.5; 3],
         sequence: 1,
     };
-    run_tick(&mut state, &[use_on.clone()]);
+    run_tick(&mut state, std::slice::from_ref(&use_on));
     assert!(state.players[&actor].inventory.slots[0].is_empty());
     run_tick(&mut state, &[use_on]);
     let menu = state.players[&actor].open.as_ref().expect("lectern opens");
