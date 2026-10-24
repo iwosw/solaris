@@ -36,6 +36,10 @@ mod campfire;
 pub(crate) mod carrier_blocks;
 #[cfg(test)]
 mod carrier_blocks_tests;
+mod cauldron_wash;
+#[cfg(test)]
+#[path = "cauldron_wash_tests.rs"]
+mod cauldron_wash_tests;
 mod chests;
 mod chorus;
 mod chunk_loader;
