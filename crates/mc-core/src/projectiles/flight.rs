@@ -349,6 +349,23 @@ fn attached(state: &mut TickState, id: EntityId, record: &mut ProjectileState) -
     state
         .entities
         .set_pos(slot, state.entities.pos(target_slot));
+    // ELYTRA-FIREWORK-BOOST (vanilla-like): an attached rocket drives a
+    // gliding player along their horizontal look direction while it burns
+    // (burst speed; input movement recomputes velocity each tick).
+    let gliding = state
+        .players
+        .get(&state.entities.body(target_slot).id)
+        .is_some_and(|p| p.fall_flying && !p.vitals.is_dead());
+    if gliding {
+        let yaw = state.entities.rot(target_slot)[0];
+        let dir = [-(yaw as f64).sin(), 0.0, (yaw as f64).cos()];
+        let vel = state.entities.vel(target_slot);
+        state.entities.set_vel(
+            target_slot,
+            [vel[0] + dir[0] * 1.5, vel[1], vel[2] + dir[2] * 1.5],
+        );
+        state.entities.set_vel(slot, [0.0; 3]);
+    }
     true
 }
 fn arrow_damage(
@@ -696,6 +713,8 @@ fn step(
                 return true;
             }
         }
+        // Target blocks charge from projectile strikes (vanilla output).
+        crate::redstone::charge_target(state, block_position, impact);
         record.stuck = true;
         record.critical = false;
         record.age = 0;

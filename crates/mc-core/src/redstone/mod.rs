@@ -112,6 +112,7 @@ pub(super) fn reactive(path: &str) -> bool {
             | "lectern"
             | "sculk_sensor"
             | "calibrated_sculk_sensor"
+            | "target"
     ) || path.ends_with("_door")
         || path.ends_with("_trapdoor")
         || path.ends_with("_fence_gate")
@@ -176,6 +177,7 @@ fn weak_output(state: &TickState, source: BlockPos, target: BlockPos) -> u8 {
             }
         }
         "trapped_chest" => chest_viewers(state, source),
+        "target" => prop(block, "power").and_then(|p| p.parse().ok()).unwrap_or(0),
         _ if matches!(path, "lever" | "detector_rail") || path.ends_with("lightning_rod") => {
             if prop(block, "powered") == Some("true") {
                 15
@@ -349,6 +351,45 @@ pub(crate) fn neighbours(state: &mut TickState, writes: &[(BlockPos, u32)]) {
 }
 pub(crate) fn wake(state: &mut TickState, pos: BlockPos) {
     state.redstone.wake.push(pos);
+}
+
+/// TARGET-PROJECTILE-POWER (vanilla-like): a projectile striking a target
+/// block charges it; power follows hit accuracy (bullseye = 15) and decays
+/// after a short delay. Mirrors the campfire-relight direct-mutation path.
+pub(crate) fn charge_target(state: &mut TickState, pos: BlockPos, impact: [f64; 3]) {
+    let Some(current) = state.world.block_at(pos.x, pos.y, pos.z) else {
+        return;
+    };
+    let Some(block) = state.registry.blocks.by_id(mc_world::BlockStateId(current)) else {
+        return;
+    };
+    if block.block.id.path() != "target" {
+        return;
+    }
+    // Accuracy: distance from the block center on the struck face plane.
+    let center = [f64::from(pos.x) + 0.5, f64::from(pos.y) + 0.5, f64::from(pos.z) + 0.5];
+    let d = impact
+        .into_iter()
+        .zip(center)
+        .map(|(a, b)| (a - b) * (a - b))
+        .sum::<f64>()
+        .sqrt();
+    let power = (15 - (d * 20.0).floor() as i64).clamp(1, 15);
+    let mut properties = block.properties.clone();
+    let Some((_, value)) = properties.iter_mut().find(|(key, _)| key == "power") else {
+        return;
+    };
+    *value = power.to_string();
+    let Some(next) = state.registry.blocks.by_name_and_props(&block.block.id, &properties) else {
+        return;
+    };
+    state.world.set_block(pos.x, pos.y, pos.z, next.0);
+    state.merge_block_writes.push((
+        crate::boundary::BlockPos { x: pos.x, y: pos.y, z: pos.z },
+        next.0,
+    ));
+    schedule_cell(state, crate::boundary::BlockPos { x: pos.x, y: pos.y, z: pos.z }, 8, 4);
+    wake(state, crate::boundary::BlockPos { x: pos.x, y: pos.y, z: pos.z });
 }
 
 /// Called after all ordinary world writes, before folding the overlay.
@@ -676,6 +717,11 @@ fn tick_cell(
         "lectern" => {
             if tick.priority == 4 {
                 change(state, writes, pos, "powered", "false");
+            }
+        }
+        "target" => {
+            if tick.priority == 4 {
+                change(state, writes, pos, "power", "0");
             }
         }
         _ if path.ends_with("lightning_rod") => {

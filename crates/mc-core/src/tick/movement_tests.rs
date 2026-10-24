@@ -345,3 +345,46 @@ fn permitted_airborne_states_do_not_trip_airtime() {
         assert!(!kicked(&changes), "{kind}");
     }
 }
+
+#[test]
+fn gliding_firework_use_boosts_flight_speed() {
+    // ELYTRA-FIREWORK-BOOST through the item-use path: using a firework
+    // while gliding must increase flight speed (vanilla boost).
+    let (mut state, player, _pos) = flat_player_fixture();
+    let slot = state.entities.slot_of(player).unwrap();
+    let elytra = state
+        .registry
+        .items
+        .id_of(&Identifier::parse("minecraft:elytra").unwrap())
+        .unwrap();
+    state.players.get_mut(&player).unwrap().inventory.slots[38] =
+        ItemStack::new(elytra, 1);
+    state.players.get_mut(&player).unwrap().fall_flying = true;
+    state.entities.set_ground(slot, false);
+    let rocket = state
+        .registry
+        .items
+        .id_of(&Identifier::parse("minecraft:firework_rocket").unwrap())
+        .unwrap();
+    state.players.get_mut(&player).unwrap().inventory.slots[0] = ItemStack::new(rocket, 1);
+    state.players.get_mut(&player).unwrap().inventory.selected = 0;
+    run_tick(
+        &mut state,
+        &[PlayerInput::UseItem {
+            connection: ConnectionId(1),
+            hand: crate::boundary::Hand::Main,
+            yaw: 0.0,
+            pitch: 0.0,
+            sequence: 1,
+        }],
+    );
+    for _ in 0..10 {
+        run_tick(&mut state, &[]);
+    }
+    let vel = state.entities.vel(slot);
+    let speed = (vel[0] * vel[0] + vel[2] * vel[2]).sqrt();
+    assert!(
+        speed > 0.5,
+        "firework boost while gliding must raise flight speed, got {speed}"
+    );
+}

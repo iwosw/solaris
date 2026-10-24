@@ -562,3 +562,55 @@ fn armor_stand_moved_by_an_earlier_projectile_removal_stays_hittable() {
     assert!(state.entities.slot_of(flying).is_some());
     assert!(state.entities.slot_of(stand).is_some());
 }
+
+#[test]
+fn target_block_emits_power_when_shot() {
+    // TARGET-PROJECTILE-POWER through the arrow flight path: an arrow
+    // sticking in a target block must power it.
+    let (mut state, player, centre) = setup();
+    let tx = centre[0] as i32 + 4;
+    let ty = centre[1] as i32;
+    let tz = centre[2] as i32;
+    let target = state
+        .registry
+        .blocks
+        .block(&Identifier::parse("minecraft:target").unwrap())
+        .unwrap()
+        .default
+        .0;
+    state.world.set_block(tx, ty, tz, target);
+    state.world.set_block(tx, ty + 1, tz, state.registry.states.air);
+    state.world.set_block(tx, ty + 2, tz, state.registry.states.air);
+    state.world.fold_overlay();
+    let owner = state
+        .entities
+        .row(state.entities.slot_of(player).unwrap())
+        .uuid;
+    let mut record = ProjectileState::new(ProjectileKind::Arrow, Some(owner), arrow_stack(&state));
+    record.damage = 2.0;
+    launch(
+        &mut state,
+        record,
+        [centre[0], centre[1] + 0.7, centre[2]],
+        [3.0, 0.0, 0.0],
+    );
+    run_tick(&mut state, &[]);
+    run_tick(&mut state, &[]);
+    // The target emits to its neighbors (vanilla weak output): assert the
+    // powered state directly and the output seen from an adjacent cell.
+    let hit = state
+        .world
+        .block_at(tx, ty, tz)
+        .and_then(|id| state.registry.blocks.by_id(mc_world::BlockStateId(id)))
+        .unwrap();
+    assert!(
+        hit.properties.iter().any(|(k, v)| k == "power" && v != "0"),
+        "shot target block must carry charge"
+    );
+    let neighbor = mc_world::BlockPos { x: tx + 1, y: ty, z: tz };
+    let target_pos = mc_world::BlockPos { x: tx, y: ty, z: tz };
+    assert!(
+        crate::redstone::output(&state, target_pos, neighbor) > 0,
+        "shot target block must emit redstone power"
+    );
+}
