@@ -99,21 +99,25 @@ pub(crate) fn use_on(
     clicked: BlockPos,
     face: u8,
 ) -> bool {
-    let Some(player) = state.players.get(&actor) else {
-        return false;
+    let stack_snapshot = {
+        let Some(player) = state.players.get(&actor) else {
+            return false;
+        };
+        if player.spectator() || player.vitals.is_dead() {
+            return false;
+        }
+        let index = if hand == Hand::Main {
+            usize::from(player.inventory.selected)
+        } else {
+            crate::inventory::OFF_HAND
+        };
+        let stack = &player.inventory.slots[index];
+        if stack.is_empty() {
+            return false;
+        }
+        stack.clone()
     };
-    if player.spectator() || player.vitals.is_dead() {
-        return false;
-    }
-    let index = if hand == Hand::Main {
-        usize::from(player.inventory.selected)
-    } else {
-        crate::inventory::OFF_HAND
-    };
-    let stack = &player.inventory.slots[index];
-    if stack.is_empty() {
-        return false;
-    }
+    let stack = &stack_snapshot;
     let Some(default) = state
         .registry
         .item_facts
@@ -128,6 +132,29 @@ pub(crate) fn use_on(
     let Some(blueprint) = state.registry.blueprint(type_id) else {
         return true;
     };
+    if crate::trial_spawner::block(state, clicked, "spawner").is_some() {
+        let configured = crate::monster_spawner::set_entity(state, clicked, type_id);
+        if !configured {
+            return true;
+        }
+        // SpawnEggItem.useOn shrinks directly for spawners, even in creative.
+        // (Held-debit floors do not apply: vanilla shrinks the egg here, so a
+        // direct shrink keeps survival/creative identical.)
+        let mut remaining = stack_snapshot;
+        remaining.count -= 1;
+        if remaining.count == 0 {
+            remaining = ItemStack::EMPTY;
+        }
+        let changes = state.players.get_mut(&actor).expect("egg player").replace_held(hand, remaining);
+        if let Some(connection) = state.connections.entity_connection(actor) {
+            for change in changes {
+                state.push_player(connection, change);
+            }
+        }
+        crate::vibration::emit(state, [f64::from(clicked.x) + 0.5, f64::from(clicked.y) + 0.5, f64::from(clicked.z) + 0.5],
+            crate::vibration::GameEvent::BlockChange, Some(actor));
+        return true;
+    }
     if state.difficulty == crate::survival::Difficulty::Peaceful
         && blueprint.category == crate::blueprint::MobCategory::Monster
     {

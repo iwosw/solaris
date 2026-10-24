@@ -130,3 +130,42 @@ fn spawn_egg_floor_admission_precedes_mob_publication_and_preserves_creative_cos
         ItemStack::new(item, 1)
     );
 }
+
+#[test]
+fn fix_mobs_spawn_egg_configures_spawner_without_spawning_adjacent_mob() {
+    let (mut state, actor, centre) = crate::hostile_tests::setup(2.0);
+    let clicked = BlockPos { x: centre[0] as i32, y: 200, z: centre[2] as i32 };
+    let spawner = state.registry.blocks.block(&Identifier::parse("minecraft:spawner").unwrap()).unwrap().default.0;
+    state.world.set_block(clicked.x, clicked.y, clicked.z, spawner);
+    for (name, difficulty) in [
+        ("zombie", crate::survival::Difficulty::Normal),
+        ("cow", crate::survival::Difficulty::Peaceful),
+        ("zombie", crate::survival::Difficulty::Peaceful),
+    ] {
+        state.difficulty = difficulty;
+        let egg = state.registry.items.id_of(&Identifier::parse(format!("minecraft:{name}_spawn_egg")).unwrap()).unwrap();
+        state.players.get_mut(&actor).unwrap().inventory.slots[0] = ItemStack::new(egg, 2);
+        let before = state.entities.len();
+        assert!(use_on(&mut state, actor, Hand::Main, clicked, 2));
+        assert_eq!(state.entities.len(), before, "spawner click must not spawn an adjacent mob");
+        assert_eq!(state.players[&actor].inventory.slots[0].count, 1);
+        let (_, Some(bytes)) = state.opaque_changes.last().expect("spawner post-image") else { panic!("missing post-image") };
+        let fields = mc_data::trial_nbt::decode(bytes).unwrap();
+        let spawn = mc_data::trial_nbt::compound(&fields, "SpawnData").unwrap().unwrap();
+        let entity = mc_data::trial_nbt::compound(spawn, "entity").unwrap().unwrap();
+        assert_eq!(mc_data::item_nbt::field(entity, "id"), Some(&Tag::String(format!("minecraft:{name}"))));
+    }
+}
+
+#[test]
+fn fix_mobs_corrupt_spawner_entry_stays_inert_without_tick_panic() {
+    let (mut state, _, _) = crate::hostile_tests::setup(2.0);
+    let pos = BlockPos { x: 0, y: 200, z: 0 };
+    let spawner = state.registry.blocks.block(&Identifier::parse("minecraft:spawner").unwrap()).unwrap().default.0;
+    state.world.set_block(pos.x, pos.y, pos.z, spawner);
+    let bytes = mc_data::trial_nbt::encode(vec![("SpawnData".into(), Tag::Compound(vec![]))], "minecraft:mob_spawner", [pos.x, pos.y, pos.z]);
+    state.world.set_opaque_block_entity(pos, Some(bytes));
+    let before = state.opaque_changes.len();
+    crate::monster_spawner::after_blocks(&mut state, &[(pos, spawner)]);
+    assert_eq!(state.opaque_changes.len(), before, "corrupt spawner must stay inert without executing");
+}
