@@ -1,5 +1,7 @@
-//! Copper chest/statue weathering. State changes retain each block's inventory
-//! and all properties; paired copper chests always share one weathering image.
+//! Data-driven copper weathering for all 14 full 8-variant families
+//! (WeatheringCopper NEXT/PREVIOUS BiMaps). State changes retain each
+//! block's inventory and all properties; paired copper chests always
+//! share one weathering image.
 use crate::boundary::{BlockPos, EntityId, Hand};
 use crate::tick::TickState;
 use mc_data::Identifier;
@@ -7,6 +9,28 @@ use mc_world::{BlockRegistry, BlockStateId};
 
 pub(crate) const AGES: [&str; 4] = ["unaffected", "exposed", "weathered", "oxidized"];
 pub(crate) const POSES: [&str; 4] = ["standing", "sitting", "running", "star"];
+
+/// Every weathering family: the bare (age-0, unwaxed) block path, derived
+/// from the vanilla registry (each has all 8 wax/age variants).
+/// `copper`/`copper_block` are bare-copper aliases (age 0 only).
+const FAMILIES: [&str; 16] = [
+    "chiseled_copper",
+    "copper",
+    "copper_bars",
+    "copper_block",
+    "copper_bulb",
+    "copper_chain",
+    "copper_chest",
+    "copper_door",
+    "copper_golem_statue",
+    "copper_grate",
+    "copper_lantern",
+    "copper_trapdoor",
+    "cut_copper",
+    "cut_copper_slab",
+    "cut_copper_stairs",
+    "lightning_rod",
+];
 
 pub(crate) fn chest(path: &str) -> bool {
     family(path).is_some_and(|(name, _, _)| name == "copper_chest")
@@ -24,7 +48,11 @@ pub(crate) fn family(path: &str) -> Option<(&str, u8, bool)> {
     } else {
         (path, 0)
     };
-    matches!(path, "copper_chest" | "copper_golem_statue").then_some((path, age, waxed))
+    // Bare-copper aliases exist only unwaxed at age 0.
+    if (path == "copper" || path == "copper_block") && (waxed || age > 0) {
+        return None;
+    }
+    FAMILIES.contains(&path).then_some((path, age, waxed))
 }
 
 pub(crate) fn name(family: &str, age: u8, waxed: bool) -> String {
@@ -84,7 +112,16 @@ pub(crate) fn random_tick(
 ) -> Option<Vec<(BlockPos, u32)>> {
     let block = state.registry.blocks.by_id(BlockStateId(id))?;
     let (_, age, waxed) = family(block.block.id.path())?;
-    if waxed || age == 3 || roll % 1000 >= 57 {
+    // Pinned ChangeOverTimeBlock.changeOverTime: nextFloat < 0.05688889f
+    // gates the Manhattan-4 same-class scan; the scan chance is
+    // ((older+1)/(older+same+1))^2 * chanceModifier (1.0 for copper).
+    // nextFloat is 24 random bits over 2^24: 0.05688889f * 2^24 =
+    // 954437.1875 -> top-24-bits < 954438 (bits <= 954437). With no older
+    // chance is 1, so the gate alone decides.
+    if waxed || age == 3 || roll % (1 << 24) >= 954438 {
+        return None;
+    }
+    if !oxidation_scan_passes(state, pos, roll) {
         return None;
     }
     let next = transform(&state.registry.blocks, id, age + 1, false)?;
@@ -104,6 +141,47 @@ pub(crate) fn random_tick(
         }
     }
     Some(writes)
+}
+
+/// Manhattan-4 same-class oxidation scan: counts older (higher-age) and same-age
+/// weathering neighbours; passes with ((older+1)/(older+same+1))^2.
+fn oxidation_scan_passes(state: &TickState, pos: BlockPos, roll: u32) -> bool {
+    let Some(here) = state.world.block_at(pos.x, pos.y, pos.z) else {
+        return false;
+    };
+    let Some((_, age, _)) = family_of_state(state, here) else {
+        return false;
+    };
+    let mut older = 0u32;
+    let mut same = 0u32;
+    for dx in -4i32..=4 {
+        for dy in -4i32..=4 {
+            for dz in -4i32..=4 {
+                if dx.abs() + dy.abs() + dz.abs() > 4 || (dx == 0 && dy == 0 && dz == 0) {
+                    continue;
+                }
+                let cell = BlockPos { x: pos.x + dx, y: pos.y + dy, z: pos.z + dz };
+                let Some(id) = state.world.block_at(cell.x, cell.y, cell.z) else {
+                    continue;
+                };
+                let Some((_, nage, _)) = family_of_state(state, id) else {
+                    continue;
+                };
+                if nage > age {
+                    older += 1;
+                } else if nage == age {
+                    same += 1;
+                } else {
+                    return false;
+                }
+            }
+        }
+    }
+    // Exact float compare via integer cross-multiplication:
+    // roll24/2^24 < ((older+1)/(older+same+1))^2.
+    let num = u64::from(older + 1) * u64::from(older + 1) * (1 << 24);
+    let den = u64::from(older + same + 1) * u64::from(older + same + 1);
+    u64::from(roll % (1 << 24)) * den < num
 }
 
 pub(crate) fn use_on(state: &mut TickState, actor: EntityId, hand: Hand, pos: BlockPos) -> bool {

@@ -1,5 +1,5 @@
 use super::*;
-use crate::boundary::{ChunkPos, ConnectionId, PlayerInput};
+use crate::boundary::{ChunkPos, ConnectionId, Hand, PlayerInput};
 use crate::core::{checkpoint_data_for, restore_entity};
 use crate::journal::{
     EntityStateImage, JournalEntry, JournalWriter, Replay, ReplayEntity,
@@ -1149,4 +1149,67 @@ fn creative_copper_waxing_has_no_debit_and_can_use_reserved_honeycomb() {
         state.players[&actor].inventory.slots[0],
         stack("honeycomb", 1)
     );
+}
+
+#[test]
+fn all_weathering_families_oxidize_wax_and_scrape() {
+    // COPPER-WEATHERING group: every full 8-variant family weathers one age
+    // on its random tick, waxes with honeycomb, and scrapes back with an axe.
+    let mut state = fixture(None);
+    let player = join(&mut state);
+    let families = [
+        "chiseled_copper",
+        "copper_bars",
+        "copper_bulb",
+        "copper_chain",
+        "copper_door",
+        "copper_grate",
+        "copper_lantern",
+        "copper_trapdoor",
+        "cut_copper",
+        "cut_copper_slab",
+        "cut_copper_stairs",
+        "lightning_rod",
+    ];
+    for (i, fam) in families.iter().enumerate() {
+        let pos = BlockPos { x: 20 + i as i32, y: 201, z: 1 };
+        // Stateless families plant bare; stateful ones need explicit
+        // props (registry defaults are attached/active states).
+        let bare: &[(&str, &str)] = &[];
+        let id = block(
+            &state,
+            fam,
+            match *fam {
+                "copper_bars" => &[("east", "false"), ("north", "false"), ("south", "false"), ("waterlogged", "false"), ("west", "false")][..],
+                "copper_bulb" => &[("lit", "false"), ("powered", "false")][..],
+                "copper_chain" => &[("axis", "y"), ("waterlogged", "false")][..],
+                "copper_door" => &[("facing", "north"), ("half", "lower"), ("hinge", "left"), ("open", "false"), ("powered", "false")][..],
+                "copper_grate" => &[("waterlogged", "false")][..],
+                "copper_lantern" => &[("hanging", "false"), ("waterlogged", "false")][..],
+                "copper_trapdoor" => &[("facing", "north"), ("half", "bottom"), ("open", "false"), ("powered", "false"), ("waterlogged", "false")][..],
+                "cut_copper_slab" => &[("type", "bottom"), ("waterlogged", "false")][..],
+                "cut_copper_stairs" => &[("facing", "north"), ("half", "bottom"), ("shape", "straight"), ("waterlogged", "false")][..],
+                "lightning_rod" => &[("facing", "up"), ("powered", "false"), ("waterlogged", "false")][..],
+                _ => bare,
+            },
+        );
+        state.world.set_block(pos.x, pos.y, pos.z, id);
+        state.world.fold_overlay();
+        // Weather one age via the random-tick path (roll 0 always passes).
+        let writes = random_tick(&state, pos, at(&state, pos).id.0, 0)
+            .unwrap_or_else(|| panic!("{fam} never weathered"));
+        assert_eq!(family(at(&state, pos).block.id.path()).unwrap().1, 0);
+        for (wpos, wid) in writes {
+            state.world.set_block(wpos.x, wpos.y, wpos.z, wid);
+        }
+        assert_eq!(family(at(&state, pos).block.id.path()).unwrap().1, 1);
+        // Wax with honeycomb, then scrape back with an axe.
+        state.players.get_mut(&player).unwrap().inventory.slots[0] = stack("honeycomb", 2);
+        assert!(use_on(&mut state, player, Hand::Main, pos));
+        assert!(family(at(&state, pos).block.id.path()).unwrap().2);
+        state.players.get_mut(&player).unwrap().inventory.slots[0] = stack("iron_axe", 1);
+        assert!(use_on(&mut state, player, Hand::Main, pos));
+        let (name, age, waxed) = family(at(&state, pos).block.id.path()).unwrap();
+        assert!(!waxed && age == 1, "{fam} scraped to unwaxed age 1, got {name}");
+    }
 }
