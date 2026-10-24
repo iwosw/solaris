@@ -394,3 +394,41 @@ fn natural_golem_player_damage_scales_with_difficulty() {
         "difficulty must affect a natural golem's player hit: {damage:?}"
     );
 }
+
+#[test]
+fn golem_damage_to_mobs_is_independent_of_difficulty() {
+    use crate::survival::Difficulty;
+    let mut damage = Vec::new();
+    for difficulty in [Difficulty::Easy, Difficulty::Normal, Difficulty::Hard] {
+        let mut state = fixture();
+        state.difficulty = difficulty;
+        let golem_type = state
+            .registry
+            .entity_types
+            .id_of(&Identifier::parse("minecraft:iron_golem").unwrap())
+            .unwrap();
+        let husk_type = state
+            .registry
+            .entity_types
+            .id_of(&Identifier::parse("minecraft:husk").unwrap())
+            .unwrap();
+        state.spawn_mob(golem_type, [8.5, 201.0, 7.0], 100.0);
+        let target = state.spawn_mob(husk_type, [8.5, 201.0, 8.5], 20.0);
+        for _ in 0..40 {
+            run_tick(&mut state, &[]);
+            let slot = state
+                .entities
+                .slot_of(target)
+                .expect("one hit is nonlethal");
+            let health = state.entities.row(slot).health;
+            if health < 20.0 {
+                damage.push(20.0 - health);
+                break;
+            }
+        }
+    }
+    assert_eq!(damage.len(), 3, "each golem must land its first hit");
+    assert!(damage[0] > 0.0);
+    assert_eq!(damage[0], damage[1]);
+    assert_eq!(damage[1], damage[2]);
+}

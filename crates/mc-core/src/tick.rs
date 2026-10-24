@@ -6852,9 +6852,9 @@ fn step_entity(row: ReadRow, ctx: &StepCtx) -> (MoveWrite, Vec<RawIntent>) {
                         actor: row.id,
                         kind: IntentKind::DamageEntity {
                             target,
-                            amount: if golem {
-                                attack_damage
-                            } else {
+                            amount: if ctx.entities.slot_of(target).is_some_and(|slot| {
+                                matches!(ctx.entities.body(slot).kind, EntityKind::Player { .. })
+                            }) {
                                 ctx.difficulty.scale_mob_damage(attack_damage)
                             },
                             kind: crate::survival::DamageKind::Melee,
@@ -6863,6 +6863,8 @@ fn step_entity(row: ReadRow, ctx: &StepCtx) -> (MoveWrite, Vec<RawIntent>) {
                                 position: row.pos,
                                 yaw: 0.0,
                                 bonus_knockback: 0.0,
+                            } else {
+                                attack_damage
                                 sweep: false,
                                 fire_ticks: 0,
                                 bane_ticks: 0,
