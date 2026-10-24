@@ -82,6 +82,9 @@ pub(crate) fn announce_player(
     }
 }
 
+/// Vanilla `multiplayer.disconnect.duplicate_login`.
+const DUPLICATE_LOGIN: &str = "You logged in from another location";
+
 pub(in crate::tick) fn join(
     state: &mut TickState,
     (connection, uuid, name, permission_level): (&ConnectionId, &uuid::Uuid, &String, &u8),
@@ -89,6 +92,26 @@ pub(in crate::tick) fn join(
 ) {
     if state.connections.by_connection.contains_key(connection) {
         return;
+    }
+    // Vanilla duplicate login: the newer login wins. The incumbent's ordinary
+    // Leave capture (menus closed, image saved) is restored below, so its
+    // inventory moves rather than copies. An unverified plugin-login claimant
+    // never kicks a verified session; authentication arbitrates those.
+    if !state.require_plugin_login
+        && let Some(incumbent) = state
+            .connections
+            .uuids
+            .iter()
+            .find_map(|(other, joined)| (joined == uuid).then_some(*other))
+    {
+        leave(state, &incumbent, changes);
+        state.push_player(
+            incumbent,
+            PlayerChange::Disconnect {
+                reason: DUPLICATE_LOGIN.to_owned(),
+            },
+        );
+        state.disconnects.push((incumbent, state.tick));
     }
     if state.entities.slot_of_uuid(*uuid).is_some()
         || state

@@ -1309,27 +1309,27 @@ fn load_spawn_area(state: &mut TickState) {
 }
 
 #[test]
-fn duplicate_join_same_batch_and_across_worlds_never_duplicates_inventory() {
+fn duplicate_login_kicks_the_old_session_and_hands_over_inventory_without_duplicating() {
     let (mut state, alice, bob) = worlds();
     command(&mut state, 1, "give @a minecraft:diamond 3");
     let before = state.players[&alice].inventory.slots.clone();
-    let nether_before = state.other_dimensions[&Dimension::Nether].players[&bob]
-        .inventory
-        .slots
-        .clone();
+    let alice_pos = state.entities.pos(state.entities.slot_of(alice).unwrap());
+    let nether = &state.other_dimensions[&Dimension::Nether];
+    let nether_before = nether.players[&bob].inventory.slots.clone();
+    let bob_pos = nether.entities.pos(nether.entities.slot_of(bob).unwrap());
     let (_, drains, _) = crate::tick::run_tick(
         &mut state,
         &[
             PlayerInput::Join {
                 connection: ConnectionId(3),
                 uuid: uuid::Uuid::from_u128(1),
-                name: "DuplicateAlice".into(),
+                name: "Alice".into(),
                 permission_level: 0,
             },
             PlayerInput::Join {
                 connection: ConnectionId(4),
                 uuid: uuid::Uuid::from_u128(2),
-                name: "DuplicateBob".into(),
+                name: "Bob".into(),
                 permission_level: 0,
             },
             PlayerInput::Join {
@@ -1341,27 +1341,46 @@ fn duplicate_join_same_batch_and_across_worlds_never_duplicates_inventory() {
             PlayerInput::Join {
                 connection: ConnectionId(6),
                 uuid: uuid::Uuid::from_u128(5),
-                name: "DuplicateFresh".into(),
+                name: "Fresh".into(),
                 permission_level: 0,
             },
         ],
     );
-    for connection in [3, 4, 6].map(ConnectionId) {
+    let worlds =
+        || std::iter::once(&state).chain(state.other_dimensions.values().map(|world| &**world));
+    // The newer login wins: each older session gets vanilla's duplicate-login kick.
+    for connection in [1, 2, 5].map(ConnectionId) {
         assert!(drains.iter().filter(|(id, _)| *id == connection).flat_map(|(_, queue)| queue)
-            .any(|change| matches!(change, PlayerChange::Disconnect { reason, .. } if reason == "UUID is already joined")));
-        assert!(
-            !std::iter::once(&state)
-                .chain(state.other_dimensions.values().map(|world| &**world))
-                .any(|world| world.connections.entity_of(connection).is_some())
-        );
+            .any(|change| matches!(change, PlayerChange::Disconnect { reason, .. } if reason == "You logged in from another location")));
+        assert!(!worlds().any(|world| world.connections.entity_of(connection).is_some()));
     }
-    assert_eq!(state.players[&alice].inventory.slots, before);
+    for connection in [3, 4, 6].map(ConnectionId) {
+        assert!(worlds().any(|world| world.connections.entity_of(connection).is_some()));
+    }
+    for entity in [alice, bob] {
+        assert!(!worlds().any(|world| world.entities.slot_of_any(entity).is_some()));
+    }
+    let new_alice = state.connections.entity_of(ConnectionId(3)).unwrap();
+    assert_eq!(state.players[&new_alice].inventory.slots, before);
     assert_eq!(
-        state.other_dimensions[&Dimension::Nether].players[&bob]
-            .inventory
-            .slots,
-        nether_before
+        state
+            .entities
+            .pos(state.entities.slot_of(new_alice).unwrap()),
+        alice_pos
     );
+    let nether = &state.other_dimensions[&Dimension::Nether];
+    let new_bob = nether.connections.entity_of(ConnectionId(4)).unwrap();
+    assert_eq!(nether.players[&new_bob].inventory.slots, nether_before);
+    assert_eq!(
+        nether
+            .entities
+            .pos(nether.entities.slot_of(new_bob).unwrap()),
+        bob_pos
+    );
+    // No second copy waits offline for a later join.
+    for uuid in [1, 2, 5].map(uuid::Uuid::from_u128) {
+        assert!(!worlds().any(|world| world.offline_players.contains_key(&uuid)));
+    }
     assert_eq!(state.dimension_globals.roster.len(), 3);
     let uuids: Vec<_> = std::iter::once(&state)
         .chain(state.other_dimensions.values().map(|world| &**world))
