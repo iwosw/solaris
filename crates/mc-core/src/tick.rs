@@ -3605,7 +3605,8 @@ fn plan_placement_click(
         water_source: state.registry.states.water,
     };
     let cells = crate::placement::place(&state.registry.blocks, item_block, &click, &reads)?;
-    if !crate::farming::can_stand(state, cells[0].1, cells[0].0)
+    if !crate::farming::can_plant(state, cells[0].1, cells[0].0)
+        || !crate::farming::can_stand(state, cells[0].1, cells[0].0)
         || !crate::placement::supported(
             &state.registry.blocks,
             &state.registry.tags,

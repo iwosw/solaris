@@ -96,6 +96,8 @@ pub(crate) fn random_growth(state: &TickState, at: BlockPos, id: u32, seed: u64)
         match path {
             "kelp" | "cave_vines" | "weeping_vines" | "twisting_vines" | "vine"
             | "brown_mushroom" | "red_mushroom" => growth::random(read, at, id, seed),
+            "pointed_dripstone" => growth::dripstone(read, at, id, seed),
+            "budding_amethyst" => growth::amethyst(read, at, seed),
             "chorus_flower" => crate::chorus::growth(blocks, read, pos, BlockStateId(id), seed),
             "bamboo_sapling" => rules::bamboo_sapling_growth_edits(blocks, read, pos, seed),
             "cactus" | "sugar_cane" | "bamboo" => {
