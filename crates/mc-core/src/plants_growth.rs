@@ -1032,9 +1032,8 @@ pub(super) fn amethyst(read: &Read<'_>, at: BlockPos, seed: u64) -> Option<Vec<P
     None
 }
 
-/// Vanilla egg hatching for a sampled egg block. Returns block edits plus
-/// `(species, pos)` births. Turtle eggs crack only at night on sand;
-/// sniffer eggs crack anywhere; frogspawn needs water below.
+/// Vanilla turtle-egg random tick: crack staging at night on sand.
+/// Sniffer eggs and frogspawn use the scheduled clock (crate::eggs).
 /// One hatched egg birth: species plus spawn position.
 pub(super) type HatchBirth = (&'static str, [f64; 3]);
 
@@ -1082,47 +1081,9 @@ pub(super) fn hatch(
             }
             Some((vec![edit(at, air)], births))
         }
-        "sniffer_egg" => {
-            if roll.below(200) != 0 {
-                return None;
-            }
-            let hatch = prop(blocks, id, "hatch")?.parse::<u8>().ok()?;
-            if hatch < 2 {
-                let next = with_prop(blocks, id, "hatch", &(hatch + 1).to_string())?;
-                return Some((vec![edit(at, next)], Vec::new()));
-            }
-            let air = read.state.registry.states.air;
-            Some((
-                vec![edit(at, air)],
-                vec![(
-                    "sniffer",
-                    [f64::from(at.x) + 0.5, f64::from(at.y) + 1.0, f64::from(at.z) + 0.5],
-                )],
-            ))
-        }
-        "frogspawn" => {
-            let below = BlockPos { y: at.y - 1, ..at };
-            if path(read, below)? != "water" {
-                return None;
-            }
-            if roll.below(200) != 0 {
-                return None;
-            }
-            let air = read.state.registry.states.air;
-            let count = 2 + roll.below(4);
-            let mut births = Vec::new();
-            for index in 0..count {
-                births.push((
-                    "tadpole",
-                    [
-                        f64::from(at.x) + 0.3 + f64::from(index % 3) * 0.2,
-                        f64::from(at.y),
-                        f64::from(at.z) + 0.3 + f64::from(index / 3) * 0.2,
-                    ],
-                ));
-            }
-            Some((vec![edit(at, air)], births))
-        }
+        // Sniffer eggs and frogspawn run on the scheduled block-tick
+        // clock (SnifferEggBlock thirds, FrogspawnBlock hatch delay), not
+        // the random tick; see crate::eggs.
         _ => None,
     }
 }

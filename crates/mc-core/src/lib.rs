@@ -83,6 +83,7 @@ pub mod dimensions;
 pub(crate) mod dolphin;
 pub mod effects;
 pub(crate) mod effects_trigger;
+pub(crate) mod eggs;
 pub(crate) mod enchantment_locations;
 pub(crate) mod enchantment_thorns;
 pub(crate) mod enchantments;

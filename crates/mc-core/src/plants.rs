@@ -136,9 +136,9 @@ pub(crate) fn random_growth(state: &TickState, at: BlockPos, id: u32, seed: u64)
     })
 }
 
-/// Vanilla egg hatching for a sampled egg block: turtle eggs crack at
-/// night on sand (hatch 0→1→2, then break into babies), sniffer eggs crack
-/// into a snifferlet, and frogspawn in water hatches tadpoles.
+/// Vanilla turtle-egg random tick: crack staging at night on sand
+/// (hatch 0→1→2, then break into babies). Sniffer eggs and frogspawn use
+/// the scheduled clock (crate::eggs).
 pub(crate) fn egg_hatch(state: &TickState, at: BlockPos, id: u32, seed: u64) -> Option<Hatch> {
     let read = Read {
         state,

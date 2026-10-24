@@ -1002,16 +1002,18 @@ fn turtle_eggs_crack_at_night_into_baby_turtles() {
 
 #[test]
 fn sniffer_eggs_hatch_into_baby_sniffers() {
+    // Vanilla SnifferEggBlock: scheduled thirds of 24000 ticks (12000 on
+    // moss); each third cracks hatch+1, the third hatches a snifferlet.
     let (mut state, _) = setup();
-    state.gamerules.insert("random_tick_speed".into(), FAST.into());
     let egg = block(&state, "sniffer_egg", &[("hatch", "0")]);
     put(&mut state, 3, Y + 1, -2, egg);
-    for _ in 0..3000 {
+    crate::eggs::changed(&mut state, crate::boundary::BlockPos { x: 3, y: Y + 1, z: -2 });
+    for _ in 0..30_000 {
         run(&mut state, 1);
-        let slots: Vec<_> = state.entities.slots().collect();
-        let babies = slots
-            .iter()
-            .filter(|slot| state.entities.row(**slot).entity_life.child_ticks > 0)
+        let babies = state
+            .entities
+            .slots()
+            .filter(|slot| state.entities.row(*slot).entity_life.child_ticks > 0)
             .count();
         if babies >= 1 {
             return;
@@ -1022,13 +1024,15 @@ fn sniffer_eggs_hatch_into_baby_sniffers() {
 
 #[test]
 fn frogspawn_hatches_tadpoles_in_water() {
+    // Vanilla FrogspawnBlock: one scheduled tick 3600..12000 hatches 2-5
+    // tadpoles; no random-tick clock.
     let (mut state, _) = setup();
-    state.gamerules.insert("random_tick_speed".into(), FAST.into());
     let water = state.registry.states.water_levels[0];
     put(&mut state, 4, Y, -2, water);
     let spawn = block(&state, "frogspawn", &[]);
     put(&mut state, 4, Y + 1, -2, spawn);
-    for _ in 0..3000 {
+    crate::eggs::changed(&mut state, crate::boundary::BlockPos { x: 4, y: Y + 1, z: -2 });
+    for _ in 0..15_000 {
         run(&mut state, 1);
         let kinds: Vec<_> = state
             .entities
