@@ -1075,6 +1075,7 @@ impl PlayerState {
         if rules.items.name_of(held.item_id).is_some_and(|item| item.as_str() == "minecraft:brush") {
             return PlayerEffects::default();
         }
+        let before = self.snapshot();
         let consumed = self.inventory.slots[slot].clone();
         self.statistics
             .increment(StatType::Used, consumed.item_id, 1);
