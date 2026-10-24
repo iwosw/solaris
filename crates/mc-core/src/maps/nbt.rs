@@ -72,7 +72,7 @@ pub fn from_tag(root: &Tag) -> Result<SavedMap, String> {
                 _ => return Err("invalid frame marker position".into()),
             };
             let rotation = int(tag, "rotation", Some(0))?;
-            map.frame_markers.push((pos[0], pos[1], rotation));
+            map.frame_markers.push((pos[0], pos[2], rotation));
         }
     }
     mc_nbt::write_named(&mut map.original_nbt, "", root).map_err(|e| e.to_string())?;

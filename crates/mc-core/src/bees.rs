@@ -705,10 +705,38 @@ fn nearby(
     }
     result
 }
-fn flower(b: &mc_world::BlockState) -> bool {
+/// Vanilla bee attraction: the 26.1.2 bee_attractive tag members, minus
+/// waterlogged flowers and minus tall-flower upper halves (attractsBees).
+fn flower_at(state: &TickState, cell: BlockPos) -> bool {
+    let Some(id) = state.world.block_at(cell.x, cell.y, cell.z) else {
+        return false;
+    };
+    let Some(b) = state.registry.blocks.by_id(mc_world::BlockStateId(id)) else {
+        return false;
+    };
+    // Waterlogged flowers do not attract bees.
+    if b.properties
+        .iter()
+        .any(|(key, value)| key == "waterlogged" && value == "true")
+    {
+        return false;
+    }
+    let path = b.block.id.path();
+    // Tall flowers attract only at their lower half (upper half excluded).
+    if matches!(
+        path,
+        "sunflower" | "lilac" | "rose_bush" | "peony" | "pitcher_plant"
+    ) && b
+        .properties
+        .iter()
+        .any(|(key, value)| key == "half" && value == "upper")
+    {
+        return false;
+    }
     matches!(
-        b.block.id.path(),
+        path,
         "dandelion"
+            | "open_eyeblossom"
             | "poppy"
             | "blue_orchid"
             | "allium"
@@ -720,17 +748,82 @@ fn flower(b: &mc_world::BlockState) -> bool {
             | "oxeye_daisy"
             | "cornflower"
             | "lily_of_the_valley"
+            | "wither_rose"
+            | "torchflower"
             | "sunflower"
             | "lilac"
-            | "rose_bush"
             | "peony"
-            | "torchflower"
+            | "rose_bush"
             | "pitcher_plant"
             | "flowering_azalea"
             | "flowering_azalea_leaves"
+            | "mangrove_propagule"
             | "cherry_leaves"
             | "pink_petals"
             | "wildflowers"
+            | "chorus_flower"
+            | "spore_blossom"
+            | "cactus_flower"
+    )
+}
+
+fn nearby_flower(state: &TickState, p: [f64; 3]) -> Option<BlockPos> {
+    let origin = BlockPos {
+        x: p[0].floor() as i32,
+        y: p[1].floor() as i32,
+        z: p[2].floor() as i32,
+    };
+    let mut result = None;
+    let mut best = f64::INFINITY;
+    for x in origin.x - 8..=origin.x + 8 {
+        for y in origin.y - 4..=origin.y + 4 {
+            for z in origin.z - 8..=origin.z + 8 {
+                let cell = BlockPos { x, y, z };
+                let d = distance(p, centre(cell));
+                if d < best && flower_at(state, cell) {
+                    best = d;
+                    result = Some(cell);
+                }
+            }
+        }
+    }
+    result
+}
+
+/// Block-name leg of bee attraction (full 26.1.2 bee_attractive tag).
+/// Waterlogged/tall-half rules live in flower_at; the search path uses
+/// nearby_flower. Kept in sync: any tag member here must appear there.
+fn flower(b: &mc_world::BlockState) -> bool {
+    matches!(
+        b.block.id.path(),
+        "dandelion"
+            | "open_eyeblossom"
+            | "poppy"
+            | "blue_orchid"
+            | "allium"
+            | "azure_bluet"
+            | "red_tulip"
+            | "orange_tulip"
+            | "white_tulip"
+            | "pink_tulip"
+            | "oxeye_daisy"
+            | "cornflower"
+            | "lily_of_the_valley"
+            | "wither_rose"
+            | "torchflower"
+            | "sunflower"
+            | "lilac"
+            | "peony"
+            | "rose_bush"
+            | "pitcher_plant"
+            | "flowering_azalea"
+            | "flowering_azalea_leaves"
+            | "mangrove_propagule"
+            | "cherry_leaves"
+            | "pink_petals"
+            | "wildflowers"
+            | "chorus_flower"
+            | "spore_blossom"
             | "cactus_flower"
     )
 }
@@ -1073,7 +1166,7 @@ pub(crate) fn run(
             }
             if bee
                 .flower
-                .is_some_and(|p| !block(state, p).is_some_and(flower))
+                .is_some_and(|p| !flower_at(state, p))
             {
                 bee.flower = None;
                 bee.pollination = 0;
@@ -1085,7 +1178,7 @@ pub(crate) fn run(
                     });
                 }
                 if bee.flower.is_none() {
-                    bee.flower = nearby(state, p, flower);
+                    bee.flower = nearby_flower(state, p);
                 }
                 if bee.hive.is_none() || bee.flower.is_none() {
                     bee.search_cooldown_until = state.tick.saturating_add(200);

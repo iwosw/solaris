@@ -83,6 +83,7 @@ impl SavedMap {
             || self.colors.iter().any(|c| *c >= 248)
             || self.banners.len() > 256
             || self.decorations.len() > 256
+            || self.frame_markers.len() > 256
             || self.decorations.values().any(|d| {
                 !d.x.is_finite()
                     || !d.z.is_finite()
