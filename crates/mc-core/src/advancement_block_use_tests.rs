@@ -119,6 +119,35 @@ fn honey_harvest_captures_empty_hive_after_effect_and_pre_debit_bottle() {
 #[test]
 fn sign_glow_and_record_insertion_award_only_real_mutations() {
     let (mut state, actor) = fixture("minecraft:oak_sign", "minecraft:glow_ink_sac");
+    // Vanilla SignApplicator.canApplyToSign needs a nonempty face message
+    // on the side the player faces; write both sides (merged from two
+    // text_nbt images so the helper stays private).
+    let side = |tag: mc_nbt::Tag, key: &str| {
+        if let mc_nbt::Tag::Compound(fields) = tag {
+            fields
+                .into_iter()
+                .find(|(k, _)| k == key)
+                .map(|(_, v)| v)
+        } else {
+            None
+        }
+    };
+    let front = side(
+        crate::signs::text_nbt(&vec!["hello".into(); 4]),
+        "front_text",
+    )
+    .unwrap();
+    let mut bytes = Vec::new();
+    mc_nbt::write_network(
+        &mut bytes,
+        &mc_nbt::Tag::Compound(vec![
+            ("front_text".into(), front.clone()),
+            ("back_text".into(), front),
+            ("is_waxed".into(), mc_nbt::Tag::Byte(0)),
+        ]),
+    )
+    .unwrap();
+    state.world.set_opaque_block_entity(POS, Some(bytes));
     assert!(crate::signs::use_on(&mut state, actor, Hand::Main, POS));
     evidence(
         &state,
