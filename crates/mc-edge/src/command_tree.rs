@@ -2044,7 +2044,8 @@ mod tests {
                         "w",
                         "teammsg",
                         "tm",
-                        "settlement"
+                        "settlement",
+                        "trigger"
                     ]
                 );
             }
@@ -2053,7 +2054,7 @@ mod tests {
                 assert_eq!(
                     root.restricted,
                     level >= 2
-                        && !matches!(&root.kind, CommandNodeKind::Literal(name) if ["help", "list", "me", "msg", "tell", "w", "teammsg", "tm", "settlement"].contains(&name.as_str()))
+                        && !matches!(&root.kind, CommandNodeKind::Literal(name) if ["help", "list", "me", "msg", "tell", "w", "teammsg", "tm", "settlement", "trigger"].contains(&name.as_str()))
                 );
             }
         }
@@ -2249,7 +2250,8 @@ mod tests {
     #[test]
     fn help_derives_smart_optional_and_alternative_usages_from_the_tree() {
         let public = help(None, 0, &[]).unwrap();
-        assert_eq!(public.len(), 9);
+        assert_eq!(public.len(), 10);
+        assert!(public.contains(&"/trigger <objective> [add|set]".to_owned()));
         assert!(public.contains(&"/help [<command>]".to_owned()));
         assert!(public.contains(&"/list [uuids]".to_owned()));
         assert!(public.contains(&"/msg <targets> <message>".to_owned()));
