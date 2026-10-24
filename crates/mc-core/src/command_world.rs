@@ -356,24 +356,28 @@ pub(crate) fn execute(
     executor: EntityId,
     command: &WorldCommand,
     _changes: &mut ChangeSet,
-) {
-    let result = execute_inner(state, executor, command);
-    let text = match result {
-        Ok(text) => text,
-        Err(error) => match error {
-            CommandError::Message(text) => text,
-            CommandError::Usage(usage) => format!("Usage: {usage}"),
-            CommandError::Unknown => "Unknown command".to_owned(),
-        },
+) -> crate::command_execution::CommandResult {
+    use crate::command_execution::CommandResult::Failed;
+    let (text, result) = match execute_inner(state, executor, command) {
+        Ok(reply) => reply,
+        Err(error) => (
+            match error {
+                CommandError::Message(text) => text,
+                CommandError::Usage(usage) => format!("Usage: {usage}"),
+                CommandError::Unknown => "Unknown command".to_owned(),
+            },
+            Failed,
+        ),
     };
     state.push_player(connection, PlayerChange::Chat { message: text });
+    result
 }
 
 fn execute_inner(
     state: &mut TickState,
     executor: EntityId,
     command: &WorldCommand,
-) -> Result<String, CommandError> {
+) -> Result<(String, crate::command_execution::CommandResult), CommandError> {
     let (base, base_rotation) = crate::command_console::pose(state, executor)
         .ok_or_else(|| message("Command source is unavailable"))?;
     match command {
@@ -452,9 +456,12 @@ fn execute_inner(
             if count == 0 {
                 return Err(message("No players matched"));
             }
-            Ok(format!(
-                "Set spawn point for {count} player(s) to {}, {}, {}",
-                pos.x, pos.y, pos.z
+            Ok((
+                format!(
+                    "Set spawn point for {count} player(s) to {}, {}, {}",
+                    pos.x, pos.y, pos.z
+                ),
+                crate::command_execution::CommandResult::Unavailable,
             ))
         }
         WorldCommand::SetWorldSpawn {
@@ -478,9 +485,9 @@ fn execute_inner(
                 [pos.x, pos.y, pos.z],
                 resolved_rotation(*rotation, base_rotation),
             );
-            Ok(format!(
-                "Set world spawn to {}, {}, {}",
-                pos.x, pos.y, pos.z
+            Ok((
+                format!("Set world spawn to {}, {}, {}", pos.x, pos.y, pos.z),
+                crate::command_execution::CommandResult::Unavailable,
             ))
         }
     }
@@ -493,7 +500,7 @@ fn edit_region(
     block: u32,
     image: Option<crate::command_block_entity::Prepared>,
     mode: &FillMode,
-) -> Result<String, CommandError> {
+) -> Result<(String, crate::command_execution::CommandResult), CommandError> {
     let min = BlockPos {
         x: a.x.min(b.x),
         y: a.y.min(b.y),
@@ -601,7 +608,10 @@ fn edit_region(
     if count == 0 {
         return Err(message("No blocks were changed"));
     }
-    Ok(format!("Changed {count} block(s)"))
+    Ok((
+        format!("Changed {count} block(s)"),
+        crate::command_execution::CommandResult::Success(count),
+    ))
 }
 
 fn is_air(registry: &BlockRegistry, state: u32) -> bool {
@@ -684,7 +694,7 @@ mod tests {
         actor: EntityId,
         command: &str,
     ) -> Result<String, CommandError> {
-        execute_inner(state, actor, &parsed(command))
+        execute_inner(state, actor, &parsed(command)).map(|(message, _)| message)
     }
 
     #[test]

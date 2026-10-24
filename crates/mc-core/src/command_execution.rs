@@ -7,6 +7,42 @@ use crate::entities::EntityKind;
 use crate::tick::{DamagePiece, TickState};
 use mc_nbt::{ListTag, Tag};
 
+/// Native execution outcome, independent of translated player feedback.
+/// `Success(0)` is distinct from failure; unavailable results are rejected
+/// before executing a command with an execute-store callback.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum CommandResult {
+    Success(i32),
+    Failed,
+    Unavailable,
+}
+
+use CommandResult::{Failed, Success, Unavailable};
+
+pub(crate) fn supports_store_result(command: &Command) -> bool {
+    match command {
+        Command::Kill { .. }
+        | Command::Summon { .. }
+        | Command::Give { .. }
+        | Command::Clear { .. }
+        | Command::EffectGive { .. }
+        | Command::EffectClear { .. }
+        | Command::Teleport { .. }
+        | Command::Experience { .. }
+        | Command::ExperienceSet { .. }
+        | Command::ExperienceQuery { .. }
+        | Command::TimeQuery(_)
+        | Command::GameRule { value: None, .. }
+        | Command::WorldBorder(crate::command_border::BorderCommand::Get)
+        | Command::World(
+            crate::command_world::WorldCommand::SetBlock { .. }
+            | crate::command_world::WorldCommand::Fill { .. },
+        ) => true,
+        Command::Scoreboard(command) => command.supports_store_result(),
+        _ => false,
+    }
+}
+
 fn text(value: impl ToString) -> Tag {
     Tag::Compound(vec![("text".into(), Tag::String(value.to_string()))])
 }
@@ -356,7 +392,7 @@ pub(crate) fn execute(
     executor: EntityId,
     command: &Command,
     changes: &mut ChangeSet,
-) {
+) -> CommandResult {
     match command {
         Command::Advancement {
             target,
@@ -371,7 +407,7 @@ pub(crate) fn execute(
                     Ok(ids) => ids,
                     Err(message) => {
                         error(state, connection, message);
-                        return;
+                        return Failed;
                     }
                 };
             if let (Some(id), Some(criterion)) = (advancement, criterion)
@@ -384,7 +420,7 @@ pub(crate) fn execute(
                     connection,
                     format!("Unknown criterion '{criterion}' for advancement '{id}'"),
                 );
-                return;
+                return Failed;
             }
             let targets = player_targets(state, executor, target);
             if targets.is_empty() {
@@ -394,7 +430,7 @@ pub(crate) fn execute(
                     "argument.entity.notfound.player",
                     Vec::new(),
                 );
-                return;
+                return Failed;
             }
             let mut count = 0;
             for &entity in &targets {
@@ -430,11 +466,11 @@ pub(crate) fn execute(
             );
         }
         Command::EffectGive { .. } | Command::EffectClear { .. } => {
-            crate::effects::execute_command(state, connection, executor, command)
+            return crate::effects::execute_command(state, connection, executor, command);
         }
         Command::GameMode { target, mode } => {
             let Some(targets) = command_players(state, connection, executor, target) else {
-                return;
+                return Failed;
             };
             game_mode(
                 state, connection, executor, &targets, *mode, command, changes,
@@ -446,15 +482,15 @@ pub(crate) fn execute(
             count,
         } => {
             let Some(targets) = command_players(state, connection, executor, target) else {
-                return;
+                return Failed;
             };
-            give(state, connection, &targets, item, *count, command, changes);
+            return give(state, connection, &targets, item, *count, command, changes);
         }
         Command::Clear { target, item, max } => {
             let Some(targets) = command_players(state, connection, executor, target) else {
-                return;
+                return Failed;
             };
-            clear(
+            return clear(
                 state,
                 connection,
                 &targets,
@@ -470,12 +506,13 @@ pub(crate) fn execute(
             levels,
         } => {
             let Some(targets) = command_players(state, connection, executor, target) else {
-                return;
+                return Failed;
             };
             for &target in &targets {
                 apply_player_command(state, target, command, changes);
             }
             experience_success(state, connection, "add", *amount, *levels, &targets);
+            return Success(targets.len() as i32);
         }
         Command::ExperienceSet {
             target,
@@ -483,7 +520,7 @@ pub(crate) fn execute(
             levels,
         } => {
             let Some(targets) = command_players(state, connection, executor, target) else {
-                return;
+                return Failed;
             };
             // Points beyond the current level's bar are invalid; vanilla
             // fails only when no target accepts them.
@@ -501,7 +538,7 @@ pub(crate) fn execute(
                     "commands.experience.set.points.invalid",
                     Vec::new(),
                 );
-                return;
+                return Failed;
             }
             for &target in &targets {
                 if accepts(state, &target) {
@@ -509,14 +546,15 @@ pub(crate) fn execute(
                 }
             }
             experience_success(state, connection, "set", *amount, *levels, &targets);
+            return Success(targets.len() as i32);
         }
         Command::ExperienceQuery { target, levels } => {
             let Some(targets) = command_players(state, connection, executor, target) else {
-                return;
+                return Failed;
             };
             let [target] = targets[..] else {
                 feedback(state, connection, "argument.player.toomany", Vec::new());
-                return;
+                return Failed;
             };
             let experience = state.players[&target].vitals.experience;
             let (key, amount) = if *levels {
@@ -535,6 +573,7 @@ pub(crate) fn execute(
                 key,
                 vec![entity_name(state, target), text(amount)],
             );
+            return Success(amount);
         }
         Command::Enchant(enchant_command) => {
             let targets = resolve_target(state, executor, &enchant_command.target);
@@ -545,7 +584,7 @@ pub(crate) fn execute(
                     "argument.entity.notfound.entity",
                     Vec::new(),
                 );
-                return;
+                return Failed;
             }
             let single = targets.len() == 1;
             let mut successful = Vec::new();
@@ -558,7 +597,7 @@ pub(crate) fn execute(
                             "commands.enchant.failed.itemless",
                             vec![entity_name(state, target)],
                         );
-                        return;
+                        return Failed;
                     }
                     continue;
                 };
@@ -619,7 +658,7 @@ pub(crate) fn execute(
                 Ok(stack) => stack,
                 Err(reason) => {
                     error(state, connection, reason);
-                    return;
+                    return Failed;
                 }
             };
             replacement = if *count <= 0 {
@@ -638,7 +677,7 @@ pub(crate) fn execute(
                     connection,
                     "Inventory is reserved by an active native operation",
                 );
-                return;
+                return Failed;
             }
             let effects = state
                 .players
@@ -660,7 +699,7 @@ pub(crate) fn execute(
                     "argument.entity.notfound.entity",
                     Vec::new(),
                 );
-                return;
+                return Failed;
             }
             let (origin, rotation) = crate::command_console::pose(state, executor)
                 .unwrap_or((state.world.world_spawn_position(), [0.0; 2]));
@@ -683,7 +722,7 @@ pub(crate) fn execute(
                             },
                             Vec::new(),
                         );
-                        return;
+                        return Failed;
                     }
                     (
                         state.entities.pos(
@@ -715,7 +754,7 @@ pub(crate) fn execute(
                     "commands.teleport.invalidPosition",
                     Vec::new(),
                 );
-                return;
+                return Failed;
             }
             for &target in &targets {
                 let slot = state
@@ -766,6 +805,7 @@ pub(crate) fn execute(
                 &format!("commands.teleport.success.{kind}.{suffix}"),
                 args,
             );
+            return Success(targets.len() as i32);
         }
         Command::Time { ticks, add } => {
             state.day_time = if *add {
@@ -793,15 +833,11 @@ pub(crate) fn execute(
                 vec![text("minecraft:overworld"), text(name)],
             );
         }
-        Command::TimeQuery(query) => feedback(
-            state,
-            connection,
-            "commands.time.query",
-            vec![text(query.value(
-                state.tick_control.game_ticks(state.tick),
-                state.day_time,
-            ))],
-        ),
+        Command::TimeQuery(query) => {
+            let value = query.value(state.tick_control.game_ticks(state.tick), state.day_time);
+            feedback(state, connection, "commands.time.query", vec![text(value)]);
+            return Success((value % i64::from(i32::MAX)) as i32);
+        }
         Command::Weather {
             weather,
             duration_ticks,
@@ -832,7 +868,7 @@ pub(crate) fn execute(
                     "commands.difficulty.failure",
                     vec![difficulty_name(*difficulty)],
                 );
-                return;
+                return Failed;
             }
             state.difficulty = *difficulty;
             if state.dimension_globals.active {
@@ -876,6 +912,11 @@ pub(crate) fn execute(
                 .or_else(|| crate::command_rules::default_value(name))
                 .unwrap_or("")
                 .to_owned();
+            let result = match value.as_str() {
+                "true" => Success(1),
+                "false" => Success(0),
+                _ => value.parse::<i32>().map_or(Unavailable, Success),
+            };
             feedback(
                 state,
                 connection,
@@ -886,6 +927,7 @@ pub(crate) fn execute(
                 },
                 vec![text(name), text(value)],
             );
+            return result;
         }
         Command::WorldBorder(command) => {
             let origin = crate::command_console::pose(state, executor).map_or_else(
@@ -894,6 +936,9 @@ pub(crate) fn execute(
             );
             let message = crate::command_border::execute(&mut state.border, *command, origin);
             state.push_player(connection, PlayerChange::Chat { message });
+            if matches!(command, crate::command_border::BorderCommand::Get) {
+                return Success((state.border.size + 0.5).floor() as i32);
+            }
         }
         Command::Summon {
             entity,
@@ -906,11 +951,11 @@ pub(crate) fn execute(
                     connection,
                     format!("Unknown entity type '{}'", entity.as_str()),
                 );
-                return;
+                return Failed;
             };
             if facts.flags.is_some_and(|flags| !flags.is_summonable()) {
                 feedback(state, connection, "commands.summon.failed", Vec::new());
-                return;
+                return Failed;
             }
             if state.difficulty == crate::survival::Difficulty::Peaceful
                 && facts.category.is_hostile()
@@ -921,7 +966,7 @@ pub(crate) fn execute(
                     "commands.summon.failed.peaceful",
                     Vec::new(),
                 );
-                return;
+                return Failed;
             }
             let type_id = facts.protocol_id;
             let (origin, rotation) = crate::command_console::pose(state, executor)
@@ -942,14 +987,14 @@ pub(crate) fn execute(
                     "commands.summon.invalidPosition",
                     Vec::new(),
                 );
-                return;
+                return Failed;
             }
             if entity.as_str() == "minecraft:item" {
                 let item = match crate::command_summon::prepare_item(state, nbt) {
                     Ok(item) => item,
                     Err(failure) => {
                         error(state, connection, failure.message());
-                        return;
+                        return Failed;
                     }
                 };
                 let id = crate::tick::spawn_item_entity(state, at, item.stack);
@@ -971,14 +1016,14 @@ pub(crate) fn execute(
                     "commands.summon.success",
                     vec![entity_name(state, id)],
                 );
-                return;
+                return Success(1);
             }
             let image =
                 match crate::command_summon::prepare(state, type_id, entity.as_str(), at, nbt) {
                     Ok(image) => image,
                     Err(failure) => {
                         error(state, connection, failure.message());
-                        return;
+                        return Failed;
                     }
                 };
             let health = state
@@ -994,6 +1039,7 @@ pub(crate) fn execute(
                 "commands.summon.success",
                 vec![entity_name(state, id)],
             );
+            return Success(1);
         }
         Command::Kill { target } => {
             let targets = resolve_target(state, executor, target);
@@ -1004,7 +1050,7 @@ pub(crate) fn execute(
                     "argument.entity.notfound.entity",
                     Vec::new(),
                 );
-                return;
+                return Failed;
             }
             for &target in &targets {
                 if let Some(slot) = state.entities.slot_of(target) {
@@ -1030,9 +1076,10 @@ pub(crate) fn execute(
                 },
                 vec![targets_label(state, &targets)],
             );
+            return Success(targets.len() as i32);
         }
         Command::World(command) => {
-            crate::command_world::execute(state, connection, executor, command, changes)
+            return crate::command_world::execute(state, connection, executor, command, changes);
         }
         Command::BlockLog(command) => {
             crate::block_log::execute(state, connection, executor, command);
@@ -1059,8 +1106,9 @@ pub(crate) fn execute(
             }
         }
         Command::Scoreboard(command) => {
-            let message = crate::scoreboard::execute(state, executor, command);
+            let (message, result) = crate::scoreboard::execute(state, executor, command);
             error(state, connection, message);
+            return result;
         }
         Command::Say(message) | Command::Me { message, .. } => {
             let name = entity_name(state, executor);
@@ -1119,7 +1167,7 @@ pub(crate) fn execute(
                     "commands.teammsg.failed.noteam",
                     Vec::new(),
                 );
-                return;
+                return Failed;
             };
             let members = state.dimension_globals.active.then(|| team.members.clone());
             let display_name = team.display_name.clone();
@@ -1188,7 +1236,7 @@ pub(crate) fn execute(
                     "argument.entity.notfound.player",
                     Vec::new(),
                 );
-                return;
+                return Failed;
             }
             let message = if *selectors {
                 expand_message(state, executor, message)
@@ -1232,6 +1280,7 @@ pub(crate) fn execute(
             crate::command_locate::execute(state, connection, executor, locate)
         }
     }
+    Unavailable
 }
 
 /// Native `/settlement` execution. Create is open to any authenticated actor;
@@ -1962,12 +2011,12 @@ fn give(
     count: i32,
     command: &Command,
     changes: &mut ChangeSet,
-) {
+) -> CommandResult {
     let stack = match item.stack_with(&state.registry.item_rules()) {
         Ok(stack) => stack,
         Err(reason) => {
             error(state, connection, reason);
-            return;
+            return Failed;
         }
     };
     let maximum = state
@@ -1983,7 +2032,7 @@ fn give(
             "commands.give.failed.toomanyitems",
             vec![text(maximum), name],
         );
-        return;
+        return Failed;
     }
     for &target in targets {
         apply_player_command(state, target, command, changes);
@@ -1995,6 +2044,7 @@ fn give(
         targets_label(state, targets),
     ];
     feedback(state, connection, &key, args);
+    Success(targets.len() as i32)
 }
 
 fn clear(
@@ -2005,13 +2055,13 @@ fn clear(
     max: Option<i32>,
     command: &Command,
     changes: &mut ChangeSet,
-) {
+) -> CommandResult {
     let rules = state.registry.item_rules();
     if let Some(item) = item
         && let Err(reason) = item.validate(&rules)
     {
         error(state, connection, reason);
-        return;
+        return Failed;
     }
     // `max == Some(0)` only counts (`/clear ... 0`); a real clear must not
     // debit an inventory an active native operation still reserves.
@@ -2054,7 +2104,7 @@ fn clear(
                     connection,
                     "Inventory is reserved by an active native operation",
                 );
-                return;
+                return Failed;
             }
         }
     }
@@ -2083,6 +2133,7 @@ fn clear(
             &format!("clear.failed.{suffix}"),
             vec![label],
         );
+        Failed
     } else {
         let mode = if max == Some(0) { "test" } else { "success" };
         feedback(
@@ -2091,6 +2142,7 @@ fn clear(
             &format!("commands.clear.{mode}.{suffix}"),
             vec![text(cleared), label],
         );
+        Success(cleared)
     }
 }
 

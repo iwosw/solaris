@@ -212,9 +212,9 @@ fn score(
         .and_then(|scores| scores.get(objective))
         .map(|score| score.value))
 }
-fn condition(state: &TickState, context: Context, text: &mut &str) -> Result<bool, String> {
+fn condition(state: &TickState, context: Context, text: &mut &str) -> Result<i32, String> {
     match word(text)? {
-        "entity" => Ok(!select(state, context, word(text)?)?.is_empty()),
+        "entity" => Ok(select(state, context, word(text)?)?.len() as i32),
         "block" => {
             let at = coordinates(text, context)?.map(f64::floor);
             let spec =
@@ -227,7 +227,7 @@ fn condition(state: &TickState, context: Context, text: &mut &str) -> Result<boo
                 .world
                 .block_at(at[0] as i32, at[1] as i32, at[2] as i32)
                 .ok_or("Condition position is not loaded")?;
-            Ok(spec.matches(&world.registry.blocks, block))
+            Ok(i32::from(spec.matches(&world.registry.blocks, block)))
         }
         "score" => {
             let holder = word(text)?;
@@ -264,7 +264,9 @@ fn condition(state: &TickState, context: Context, text: &mut &str) -> Result<boo
                 if min > max {
                     return Err("Reversed score range".into());
                 }
-                Ok(left.is_some_and(|value| (min..=max).contains(&value)))
+                Ok(i32::from(
+                    left.is_some_and(|value| (min..=max).contains(&value)),
+                ))
             } else {
                 let right_holder = word(text)?;
                 let right_objective = word(text)?;
@@ -272,7 +274,7 @@ fn condition(state: &TickState, context: Context, text: &mut &str) -> Result<boo
                     return Err("Invalid score comparison".into());
                 }
                 let right = score(state, context, right_holder, right_objective)?;
-                Ok(match (left, right) {
+                Ok(i32::from(match (left, right) {
                     (Some(a), Some(b)) => match operator {
                         "=" => a == b,
                         "<" => a < b,
@@ -281,7 +283,7 @@ fn condition(state: &TickState, context: Context, text: &mut &str) -> Result<boo
                         _ => a >= b,
                     },
                     _ => false,
-                })
+                }))
             }
         }
         "blocks" => Err("execute if/unless blocks is not implemented".into()),
@@ -309,16 +311,29 @@ pub(crate) fn run(state: &mut TickState, text: &str, context: Context, changes: 
     }
     state.command_context.depth += 1;
     let previous = state.command_context.current;
-    let mut branches = vec![(text.trim(), context, false)];
-    while let Some((mut text, mut context, mut continuation)) = branches.pop() {
-        let result = (|| -> Result<(), String> {
+    let mut branches = vec![(
+        text.trim(),
+        context,
+        false,
+        Vec::<crate::command_store::Store>::new(),
+    )];
+    while let Some((mut text, mut context, mut continuation, mut stores)) = branches.pop() {
+        let result = (|| -> Result<Option<(bool, i32)>, String> {
             loop {
                 charge(state)?;
                 state.command_context.current = Some(context);
                 let mut rest = text;
                 let root = word(&mut rest)?;
                 if !continuation && root != "execute" {
-                    return native(state, text, context, changes);
+                    use crate::command_execution::CommandResult;
+                    return match native(state, text, context, changes, !stores.is_empty())? {
+                        CommandResult::Success(value) => Ok(Some((true, value))),
+                        CommandResult::Failed => Ok(Some((false, 0))),
+                        CommandResult::Unavailable if stores.is_empty() => Ok(None),
+                        CommandResult::Unavailable => {
+                            Err("Command has no execute-store result".into())
+                        }
+                    };
                 }
                 if context.permission < 2 {
                     return Err(crate::commands::CommandError::Unknown.message());
@@ -337,6 +352,9 @@ pub(crate) fn run(state: &mut TickState, text: &str, context: Context, changes: 
                         if selected.len() + branches.len() > LIMIT {
                             return Err("Execute fork budget exceeded".into());
                         }
+                        if selected.is_empty() {
+                            return Ok(Some((false, 0)));
+                        }
                         for id in selected.into_iter().rev() {
                             let Some((dimension, position, rotation, height)) =
                                 entity_pose(state, id)
@@ -352,9 +370,9 @@ pub(crate) fn run(state: &mut TickState, text: &str, context: Context, changes: 
                                 next.position = position;
                                 next.rotation = rotation;
                             }
-                            branches.push((text, next, true));
+                            branches.push((text, next, true, stores.clone()));
                         }
-                        return Ok(());
+                        return Ok(None);
                     }
                     "positioned" | "rotated" => {
                         let mut probe = text;
@@ -363,6 +381,9 @@ pub(crate) fn run(state: &mut TickState, text: &str, context: Context, changes: 
                             let selected = select(state, context, word(&mut text)?)?;
                             if selected.len() + branches.len() > LIMIT {
                                 return Err("Execute fork budget exceeded".into());
+                            }
+                            if selected.is_empty() {
+                                return Ok(Some((false, 0)));
                             }
                             for id in selected.into_iter().rev() {
                                 let Some((_, position, rotation, _)) = entity_pose(state, id)
@@ -376,9 +397,9 @@ pub(crate) fn run(state: &mut TickState, text: &str, context: Context, changes: 
                                 } else {
                                     next.rotation = rotation;
                                 }
-                                branches.push((text, next, true));
+                                branches.push((text, next, true, stores.clone()));
                             }
-                            return Ok(());
+                            return Ok(None);
                         }
                         if subcommand == "positioned" {
                             context.position = coordinates(&mut text, context)?;
@@ -408,6 +429,9 @@ pub(crate) fn run(state: &mut TickState, text: &str, context: Context, changes: 
                             if selected.len() + branches.len() > LIMIT {
                                 return Err("Execute fork budget exceeded".into());
                             }
+                            if selected.is_empty() {
+                                return Ok(Some((false, 0)));
+                            }
                             for id in selected.into_iter().rev() {
                                 let Some((_, mut target, _, height)) = entity_pose(state, id)
                                 else {
@@ -418,9 +442,9 @@ pub(crate) fn run(state: &mut TickState, text: &str, context: Context, changes: 
                                 }
                                 let mut next = context;
                                 face(&mut next, target);
-                                branches.push((text, next, true));
+                                branches.push((text, next, true, stores.clone()));
                             }
-                            return Ok(());
+                            return Ok(None);
                         }
                         let target = coordinates(&mut text, context)?;
                         face(&mut context, target);
@@ -462,34 +486,70 @@ pub(crate) fn run(state: &mut TickState, text: &str, context: Context, changes: 
                         context.dimension = dimension;
                     }
                     "if" | "unless" => {
-                        let passed = condition(state, context, &mut text)?;
-                        if passed != (subcommand == "if") {
-                            return Ok(());
+                        let numeric = text.split_whitespace().next() == Some("entity");
+                        let count = condition(state, context, &mut text)?;
+                        let passed = (count != 0) == (subcommand == "if");
+                        if !passed {
+                            if text.trim().is_empty() {
+                                return Err(if numeric && subcommand == "unless" {
+                                    format!("Test failed. Count: {count}")
+                                } else {
+                                    "Test failed".into()
+                                });
+                            }
+                            return Ok(Some((false, 0)));
                         }
                         if text.trim().is_empty() {
-                            return Ok(());
+                            let value = if subcommand == "if" { count } else { 1 };
+                            crate::command_execution::feedback(
+                                state,
+                                context.connection,
+                                if numeric && subcommand == "if" {
+                                    "commands.execute.conditional.pass_count"
+                                } else {
+                                    "commands.execute.conditional.pass"
+                                },
+                                if numeric && subcommand == "if" {
+                                    vec![mc_nbt::Tag::String(value.to_string())]
+                                } else {
+                                    Vec::new()
+                                },
+                            );
+                            return Ok(Some((true, value)));
                         }
                     }
-                    "store" => return Err("execute store is not implemented".into()),
+                    "store" => stores.push(crate::command_store::Store::parse(
+                        state, context, &mut text,
+                    )?),
                     _ => return Err("Unsupported execute subcommand".into()),
                 }
             }
         })();
-        if let Err(message) = result {
-            error(state, context, message);
+        let outcome = match result {
+            Ok(outcome) => outcome,
+            Err(message) => {
+                error(state, context, message);
+                Some((false, 0))
+            }
+        };
+        if let Some((success, value)) = outcome {
+            for store in &stores {
+                store.apply(state, success, value);
+            }
         }
     }
     state.command_context.current = previous;
     state.command_context.depth -= 1;
 }
-fn native(
+pub(crate) fn native(
     state: &mut TickState,
     text: &str,
     context: Context,
     changes: &mut ChangeSet,
-) -> Result<(), String> {
+    require_result: bool,
+) -> Result<crate::command_execution::CommandResult, String> {
     if context.dimension != state.dimension {
-        return crate::dimensions::travel::execute_context(state, text, context);
+        return crate::dimensions::travel::execute_context(state, text, context, require_result);
     }
     state.command_context.current = Some(context);
     if matches!(
@@ -499,11 +559,22 @@ fn native(
         if context.permission < 2 {
             return Err(crate::commands::CommandError::Unknown.message());
         }
-        crate::datapacks::command(state, context.connection, context.executor, text, changes);
-        return Ok(());
+        if require_result && text.split_whitespace().next() != Some("data") {
+            return Err("Command does not support execute store".into());
+        }
+        return Ok(crate::datapacks::command(
+            state,
+            context.connection,
+            context.executor,
+            text,
+            changes,
+        ));
     }
     let command =
         crate::commands::parse(text, context.permission >= 2).map_err(|error| error.message())?;
+    if require_result && !crate::command_execution::supports_store_result(&command) {
+        return Err("Command does not support execute store".into());
+    }
     if state.command_context.shared
         && (matches!(command, Command::Teleport { .. })
             || crate::dimensions::commands::target(&command).is_some())
@@ -522,7 +593,7 @@ fn native(
         state.command_context.changes = aggregate;
         result
     } else {
-        crate::command_execution::execute(
+        let result = crate::command_execution::execute(
             state,
             context.connection,
             context.executor,
@@ -532,7 +603,7 @@ fn native(
         if state.command_context.shared {
             crate::dimensions::commands::commit(state, changes);
         }
-        Ok(())
+        Ok(result)
     }
 }
 #[cfg(test)]

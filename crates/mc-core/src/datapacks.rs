@@ -496,16 +496,16 @@ pub(crate) fn command(
     executor: EntityId,
     text: &str,
     changes: &mut ChangeSet,
-) -> bool {
+) -> crate::command_execution::CommandResult {
+    use crate::command_execution::CommandResult::{Failed, Unavailable};
     let Some(root) = text.split_whitespace().next() else {
-        return false;
+        return Unavailable;
     };
     if root == "data" {
-        crate::command_blocks::data(state, connection, executor, text);
-        return true;
+        return crate::command_data::command(state, connection, executor, text);
     }
     if !matches!(root, "function" | "schedule" | "reload" | "datapack") {
-        return false;
+        return Unavailable;
     }
     let words = text.split_whitespace().collect::<Vec<_>>();
     let result = match words.as_slice() {
@@ -552,11 +552,14 @@ pub(crate) fn command(
         }
         _ => Err("Supported: function <id|#tag>; schedule function <id> <time> [append|replace]; schedule clear <id>; reload; datapack list".into()),
     };
-    if let Err(error) = result {
+    let outcome = if let Err(error) = result {
         feedback(state, connection, error);
-    }
+        Failed
+    } else {
+        Unavailable
+    };
     drain(state, changes);
-    true
+    outcome
 }
 
 pub(crate) fn tick(state: &mut TickState, changes: &mut ChangeSet) {

@@ -102,6 +102,13 @@ impl Jukebox {
             ("y".into(), Tag::Int(pos.y)),
             ("z".into(), Tag::Int(pos.z)),
         ];
+        fields.extend(self.data_fields(items));
+        let mut bytes = Vec::new();
+        mc_nbt::write_network(&mut bytes, &Tag::Compound(fields)).expect("jukebox NBT");
+        bytes
+    }
+    pub(crate) fn data_fields(&self, items: &mc_data::items::ItemRegistry) -> Vec<(String, Tag)> {
+        let mut fields = Vec::new();
         if !self.record.is_empty() {
             fields.push((
                 "RecordItem".into(),
@@ -111,9 +118,7 @@ impl Jukebox {
         if let Some(ticks) = self.elapsed {
             fields.push(("ticks_since_song_started".into(), Tag::Long(ticks as i64)));
         }
-        let mut bytes = Vec::new();
-        mc_nbt::write_network(&mut bytes, &Tag::Compound(fields)).expect("jukebox NBT");
-        bytes
+        fields
     }
 }
 pub(crate) fn hydrate_chunk(

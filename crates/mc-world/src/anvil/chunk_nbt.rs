@@ -1084,6 +1084,45 @@ fn chunk_to_nbt_parts(
     Ok(Tag::Compound(root))
 }
 
+/// Read one block entity using the same typed owners and retained metadata as Anvil.
+/// Does not encode chunk sections, generate loot, or modify the chunk.
+pub fn block_entity_to_tag(
+    chunk: &Chunk,
+    pos: BlockPos,
+    registry: &BlockRegistry,
+    items: &ItemRegistry,
+) -> Result<Option<Tag>, ChunkNbtError> {
+    let mut encoded = if let Some(value) = chunk.furnaces.get(&pos) {
+        encode_furnace(
+            &pos,
+            value,
+            items,
+            furnace_block_entity_id_for_block(chunk, registry, pos),
+        )?
+    } else if let Some(value) = chunk.chests.get(&pos) {
+        encode_chest(
+            &pos,
+            value,
+            items,
+            chest_storage_block_entity_id_for_block(chunk, registry, pos),
+        )?
+    } else if let Some(value) = chunk.hoppers.get(&pos) {
+        encode_hopper(&pos, value, items)?
+    } else if let Some(value) = chunk.brewing_stands.get(&pos) {
+        encode_brewing_stand(&pos, value, items)?
+    } else {
+        return chunk
+            .block_entities
+            .get(&pos)
+            .map(|bytes| mc_nbt::read_network(&mut bytes.as_slice()).map_err(ChunkNbtError::from))
+            .transpose();
+    };
+    if let Some(native) = chunk.block_entities.get(&pos) {
+        merge_container_metadata(&mut encoded, native)?;
+    }
+    Ok(Some(encoded))
+}
+
 fn encode_light_layer(layer: &Option<crate::chunk::LightSection>) -> Option<Tag> {
     layer
         .as_ref()

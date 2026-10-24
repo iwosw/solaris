@@ -207,7 +207,8 @@ pub(crate) fn execute(
     state: &mut TickState,
     mut request: Request,
     changes: &mut BTreeMap<Dimension, ChangeSet>,
-) -> Result<(), String> {
+) -> Result<crate::command_execution::CommandResult, String> {
+    use crate::command_execution::CommandResult::{Failed, Success, Unavailable};
     let source_dimension = locate(state, request.executor)
         .map(|(dimension, _)| dimension)
         .unwrap_or(state.dimension);
@@ -282,21 +283,23 @@ pub(crate) fn execute(
                 ),
             },
         );
-        return Ok(());
+        return Ok(Unavailable);
     }
     let title_action = match &request.command {
         Command::Title { action, .. } => Some(action.clone()),
         _ => None,
     };
     if let Some(action) = title_action {
-        return execute_title_global(state, request, changes, selected, action);
+        return execute_title_global(state, request, changes, selected, action)
+            .map(|()| Unavailable);
     }
+    let mut result = Failed;
     for entity in selected {
         let (dimension, _) = locate(state, entity).expect("selected entity");
         *target_mut(&mut request.command) = Target::Entity(entity);
         let changes = changes.entry(dimension).or_default();
-        if dimension == state.dimension {
-            crate::command_execution::execute(
+        let outcome = if dimension == state.dimension {
+            let outcome = crate::command_execution::execute(
                 state,
                 request.connection,
                 request.executor,
@@ -304,13 +307,14 @@ pub(crate) fn execute(
                 changes,
             );
             commit(state, changes);
+            outcome
         } else {
             let mut world = state
                 .other_dimensions
                 .remove(&dimension)
                 .expect("selected world");
             super::runtime::swap_globals(state, &mut world);
-            crate::command_execution::execute(
+            let outcome = crate::command_execution::execute(
                 &mut world,
                 request.connection,
                 request.executor,
@@ -320,10 +324,17 @@ pub(crate) fn execute(
             commit(&mut world, changes);
             super::runtime::swap_globals(state, &mut world);
             state.other_dimensions.insert(dimension, world);
-        }
+            outcome
+        };
+        result = match (result, outcome) {
+            (Unavailable, _) | (_, Unavailable) => Unavailable,
+            (Success(total), Success(value)) => Success(total.wrapping_add(value)),
+            (Success(total), Failed) => Success(total),
+            (Failed, outcome) => outcome,
+        };
         super::travel::sync_wire_ids(state);
     }
-    Ok(())
+    Ok(result)
 }
 
 /// `/title` across dimensions: send each player's `TitleChange` in their own

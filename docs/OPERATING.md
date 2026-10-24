@@ -706,8 +706,18 @@ block using, for example:
 /data get block 0 80 0
 ```
 
-`/data` currently inspects command-block NBT and merges only `Command` and `auto`;
-it cannot bypass another block entity's native owner. Impulse blocks respond to
+Operator level 2 `/data get entity <target> [path] [scale]` and
+`/data get block <x> <y> <z> [path] [scale]` read native entity and block-entity
+owners, including live inventory/timer overlays, without editing state or generating loot.
+Feedback uses vanilla SNBT. Paths accept dotted/quoted keys, signed list/array indices,
+`[]`, and compound filters (`Inventory[{Slot:0b}].count`). A path must select exactly
+one value. Numeric results are floored (after optional scale); unscaled strings
+return UTF-16 length and collections return size. Root queries return 1.
+Current vanilla keys include `active_effects`, `equipment`, and furnace
+`cooking_time_spent`; absent optional fields are errors, not invented defaults.
+`/data merge` still writes only command-block `Command` and `auto`; entity/storage
+modification and other block-entity writes are not supported.
+Impulse blocks respond to
 redstone rising edges; repeating blocks use the durable scheduled-block queue;
 chains follow facing, with a bounded traversal and once-per-tick execution.
 Relative coordinates resolve at the command block, not world spawn.
@@ -728,8 +738,22 @@ score comparisons or `matches` ranges. `run` dispatches the supported native
 command set with the original permission level. Local `^` coordinates honor
 rotation/anchor; relative `~` and selector origins honor source position.
 Cross-world execution uses the shared `dimensions_travel` commit authority,
-not direct edge mutation. Conditional block-region comparison (`blocks`),
-`store` and general NBT predicates remain gaps. Eye anchors use native player
+not direct edge mutation. `store result|success score <holders> <objective>`
+captures native `data get`, `time query`, `gamerule` query, `worldborder get`,
+`scoreboard players get`, and terminal entity/block/score conditions. Supported
+mutating producers are `kill`, `summon`, `give`, `clear`, `effect give/clear`,
+`teleport`/`tp`, `experience add/set`, `scoreboard players set/add/remove/reset/operation`,
+`setblock`, `fill`, and the restricted command-block `data merge block` surface.
+The existing command owners return typed outcomes: target counts, removed-item
+counts, changed-block counts, or resulting score values as appropriate. Failures
+store zero; a successful zero-valued result still stores success 1. Callbacks
+follow each execute branch and update the native scoreboard's journal/broadcast
+owner, including cross-world native dispatch at the shared tick boundary.
+Unsupported producers fail explicitly before executing; entity/block/storage/bossbar
+store destinations are not supported. Absent commands such as `tag`, `clone` and
+generic `data modify` remain absent, not fabricated result producers.
+Conditional block-region comparison (`blocks`)
+and general NBT execute predicates remain gaps. Eye anchors use native player
 pose heights or the local entity-dimensions contract scaled to body height.
 The edge advertises greedy argument tails for these roots, with native syntax
 validation; rich vanilla subcommand suggestions are not implemented.
