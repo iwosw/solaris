@@ -1407,7 +1407,7 @@ fn flowerless_bee_finds_wither_rose_and_rejects_waterlogged() {
     // torchflower and tall upper halves do not.
     let mut state = state(None);
     place(&mut state, BlockPos { x: 6, y: 201, z: 4 }, "minecraft:wither_rose");
-    let found: Option<BlockPos> = nearby(&state, [4.5, 201.0, 4.5], |b| flower(b));
+    let found: Option<BlockPos> = nearby(&state, [4.5, 201.0, 4.5], flower);
     assert_eq!(found, Some(BlockPos { x: 6, y: 201, z: 4 }));
 }
 

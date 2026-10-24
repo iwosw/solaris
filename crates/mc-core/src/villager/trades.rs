@@ -281,7 +281,7 @@ fn add_librarian_book(state: &mut VillagerState, registry: &CoreRegistry, level:
     ) else {
         return;
     };
-    let enchantment = mc_data::Identifier::parse(&format!("minecraft:{name}"))
+    let enchantment = mc_data::Identifier::parse(format!("minecraft:{name}"))
         .expect("librarian enchantment id");
     // Enchanted books carry stored_enchantments, not the item enchantment
     // family (vanilla StoredEnchantments component).

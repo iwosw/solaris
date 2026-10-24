@@ -14,7 +14,7 @@ pub(super) fn complete(
     index: usize,
     held: &ItemStack,
     writes: &mut Vec<(BlockPos, u32)>,
-    spawned: &mut Vec<crate::boundary::EntityId>,
+    spawned: &[crate::boundary::EntityId],
 ) -> bool {
     let Some(item) = state.registry.items.name_of(held.item_id) else {
         return false;

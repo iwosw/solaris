@@ -4,6 +4,9 @@ use crate::tick::TickState;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
+/// One pending map-marker row: (x, z, rotation, tracked, selected, owner).
+type MarkerRow = (f64, f64, f32, bool, bool, ConnectionId);
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Marker {
     pub kind: i32,
@@ -138,7 +141,7 @@ fn sample(state: &TickState, map: &SavedMap, index: usize) -> Option<u8> {
             (h + i64::from(*y), d + u64::from(*depth), n + 1)
         });
     let height = height_sum / n.max(1) as i64;
-    let depth = (depth_sum / n.max(1) as u64).min(8) as i32;
+    let depth = (depth_sum / n.max(1)).min(8) as i32;
     // Vanilla brightness: water depth darkens (depth>0), north height
     // difference shades slopes, flat dry land stays base+1.
     let north = north_height(state, map, index, step);
@@ -220,7 +223,7 @@ pub(crate) fn tick(state: &mut TickState) {
     }
     let mut views: BTreeMap<i32, BTreeSet<ConnectionId>> = BTreeMap::new();
     // Marker: x, z, rotation, frame flag, carrier-hidden, owner connection.
-    let mut markers: BTreeMap<i32, Vec<(f64, f64, f32, bool, bool, ConnectionId)>> =
+    let mut markers: BTreeMap<i32, Vec<MarkerRow>> =
         BTreeMap::new();
     for (&entity, player) in &state.players {
         if player.spectator() {
@@ -361,10 +364,7 @@ pub(crate) fn tick(state: &mut TickState) {
                     let color = path
                         .strip_suffix("_wall_banner")
                         .or_else(|| path.strip_suffix("_banner"));
-                    match color {
-                        Some(color) if color == banner.color => false,
-                        _ => true,
-                    }
+                    !matches!(color, Some(color) if color == banner.color)
                 })
                 .map(|(index, _)| index)
                 .collect();
