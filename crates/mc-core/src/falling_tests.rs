@@ -345,12 +345,34 @@ fn empty_collision_attachment_is_not_a_floor_and_slab_landing_drops_instead() {
     }
     assert_eq!(
         state.world.block_at(pos.x, 201, pos.z),
-        Some(sand),
-        "empty collision torch must not suspend falling sand above it"
+        Some(torch),
+        "a nonreplaceable torch survives the falling block's landing"
     );
+    assert_eq!(spawned.len(), 1, "the blocked sand drops exactly one item");
+    let drop_slot = state.entities.slot_of(spawned[0]).unwrap();
+    let stack = state
+        .entities
+        .row(drop_slot)
+        .item
+        .as_ref()
+        .expect("sand item");
+    assert_eq!(stack.count, 1);
+    assert_eq!(
+        state
+            .registry
+            .items
+            .name_of(stack.item_id)
+            .unwrap()
+            .as_str(),
+        "minecraft:sand"
+    );
+    assert_eq!(removed.len(), 1);
     assert!(
-        spawned.is_empty(),
-        "OLD landing replacement does not separately wash loot"
+        state
+            .entities
+            .slots()
+            .all(|slot| state.entities.row(slot).falling.is_none()),
+        "the falling entity is retired after dropping its item"
     );
     let (mut slab_state, pos) = setup();
     let sand = slab_state.registry.states.sand;

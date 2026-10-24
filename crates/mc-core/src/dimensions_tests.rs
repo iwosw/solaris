@@ -1657,14 +1657,18 @@ fn native_dimension_spawn_tables_and_census_are_local() {
     for dimension in [Dimension::Nether, Dimension::End] {
         let world = state.other_dimensions.get_mut(&dimension).unwrap();
         let biome = world.world.biome_at(8, 64, 8).unwrap();
-        assert_eq!(
-            biome.as_str(),
-            if dimension == Dimension::Nether {
+        match dimension {
+            Dimension::Nether => assert!(matches!(
+                biome.as_str(),
                 "minecraft:nether_wastes"
-            } else {
-                "minecraft:the_end"
-            }
-        );
+                    | "minecraft:soul_sand_valley"
+                    | "minecraft:crimson_forest"
+                    | "minecraft:warped_forest"
+                    | "minecraft:basalt_deltas"
+            )),
+            Dimension::End => assert_eq!(biome.as_str(), "minecraft:the_end"),
+            Dimension::Overworld => unreachable!(),
+        }
         let entries = world.registry.biome_spawns.exact_entries(biome, "monster");
         let selected = crate::natural_spawn::choose_spawn(&world.registry, entries, 0).unwrap();
         let id = world

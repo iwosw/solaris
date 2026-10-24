@@ -369,8 +369,8 @@ fn natural_golem_player_damage_scales_with_difficulty() {
         let actor = state.connections.entity_of(ConnectionId(1)).unwrap();
         let actor_slot = state.entities.slot_of(actor).unwrap();
         state.entities.set_pos(actor_slot, [8.5, 201.0, 8.5]);
-        state.players.get_mut(&actor).unwrap().vitals.health = 100.0;
-        state.entities.row_mut(actor_slot).health = 100.0;
+        state.players.get_mut(&actor).unwrap().vitals.health = 20.0;
+        state.entities.row_mut(actor_slot).health = 20.0;
         state.entities.row_mut(actor_slot).protected_until = 0;
         let type_id = state
             .registry
@@ -382,11 +382,11 @@ fn natural_golem_player_damage_scales_with_difficulty() {
         state.entities.row_mut(slot).last_player_hit = Some((actor, state.tick));
         for _ in 0..40 {
             run_tick(&mut state, &[]);
-            if state.players[&actor].vitals.health < 100.0 {
+            if state.players[&actor].vitals.health < 20.0 {
                 break;
             }
         }
-        damage.push(100.0 - state.players[&actor].vitals.health);
+        damage.push(20.0 - state.players[&actor].vitals.health);
     }
     assert!(
         damage[0] > 0.0 && damage[0] < damage[1] && damage[1] < damage[2],
