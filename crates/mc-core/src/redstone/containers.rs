@@ -1217,6 +1217,17 @@ fn nonprojectile(
         Err(()) => return true,
         Ok(false) => {}
     }
+    // Vanilla dispenser behaviors before ordinary item ejection: glowstone
+    // charges a non-full respawn anchor; glass bottles/shears harvest a
+    // full beehive/bee nest.
+    if name == "glowstone" && super::dispenser_anchor::charge(state, pos, target, index, writes) {
+        return true;
+    }
+    if (name == "glass_bottle" || name == "shears")
+        && super::dispenser_hive::harvest(state, pos, target, index, &held, writes, spawned)
+    {
+        return true;
+    }
     if name == "tnt" {
         let center = [
             f64::from(target.x) + 0.5,

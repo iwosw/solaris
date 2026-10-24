@@ -391,11 +391,38 @@ fn bed_exit(state: &TickState, head: BlockPos, yaw: f32) -> Option<[f64; 3]> {
         / std::f64::consts::FRAC_PI_4)
         .round() as i32)
         .rem_euclid(8) as usize;
+    // Vanilla fits the player AABB in the exit cells (DismountHelper):
+    // partial blocks like carpet do not obstruct; only intersecting solid
+    // shapes and hazards block the exit.
     let free = |x, y, z| {
-        state.world.block_at(x, y, z).is_some_and(|id| {
-            state.registry.materials.classify(id) == mc_physics::BlockMaterial::Air
-                && state.registry.hazard_flags.get(id as usize) == Some(&0)
-        })
+        let Some(id) = state.world.block_at(x, y, z) else {
+            return false;
+        };
+        if state.registry.hazard_flags.get(id as usize) != Some(&0) {
+            return false;
+        }
+        if state.registry.materials.classify(id) == mc_physics::BlockMaterial::Air {
+            return true;
+        }
+        if state.registry.materials.classify(id) == mc_physics::BlockMaterial::Solid {
+            return false;
+        }
+        let Some(block) = state.registry.blocks.by_id(mc_world::BlockStateId(id)) else {
+            return false;
+        };
+        !mc_data::collision_shapes::vanilla_collision_shapes()
+            .get_for_state(id, &block.block.id, &block.properties)
+            .is_some_and(|shape| {
+                shape.iter().any(|collision_box| {
+                    let units =
+                        mc_data::collision_shapes::COLLISION_UNITS_PER_BLOCK as f64;
+                    let [_, min_y, _, _, max_y, _] = collision_box.coordinates();
+                    // Carpet-thin shapes (<=1/16) never intersect the player
+                    // AABB standing at this cell's floor.
+                    f64::from(max_y) / units > 0.0625
+                        && f64::from(min_y) / units < 1.8
+                })
+            })
     };
     for dy in [0, -1] {
         for anchor in [head, foot] {

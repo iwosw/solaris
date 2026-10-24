@@ -1276,6 +1276,12 @@ fn anger(state: &mut TickState, p: [f64; 3], target: uuid::Uuid) {
         }
     }
 }
+/// Dispenser/automated harvest anger: nearby loose bees turn hostile absent
+/// smoke, without attributing the harvest to any player. Retained hive
+/// occupants keep their normal exit schedule.
+pub(crate) fn anger_nearby(state: &mut TickState, p: [f64; 3]) {
+    anger(state, p, uuid::Uuid::nil());
+}
 pub(crate) fn accepted_hit(
     state: &mut TickState,
     victim: EntitySlot,

@@ -5,8 +5,10 @@ pub(crate) mod containers;
 pub(crate) mod custody;
 #[cfg(test)]
 mod dirty_signals_tests;
+mod dispenser_anchor;
 mod dispenser_blocks;
 mod dispenser_equipment;
+mod dispenser_hive;
 mod entity_query;
 mod piston;
 mod piston_motion;
