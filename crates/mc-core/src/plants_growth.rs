@@ -251,9 +251,37 @@ pub(super) fn bonemeal(
                 .then(|| named(read, "hanging_roots").map(|id| vec![edit(below, id)]))?
         }
         "brown_mushroom" | "red_mushroom" => huge_mushroom(read, at, name, seed),
-        "azalea" | "flowering_azalea" => azalea_tree(read, at, name, seed),
-        "mangrove_propagule" => mangrove_tree(read, at, seed),
-        "crimson_fungus" | "warped_fungus" => huge_fungus(read, at, name),
+        "azalea" | "flowering_azalea" => {
+            // Vanilla `AzaleaBlock`: one 45% roll per meal; success grows the
+            // tree only when the canopy fits (two-stage saplings differ).
+            if Roll::new(seed).below(20) >= 9 {
+                return None;
+            }
+            azalea_tree(read, at, name, seed)
+        }
+        "mangrove_propagule" => {
+            // Vanilla `MangrovePropaguleBlock`: a planted propagule follows
+            // the sapling two-stage chances; a hanging one just ages.
+            if prop(blocks, id, "hanging") == Some("true") {
+                let age = prop(blocks, id, "age")?.parse::<u8>().ok()?;
+                if age >= 4 {
+                    return None;
+                }
+                let next = with_prop(blocks, id, "age", &(age + 1).to_string())?;
+                return Some(vec![edit(at, next)]);
+            }
+            if Roll::new(seed).below(20) >= 9 {
+                return None;
+            }
+            mangrove_tree(read, at, seed)
+        }
+        "crimson_fungus" | "warped_fungus" => {
+            // Vanilla huge-fungus meal: 40% grows on matching nylium.
+            if Roll::new(seed).below(5) >= 2 {
+                return None;
+            }
+            huge_fungus(read, at, name)
+        }
         "moss_block" => moss_spread(read, at, seed),
         "crimson_nylium" | "warped_nylium" => nylium_foliage(read, at, name, seed),
         "netherrack" => nylium_conversion(read, at, seed),
@@ -771,12 +799,14 @@ pub(super) fn dripstone(
         }
     }
     if fluid {
-        if roll.below(6) != 0 {
+        // Vanilla lava drip: 15/256 per tick fills an empty cauldron full.
+        if roll.below(256) >= 15 {
             return grow_dripstone(read, at, id, false, &mut roll);
         }
         return fill_cauldron(read, cell, "lava", &mut roll);
     }
-    if roll.below(16) < 6 {
+    // Vanilla water drip: 45/256 per tick raises one level.
+    if roll.below(256) < 45 {
         return fill_cauldron(read, cell, "water", &mut roll);
     }
     grow_dripstone(read, at, id, true, &mut roll)
@@ -806,8 +836,11 @@ fn fill_cauldron(
         "water_cauldron"
     };
     if name == "cauldron" {
+        // Vanilla lava drips fill an empty cauldron completely; water drips
+        // add one level per success.
+        let fill = if fluid == "lava" { "3" } else { "1" };
         let id = mc_data::Identifier::parse(format!("minecraft:{target}")).ok()?;
-        let one = blocks.by_name_and_props(&id, &[("level".into(), "1".into())])?;
+        let one = blocks.by_name_and_props(&id, &[("level".into(), fill.into())])?;
         return Some(vec![edit(cell, one.0)]);
     }
     if name != target || level >= 3 {

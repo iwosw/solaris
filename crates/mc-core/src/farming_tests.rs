@@ -694,11 +694,19 @@ fn bone_meal_grows_azalea_and_fungi_but_rejects_wrong_soil() {
     put(&mut state, -6, Y, 2, dirt);
     plant(&mut state, -6, Y + 1, 2, "azalea", &[]);
     near(&mut state, player, -6, Y + 1, 2);
-    give(&mut state, player, "bone_meal", 3);
-    use_on(&mut state, -6, Y + 1, 2, 1);
+    // One 45% roll per meal: repeat until the tree lands.
+    give(&mut state, player, "bone_meal", 20);
+    let trunk = block(&state, "oak_log", &[("axis", "y")]);
+    for _ in 0..20 {
+        if at(&state, -6, Y + 2, 2) == trunk {
+            break;
+        }
+        use_on(&mut state, -6, Y + 1, 2, 1);
+        give(&mut state, player, "bone_meal", 20);
+    }
     assert_eq!(
         at(&state, -6, Y + 2, 2),
-        block(&state, "oak_log", &[("axis", "y")]),
+        trunk,
         "azalea grows a trunk"
     );
     // Crimson fungus on dirt refuses; on crimson nylium it grows huge.
@@ -712,10 +720,19 @@ fn bone_meal_grows_azalea_and_fungi_but_rejects_wrong_soil() {
     put(&mut state, 8, Y, 2, nylium);
     plant(&mut state, 8, Y + 1, 2, "crimson_fungus", &[]);
     near(&mut state, player, 8, Y + 1, 2);
-    use_on(&mut state, 8, Y + 1, 2, 1);
+    // One 40% roll per meal: repeat until the fungus lands.
+    give(&mut state, player, "bone_meal", 20);
+    let stem = block(&state, "crimson_stem", &[("axis", "y")]);
+    for _ in 0..20 {
+        if at(&state, 8, Y + 2, 2) == stem {
+            break;
+        }
+        use_on(&mut state, 8, Y + 1, 2, 1);
+        give(&mut state, player, "bone_meal", 20);
+    }
     assert_eq!(
         at(&state, 8, Y + 2, 2),
-        block(&state, "crimson_stem", &[("axis", "y")]),
+        stem,
         "crimson fungus grows huge on its nylium"
     );
 }
@@ -1002,3 +1019,74 @@ fn frogspawn_hatches_tadpoles_in_water() {
 }
 
 
+
+#[test]
+fn bone_meal_cadence_gates_azalea_fungus_and_mangrove() {
+    // Azalea: one 45% roll per meal; success grows, failure consumes.
+    let (mut state, player) = setup();
+    let dirt = state.registry.states.dirt;
+    put(&mut state, -6, Y, 2, dirt);
+    plant(&mut state, -6, Y + 1, 2, "azalea", &[]);
+    near(&mut state, player, -6, Y + 1, 2);
+    give(&mut state, player, "bone_meal", 20);
+    for _ in 0..20 {
+        if at(&state, -6, Y + 2, 2) == block(&state, "oak_log", &[("axis", "y")]) {
+            break;
+        }
+        use_on(&mut state, -6, Y + 1, 2, 1);
+    }
+    assert_eq!(
+        at(&state, -6, Y + 2, 2),
+        block(&state, "oak_log", &[("axis", "y")]),
+        "repeated meals grow the azalea (45% each)"
+    );
+    // A single meal must be able to fail while still consuming the item.
+    let (mut state, player) = setup();
+    let dirt0 = state.registry.states.dirt;
+    put(&mut state, -6, Y, 2, dirt0);
+    plant(&mut state, -6, Y + 1, 2, "azalea", &[]);
+    near(&mut state, player, -6, Y + 1, 2);
+    give(&mut state, player, "bone_meal", 1);
+    use_on(&mut state, -6, Y + 1, 2, 1);
+    assert_eq!(held(&state, player).count, 0, "meal is spent even on a miss");
+    // Huge fungus: 40% per meal on matching nylium.
+    let (mut state, player) = setup();
+    let nylium = block(&state, "crimson_nylium", &[]);
+    put(&mut state, 8, Y, 2, nylium);
+    plant(&mut state, 8, Y + 1, 2, "crimson_fungus", &[]);
+    near(&mut state, player, 8, Y + 1, 2);
+    give(&mut state, player, "bone_meal", 20);
+    for _ in 0..20 {
+        if at(&state, 8, Y + 2, 2) == block(&state, "crimson_stem", &[("axis", "y")]) {
+            break;
+        }
+        use_on(&mut state, 8, Y + 1, 2, 1);
+    }
+    assert_eq!(
+        at(&state, 8, Y + 2, 2),
+        block(&state, "crimson_stem", &[("axis", "y")]),
+        "repeated meals grow the fungus (40% each)"
+    );
+    // Hanging propagule ages instead of growing a tree.
+    let (mut state, player) = setup();
+    plant(
+        &mut state,
+        2,
+        Y + 1,
+        4,
+        "mangrove_propagule",
+        &[("hanging", "true"), ("age", "0"), ("stage", "0"), ("waterlogged", "false")],
+    );
+    near(&mut state, player, 2, Y + 1, 4);
+    give(&mut state, player, "bone_meal", 2);
+    use_on(&mut state, 2, Y + 1, 4, 1);
+    assert_eq!(
+        at(&state, 2, Y + 1, 4),
+        block(
+            &state,
+            "mangrove_propagule",
+            &[("hanging", "true"), ("age", "1"), ("stage", "0"), ("waterlogged", "false")]
+        ),
+        "hanging propagule ages one stage"
+    );
+}
