@@ -84,7 +84,10 @@ fn extend(
             return None;
         }
         if prop(blocks, get(read, target)?, "level") != Some("0") {
-            let roof = BlockPos { y: target.y + 1, ..target };
+            let roof = BlockPos {
+                y: target.y + 1,
+                ..target
+            };
             if path(read, roof)? != "water" {
                 return None;
             }

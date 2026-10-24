@@ -870,12 +870,16 @@ fn axolotl_stacked_fish_buckets_keep_a_water_bucket_remainder() {
     let fish = item(&state, "tropical_fish_bucket");
     let water = item(&state, "water_bucket");
     let (fish_total, water_total): (i32, i32) =
-        state.players[&actor].inventory.slots.iter().fold((0, 0), |(f, w), stack| {
-            (
-                f + (stack.item_id == fish) as i32 * stack.count,
-                w + (stack.item_id == water) as i32 * stack.count,
-            )
-        });
+        state.players[&actor]
+            .inventory
+            .slots
+            .iter()
+            .fold((0, 0), |(f, w), stack| {
+                (
+                    f + (stack.item_id == fish) as i32 * stack.count,
+                    w + (stack.item_id == water) as i32 * stack.count,
+                )
+            });
     assert_eq!((fish_total, water_total), (1, 1));
 }
 

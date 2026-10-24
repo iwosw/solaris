@@ -741,8 +741,7 @@ pub fn interact(
     // bucket: the food is consumed but its bucket is not destroyed. A single
     // bucket is swapped in hand; a stacked remainder rides merge_gives at
     // merge (see the FeedAnimal arm) so it never overwrites the survivors.
-    let remainder =
-        axolotl_bucket_remainder(state, body, row, &held).filter(|_| held.count == 1);
+    let remainder = axolotl_bucket_remainder(state, body, row, &held).filter(|_| held.count == 1);
     let take = if matches!(kind, IntentKind::FeedAnimal { .. }) {
         i32::from(!creative)
     } else {
