@@ -143,9 +143,7 @@ pub(super) fn mob_bucket_mob(name: &str) -> Option<&'static str> {
 /// Mob buckets empty like water (plus the captured entity, spawned by the
 /// container owner after this plan commits).
 fn mob_bucket_empty(state: &TickState, target: BlockPos, name: &str) -> Option<Bucket> {
-    let path = name.strip_prefix("minecraft:").unwrap_or(name);
-    let mob = mob_bucket_mob(name)?;
-    let _ = mob;
+    mob_bucket_mob(name)?;
     // Reuse the water placement path: flow water into the target cell.
     let current = state.world.block_at(target.x, target.y, target.z)?;
     let wet = crate::fluids::waterlogged(state, current, true);
