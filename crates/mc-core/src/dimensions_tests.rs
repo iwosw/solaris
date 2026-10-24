@@ -2265,3 +2265,102 @@ fn summon_uuid_preflight_covers_other_worlds_offline_players_and_same_tick_claim
     );
     validate_identity(&mut state).unwrap();
 }
+
+fn open_diamond_chest(state: &mut TickState, connection: u64) -> PlayerInput {
+    let entity = state
+        .connections
+        .entity_of(ConnectionId(connection))
+        .unwrap();
+    let slot = state.entities.slot_of(entity).unwrap();
+    state.entities.set_pos(slot, [8.5, 150.0, 8.5]);
+    let chest = state
+        .registry
+        .blocks
+        .block(&mc_data::Identifier::parse("minecraft:chest").unwrap())
+        .unwrap()
+        .default
+        .0;
+    state.world.set_block(10, 150, 8, chest);
+    state.world.fold_overlay();
+    let mut slots = vec![mc_data::ItemStack::EMPTY; 27];
+    slots[0] = mc_data::ItemStack::new(diamond_id(state), 5);
+    state.block_entities.insert(
+        (10, 150, 8),
+        crate::tick::BlockEntityState {
+            slots,
+            furnace: None,
+        },
+    );
+    crate::tick::run_tick(
+        state,
+        &[PlayerInput::UseItemOn {
+            connection: ConnectionId(connection),
+            hand: crate::boundary::Hand::Main,
+            position: crate::boundary::BlockPos {
+                x: 10,
+                y: 150,
+                z: 8,
+            },
+            face: 1,
+            cursor: [0.5; 3],
+            sequence: 1,
+        }],
+    );
+    let menu = state.players[&entity].open.as_ref().expect("chest menu");
+    PlayerInput::ContainerClick {
+        connection: ConnectionId(connection),
+        window: menu.window,
+        state_id: menu.state_id,
+        slot: 0,
+        button: 0,
+        mode: crate::boundary::ClickMode::QuickMove,
+    }
+}
+
+fn diamond_id(state: &TickState) -> u32 {
+    state
+        .registry
+        .items
+        .id_of(&mc_data::Identifier::parse("minecraft:diamond").unwrap())
+        .unwrap()
+}
+
+/// Diamonds held, carried on the cursor, or lying on the ground.
+fn diamonds(state: &TickState, player: EntityId) -> i32 {
+    let diamond = diamond_id(state);
+    let player = &state.players[&player];
+    let held: i32 = player
+        .inventory
+        .slots
+        .iter()
+        .chain(player.open.as_ref().map(|menu| &menu.carried))
+        .filter(|stack| stack.item_id == diamond)
+        .map(|stack| stack.count)
+        .sum();
+    let ground: i32 = state
+        .entities
+        .slots()
+        .filter(|slot| state.entities.body(*slot).alive)
+        .filter_map(|slot| state.entities.row(slot).item.as_ref())
+        .filter(|item| item.item_id == diamond)
+        .map(|item| item.count)
+        .sum();
+    held + ground
+}
+
+#[test]
+fn shared_destroy_command_settles_open_chest_before_the_next_click() {
+    let (mut state, alice, _) = worlds();
+    let click = open_diamond_chest(&mut state, 1);
+    command(&mut state, 1, "setblock 10 150 8 air destroy");
+    assert!(
+        !state.open_containers.contains_key(&alice),
+        "the viewer closes with the command"
+    );
+    assert!(state.merge_command_broken.is_empty());
+    assert!(state.merge_container_contents.is_empty());
+    assert!(state.merge_closed_viewers.is_empty());
+    assert!(!state.block_entities.contains_key(&(10, 150, 8)));
+    crate::tick::run_tick(&mut state, &[click]);
+    assert_eq!(diamonds(&state, alice), 5);
+}

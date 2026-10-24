@@ -150,13 +150,15 @@ pub(super) fn resolve(
 }
 
 pub(crate) fn commit(world: &mut TickState, changes: &mut ChangeSet) {
-    if !world.merge_damage.is_empty() {
-        let (_, mut events, mut spawned, mut removed) = world.commit_merge_effects();
-        changes.entity_events.append(&mut events);
-        changes.entities_spawned.append(&mut spawned);
-        changes.entities_removed.append(&mut removed);
-        crate::entity_life::commit_drops(world, &mut changes.entities_spawned);
-    }
+    // Like any out-of-merge world edit (`portals::commit_removals`), a command
+    // settles everything it staged (damage, drops, destroyed container custody
+    // and viewer closure) at its own boundary: the next tick's inputs must never
+    // reach storage whose removal was already snapshotted.
+    let (_, mut events, mut spawned, mut removed) = world.commit_merge_effects();
+    changes.entity_events.append(&mut events);
+    changes.entities_spawned.append(&mut spawned);
+    changes.entities_removed.append(&mut removed);
+    crate::entity_life::commit_drops(world, &mut changes.entities_spawned);
     if !world.merge_block_writes.is_empty() {
         let mut writes = std::mem::take(&mut world.merge_block_writes);
         let mut spawned = Vec::new();
