@@ -910,3 +910,95 @@ fn budding_amethyst_sprouts_buds_that_advance_to_clusters() {
     }
     panic!("budding amethyst never sprouted");
 }
+
+#[test]
+fn turtle_eggs_crack_at_night_into_baby_turtles() {
+    let (mut state, _) = setup();
+    state.gamerules.insert("random_tick_speed".into(), FAST.into());
+    state.day_time = 15_000;
+    let sand = state
+        .registry
+        .blocks
+        .block(&mc_data::Identifier::parse("minecraft:sand").unwrap())
+        .unwrap()
+        .default
+        .0;
+    // Sand is a falling block: bed it on stone like a real beach, or it
+    // drops away and the egg (correctly) never hatches on the bare air.
+    let stone = state.registry.states.stone;
+    put(&mut state, 2, Y - 1, -2, stone);
+    put(&mut state, 2, Y, -2, sand);
+    let eggs = block(&state, "turtle_egg", &[("eggs", "2"), ("hatch", "0")]);
+    put(&mut state, 2, Y + 1, -2, eggs);
+    for _ in 0..3000 {
+        run(&mut state, 1);
+        let slots: Vec<_> = state.entities.slots().collect();
+        let babies = slots
+            .iter()
+            .filter(|slot| {
+                let row = state.entities.row(**slot);
+                let body = state.entities.body(**slot);
+                row.entity_life.child_ticks > 0
+                    && matches!(body.kind, crate::entities::EntityKind::Mob { .. })
+            })
+            .count();
+        if babies >= 2 {
+            return;
+        }
+    }
+    panic!("turtle eggs never hatched");
+}
+
+#[test]
+fn sniffer_eggs_hatch_into_baby_sniffers() {
+    let (mut state, _) = setup();
+    state.gamerules.insert("random_tick_speed".into(), FAST.into());
+    let egg = block(&state, "sniffer_egg", &[("hatch", "0")]);
+    put(&mut state, 3, Y + 1, -2, egg);
+    for _ in 0..3000 {
+        run(&mut state, 1);
+        let slots: Vec<_> = state.entities.slots().collect();
+        let babies = slots
+            .iter()
+            .filter(|slot| state.entities.row(**slot).entity_life.child_ticks > 0)
+            .count();
+        if babies >= 1 {
+            return;
+        }
+    }
+    panic!("sniffer egg never hatched");
+}
+
+#[test]
+fn frogspawn_hatches_tadpoles_in_water() {
+    let (mut state, _) = setup();
+    state.gamerules.insert("random_tick_speed".into(), FAST.into());
+    let water = state.registry.states.water_levels[0];
+    put(&mut state, 4, Y, -2, water);
+    let spawn = block(&state, "frogspawn", &[]);
+    put(&mut state, 4, Y + 1, -2, spawn);
+    for _ in 0..3000 {
+        run(&mut state, 1);
+        let kinds: Vec<_> = state
+            .entities
+            .slots()
+            .map(|slot| state.entities.body(slot).kind)
+            .collect();
+        let tadpoles = kinds
+            .iter()
+            .filter(|kind| match kind {
+                crate::entities::EntityKind::Mob { type_id } => state
+                    .registry
+                    .blueprint(*type_id)
+                    .is_some_and(|blueprint| blueprint.name == "minecraft:tadpole"),
+                _ => false,
+            })
+            .count();
+        if tadpoles >= 2 {
+            return;
+        }
+    }
+    panic!("frogspawn never hatched");
+}
+
+

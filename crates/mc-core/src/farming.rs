@@ -82,6 +82,7 @@ fn kind_of(path: &str) -> Kind {
             Kind::Copper
         }
         "pointed_dripstone" | "budding_amethyst" => Kind::Mineral,
+        "turtle_egg" | "sniffer_egg" | "frogspawn" => Kind::Mineral,
         _ if path.ends_with("_leaves") => Kind::Leaves,
         _ if path.ends_with("_sapling") && !path.starts_with("potted_") => Kind::Sapling,
         _ => Kind::Inert,
@@ -583,6 +584,11 @@ enum Outcome {
     LeafRefresh,
     /// The block pops off and drops its loot.
     Pop,
+    /// Egg blocks hatch: rewrite cells, then spawn live babies.
+    Hatch {
+        cells: Vec<(BlockPos, u32)>,
+        spawn: Vec<crate::plants::EggSpawn>,
+    },
 }
 
 /// Random-tick every loaded section once. New states go to the world and
@@ -632,6 +638,14 @@ pub fn run(state: &mut TickState, writes: &mut Vec<(BlockPos, u32)>, spawned: &m
                     continue;
                 }
                 vec![(at, air)]
+            }
+            Outcome::Hatch { cells, spawn } => {
+                for birth in spawn {
+                    let id = state.spawn_mob(birth.type_id, birth.pos, birth.health);
+                    crate::entity_life::make_child(state, id);
+                    spawned.push(id);
+                }
+                cells
             }
         };
         for (pos, new) in cells {
@@ -850,13 +864,17 @@ fn tick_cell(
         Kind::Copper => {
             crate::copper::random_tick(state, at, id, roll.below(u32::MAX)).map(Outcome::Set)
         }
-        Kind::Mineral => crate::plants::random_growth(
-            state,
-            at,
-            id,
-            hash(&[roll.below(u32::MAX) as u64, state.tick]),
-        )
-        .map(Outcome::Plants),
+        Kind::Mineral => {
+            let seed = hash(&[roll.below(u32::MAX) as u64, state.tick]);
+            if let Some(hatch) = crate::plants::egg_hatch(state, at, id, seed) {
+                Some(Outcome::Hatch {
+                    cells: hatch.cells,
+                    spawn: hatch.spawn,
+                })
+            } else {
+                crate::plants::random_growth(state, at, id, seed).map(Outcome::Plants)
+            }
+        }
         Kind::Plant => {
             if !can_stand(state, id, at) {
                 Some(Outcome::Pop)
