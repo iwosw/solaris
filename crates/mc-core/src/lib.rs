@@ -9,6 +9,7 @@ pub(crate) mod abstract_sim;
 mod abstract_sim_tests;
 pub mod advancements;
 pub mod allay;
+pub mod armadillo;
 mod armor_stand;
 mod beacon;
 #[cfg(test)]

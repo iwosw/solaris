@@ -453,6 +453,29 @@ fn apply_defense(
             }
         }
     }
+    // ARMADILLO-THREAT-ROLL (vanilla-like): a rolled-up armadillo halves
+    // melee and projectile damage.
+    if !shields
+        && piece.amount > 0.0
+        && matches!(
+            piece.kind,
+            crate::survival::DamageKind::Melee | crate::survival::DamageKind::Projectile
+        )
+    {
+        let rolled = crate::mounts::type_id(state.entities.body(actor))
+            .and_then(|id| state.registry.blueprint(id))
+            .is_some_and(|blueprint| blueprint.name == "minecraft:armadillo")
+            && state
+                .entities
+                .row(actor)
+                .entity_life
+                .armadillo
+                .as_ref()
+                .is_some_and(|st| st.rolled);
+        if rolled {
+            piece.amount *= 0.5;
+        }
+    }
     if !state.registry.item_facts.has_physical_profiles() {
         return true;
     }

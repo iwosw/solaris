@@ -39,6 +39,7 @@ pub struct EntityLifeState {
     pub stew_effects: Vec<mc_data::item_stack::StewEffect>,
     pub portal: crate::portals::PortalState,
     pub dolphin: Option<crate::dolphin::DolphinState>,
+    pub armadillo: Option<crate::armadillo::ArmadilloState>,
 }
 
 #[derive(Debug, Clone, PartialEq)]

@@ -519,6 +519,10 @@ pub(in crate::tick) fn interact_entity(
         crate::plugin::entity_interaction(state, entity, *target, *hand, secondary, None);
         return;
     }
+    if crate::armadillo::interact(state, entity, *target, *hand) {
+        crate::plugin::entity_interaction(state, entity, *target, *hand, secondary, None);
+        return;
+    }
     let first_intent = intents.len();
     if crate::mounts::interact(state, entity, *target, *hand, secondary, intents) {
         crate::plugin::entity_interaction(
