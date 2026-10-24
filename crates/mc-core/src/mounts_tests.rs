@@ -638,9 +638,10 @@ fn armadillo_curls_against_undead_and_halves_melee_damage() {
     state.commit_merge_effects();
     state.commit_merge_effects();
     let after = state.entities.row(slot(&state, armadillo)).health;
+    // Armadillo.hurtServer: scared damage maps (amount - 1) / 2.
     assert!(
-        before - after < 10.0,
-        "curled armadillo must take reduced melee damage, took {}",
+        (before - after - 4.5).abs() < f32::EPSILON,
+        "curled armadillo must take (10 - 1) / 2 damage, took {}",
         before - after
     );
 }
@@ -697,9 +698,10 @@ fn wolf_body_armor_absorbs_melee_damage_and_wears() {
     state.commit_merge_effects();
     state.commit_merge_effects();
     let after = state.entities.row(slot(&state, wolf)).health;
+    // Wolf.actuallyHurt: armor absorbs non-bypassed damage entirely.
     assert!(
-        before - after < 4.0,
-        "armored wolf must take reduced melee damage, took {}",
+        before - after == 0.0,
+        "armored wolf must take no melee damage, took {}",
         before - after
     );
     assert!(
@@ -709,7 +711,7 @@ fn wolf_body_armor_absorbs_melee_damage_and_wears() {
             .loot
             .body_armor
             .as_ref()
-            .is_some_and(|s| s.damage.unwrap_or(0) > 0),
+            .is_some_and(|s| s.damage.unwrap_or(0) == 4),
         "wolf armor must wear down when absorbing damage"
     );
 }
@@ -727,7 +729,15 @@ fn armadillo_scute_timer_drops_scute() {
         .entity_life
         .armadillo
         .get_or_insert_with(crate::armadillo::ArmadilloState::default)
-        .scute_ticks = 6_000;
+        .scute_ticks = 10;
+    state
+        .entities
+        .row_mut(slot)
+        .entity_life
+        .armadillo
+        .as_mut()
+        .expect("armadillo state")
+        .seeded = true;
     for _ in 0..3 {
         run_tick(&mut state, &[]);
     }

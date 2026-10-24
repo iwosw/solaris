@@ -462,9 +462,11 @@ fn powered_shelf_exchange_is_atomic_with_real_player_reservations() {
 
 #[test]
 fn chiseled_bookshelf_stores_and_returns_books() {
-    // CHISELED-BOOKSHELF through the block-use path: using a book on a
-    // chiseled bookshelf stores it; using the filled slot bare-handed
-    // returns it (vanilla 6-slot shelf).
+    // CHISELED-BOOKSHELF through the block-use path (ChiseledBookShelfBlock,
+    // 26.1.2): using a BOOKSHELF_BOOKS-tag book stores it (slot_4_occupied
+    // set for cursor [0.5; 3]); the comparator reads
+    // getLastInteractedSlot() + 1 = 5. Cursor math: col = section(0.5, 3)
+    // = 1, row = section(0.5, 2) = 1, index = 1 + 1 * 3 = 4.
     let (mut state, actor) = fixture(None);
     let id = block(&state, "chiseled_bookshelf", &[("facing", "south")]);
     state.world.set_block(8, 201, 8, id);
@@ -473,7 +475,29 @@ fn chiseled_bookshelf_stores_and_returns_books() {
     state.players.get_mut(&actor).unwrap().inventory.slots[0] = book.clone();
     assert!(use_on(&mut state, actor, Hand::Main, POS, 3, [0.5; 3]));
     assert!(state.players[&actor].inventory.slots[0].is_empty());
+    let stored = state
+        .world
+        .block_at(POS.x, POS.y, POS.z)
+        .and_then(|id| state.registry.blocks.by_id(mc_world::BlockStateId(id)))
+        .unwrap();
+    assert!(
+        stored.properties.iter().any(|(k, v)| k == "slot_4_occupied" && v == "true"),
+        "stored book must mark its slot occupied"
+    );
     state.players.get_mut(&actor).unwrap().inventory.slots[0] = ItemStack::EMPTY;
     assert!(use_on(&mut state, actor, Hand::Main, POS, 3, [0.5; 3]));
     assert_eq!(state.players[&actor].inventory.slots[0].count, 1);
+}
+
+#[test]
+fn chiseled_bookshelf_comparator_reads_last_interacted_slot() {
+    // Post-fix coverage (vanilla-b only): comparator = last slot + 1.
+    let (mut state, actor) = fixture(None);
+    let id = block(&state, "chiseled_bookshelf", &[("facing", "south")]);
+    state.world.set_block(8, 201, 8, id);
+    state.world.fold_overlay();
+    let book = stack(&state, "book", 1);
+    state.players.get_mut(&actor).unwrap().inventory.slots[0] = book.clone();
+    assert!(use_on(&mut state, actor, Hand::Main, POS, 3, [0.5; 3]));
+    assert_eq!(crate::chiseled_shelf::comparator(&state, POS), 5);
 }

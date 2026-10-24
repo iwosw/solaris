@@ -423,45 +423,71 @@ fn apply_defense(
     piece: &mut DamagePiece,
     shields: bool,
 ) -> bool {
-    // WOLF-ARMOR-ABSORB (vanilla-like): equipped wolf body armor halves
-    // incoming damage and wears by 1 per damaging hit, breaking at max
-    // durability (armadillo scutes repair it through the interact path).
+    // WOLF-ARMOR-ABSORB (Wolf.actuallyHurt/canArmorAbsorb, 26.1.2):
+    // equipped wolf armor fully absorbs damage that is not in the
+    // bypasses_wolf_armor tag, wearing ceil(amount) durability per hit and
+    // breaking at max damage. No armor-value reduction applies.
     if !shields && piece.amount > 0.0 {
-        let kind = crate::mounts::type_id(state.entities.body(actor))
+        let wolf = crate::mounts::type_id(state.entities.body(actor))
             .and_then(|id| state.registry.blueprint(id))
-            .map(|blueprint| blueprint.name.as_str());
-        if kind == Some("minecraft:wolf")
-            && state.entities.row(actor).loot.body_armor.is_some()
-        {
-            piece.amount *= 0.5;
-            let max = state
-                .registry
-                .item_rules()
-                .facts
-                .facts_for_stack(
-                    state.entities.row(actor).loot.body_armor.as_ref().expect("armor"),
-                    &state.registry.items,
+            .is_some_and(|blueprint| blueprint.name == "minecraft:wolf");
+        let armored = state
+            .entities
+            .row(actor)
+            .loot
+            .body_armor
+            .as_ref()
+            .is_some_and(|stack| {
+                state
+                    .registry
+                    .items
+                    .name_of(stack.item_id)
+                    .is_some_and(|name| name.as_str() == "minecraft:wolf_armor")
+            });
+        if wolf && armored {
+            let bypass = {
+                let cause = piece.source.and_then(|source| match source {
+                    crate::intent::DamageSource::Melee { attacker, .. } => Some(attacker),
+                    crate::intent::DamageSource::Mace { attacker, .. } => Some(attacker),
+                    crate::intent::DamageSource::Sweep { attacker, .. } => Some(attacker),
+                    _ => None,
+                });
+                let player_attack = cause.is_some_and(|id| state.players.contains_key(&id));
+                let type_id = piece.kind.type_id(piece.source, player_attack);
+                state.registry.tags.contains_raw_id(
+                    "minecraft:damage_type",
+                    "minecraft:bypasses_wolf_armor",
+                    type_id,
                 )
-                .and_then(|facts| facts.max_damage);
-            let row = state.entities.row_mut(actor);
-            let armor = row.loot.body_armor.as_mut().expect("armor");
-            let worn = armor.damage.unwrap_or(0).saturating_add(1);
-            if max.is_some_and(|max| worn as u32 >= max) {
-                row.loot.body_armor = None;
-            } else {
-                armor.damage = Some(worn);
+            };
+            if !bypass {
+                let max = state
+                    .registry
+                    .item_rules()
+                    .facts
+                    .facts_for_stack(
+                        state.entities.row(actor).loot.body_armor.as_ref().expect("armor"),
+                        &state.registry.items,
+                    )
+                    .and_then(|facts| facts.max_damage);
+                let row = state.entities.row_mut(actor);
+                let armor = row.loot.body_armor.as_mut().expect("armor");
+                let worn = armor
+                    .damage
+                    .unwrap_or(0)
+                    .saturating_add(piece.amount.ceil() as i32);
+                if max.is_some_and(|max| worn as u32 >= max) {
+                    row.loot.body_armor = None;
+                } else {
+                    armor.damage = Some(worn);
+                }
+                piece.amount = 0.0;
             }
         }
     }
-    // ARMADILLO-THREAT-ROLL (vanilla-like): a rolled-up armadillo halves
-    // melee and projectile damage.
-    if !shields
-        && piece.amount > 0.0
-        && matches!(
-            piece.kind,
-            crate::survival::DamageKind::Melee | crate::survival::DamageKind::Projectile
-        )
-    {
+    // ARMADILLO-THREAT-ROLL (Armadillo.hurtServer, 26.1.2): while scared
+    // (rolled up) incoming damage maps (amount - 1) / 2, all kinds.
+    if !shields && piece.amount > 0.0 {
         let rolled = crate::mounts::type_id(state.entities.body(actor))
             .and_then(|id| state.registry.blueprint(id))
             .is_some_and(|blueprint| blueprint.name == "minecraft:armadillo")
@@ -473,7 +499,7 @@ fn apply_defense(
                 .as_ref()
                 .is_some_and(|st| st.rolled);
         if rolled {
-            piece.amount *= 0.5;
+            piece.amount = (piece.amount - 1.0) / 2.0;
         }
     }
     if !state.registry.item_facts.has_physical_profiles() {

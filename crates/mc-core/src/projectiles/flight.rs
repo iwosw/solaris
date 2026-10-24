@@ -349,25 +349,27 @@ fn attached(state: &mut TickState, id: EntityId, record: &mut ProjectileState) -
     state
         .entities
         .set_pos(slot, state.entities.pos(target_slot));
-    // ELYTRA-FIREWORK-BOOST (vanilla-like): an attached rocket drives a
-    // gliding player along their horizontal look direction while it burns
-    // (burst speed; input movement recomputes velocity each tick).
+    // ELYTRA-FIREWORK-BOOST (FireworkRocketEntity.tick, 26.1.2): while
+    // attached and the owner is gliding, per axis v += look*0.1 +
+    // (look*1.5 - v)*0.5 (look = full 3D look angle; same mth convention as
+    // weapon geometry). Input movement recomputes velocity each tick, so the
+    // observable effect is the per-tick boost while the rocket burns.
     let gliding = state
         .players
         .get(&state.entities.body(target_slot).id)
         .is_some_and(|p| p.fall_flying && !p.vitals.is_dead());
     if gliding {
-        let yaw = state.entities.rot(target_slot)[0];
-        let yaw_rad = f64::from(yaw).to_radians();
-        let dir = [
-            -f64::from(mc_physics::mth::sin(yaw_rad)),
-            0.0,
-            f64::from(mc_physics::mth::cos(yaw_rad)),
+        let rot = state.entities.rot(target_slot);
+        let (yaw, pitch) = (f64::from(rot[0]).to_radians(), f64::from(rot[1]).to_radians());
+        let look = [
+            -f64::from(mc_physics::mth::sin(yaw)) * f64::from(mc_physics::mth::cos(pitch)),
+            -f64::from(mc_physics::mth::sin(pitch)),
+            f64::from(mc_physics::mth::cos(yaw)) * f64::from(mc_physics::mth::cos(pitch)),
         ];
         let vel = state.entities.vel(target_slot);
         state.entities.set_vel(
             target_slot,
-            [vel[0] + dir[0] * 1.5, vel[1], vel[2] + dir[2] * 1.5],
+            std::array::from_fn(|i| vel[i] + look[i] * 0.1 + (look[i] * 1.5 - vel[i]) * 0.5),
         );
         state.entities.set_vel(slot, [0.0; 3]);
     }
@@ -719,7 +721,8 @@ fn step(
             }
         }
         // Target blocks charge from projectile strikes (vanilla output).
-        crate::redstone::charge_target(state, block_position, impact);
+        let arrows = record.kind.arrow();
+        crate::redstone::charge_target(state, block_position, impact, velocity, arrows);
         record.stuck = true;
         record.critical = false;
         record.age = 0;

@@ -192,10 +192,15 @@ pub(crate) fn run(state: &mut TickState) {
     }
 }
 
-/// DOLPHIN-TREASURE (vanilla-like): a fed dolphin swims toward the
-/// nearest treasure container (chest, trapped chest or barrel) within 100
-/// blocks; reaching it clears GotFish. No structure navigation — the nearest
-/// loaded container stands in for buried treasure (documented approximation).
+/// DOLPHIN-TREASURE (DolphinSwimToTreasureGoal, 26.1.2): a fed dolphin
+/// with air >= 100 locates the nearest DOLPHIN_LOCATED structure
+/// (ocean_ruin/shipwreck via findNearestMapStructure radius 50) and swims
+/// there; arriving within 4.0 (closerToCenterThan) clears GotFish.
+/// Engine approximation (documented): the engine has no
+/// nearest-structure position lookup, so the nearest treasure container
+/// (chest/trapped chest/barrel) within 48 blocks stands in for the
+/// structure position. Gate (air >= 100) and arrival radius (4.0) match
+/// bytecode.
 pub(crate) fn treasure_search(state: &mut TickState) {
     // Collect seekers first (immutable borrow), then steer (mutable).
     let mut seekers: Vec<EntitySlot> = Vec::new();
@@ -206,6 +211,7 @@ pub(crate) fn treasure_search(state: &mut TickState) {
             continue;
         };
         if !body.alive
+            || body.air_supply < 100
             || !is_dolphin(type_id)
             || !state.entities.row(slot).entity_life.dolphin.as_ref().is_some_and(|d| d.got_fish)
         {

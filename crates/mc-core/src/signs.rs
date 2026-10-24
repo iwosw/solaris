@@ -389,51 +389,52 @@ pub(crate) fn use_on(state: &mut TickState, actor: EntityId, hand: Hand, pos: Bl
         return false;
     }
     if let Some((key, value)) = decoration {
-        // Vanilla SignApplicator.canApplyToSign: dye/glow apply only when
-        // the targeted face has a nonempty message; blank faces consume
-        // nothing. Waxing has no message requirement.
-        if key != "is_waxed" && !face_has_message(&nbt, front) {
-            return true;
-        }
-        let fields = if key == "is_waxed" {
-            let Tag::Compound(fields) = &mut nbt else {
-                unreachable!()
+        // Vanilla SignBlock.useItemOn via SignApplicator.canApplyToSign:
+        // dye/glow apply only when the targeted face has a nonempty
+        // message. A blank face falls through to empty-hand handling
+        // (vanilla TRY_WITH_EMPTY_HAND: the editor opens, nothing is
+        // consumed or awarded). Waxing has no message requirement.
+        if key == "is_waxed" || face_has_message(&nbt, front) {
+            let fields = if key == "is_waxed" {
+                let Tag::Compound(fields) = &mut nbt else {
+                    unreachable!()
+                };
+                fields
+            } else {
+                side_mut(&mut nbt, front)
             };
-            fields
-        } else {
-            side_mut(&mut nbt, front)
-        };
-        if !fields
-            .iter()
-            .any(|(name, old)| name == key && *old == value)
-        {
-            if crate::tick::held_debit_below_floor(state, actor, hand, 1) {
+            if !fields
+                .iter()
+                .any(|(name, old)| name == key && *old == value)
+            {
+                if crate::tick::held_debit_below_floor(state, actor, hand, 1) {
+                    return true;
+                }
+                let before = {
+                    let player = &state.players[&actor];
+                    player.inventory.slots[crate::tick::held_slot_index(player, hand)].clone()
+                };
+                set(fields, key, value);
+                if key == "is_waxed" {
+                    state
+                        .sign_editors
+                        .retain(|_, editor| editor.position != pos);
+                }
+                publish(state, pos, id, nbt);
+                let effects = state.players.get_mut(&actor).unwrap().consume_held(hand, 1);
+                for change in effects.changes {
+                    state.push_player(connection, change);
+                }
+                crate::advancements::accepted_block(
+                    state,
+                    actor,
+                    "minecraft:item_used_on_block",
+                    pos,
+                    Some(id),
+                    Some(before),
+                );
                 return true;
             }
-            let before = {
-                let player = &state.players[&actor];
-                player.inventory.slots[crate::tick::held_slot_index(player, hand)].clone()
-            };
-            set(fields, key, value);
-            if key == "is_waxed" {
-                state
-                    .sign_editors
-                    .retain(|_, editor| editor.position != pos);
-            }
-            publish(state, pos, id, nbt);
-            let effects = state.players.get_mut(&actor).unwrap().consume_held(hand, 1);
-            for change in effects.changes {
-                state.push_player(connection, change);
-            }
-            crate::advancements::accepted_block(
-                state,
-                actor,
-                "minecraft:item_used_on_block",
-                pos,
-                Some(id),
-                Some(before),
-            );
-            return true;
         }
     }
     // Vanilla only falls back to empty-hand editing for a main-hand use.

@@ -353,10 +353,18 @@ pub(crate) fn wake(state: &mut TickState, pos: BlockPos) {
     state.redstone.wake.push(pos);
 }
 
-/// TARGET-PROJECTILE-POWER (vanilla-like): a projectile striking a target
-/// block charges it; power follows hit accuracy (bullseye = 15) and decays
-/// after a short delay. Mirrors the campfire-relight direct-mutation path.
-pub(crate) fn charge_target(state: &mut TickState, pos: BlockPos, impact: [f64; 3]) {
+/// TARGET-PROJECTILE-POWER (TargetBlock.updateRedstoneOutput, 26.1.2):
+/// a projectile striking a target block charges it; power follows hit
+/// accuracy on the struck face (bullseye = 15, edge = 1) and decays after
+/// 20 ticks for arrows, 8 for other projectiles. Mirrors the
+/// campfire-relight direct-mutation path.
+pub(crate) fn charge_target(
+    state: &mut TickState,
+    pos: BlockPos,
+    impact: [f64; 3],
+    velocity: [f64; 3],
+    arrows: bool,
+) {
     let Some(current) = state.world.block_at(pos.x, pos.y, pos.z) else {
         return;
     };
@@ -366,15 +374,25 @@ pub(crate) fn charge_target(state: &mut TickState, pos: BlockPos, impact: [f64; 
     if block.block.id.path() != "target" {
         return;
     }
-    // Accuracy: distance from the block center on the struck face plane.
-    let center = [f64::from(pos.x) + 0.5, f64::from(pos.y) + 0.5, f64::from(pos.z) + 0.5];
-    let d = impact
+    // Accuracy (TargetBlock.getRedstoneStrength): over the two face-plane
+    // axes, max |frac(coord) - 0.5|; power = 1 + ceil(15 * clamp((0.5 -
+    // maxfrac) / 0.5, 0, 1)). The struck face is the dominant velocity axis.
+    let ax = velocity
         .into_iter()
-        .zip(center)
-        .map(|(a, b)| (a - b) * (a - b))
-        .sum::<f64>()
-        .sqrt();
-    let power = (15 - (d * 20.0).floor() as i64).clamp(1, 15);
+        .enumerate()
+        .max_by(|(_, a), (_, b)| a.abs().total_cmp(&b.abs()))
+        .map(|(i, _)| i)
+        .unwrap_or(0);
+    let mut maxfrac = 0.0_f64;
+    for (i, c) in impact.into_iter().enumerate() {
+        if i == ax {
+            continue;
+        }
+        let frac = c - c.floor();
+        maxfrac = maxfrac.max((frac - 0.5).abs());
+    }
+    let ratio = ((0.5 - maxfrac) / 0.5).clamp(0.0, 1.0);
+    let power = (1 + (15.0 * ratio).ceil() as i64).clamp(1, 15);
     let mut properties = block.properties.clone();
     let Some((_, value)) = properties.iter_mut().find(|(key, _)| key == "power") else {
         return;
@@ -388,7 +406,8 @@ pub(crate) fn charge_target(state: &mut TickState, pos: BlockPos, impact: [f64; 
         crate::boundary::BlockPos { x: pos.x, y: pos.y, z: pos.z },
         next.0,
     ));
-    schedule_cell(state, crate::boundary::BlockPos { x: pos.x, y: pos.y, z: pos.z }, 8, 4);
+    let delay = if arrows { 20 } else { 8 };
+    schedule_cell(state, crate::boundary::BlockPos { x: pos.x, y: pos.y, z: pos.z }, delay, 4);
     wake(state, crate::boundary::BlockPos { x: pos.x, y: pos.y, z: pos.z });
 }
 

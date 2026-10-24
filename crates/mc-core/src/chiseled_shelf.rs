@@ -29,27 +29,50 @@ fn prop<'a>(block: &'a mc_world::BlockState, name: &str) -> Option<&'a str> {
         .map(|(_, value)| value.as_str())
 }
 
+/// Vanilla BOOKSHELF_BOOKS tag (bookshelf_books.json, 26.1.2 data).
 fn accepts(state: &TickState, stack: &ItemStack) -> bool {
     !stack.is_empty()
-        && state
-            .registry
-            .items
-            .name_of(stack.item_id)
-            .is_some_and(|name| {
-                matches!(
-                    name.path(),
-                    "book" | "writable_book" | "written_book" | "enchanted_book"
-                )
-            })
+        && state.registry.tags.contains_raw_id(
+            "minecraft:item",
+            "minecraft:bookshelf_books",
+            stack.item_id as i32,
+        )
 }
 
-/// Comparator output: number of occupied slots (vanilla counts books 0-6).
+/// Comparator output (ChiseledBookShelfBlock.getAnalogOutputSignal,
+/// 26.1.2): getLastInteractedSlot() + 1 (block entity field, -1 when never
+/// touched). This is the last slot the player added to or removed from —
+/// not the filled count.
 pub(crate) fn comparator(state: &TickState, pos: BlockPos) -> u8 {
-    state
-        .block_entities
-        .get(&key(pos))
-        .map(|record| record.slots.iter().filter(|s| !s.is_empty()).count().min(6) as u8)
-        .unwrap_or(0)
+    let chunk = state.world.chunk(crate::boundary::ChunkPos {
+        x: pos.x.div_euclid(16),
+        z: pos.z.div_euclid(16),
+    });
+    let slot = chunk
+        .and_then(|chunk| chunk.block_entities.get(&pos))
+        .and_then(|bytes| mc_nbt::read_network(&mut bytes.as_slice()).ok())
+        .and_then(|tag| {
+            if let Tag::Compound(fields) = tag {
+                Some(fields)
+            } else {
+                None
+            }
+        })
+        .and_then(|fields| {
+            fields.iter().find_map(|(name, tag)| {
+                if name == "last_interacted_slot" {
+                    if let Tag::Int(v) = tag {
+                        Some(*v)
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            })
+        })
+        .unwrap_or(-1);
+    (slot + 1).clamp(0, 6) as u8
 }
 
 fn sync_occupied(state: &mut TickState, pos: BlockPos) {
@@ -123,9 +146,15 @@ pub(crate) fn use_on(
             },
         );
     }
-    let col = (u * 3.0).floor().clamp(0.0, 2.0) as usize;
-    let row = if cursor[1] >= 0.5 { 0 } else { 1 };
-    let index = row * 3 + col;
+    // SelectableSlotContainer default (26.1.2): section(f, n) =
+    // clamp(floor(f * 16 / (16 / n)), 0, n - 1); index = col + row * 3
+    // with row from (1 - y) over 2 rows, col from u over 3 columns.
+    let section = |f: f32, n: i32| {
+        ((f * 16.0 / (16.0 / n as f32)).floor() as i32).clamp(0, n - 1) as usize
+    };
+    let col = section(u, 3);
+    let row = section(1.0 - cursor[1], 2);
+    let index = col + row * 3;
     let selected = state
         .players
         .get(&actor)
@@ -162,11 +191,11 @@ pub(crate) fn use_on(
             0,
         );
     }
-    persist(state, pos);
+    persist(state, pos, index as i32);
     true
 }
 
-fn persist(state: &mut TickState, pos: BlockPos) {
+fn persist(state: &mut TickState, pos: BlockPos, last_slot: i32) {
     let Some(record) = state.block_entities.get(&key(pos)) else {
         return;
     };
@@ -177,7 +206,7 @@ fn persist(state: &mut TickState, pos: BlockPos) {
         ("z".into(), Tag::Int(pos.z)),
     ];
     mc_data::storage_blocks::encode_items(&mut fields, &record.slots, &state.registry.items);
-    fields.push(("last_interacted_slot".into(), Tag::Int(-1)));
+    fields.push(("last_interacted_slot".into(), Tag::Int(last_slot)));
     let nbt = Tag::Compound(fields);
     let mut bytes = Vec::new();
     mc_nbt::write_network(&mut bytes, &nbt).expect("chiseled shelf NBT encodes");
