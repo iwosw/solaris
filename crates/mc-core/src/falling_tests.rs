@@ -493,3 +493,35 @@ fn falling_entity_drops_are_independent_of_block_and_mob_drops() {
         "entity_drops disables only entity landing loot"
     );
 }
+
+#[test]
+fn restored_due_gravity_tick_starts_the_fall_without_nearby_writes() {
+    let (mut state, pos) = setup();
+    let sand = state.registry.states.sand;
+    state.world.set_block(pos.x, pos.y, pos.z, sand);
+    state.world.fold_overlay();
+    // A vanilla save stopped between support removal and the gravity tick.
+    state
+        .block_ticks
+        .schedule(mc_world::ScheduledBlockTick::new(
+            pos,
+            Identifier::parse("minecraft:sand").unwrap(),
+            state.tick + 2,
+            0,
+        ));
+    run_tick(&mut state, &[]);
+    assert_eq!(state.world.block_at(pos.x, pos.y, pos.z), Some(sand));
+    for _ in 0..2 {
+        run_tick(&mut state, &[]);
+    }
+    assert_eq!(
+        state.world.block_at(pos.x, pos.y, pos.z),
+        Some(state.registry.states.air)
+    );
+    assert!(
+        state
+            .entities
+            .slots()
+            .any(|slot| state.entities.row(slot).falling.is_some())
+    );
+}

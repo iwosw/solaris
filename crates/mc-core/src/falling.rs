@@ -122,14 +122,7 @@ pub(crate) fn start(
     writes: &mut Vec<(BlockPos, u32)>,
     spawned: &mut Vec<EntityId>,
 ) {
-    let Some(type_id) = state
-        .registry
-        .entity_types
-        .id_of(&Identifier::parse("minecraft:falling_block").expect("static id"))
-    else {
-        return;
-    };
-    let mut cells: Vec<_> = writes
+    let cells = writes
         .iter()
         .flat_map(|(pos, _)| {
             [
@@ -145,6 +138,33 @@ pub(crate) fn start(
             ]
         })
         .collect();
+    start_cells(state, cells, writes, spawned);
+}
+
+/// A due scheduled gravity tick (vanilla `FallingBlock.tick`, for example one
+/// restored from a save) re-checks its own cell without any nearby write.
+pub(crate) fn scheduled(
+    state: &mut TickState,
+    pos: BlockPos,
+    writes: &mut Vec<(BlockPos, u32)>,
+    spawned: &mut Vec<EntityId>,
+) {
+    start_cells(state, vec![pos], writes, spawned);
+}
+
+fn start_cells(
+    state: &mut TickState,
+    mut cells: Vec<BlockPos>,
+    writes: &mut Vec<(BlockPos, u32)>,
+    spawned: &mut Vec<EntityId>,
+) {
+    let Some(type_id) = state
+        .registry
+        .entity_types
+        .id_of(&Identifier::parse("minecraft:falling_block").expect("static id"))
+    else {
+        return;
+    };
     cells.sort_by_key(|pos| (pos.x, pos.z, pos.y));
     cells.dedup();
     let mut index = 0;

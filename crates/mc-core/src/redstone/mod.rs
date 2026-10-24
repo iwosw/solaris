@@ -538,15 +538,17 @@ fn tick_cell(
 ) {
     let pos = tick.pos;
     rails::reshape(state, writes, pos);
-    let Some(block) = state
-        .world
-        .block_at(pos.x, pos.y, pos.z)
-        .and_then(|id| registry.blocks.by_id(BlockStateId(id)))
-    else {
+    let Some(id) = state.world.block_at(pos.x, pos.y, pos.z) else {
+        return;
+    };
+    let Some(block) = registry.blocks.by_id(BlockStateId(id)) else {
         return;
     };
     let path = block.block.id.path();
     match path {
+        _ if crate::falling::gravity(&registry.blocks, id) => {
+            crate::falling::scheduled(state, pos, writes, spawned);
+        }
         _ if path.ends_with("lightning_rod") => {
             if tick.priority == 4 {
                 change(state, writes, pos, "powered", "false");
