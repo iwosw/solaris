@@ -160,7 +160,7 @@ pub fn restore_appearance(body: &crate::entities::Body, row: &mut ColdRow) {
     ) else {
         return;
     };
-    if old_ageable(contract.name) || contract.name == "minecraft:tadpole" {
+    if ageable(contract.name) || contract.name == "minecraft:tadpole" {
         crate::golden_dandelion::sync(row);
     }
     // Custom tame-health attributes were captured natively; presentation alone
@@ -737,7 +737,7 @@ pub fn advance(state: &mut TickState) {
             if row.entity_life.child_ticks > 0 && !row.entity_life.age_lock.locked {
                 row.entity_life.child_ticks -= 1;
                 row.love = 0;
-                if row.entity_life.child_ticks == 0 {
+                if row.entity_life.child_ticks == 0 && row.appearance.baby {
                     Arc::make_mut(&mut row.appearance).baby = false;
                     let body = state.entities.body_mut(slot);
                     half_width = Some(body.half_width * 2.0);
@@ -820,8 +820,8 @@ pub fn to_fields(life: &EntityLifeState, love: u32) -> Vec<(String, mc_nbt::Tag)
     fields
 }
 
-/// OLD default_breeding_state includes sterile mules as ageable animals.
-pub(crate) fn old_ageable(name: &str) -> bool {
+/// Vanilla Animal/AgeableWaterCreature families; villagers own their age separately.
+pub(crate) fn ageable(name: &str) -> bool {
     matches!(
         name,
         "minecraft:sheep"
@@ -832,6 +832,7 @@ pub(crate) fn old_ageable(name: &str) -> bool {
             | "minecraft:goat"
             | "minecraft:rabbit"
             | "minecraft:camel"
+            | "minecraft:camel_husk"
             | "minecraft:armadillo"
             | "minecraft:axolotl"
             | "minecraft:bee"
@@ -840,6 +841,8 @@ pub(crate) fn old_ageable(name: &str) -> bool {
             | "minecraft:horse"
             | "minecraft:donkey"
             | "minecraft:mule"
+            | "minecraft:skeleton_horse"
+            | "minecraft:zombie_horse"
             | "minecraft:llama"
             | "minecraft:trader_llama"
             | "minecraft:ocelot"
@@ -847,6 +850,8 @@ pub(crate) fn old_ageable(name: &str) -> bool {
             | "minecraft:hoglin"
             | "minecraft:strider"
             | "minecraft:dolphin"
+            | "minecraft:squid"
+            | "minecraft:glow_squid"
             | "minecraft:nautilus"
             | "minecraft:zombie_nautilus"
             | "minecraft:happy_ghast"
@@ -854,6 +859,33 @@ pub(crate) fn old_ageable(name: &str) -> bool {
             | "minecraft:panda"
             | "minecraft:polar_bear"
             | "minecraft:turtle"
+            | "minecraft:frog"
+            | "minecraft:parrot"
+    )
+}
+
+/// These AgeableMob subclasses override vanilla `isBaby` to always return false.
+pub(crate) fn age_has_baby_model(name: &str) -> bool {
+    !matches!(
+        name,
+        "minecraft:camel_husk"
+            | "minecraft:frog"
+            | "minecraft:parrot"
+            | "minecraft:zombie_nautilus"
+    )
+}
+
+/// Boolean baby state, not the growing AgeableMob clock.
+pub(crate) fn uses_is_baby(name: &str) -> bool {
+    matches!(
+        name,
+        "minecraft:zombie"
+            | "minecraft:husk"
+            | "minecraft:drowned"
+            | "minecraft:zombie_villager"
+            | "minecraft:zombified_piglin"
+            | "minecraft:piglin"
+            | "minecraft:zoglin"
     )
 }
 

@@ -1532,7 +1532,15 @@ pub(crate) fn restore_entity(
         },
     );
     if let Some(slot) = state.entities.slot_of(entity_id) {
-        if record.state.entity_life.child_ticks != 0 {
+        let baby = record.appearance.baby
+            || (record.state.entity_life.child_ticks != 0
+                && crate::entity_life::age_has_baby_model(
+                    state
+                        .registry
+                        .entity_type_name(record.type_id)
+                        .expect("restored entity type"),
+                ));
+        if baby {
             state.entities.set_half_width(slot, half_width * 0.5);
         }
         state
@@ -1561,7 +1569,7 @@ pub(crate) fn restore_entity(
         if body.burn_ticks != 0 {
             Arc::make_mut(&mut row.appearance).shared_flags |= 1;
         }
-        if row.entity_life.child_ticks != 0 {
+        if baby {
             Arc::make_mut(&mut row.appearance).baby = true;
             body.height *= 0.5;
         }
@@ -2670,6 +2678,11 @@ pub(crate) fn appearance_from_vanilla_entity(
             ("CustomNameVisible", mc_nbt::Tag::Byte(value)) => {
                 image.custom_name_visible = *value != 0;
             }
+            ("IsBaby", mc_nbt::Tag::Byte(value))
+                if crate::entity_life::uses_is_baby(&record.id) =>
+            {
+                image.baby = *value != 0;
+            }
             _ => {}
         }
     }
@@ -2894,6 +2907,12 @@ fn entity_capture_record(
                 .expect("live villager state satisfies persistence invariants")
         })
         .unwrap_or_default();
+    if crate::entity_life::uses_is_baby(&name) && row.villager.is_none() {
+        extra_fields.push((
+            "IsBaby".into(),
+            mc_nbt::Tag::Byte(i8::from(row.appearance.baby)),
+        ));
+    }
     extra_fields.extend(
         crate::journal::EntityStateImage::from_row(body, row).to_fields(&view.registry.blocks),
     );

@@ -1337,39 +1337,7 @@ fn vanilla_capabilities(blueprint: &mut MobBlueprint) {
                 | "minecraft:zoglin"
                 | "minecraft:zombie_horse"
         ),
-        ageable: matches!(
-            name,
-            "minecraft:sheep"
-                | "minecraft:cow"
-                | "minecraft:mooshroom"
-                | "minecraft:chicken"
-                | "minecraft:pig"
-                | "minecraft:goat"
-                | "minecraft:rabbit"
-                | "minecraft:camel"
-                | "minecraft:armadillo"
-                | "minecraft:axolotl"
-                | "minecraft:bee"
-                | "minecraft:cat"
-                | "minecraft:wolf"
-                | "minecraft:horse"
-                | "minecraft:donkey"
-                | "minecraft:mule"
-                | "minecraft:llama"
-                | "minecraft:trader_llama"
-                | "minecraft:ocelot"
-                | "minecraft:fox"
-                | "minecraft:hoglin"
-                | "minecraft:strider"
-                | "minecraft:dolphin"
-                | "minecraft:nautilus"
-                | "minecraft:zombie_nautilus"
-                | "minecraft:happy_ghast"
-                | "minecraft:sniffer"
-                | "minecraft:panda"
-                | "minecraft:polar_bear"
-                | "minecraft:turtle"
-        ),
+        ageable: crate::entity_life::ageable(name),
         milkable: matches!(
             name,
             "minecraft:cow" | "minecraft:goat" | "minecraft:mooshroom"
