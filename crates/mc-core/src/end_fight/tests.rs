@@ -423,6 +423,22 @@ fn config(root: &std::path::Path) -> crate::config::CoreConfig {
     config
 }
 #[test]
+fn peaceful_end_checkpoint_reopens_with_the_same_dragon() {
+    let mut s = running();
+    let uuid = s.end_fight.dragon_uuid.unwrap();
+    s.difficulty = crate::survival::Difficulty::Peaceful;
+    run_tick(&mut s, &[]);
+    let directory = tempfile::tempdir().unwrap();
+    native_fixture(&s, directory.path());
+    let core = crate::Core::open(config(directory.path())).unwrap();
+    core.shutdown();
+    assert_eq!(s.end_fight.dragon_uuid, Some(uuid));
+    assert!(s.entities.slot_of_uuid(uuid).is_some());
+    let core = crate::Core::open(config(directory.path())).unwrap();
+    core.shutdown();
+}
+
+#[test]
 fn native_metadata_uses_measured_26_1_keys_and_rejects_malformed_phase_beam() {
     let mut s = running();
     let slot = dragon_slot(&s).unwrap();

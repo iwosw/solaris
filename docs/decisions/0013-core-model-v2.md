@@ -2132,6 +2132,13 @@ it disappears, so `/forceload remove` cannot be resurrected by a stale image.
   committed checkpoint saw them, which can be inside something built later.
   All captured mob motion is committed atomically with the other domains:
   crashes cannot mix positions from partially written checkpoints.
+- **End dragon despawn ownership (2026-10-24).** Native dragons bypass generic
+  natural despawning: local 26.1.2 `EnderDragon.checkDespawn` bytecode is an
+  unconditional return, including on Peaceful. The End fight retains its dragon
+  UUID and the corresponding body through a Peaceful tick and checkpoint/reopen.
+  Other monsters retain their ordinary Peaceful removal policy. This prevents
+  newly dangling fight identities; it does not repair already corrupt checkpoints
+  or relax native admission's missing-entity checks.
   Other entity changes (spawn, removal, health, carried items, equipment,
   variant) and all player state including position are journaled as post-images;
   lifetime age is reconstructed from committed tick anchors. Replay reaches
