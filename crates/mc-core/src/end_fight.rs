@@ -360,7 +360,7 @@ pub(crate) fn commit(state: &mut TickState, changes: &mut ChangeSet) {
         if let Some(slot) = state.entities.slot_of_uuid(uuid) {
             if state.end_fight.phase != Phase::PerchingFlaming {
                 let id = state.entities.body(slot).id;
-                state.entities.remove(slot);
+                state.remove_entity(slot);
                 changes.entities_removed.push(id);
                 state.end_fight.flame_cloud = None;
             }
@@ -476,7 +476,7 @@ fn death_tick(state: &mut TickState, changes: &mut ChangeSet, slot: EntitySlot) 
         return;
     }
     let id = state.entities.body(slot).id;
-    state.entities.remove(slot);
+    state.remove_entity(slot);
     changes.entities_removed.push(id);
     crate::end_portals::set_exit_portal(state, changes, true);
     if !state.end_fight.previously_killed {
@@ -558,7 +558,7 @@ fn respawn_tick(state: &mut TickState, changes: &mut ChangeSet) {
             for uuid in respawn.crystals {
                 if let Some(slot) = state.entities.slot_of_uuid(uuid) {
                     let id = state.entities.body(slot).id;
-                    state.entities.remove(slot);
+                    state.remove_entity(slot);
                     changes.entities_removed.push(id);
                 }
             }

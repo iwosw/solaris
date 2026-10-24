@@ -156,7 +156,7 @@ fn durable_checkpoint_prunes_covered_batches_and_crash_replays_only_tail() {
             )
             .unwrap();
         let done_rx = (!lose_ack).then_some(done_rx);
-        run_native_work(
+        let outcome = run_native_work(
             NativeWork::Checkpoint {
                 job,
                 plugins: Ok(Box::new(state.plugins.clone())),
@@ -167,6 +167,7 @@ fn durable_checkpoint_prunes_covered_batches_and_crash_replays_only_tail() {
             &mut manifest,
             &mut Default::default(),
         );
+        assert!(outcome.is_continue(), "a checkpoint does not stop the writer");
         if let Some(done_rx) = done_rx {
             assert!(done_rx.recv().unwrap().is_some());
         }

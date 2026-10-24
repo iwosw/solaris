@@ -520,8 +520,10 @@ fn despawn(
         let row = state.entities.row(*slot);
         match state.entities.body(*slot).kind {
             EntityKind::Item { .. } => row.age >= ITEM_LIFESPAN,
-            EntityKind::Mob { .. } => {
-                state.entities.body(*slot).alive
+            EntityKind::Mob { type_id } => {
+                // Vanilla EnderDragon.checkDespawn is a no-op, even on Peaceful.
+                !crate::end_fight::dragon_type(type_id)
+                    && state.entities.body(*slot).alive
                     && !no_work_before_category(row, peaceful_difficulty, no_players)
             }
             _ => false,

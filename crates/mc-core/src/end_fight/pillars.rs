@@ -164,7 +164,7 @@ pub(super) fn rebuild(state: &mut TickState, changes: &mut ChangeSet, index: u8)
     for uuid in &old {
         if let Some(slot) = state.entities.slot_of_uuid(*uuid) {
             let id = state.entities.body(slot).id;
-            state.entities.remove(slot);
+            state.remove_entity(slot);
             changes.entities_removed.push(id);
         }
     }

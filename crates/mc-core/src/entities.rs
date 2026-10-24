@@ -660,6 +660,8 @@ impl EntityStore {
     }
 
     /// Remove by dense slot via swap-remove; returns the moved entity's slot fixup.
+    /// Tick code removes through `TickState::remove_entity`, which also moves
+    /// the slots staged for this tick's merge/commit.
     pub fn remove(&mut self, slot: EntitySlot) -> Option<(EntityId, EntitySlot)> {
         let idx = slot.0 as usize;
         if idx >= self.bodies.len() {

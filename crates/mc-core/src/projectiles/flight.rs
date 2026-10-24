@@ -16,7 +16,9 @@ use crate::tick::TickState;
 pub(super) struct Hittable {
     id: EntityId,
     uuid: Uuid,
-    deployed_candidate: Option<EntitySlot>,
+    /// Armor stand: a possible plugin deployment. Hit tests resolve its slot by
+    /// id, because a projectile removed earlier in the same pass swap-moves rows.
+    deployed_candidate: bool,
     min: [f64; 3],
     max: [f64; 3],
 }
@@ -45,7 +47,7 @@ fn hittables(state: &TickState, bodies: &mut Vec<Hittable>) {
             Hittable {
                 id: body.id,
                 uuid: row.uuid,
-                deployed_candidate: crate::armor_stand::is_stand(state, slot).then_some(slot),
+                deployed_candidate: crate::armor_stand::is_stand(state, slot),
                 min: [pos[0] - body.half_width, pos[1], pos[2] - body.half_width],
                 max: [
                     pos[0] + body.half_width,
@@ -65,7 +67,7 @@ fn hittables(state: &TickState, bodies: &mut Vec<Hittable>) {
                 bodies.push(Hittable {
                     id: part,
                     uuid,
-                    deployed_candidate: None,
+                    deployed_candidate: false,
                     min,
                     max,
                 });
@@ -449,7 +451,12 @@ fn step(
                     })
                 })
                 .filter_map(|body| {
-                    let hit = body.deployed_candidate.and_then(|candidate| {
+                    let candidate = if body.deployed_candidate {
+                        state.entities.slot_of_any(body.id)
+                    } else {
+                        None
+                    };
+                    let hit = candidate.and_then(|candidate| {
                         crate::plugin_npcs::deployed_projectile_hit(
                             state,
                             candidate,
@@ -479,7 +486,7 @@ fn step(
                         }
                     })
                     .filter(|t| *t <= reach)
-                    .map(|t| (t, body, hit.is_some()))
+                    .map(|t| (t, body, hit.and(candidate)))
                 })
                 .min_by(|a, b| a.0.total_cmp(&b.0).then_with(|| a.1.id.cmp(&b.1.id)));
             let Some((t, body, deployed)) = victim else {
@@ -506,8 +513,9 @@ fn step(
             } else {
                 None
             };
-            if deployed && record.kind.arrow() {
-                let candidate = body.deployed_candidate.expect("deployed native stand slot");
+            if let Some(candidate) = deployed
+                && record.kind.arrow()
+            {
                 let physical = physical_impact.unwrap_or_else(|| {
                     let direct_type_id = match state.entities.body(slot).kind {
                         EntityKind::Mob { type_id } => type_id,

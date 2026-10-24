@@ -86,14 +86,14 @@ async fn run(cli: Cli, mut cfg: mc_edge::config::EdgeConfig) -> anyhow::Result<(
         result = mc_edge::server::serve_with_console(listener, server, !cli.no_console) => {
             // Record the edge result before shutdown drops the tick broadcast.
             match &result {
-                Ok(()) => tracing::error!(cause = "edge serve loop returned", "server stopping"),
+                Ok(()) => info!(cause = "edge serve loop returned", "server stopping"),
                 Err(error) => tracing::error!(error = %format_args!("{error:#}"), "edge failed; server stopping"),
             }
             shutdown_core.shutdown();
             result
         }
         cause = shutdown => {
-            tracing::error!(cause, "shutdown requested; stopping core");
+            info!(cause, "shutdown requested; stopping core");
             shutdown_core.shutdown();
             info!(cause, "shutdown requested; core stopped");
             Ok(())
