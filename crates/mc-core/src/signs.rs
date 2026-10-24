@@ -295,11 +295,45 @@ pub(crate) fn intercepts_placement(
         && hand == Hand::Main
 }
 
+/// Whether the sign face NBT carries a nonempty rendered message.
+fn face_has_message(nbt: &Tag, front: bool) -> bool {
+    let Tag::Compound(fields) = nbt else {
+        return false;
+    };
+    let side = if front { "front_text" } else { "back_text" };
+    let Some(Tag::Compound(side_fields)) =
+        fields.iter().find(|(key, _)| key == side).map(|(_, value)| value)
+    else {
+        return false;
+    };
+    side_fields
+        .iter()
+        .find(|(key, _)| key == "messages" || key == "message")
+        .is_some_and(|(_, value)| match value {
+            Tag::List(list) => list.elements.iter().any(|line| match line {
+                Tag::String(text) => {
+                    let text = text.trim();
+                    !text.trim().is_empty()
+                }
+                _ => false,
+            }),
+            Tag::String(text) => {
+                let text = text.trim();
+                !text.trim().is_empty()
+            }
+            _ => false,
+        })
+}
+
 pub(crate) fn use_on(state: &mut TickState, actor: EntityId, hand: Hand, pos: BlockPos) -> bool {
     let Some(player) = state.players.get(&actor) else {
         return false;
     };
     if player.spectator() {
+        return false;
+    }
+    // Vanilla mayBuild: Adventure players cannot edit or decorate signs.
+    if player.game_mode == crate::commands::GameMode::Adventure {
         return false;
     }
     let Some(id) = state.world.block_at(pos.x, pos.y, pos.z) else {
@@ -355,6 +389,12 @@ pub(crate) fn use_on(state: &mut TickState, actor: EntityId, hand: Hand, pos: Bl
         return false;
     }
     if let Some((key, value)) = decoration {
+        // Vanilla SignApplicator.canApplyToSign: dye/glow apply only when
+        // the targeted face has a nonempty message; blank faces consume
+        // nothing. Waxing has no message requirement.
+        if key != "is_waxed" && !face_has_message(&nbt, front) {
+            return true;
+        }
         let fields = if key == "is_waxed" {
             let Tag::Compound(fields) = &mut nbt else {
                 unreachable!()

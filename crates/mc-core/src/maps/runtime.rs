@@ -310,6 +310,21 @@ pub(crate) fn tick(state: &mut TickState) {
                 if !entries.contains(&marker) {
                     entries.push(marker);
                 }
+                // Retain the framed waypoint on the map itself so distant
+                // held clones keep the green pointer after everyone leaves
+                // the frame-view radius (vanilla frameMarkers).
+                if let Some(map) = state.maps.records.get_mut(&id) {
+                    let map = std::sync::Arc::make_mut(map);
+                    let retained = (
+                        frame_pos[0].floor() as i32,
+                        frame_pos[2].floor() as i32,
+                        angle as i32,
+                    );
+                    if !map.frame_markers.contains(&retained) {
+                        map.frame_markers.push(retained);
+                        state.maps.dirty.insert(id);
+                    }
+                }
             }
         }
     }
@@ -412,7 +427,21 @@ pub(crate) fn tick(state: &mut TickState) {
                 .insert((connection, id), (Arc::clone(&map), state.tick));
             let mut update = difference(id, &map, old.as_ref().map(|(map, _)| map.as_ref()));
             if map.tracking && map.dimension == state.dimension {
-                for &(x, z, angle, frame, hidden, owner) in &markers[&id] {
+                // Live markers first (frame + carriers), then retained framed
+                // waypoints not currently visible (distant home waypoints).
+                let live: std::collections::BTreeSet<(i64, i64)> = markers[&id]
+                    .iter()
+                    .map(|&(x, z, _, _, _, _)| (x as i64, z as i64))
+                    .collect();
+                let mut all = markers[&id].clone();
+                for &(fx, fz, angle) in &map.frame_markers {
+                    let (fx, fz) = (fx as f64, fz as f64);
+                    if live.contains(&(fx as i64, fz as i64)) {
+                        continue;
+                    }
+                    all.push((fx, fz, angle as f32, true, false, connection));
+                }
+                for &(x, z, angle, frame, hidden, owner) in &all {
                     // Pumpkin hiding is recipient-dependent: hidden carriers
                     // stay visible on their own map, not on others'.
                     if hidden && owner != connection {

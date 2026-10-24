@@ -383,6 +383,9 @@ pub(in crate::tick) fn leave(
         state.left_players.push(uuid);
     }
     state.locked_sessions.remove(connection);
+    // A disconnected editor releases its sign (vanilla SignBlockEntity
+    // clears editors whose player is missing); other players can edit it.
+    state.sign_editors.remove(connection);
     if let Some(entity) = state.connections.remove_by_connection(*connection) {
         state.sleepers.remove(&entity);
         // `slot_of_any`: a player who leaves while dead must
