@@ -272,11 +272,20 @@ fn native_random_sampler_reaches_extra_plants_and_support_cascade() {
         .insert("random_tick_speed".into(), super::FAST.into());
     plant(&mut state, 1, Y, 0, "soul_sand", &[]);
     plant(&mut state, 1, Y + 1, 0, "nether_wart", &[("age", "0")]);
-    super::run(&mut state, 20);
-    assert_eq!(
-        at(&state, 1, Y + 1, 0),
-        block(&state, "nether_wart", &[("age", "3")])
-    );
+    // Vanilla advances one age per received random tick gated 1/10 (pinned
+    // 26.1.2 NetherWartBlock bytecode: nextInt(10) == 0); at accelerated
+    // speed the wart must mature within a generous bound, not on an exact
+    // tick — the old exact-age-3-at-20 oracle over-fit deterministic RNG.
+    let mature = block(&state, "nether_wart", &[("age", "3")]);
+    let mut grown = false;
+    for _ in 0..200 {
+        super::run(&mut state, 1);
+        if at(&state, 1, Y + 1, 0) == mature {
+            grown = true;
+            break;
+        }
+    }
+    assert!(grown, "accelerated wart matures");
     super::dig(&mut state, 1, Y, 0);
     assert_eq!(at(&state, 1, Y + 1, 0), state.registry.states.air);
 }
