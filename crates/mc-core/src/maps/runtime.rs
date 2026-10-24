@@ -1,5 +1,5 @@
 use super::{SavedMap, decoration_id, map_id};
-use crate::boundary::{ConnectionId, EntityDataValue, Hand, PlayerChange};
+use crate::boundary::{ConnectionId, EntityDataValue, PlayerChange};
 use crate::tick::TickState;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
@@ -125,8 +125,13 @@ pub(crate) fn tick(state: &mut TickState) {
             continue;
         };
         let pos = state.entities.pos(slot);
-        for hand in [Hand::Main, Hand::Off] {
-            let held = &player.inventory.slots[crate::tick::held_slot_index(player, hand)];
+        // Vanilla multiplayer markers: a cloned map anywhere in the
+        // inventory (not only held) makes its carrier visible.
+        let mut seen = std::collections::BTreeSet::new();
+        for held in &player.inventory.slots {
+            if held.is_empty() || !seen.insert(held.item_id) {
+                continue;
+            }
             if let Some(id) = map_id(held) {
                 super::adopt_item_decorations(&mut state.maps, id, held);
                 views.entry(id).or_default().insert(player.connection);
@@ -195,11 +200,21 @@ pub(crate) fn tick(state: &mut TickState) {
         let Some(mut map) = state.maps.records.remove(&id) else {
             continue;
         };
-        if !map.locked && map.dimension == state.dimension {
+        // Vanilla mapping requires the map (or a clone) in a player's hand:
+        // framed copies alone never sample terrain (they still deliver
+        // pixels/markers to viewers). A held clone revisiting updates both.
+        let holders = &markers[&id];
+        let held = holders.iter().any(|&(_, _, _, frame)| !frame);
+        if !map.locked && map.dimension == state.dimension && held {
             let cost = 1_usize << (2 * map.scale);
             let count = (budget / cost).min(128);
-            let holders = &markers[&id];
-            let (x, z, _, _) = holders[start % holders.len()];
+            let (x, z, _, _) = holders
+                .iter()
+                .enumerate()
+                .filter(|(_, holder)| !holder.3)
+                .nth(start % holders.iter().filter(|holder| !holder.3).count().max(1))
+                .map(|(_, holder)| *holder)
+                .unwrap_or(holders[start % holders.len()]);
             let step = f64::from(1_u32 << map.scale);
             let radius = (128.0 / step).ceil() as i32;
             let px = ((x - f64::from(map.center[0])) / step).floor() as i32 + 64;

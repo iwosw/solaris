@@ -105,13 +105,20 @@ pub(crate) fn spawn(
     glow: bool,
     mut item: ItemStack,
 ) -> Option<EntityId> {
-    if !support(state, position, face)
-        || frame_at(state, position, face).is_some()
-        || !state
-            .world
-            .block_at(position.x, position.y, position.z)
-            .is_some_and(|id| crate::tick::replaceable(state, id))
-    {
+    if !support(state, position, face) || frame_at(state, position, face).is_some() {
+        return None;
+    }
+    // Vanilla geometric coexistence: frames share their cell with air,
+    // fluids, replaceable blocks and redstone dust (non-solid shapes that do
+    // not intersect the frame). Full solid blocks dislodge the frame.
+    let clear = state
+        .world
+        .block_at(position.x, position.y, position.z)
+        .is_some_and(|id| {
+            crate::tick::replaceable(state, id)
+                || state.registry.materials.classify(id) != mc_physics::BlockMaterial::Solid
+        });
+    if !clear {
         return None;
     }
     let kind = if glow {
@@ -421,6 +428,28 @@ fn break_frame(state: &mut TickState, slot: EntitySlot, drop: bool, spawned: &mu
     state.remove_entity(slot);
     crate::redstone::wake(state, position);
 }
+/// Vanilla frame contents rule: a non-explosive projectile hit on an
+/// occupied frame ejects the displayed item and spares the frame. Returns
+/// true when the hit was consumed by an ejection.
+pub(crate) fn eject_on_projectile(state: &mut TickState, target: EntityId) -> bool {
+    let Some(slot) = state
+        .entities
+        .slot_of(target)
+        .filter(|slot| name(state, *slot).is_some())
+    else {
+        return false;
+    };
+    if displayed(state, slot).is_none() {
+        return false;
+    }
+    let mut spawned = Vec::new();
+    let ejected = drop_display(state, slot, true, &mut spawned);
+    for id in spawned {
+        state.hostile.spawned.push(id);
+    }
+    ejected
+}
+
 pub(crate) fn attack(
     state: &mut TickState,
     actor: EntityId,
@@ -437,10 +466,9 @@ pub(crate) fn attack(
     let Some(player) = state.players.get(&actor) else {
         return true;
     };
-    if player.spectator()
-        || player.vitals.is_dead()
-        || player.game_mode == crate::commands::GameMode::Adventure
-    {
+    // Vanilla frames break by punching even in Adventure (no game-mode
+    // gate in the frame damage path); spectators and the dead stay out.
+    if player.spectator() || player.vitals.is_dead() {
         return true;
     }
     let drop = !player.creative();
@@ -539,7 +567,11 @@ pub(crate) fn blocks_changed(
                 ) || !state
                     .world
                     .block_at(position.x, position.y, position.z)
-                    .is_some_and(|id| crate::tick::replaceable(state, id)))
+                    .is_some_and(|id| {
+                        crate::tick::replaceable(state, id)
+                            || state.registry.materials.classify(id)
+                                != mc_physics::BlockMaterial::Solid
+                    }))
             {
                 invalid.push(state.entities.body(slot).id);
             }

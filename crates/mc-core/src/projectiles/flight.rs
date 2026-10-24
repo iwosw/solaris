@@ -599,6 +599,15 @@ fn step(
                         ..Default::default()
                     },
                 });
+            } else if record.kind.arrow()
+                && crate::item_frame::eject_on_projectile(state, body.id)
+            {
+                // Vanilla occupied frame: first non-explosive hit ejects the
+                // displayed item and leaves the frame attached. The arrow is
+                // consumed without frame damage.
+                state.projectiles.pending_arrow_removals.insert(id);
+                state.entities.set_pos(slot, impact);
+                return false;
             } else if super::payloads::breaks_armor_stand(state, body.id)
                 && (record.kind.arrow() || record.kind == ProjectileKind::Trident)
             {
