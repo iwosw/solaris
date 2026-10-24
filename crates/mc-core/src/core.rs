@@ -2892,6 +2892,11 @@ fn entity_capture_record(
     if let Some(vehicle) = &row.entity_life.vehicle {
         extra_fields.extend(crate::vehicles::to_fields(vehicle, &view.registry.items));
     }
+    extra_fields.extend(crate::mounts::persistence::cargo_to_fields(
+        &row.entity_life.mount,
+        &view.registry.items,
+        &name,
+    ));
     extra_fields.extend(
         crate::entity_loot::equipment_to_fields(
             &view.registry.items,

@@ -160,6 +160,53 @@ pub(crate) fn cargo_from_record(
     }
     Ok(())
 }
+
+/// Mount-owned keys must not survive as stale opaque inventory after withdrawal.
+pub(crate) fn owns_cargo_field(name: &str, key: &str) -> bool {
+    matches!(
+        name,
+        "minecraft:donkey" | "minecraft:mule" | "minecraft:llama" | "minecraft:trader_llama"
+    ) && (matches!(key, "ChestedHorse" | "Items") || (name.ends_with("llama") && key == "Strength"))
+}
+
+pub(crate) fn cargo_to_fields(
+    mount: &super::MountState,
+    items: &mc_data::items::ItemRegistry,
+    name: &str,
+) -> Vec<(String, Tag)> {
+    if !owns_cargo_field(name, "Items") {
+        return Vec::new();
+    }
+    let mut fields = vec![("ChestedHorse".into(), Tag::Byte(i8::from(mount.chested)))];
+    if name.ends_with("llama") {
+        fields.push((
+            "Strength".into(),
+            Tag::Int(i32::from(mount.strength.clamp(1, 5))),
+        ));
+    }
+    if mount.chested {
+        let elements = mount
+            .cargo
+            .iter()
+            .enumerate()
+            .filter(|(_, stack)| !stack.is_empty())
+            .map(|(index, stack)| {
+                let mut fields = mc_data::item_nbt::stack_to_fields(items, stack)
+                    .expect("registry-valid mount cargo");
+                fields.push(("Slot".into(), Tag::Byte(index as i8)));
+                Tag::Compound(fields)
+            })
+            .collect();
+        fields.push((
+            "Items".into(),
+            Tag::List(ListTag {
+                element_type: tag_type::COMPOUND,
+                elements,
+            }),
+        ));
+    }
+    fields
+}
 pub(crate) fn to_fields(life: &EntityLifeState) -> Vec<(String, Tag)> {
     let pet = &life.taming;
     let mut fields = Vec::new();

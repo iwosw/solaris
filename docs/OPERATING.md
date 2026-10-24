@@ -796,6 +796,9 @@ the table open and closing it refunds the grid and cursor to that player.
 Sneak-use a tamed adult horse, donkey, mule, llama or camel to open its inventory;
 the inventory key also opens it while riding. Saddle/body equipment and chested
 donkey, mule or llama cargo remain owned by the entity and survive native saves.
+Anvil entity export writes current mount cargo, chest attachment and llama
+strength. Imported `Items` are removed from opaque metadata so withdrawals cannot
+reappear on export/reimport, and newly deposited component-bearing items survive.
 Mount and container-vehicle clicks honor plugin reservations on player inventory.
 A refused extraction, quick move or drop preserves player inventory, cursor and
 entity cargo, and returns an authoritative menu resynchronization.

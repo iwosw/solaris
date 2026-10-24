@@ -2364,6 +2364,7 @@ impl EntityStateImage {
                         .is_some_and(|kind| crate::projectiles::persistence::owns_field(kind, key))
                     || villager && crate::villager::persistence::owns_field(key)
                     || image.entity_life.vehicle.is_some() && key == "Items"
+                    || crate::mounts::persistence::owns_cargo_field(&record.id, key)
                     || matches!(
                         key.as_str(),
                         "CustomName"

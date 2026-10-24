@@ -70,6 +70,98 @@ fn replay_record(state: &TickState, native: &mc_data::entity_nbt::VanillaEntity)
 }
 
 #[test]
+fn mount_cargo_region_roundtrip_uses_current_custody_not_imported_items() {
+    use mc_nbt::{ListTag, Tag, tag_type};
+    for name in ["donkey", "mule", "llama", "trader_llama"] {
+        let mut state = fixture();
+        let diamond = state
+            .registry
+            .items
+            .id_of(&mc_data::Identifier::parse("minecraft:diamond").unwrap())
+            .unwrap();
+        let mut cargo = mc_data::ItemStack::new(diamond, 7);
+        cargo.custom_name = Some("retained cargo".into());
+        let mut item_fields =
+            mc_data::item_nbt::stack_to_fields(&state.registry.items, &cargo).unwrap();
+        item_fields.push(("Slot".into(), Tag::Byte(0)));
+        let native = mc_data::entity_nbt::VanillaEntity {
+            id: format!("minecraft:{name}"),
+            uuid: uuid::Uuid::new_v4(),
+            wire_id: 200,
+            pos: [8.5, 65.0, 8.5],
+            health: 20.0,
+            extra_fields: vec![
+                ("ChestedHorse".into(), Tag::Byte(1)),
+                ("Strength".into(), Tag::Int(3)),
+                (
+                    "Items".into(),
+                    Tag::List(ListTag {
+                        element_type: tag_type::COMPOUND,
+                        elements: vec![Tag::Compound(item_fields)],
+                    }),
+                ),
+                ("test:opaque".into(), Tag::String("kept".into())),
+            ],
+            ..Default::default()
+        };
+        let record = replay_record(&state, &native);
+        restore_entity(&mut state, 200, &record).unwrap();
+        let slot = state.entities.slot_of(EntityId(200)).unwrap();
+        assert_eq!(state.entities.row(slot).entity_life.mount.cargo[0], cargo);
+        let dir = tempfile::tempdir().unwrap();
+        for chested in [true, false] {
+            let mount = &mut state.entities.row_mut(slot).entity_life.mount;
+            mount.chested = chested;
+            if chested {
+                mount.cargo[0].count = 3;
+                mount.cargo[1] = cargo.clone();
+            } else {
+                mount.cargo.clear();
+            }
+            let expected = mount.clone();
+            let (_, regions, _) = checkpoint_data_for(&state, 1);
+            mc_world::anvil::entity_regions::write_entity_regions(
+                dir.path(),
+                &state.registry.items,
+                &regions,
+                1,
+            )
+            .unwrap();
+            let loaded = mc_world::anvil::entity_regions::read_entity_regions(
+                dir.path(),
+                &state.registry.items,
+            )
+            .unwrap();
+            let exported = loaded
+                .values()
+                .flat_map(|chunk| &chunk.entities)
+                .find(|entity| entity.uuid == native.uuid)
+                .unwrap();
+            assert!(
+                exported
+                    .extra_fields
+                    .contains(&("test:opaque".into(), Tag::String("kept".into()),))
+            );
+            assert_eq!(
+                exported
+                    .extra_fields
+                    .iter()
+                    .filter(|(key, _)| key == "Items")
+                    .count(),
+                usize::from(chested),
+                "never retain a duplicate or stale opaque Items field",
+            );
+            let restored = EntityStateImage::from_record(&state.registry, exported).unwrap();
+            assert_eq!(restored.entity_life.mount.chested, expected.chested);
+            assert_eq!(restored.entity_life.mount.cargo, expected.cargo);
+            if name.ends_with("llama") {
+                assert_eq!(restored.entity_life.mount.strength, expected.strength);
+            }
+        }
+    }
+}
+
+#[test]
 fn actual_checkpoint_regions_restore_persistence_idle_air_fire_and_child_size() {
     let mut state = fixture();
     let skeleton = state
