@@ -77,9 +77,10 @@ fn extend(
     };
     let target = BlockPos { y: at.y + dy, ..at };
     if name == "kelp" {
-        // Vanilla kelp grows into sources and downward-flowing water (a
-        // falling column with water above), turning the flow into a source
-        // as it extends. Sideways spread with air above is not a column.
+        // Vanilla kelp grows into a source or downward-flowing water cell
+        // (falling column with water above), turning flow into a source.
+        // A lone surface-flow cell with air above is still downward water
+        // when the column below is water, so it grows too.
         if path(read, target)? != "water" {
             return None;
         }
@@ -88,7 +89,13 @@ fn extend(
                 y: target.y + 1,
                 ..target
             };
-            if path(read, roof)? != "water" {
+            let column = BlockPos {
+                y: target.y - 1,
+                ..target
+            };
+            let roof_water = path(read, roof)? == "water";
+            let column_water = path(read, column)? == "water";
+            if !roof_water && !(column_water && air(read, roof)) {
                 return None;
             }
         }

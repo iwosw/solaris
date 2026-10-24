@@ -548,12 +548,27 @@ fn kelp_grows_into_falling_water_and_turns_it_into_a_source() {
         block(&state, "kelp", &[("age", "1")])
     );
     assert_eq!(held(&state, player).count, 1);
-    // Sideways spread with air above is not a growable column.
+    // A single downward-flow cell over the kelp column with air above
+    // still grows: the flow becomes a source and the tip extends into it.
     let air = state.registry.states.air;
     put(&mut state, -3, Y + 3, 1, air);
     give(&mut state, player, "bone_meal", 1);
     use_on(&mut state, -3, Y + 2, 1, 1);
-    assert_eq!(at(&state, -3, Y + 3, 1), state.registry.states.air);
+    assert_eq!(at(&state, -3, Y + 1, 1), block(&state, "kelp_plant", &[]));
+    assert_eq!(
+        at(&state, -3, Y + 2, 1),
+        block(&state, "kelp", &[("age", "1")])
+    );
+    // Sideways flow (horizontal current, no water column) still refuses.
+    let kelp0 = block(&state, "kelp", &[("age", "0")]);
+    let flow1 = block(&state, "water", &[("level", "1")]);
+    let air0 = state.registry.states.air;
+    put(&mut state, 6, Y + 1, 6, kelp0);
+    put(&mut state, 6, Y + 2, 6, flow1);
+    put(&mut state, 7, Y + 2, 6, air0);
+    give(&mut state, player, "bone_meal", 1);
+    use_on(&mut state, 6, Y + 1, 6, 1);
+    assert_eq!(at(&state, 6, Y + 2, 6), block(&state, "water", &[("level", "1")]));
 }
 
 #[test]
