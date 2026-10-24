@@ -230,6 +230,66 @@ fn hooked_target_reels_with_impulse_and_costs_five_durability() {
 }
 
 #[test]
+fn hooked_item_reels_with_impulse_and_costs_three_durability() {
+    // FISHING-ITEM-HOOK: dropped items are hookable; reeling one costs 3
+    // (living entities cost 5 — see hooked_target test above).
+    let (mut state, actor, pos) = super::super::flight_tests::setup();
+    let rod = rod(&state);
+    state.players.get_mut(&actor).unwrap().inventory.slots[0] = rod;
+    use_item(&mut state, actor, Hand::Main);
+    let id = *state.projectiles.spawned.last().unwrap();
+    let cobble = state
+        .registry
+        .items
+        .id_of(&Identifier::parse("minecraft:cobblestone").unwrap())
+        .unwrap();
+    let drop = crate::tick::spawn_item_entity(&mut state,
+        [pos[0] + 4.0, pos[1], pos[2]],
+        ItemStack::new(cobble, 1),
+    );
+    let hook_slot = state.entities.slot_of(id).unwrap();
+    let mut record = state.entities.row_mut(hook_slot).projectile.take().unwrap();
+    impact(&mut state, id, &mut record, Some(drop), pos);
+    state.entities.row_mut(hook_slot).projectile = Some(record);
+    use_item(&mut state, actor, Hand::Main);
+    assert!(state.entities.vel(state.entities.slot_of(drop).unwrap())[0] < 0.0);
+    assert_eq!(state.players[&actor].inventory.slots[0].damage, Some(3));
+    assert!(state.entities.slot_of(id).is_none());
+}
+
+#[test]
+fn submerged_hook_rises_toward_the_surface() {
+    // FISHING-BOBBER-BUOYANCY: an underwater cast rises until the block
+    // above is not water.
+    let (mut state, actor, pos) = super::super::flight_tests::setup();
+    for y in 0..6 {
+        for dx in -2..=2 {
+            for dz in -2..=2 {
+                state.world.set_block(
+                    pos[0] as i32 + dx,
+                    pos[1] as i32 - 4 + y,
+                    pos[2] as i32 + dz,
+                    state.registry.states.water,
+                );
+            }
+        }
+    }
+    let rod = rod(&state);
+    state.players.get_mut(&actor).unwrap().inventory.slots[0] = rod;
+    use_item(&mut state, actor, Hand::Main);
+    let id = *state.projectiles.spawned.last().unwrap();
+    let hook_slot = state.entities.slot_of(id).unwrap();
+    // Sink the hook three blocks under the surface.
+    state.entities.set_pos(hook_slot, [pos[0], pos[1] - 1.0, pos[2]]);
+    let y0 = state.entities.pos(hook_slot)[1];
+    let mut record = state.entities.row_mut(hook_slot).projectile.take().unwrap();
+    assert!(step(&mut state, &mut Vec::new(), id, &mut record));
+    state.entities.row_mut(hook_slot).projectile = Some(record);
+    let y1 = state.entities.pos(state.entities.slot_of(id).unwrap())[1];
+    assert!(y1 > y0, "hook rises: {y0} -> {y1}");
+}
+
+#[test]
 fn orphaned_hooks_are_removed_without_waiting_for_the_age_cap() {
     for age in [0, 1201] {
         for removed_owner in [false, true] {

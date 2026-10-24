@@ -129,6 +129,34 @@ fn item_frame_native_place_insert_rotate_pop_and_break_preserve_custody() {
 }
 
 #[test]
+fn frame_punch_keeps_rotation_for_next_item() {
+    // ITEM-FRAME-ROTATION-MEMORY: punching the display out retains
+    // orientation; the next item inherits it (comparator 0 -> 4).
+    let (mut state, actor) = fixture();
+    let frame = place(&mut state, actor, "minecraft:item_frame");
+    let slot = state.entities.slot_of(frame).unwrap();
+    state.players.get_mut(&actor).unwrap().inventory.slots[0] =
+        item(&state, "minecraft:diamond", 1);
+    click(&mut state, frame);
+    for _ in 0..3 {
+        click(&mut state, frame);
+    }
+    assert_eq!(rotation(&state, slot), 3);
+    let attack = PlayerInput::Attack {
+        connection: ConnectionId(1),
+        target: frame,
+    };
+    run_tick(&mut state, &[attack]);
+    assert!(state.entities.slot_of(frame).is_some());
+    assert!(displayed(&state, slot).is_none());
+    assert_eq!(rotation(&state, slot), 3, "rotation retained after pop");
+    state.players.get_mut(&actor).unwrap().inventory.slots[0] =
+        item(&state, "minecraft:emerald", 1);
+    click(&mut state, frame);
+    assert_eq!(rotation(&state, slot), 3);
+}
+
+#[test]
 fn item_frame_generation_support_and_wal_recovery() {
     use crate::journal::{JournalWriter, Replay, read_complete_batches_after, replay_batches};
     let (mut state, _) = fixture();

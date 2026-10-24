@@ -363,6 +363,76 @@ fn sleeping_is_refused_with_a_monster_near() {
 }
 
 #[test]
+fn small_slime_does_not_block_sleep() {
+    // BED-MONSTER-ELIGIBILITY: harmless small slimes never block sleep.
+    let mut rig = Rig::new();
+    rig.state.day_time = NIGHT;
+    let slime = rig
+        .state
+        .registry
+        .entity_types
+        .id_of(&mc_data::Identifier::parse("minecraft:slime").unwrap())
+        .unwrap();
+    let near = [
+        f64::from(rig.head.x) + 0.5,
+        f64::from(rig.head.y),
+        f64::from(rig.head.z) + 2.5,
+    ];
+    rig.state.spawn_mob(slime, near, 4.0);
+    let drains = rig.use_bed(1);
+    assert!(
+        !said(&drains, "You may not rest now; there are monsters nearby"),
+        "small slime must not block sleep"
+    );
+    assert!(rig.state.sleepers.contains_key(&rig.player));
+}
+
+#[test]
+fn sealed_bed_refuses_entry_as_obstructed() {
+    // BED-OBSTRUCTED-ENTRY: no wake-up space means refused entry.
+    let mut rig = Rig::new();
+    rig.state.day_time = NIGHT;
+    let stone = rig.state.registry.states.stone;
+    // Seal the perimeter at bed level and the exit tier above both halves.
+    for dx in -1..=2 {
+        for dz in -1..=1 {
+            rig.state.world.set_block(rig.foot.x + dx, rig.foot.y, rig.foot.z + dz, stone);
+            rig.state
+                .world
+                .set_block(rig.foot.x + dx, rig.foot.y + 1, rig.foot.z + dz, stone);
+            rig.state
+                .world
+                .set_block(rig.foot.x + dx, rig.foot.y + 2, rig.foot.z + dz, stone);
+        }
+    }
+    rig.state.world.fold_overlay();
+    let drains = rig.use_bed(1);
+    assert!(said(&drains, "This bed is obstructed"));
+    assert!(rig.state.sleepers.is_empty());
+}
+
+#[test]
+fn distant_bed_use_is_too_far() {
+    // BED-SLEEP-REACH: vanilla 3-block sleeping limit beats packet reach.
+    let mut rig = Rig::new();
+    rig.state.day_time = NIGHT;
+    let slot = rig.state.entities.slot_of(rig.player).expect("slot");
+    rig.state.entities.set_pos(
+        slot,
+        [
+            f64::from(rig.foot.x) - 4.5,
+            f64::from(rig.foot.y),
+            f64::from(rig.foot.z),
+            // 4.5 blocks from the foot, beyond the 3-block sleep limit but
+            // inside packet reach.
+        ],
+    );
+    let drains = rig.use_bed(1);
+    assert!(said(&drains, "You are too far away"));
+    assert!(rig.state.sleepers.is_empty());
+}
+
+#[test]
 fn night_is_not_skipped_while_a_player_is_awake() {
     let mut rig = Rig::new();
     let other = join(&mut rig.state, 2, uuid::Uuid::new_v4());
