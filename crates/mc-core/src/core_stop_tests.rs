@@ -81,12 +81,9 @@ fn graceful_shutdown_state_distinguishes_expected_broadcast_close() {
     assert!(!core.shutdown_requested());
     core.shutdown();
     assert!(core.shutdown_requested());
-    loop {
-        match output.blocking_recv() {
-            Ok(_) | Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
-            Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
-        }
-    }
+    while let Ok(_) | Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) =
+        output.blocking_recv()
+    {}
     let restored = Core::open(config).expect("orderly shutdown retains a readable checkpoint");
     assert!(!restored.shutdown_requested());
     restored.shutdown();
