@@ -248,3 +248,40 @@ fn dolphin_corrupt_gotfish_fails_closed_with_exact_field() {
         crate::CoreError::Storage("dolphin GotFish: expected TAG_Byte boolean".into()).to_string()
     );
 }
+
+#[test]
+fn fed_dolphin_swims_toward_treasure_chest() {
+    // DOLPHIN-TREASURE through the dolphin run path: a fed dolphin
+    // (GotFish) swims toward a nearby treasure chest.
+    let (mut state, _actor, dolphin) = fixture();
+    let slot = state.entities.slot_of(dolphin).unwrap();
+    let start = state.entities.pos(slot);
+    state
+        .entities
+        .row_mut(slot)
+        .entity_life
+        .dolphin
+        .get_or_insert_with(crate::dolphin::DolphinState::default)
+        .got_fish = true;
+    // Treasure chest 10 blocks east, same depth.
+    let chest = state
+        .registry
+        .blocks
+        .block(&mc_data::Identifier::parse("minecraft:chest").unwrap())
+        .unwrap()
+        .default
+        .0;
+    let cx = (start[0] as i32) + 10;
+    state.world.set_block(cx, start[1] as i32, start[2] as i32, chest);
+    state.world.fold_overlay();
+    for _ in 0..30 {
+        state.tick += 10;
+        run(&mut state);
+    }
+    let end = state.entities.pos(state.entities.slot_of(dolphin).unwrap());
+    assert!(
+        end[0] > start[0] + 1.0,
+        "fed dolphin must swim toward the chest, moved {}",
+        end[0] - start[0]
+    );
+}

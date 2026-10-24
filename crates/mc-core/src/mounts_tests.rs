@@ -713,3 +713,38 @@ fn wolf_body_armor_absorbs_melee_damage_and_wears() {
         "wolf armor must wear down when absorbing damage"
     );
 }
+
+#[test]
+fn armadillo_scute_timer_drops_scute() {
+    // ARMADILLO-SCUTE-SHED timer leg (post-fix coverage): a timer at expiry
+    // drops a scute on the next tick.
+    let (mut state, _actor, pos) = fixture();
+    let armadillo = spawn(&mut state, "armadillo", pos);
+    let slot = slot(&state, armadillo);
+    state
+        .entities
+        .row_mut(slot)
+        .entity_life
+        .armadillo
+        .get_or_insert_with(crate::armadillo::ArmadilloState::default)
+        .scute_ticks = 6_000;
+    for _ in 0..3 {
+        run_tick(&mut state, &[]);
+    }
+    let scutes = state
+        .entities
+        .slots()
+        .filter_map(|s| state.entities.row(s).item.as_ref())
+        .filter(|stack| {
+            state
+                .registry
+                .items
+                .name_of(stack.item_id)
+                .unwrap()
+                .as_str()
+                == "minecraft:armadillo_scute"
+        })
+        .map(|stack| stack.count)
+        .sum::<i32>();
+    assert!(scutes >= 1, "expired scute timer must drop a scute");
+}
