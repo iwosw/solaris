@@ -5,6 +5,9 @@ use mc_data::statistics::{CustomStat, StatType};
 use mc_physics::mth;
 use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 
+#[path = "totem.rs"]
+mod totem;
+
 impl TickState {
     pub(super) fn commit_damage(&mut self) -> (Vec<EntityId>, Vec<EntityEvent>, Vec<EntityId>) {
         let mut deaths = Vec::new();
@@ -152,6 +155,7 @@ impl TickState {
                 let mut absorption_changed = false;
                 let victim_uuid = self.entities.row(slot).uuid;
                 let mut combat_hits = Vec::new();
+                let mut totems = Vec::new();
                 for (piece, amounts) in &mut pieces {
                     let DamagePiece {
                         amount,
@@ -256,7 +260,8 @@ impl TickState {
                             }
                         }
                         let before_hit = player.vitals.health;
-                        died |= player.vitals.hurt(kind, reduced);
+                        let lethal = player.vitals.hurt(kind, reduced);
+                        let health_after_hit = player.vitals.health;
                         player.statistics.increment_custom(
                             CustomStat::DamageTaken,
                             (reduced * 10.0).round() as i32,
@@ -272,9 +277,16 @@ impl TickState {
                         amounts.1 = (before_hit - player.vitals.health).max(0.0);
                         credit =
                             Some(((before - player.vitals.health).max(0.0), absorbed, resisted));
-                        health_changed |= player.vitals.health != before;
+                        if lethal {
+                            if let Some(rescue) = totem::rescue(player, &self.registry, kind) {
+                                totems.push(rescue);
+                            } else {
+                                died = true;
+                            }
+                        }
+                        health_changed |= lethal || player.vitals.health != before;
                         absorption_changed |= player.active_effects.absorption != absorption_before;
-                        let damage = (before_hit.max(0.0) - player.vitals.health.max(0.0)).max(0.0);
+                        let damage = (before_hit.max(0.0) - health_after_hit.max(0.0)).max(0.0);
                         if damage > 0.0
                             && let Some(attacker) = crate::plugin::damage_attacker(source)
                         {
@@ -294,6 +306,32 @@ impl TickState {
                             resisted,
                         );
                     }
+                }
+                for (used, changes) in totems {
+                    if let Some(connection) = self.connections.entity_connection(id) {
+                        for change in changes {
+                            self.push_player(connection, change);
+                        }
+                    }
+                    let evidence = crate::advancements::item_snapshot(self, &used);
+                    crate::advancements::trigger(
+                        self,
+                        id,
+                        "minecraft:used_totem",
+                        serde_json::json!({"item": evidence}),
+                    );
+                    crate::vibration::emit(
+                        self,
+                        self.entities.pos(slot),
+                        crate::vibration::GameEvent::ItemInteractFinish,
+                        Some(id),
+                    );
+                    // LivingEntity.checkTotemDeathProtection, pinned 26.1.2.
+                    events.push(EntityEvent::Status {
+                        entity: id,
+                        event: 35,
+                    });
+                    crate::effects::sync_appearance(self, id);
                 }
                 for (attacker, damage, killed) in combat_hits {
                     crate::plugin_npcs::record_combat(self, attacker, victim_uuid, damage, killed);

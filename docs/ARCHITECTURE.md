@@ -69,6 +69,16 @@ write the existing opaque block-entity WAL, not a second persistence store or a
 per-tick countdown record. Unsupported custom spawn rules/weighted potentials
 fail chunk admission rather than silently changing their meaning.
 
+Lethal player damage checks held death-protection components in main-hand/offhand
+order before death, drops, XP and plugin death notifications. Native merge consumes
+one item, restores one health and publishes inventory/effect/status changes and the
+used-totem advancement. Ordinary totems retain the pinned 26.1.2 default effects;
+an explicit empty `death_effects` component protects any held item without changing
+its user's existing effects. Component removal disables protection. Commands and
+wire codecs support empty custom actions (including omitted `death_effects`);
+nonempty custom actions fail explicitly rather than acquiring totem effects.
+Damage that bypasses invulnerability does not activate death protection.
+
 Structure templates carry typed inhabitant markers, authored persistence and
 rotation into native blueprint initialization. Placement claims and stable UUIDs
 share the existing entity checkpoint/WAL transaction; claims survive death so

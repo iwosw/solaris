@@ -20,6 +20,7 @@ pub const ITEM_COMPONENT_CODECS: &[(&str, i32)] = &[
     ("minecraft:repair_cost", 19),
     ("minecraft:enchantment_glint_override", 21),
     ("minecraft:use_remainder", 25),
+    ("minecraft:death_protection", 36),
     ("minecraft:stored_enchantments", 42),
     ("minecraft:dyed_color", 44),
     ("minecraft:charged_projectiles", 49),

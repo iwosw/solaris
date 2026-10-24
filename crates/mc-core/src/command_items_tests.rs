@@ -70,6 +70,36 @@ fn give_dyed_color_is_admitted_and_survives_inventory_and_durable_storage() {
         );
     }
 }
+
+#[test]
+fn give_death_protection_admits_empty_actions_and_rejects_custom_actions() {
+    for value in ["{}", "{death_effects:[]}"] {
+        let stack = argument(&format!("give @s stick[death_protection={value}]"))
+            .stack(&registry().items)
+            .unwrap();
+        let fields = mc_data::item_nbt::stack_to_fields(&registry().items, &stack).unwrap();
+        let restored = mc_data::item_nbt::stack_from_fields(&registry().items, &fields)
+            .unwrap()
+            .unwrap();
+        assert_eq!(restored, stack);
+    }
+    let error = argument(
+        "give @s stick[death_protection={death_effects:[{type:'minecraft:clear_all_effects'}]}]",
+    )
+    .stack(&registry().items)
+    .unwrap_err();
+    assert!(
+        error.contains("nonempty custom death_protection"),
+        "{error}"
+    );
+    for value in ["1", "{death_effects:1}"] {
+        assert!(
+            argument(&format!("give @s stick[death_protection={value}]"))
+                .stack(&registry().items)
+                .is_err()
+        );
+    }
+}
 #[test]
 fn give_custom_name_accepts_snbt_text_and_spaces_with_other_components() {
     let item = argument(

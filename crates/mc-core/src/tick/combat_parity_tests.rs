@@ -282,3 +282,149 @@ fn parity_piercing_bypasses_shield_without_wear_and_arrows_rebound() {
         }
     }
 }
+
+#[test]
+fn fix_mobs_totem_intercepts_lethal_damage_in_either_hand_but_not_void() {
+    use crate::effects::{ActiveEffect, EffectId};
+    for index in [0, crate::inventory::OFF_HAND] {
+        let (mut state, player, _) = flat_player_fixture();
+        let totem = state
+            .registry
+            .items
+            .id_of(&mc_data::Identifier::parse("minecraft:totem_of_undying").unwrap())
+            .unwrap();
+        let actor = state.players.get_mut(&player).unwrap();
+        actor.inventory.slots[index] = mc_data::ItemStack::new(totem, 1);
+        actor.give_effect(ActiveEffect::new(EffectId::Poison, 600, 0));
+        hit(&mut state, player, DamageKind::Fall, None);
+        let (deaths, events, spawned, _) = state.commit_merge_effects();
+        assert!(deaths.is_empty(), "held totem must prevent death");
+        assert!(spawned.is_empty(), "no drops or death XP");
+        assert!(
+            events
+                .iter()
+                .all(|event| !matches!(event, crate::boundary::EntityEvent::Death { .. }))
+        );
+        assert!(events.iter().any(|event| matches!(event, crate::boundary::EntityEvent::Status { entity, event: 35 } if *entity == player)));
+        let actor = &state.players[&player];
+        assert_eq!(actor.vitals.health, 1.0);
+        assert!(actor.inventory.slots[index].is_empty());
+        assert!(!actor.active_effects.has(EffectId::Poison));
+        for (id, duration, amplifier) in [
+            (EffectId::Regeneration, 900, 1),
+            (EffectId::Absorption, 100, 1),
+            (EffectId::FireResistance, 800, 0),
+        ] {
+            let effect = actor.active_effects.get(id).unwrap();
+            assert_eq!((effect.duration, effect.amplifier), (duration, amplifier));
+        }
+        state.players.get_mut(&player).unwrap().inventory.slots[index] =
+            mc_data::ItemStack::new(totem, 1);
+        state
+            .gamerules
+            .insert("keep_inventory".into(), "true".into());
+        hit(&mut state, player, DamageKind::Void, None);
+        assert_eq!(state.commit_merge_effects().0, vec![player]);
+        assert_eq!(state.players[&player].inventory.slots[index].count, 1);
+    }
+}
+
+#[test]
+fn fix_mobs_totem_checks_main_hand_first_and_never_searches_backpack() {
+    for held in [false, true] {
+        let (mut state, player, _) = flat_player_fixture();
+        let totem = state
+            .registry
+            .items
+            .id_of(&mc_data::Identifier::parse("minecraft:totem_of_undying").unwrap())
+            .unwrap();
+        let actor = state.players.get_mut(&player).unwrap();
+        actor.inventory.slots[9] = mc_data::ItemStack::new(totem, 1);
+        if held {
+            actor.inventory.slots[0] = mc_data::ItemStack::new(totem, 1);
+            actor.inventory.slots[crate::inventory::OFF_HAND] = mc_data::ItemStack::new(totem, 1);
+        }
+        state
+            .gamerules
+            .insert("keep_inventory".into(), "true".into());
+        hit(&mut state, player, DamageKind::Fall, None);
+        let deaths = state.commit_merge_effects().0;
+        assert_eq!(deaths.is_empty(), held);
+        let actor = &state.players[&player];
+        assert_eq!(actor.inventory.slots[9].count, 1);
+        if held {
+            assert!(actor.inventory.slots[0].is_empty());
+            assert_eq!(actor.inventory.slots[crate::inventory::OFF_HAND].count, 1);
+        }
+    }
+}
+
+#[test]
+fn death_protection_component_rescues_any_held_item_without_default_totem_effects() {
+    use crate::command_items::ItemArgument;
+    use crate::effects::{ActiveEffect, EffectId};
+    for item in ["stick", "totem_of_undying"] {
+        for hand in [0, crate::inventory::OFF_HAND] {
+            let (mut state, player, _) = flat_player_fixture();
+            let argument =
+                ItemArgument::parse(&format!("{item}[death_protection={{death_effects:[]}}]"))
+                    .unwrap();
+            let mut stack = argument.stack(&state.registry.items).unwrap();
+            let count = if item == "stick" { 2 } else { 1 };
+            stack.count = count;
+            let actor = state.players.get_mut(&player).unwrap();
+            actor.inventory.slots[hand] = stack;
+            actor.give_effect(ActiveEffect::new(EffectId::Poison, 600, 0));
+            hit(&mut state, player, DamageKind::Fall, None);
+            let (deaths, events, drops, _) = state.commit_merge_effects();
+            assert!(deaths.is_empty(), "{item} in slot {hand}");
+            assert!(drops.is_empty());
+            assert!(events.iter().any(|event| matches!(
+                event,
+                crate::boundary::EntityEvent::Status { entity, event: 35 } if *entity == player
+            )));
+            let actor = &state.players[&player];
+            assert_eq!(actor.vitals.health, 1.0);
+            assert_eq!(actor.inventory.slots[hand].count, count - 1);
+            assert!(actor.active_effects.has(EffectId::Poison));
+            assert!(!actor.active_effects.has(EffectId::Regeneration));
+            assert!(!actor.active_effects.has(EffectId::Absorption));
+            assert!(!actor.active_effects.has(EffectId::FireResistance));
+        }
+    }
+}
+
+#[test]
+fn death_protection_removal_skips_main_hand_and_can_use_offhand_default() {
+    use crate::command_items::ItemArgument;
+    for offhand in [false, true] {
+        let (mut state, player, _) = flat_player_fixture();
+        let removed = ItemArgument::parse("totem_of_undying[!death_protection]")
+            .unwrap()
+            .stack(&state.registry.items)
+            .unwrap();
+        let totem = removed.item_id;
+        let actor = state.players.get_mut(&player).unwrap();
+        actor.inventory.slots[0] = removed;
+        if offhand {
+            actor.inventory.slots[crate::inventory::OFF_HAND] = mc_data::ItemStack::new(totem, 1);
+        }
+        state
+            .gamerules
+            .insert("keep_inventory".into(), "true".into());
+        hit(&mut state, player, DamageKind::Fall, None);
+        let deaths = state.commit_merge_effects().0;
+        assert_eq!(deaths.is_empty(), offhand);
+        let actor = &state.players[&player];
+        assert_eq!(actor.inventory.slots[0].count, 1);
+        assert!(actor.inventory.slots[crate::inventory::OFF_HAND].is_empty());
+        if offhand {
+            assert_eq!(actor.vitals.health, 1.0);
+            assert!(
+                actor
+                    .active_effects
+                    .has(crate::effects::EffectId::Regeneration)
+            );
+        }
+    }
+}

@@ -183,6 +183,10 @@ impl DamageKind {
         )
     }
 
+    pub(crate) fn bypasses_invulnerability(self) -> bool {
+        matches!(self, Self::Void)
+    }
+
     /// Vanilla `damage_type` exhaustion, charged once per hit.
     fn exhaustion(self) -> f32 {
         match self {

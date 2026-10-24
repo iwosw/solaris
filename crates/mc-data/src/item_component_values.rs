@@ -303,6 +303,7 @@ fn value_shape(
             }
         }
         25 => template(items, value, depth)?,
+        36 => crate::item_stack::validate_death_protection(value)?,
         44 => {
             crate::item_stack::decode_dyed_color(value)?;
         }

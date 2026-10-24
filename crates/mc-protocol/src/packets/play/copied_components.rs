@@ -179,6 +179,12 @@ pub(super) fn encode<B: BufMut>(
                 mc_nbt::write_network(buf, &value)?;
             }
             2 | 3 | 19 | 63 => buf.write_varint(integer(&value)?),
+            36 => {
+                mc_data::item_stack::validate_death_protection(&value)
+                    .map_err(CodecError::NotSupported)?;
+                // DeathProtection.STREAM_CODEC is ConsumeEffect's list codec.
+                buf.write_varint(0);
+            }
             6 | 9 => write_text(buf, &value)?,
             10 | 71 => {
                 buf.write_identifier(&Identifier::parse(string(&value)?).map_err(|_| invalid())?)?
@@ -342,6 +348,14 @@ pub(super) fn decode<B: Buf>(
         }
         21 => Tag::Byte(i8::from(buf.read_bool()?)),
         25 => templates::decode(buf, depth)?,
+        36 => {
+            if buf.read_varint()? != 0 {
+                return Err(CodecError::NotSupported(
+                    "nonempty custom death_protection death_effects are unsupported",
+                ));
+            }
+            Tag::Compound(vec![("death_effects".into(), make_list(Vec::new()))])
+        }
         44 => Tag::Int(buf.read_i32()?),
         50 => templates::decode_list(buf, depth)?,
         70 => profile::decode(buf)?,

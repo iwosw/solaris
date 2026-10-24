@@ -65,6 +65,41 @@ fn nbt(value: &Tag) -> Vec<u8> {
 }
 
 #[test]
+fn copied_death_protection_empty_actions_use_vanilla_list_count() {
+    for value in [
+        fields(Vec::new()),
+        fields(vec![("death_effects", make_list(Vec::new()))]),
+    ] {
+        fixture("minecraft:death_protection", value, vec![0]);
+    }
+}
+
+#[test]
+fn copied_death_protection_rejects_nonempty_custom_actions() {
+    let value = fields(vec![(
+        "death_effects",
+        make_list(vec![fields(vec![(
+            "type",
+            text("minecraft:clear_all_effects"),
+        )])]),
+    )]);
+    let error = stack("minecraft:death_protection", value)
+        .encode(&mut Vec::new())
+        .unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("nonempty custom death_protection")
+    );
+    let error = decode(&mut [1_u8].as_slice(), 36, 0).unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("nonempty custom death_protection")
+    );
+}
+
+#[test]
 fn copied_custom_name_preserves_styled_text() {
     let value = fields(vec![("text", text("Custody")), ("color", text("gold"))]);
     fixture("minecraft:custom_name", value.clone(), nbt(&value));
@@ -366,7 +401,6 @@ const UNSUPPORTED: &[&str] = &[
     "minecraft:custom_model_data",
     "minecraft:damage_resistant",
     "minecraft:damage_type",
-    "minecraft:death_protection",
     "minecraft:debug_stick_state",
     "minecraft:dye",
     "minecraft:enchantable",
