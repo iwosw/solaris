@@ -929,7 +929,10 @@ fn grow_dripstone(
     water: bool,
     roll: &mut Roll,
 ) -> Option<Vec<PlantBlockEdit>> {
-    if !water || roll.below(8) != 0 {
+    // Pinned 26.1.2 PointedDripstoneBlock.randomTick: nextFloat < 0.011377778f.
+    // nextFloat is 24 random bits over 2^24; 0.011377778f * 2^24 =
+    // 190887.4375, so the float compare is exactly top-24-bits < 190888.
+    if !water || roll.below(1 << 24) >= 190888 {
         return None;
     }
     let blocks = &read.state.registry.blocks;
