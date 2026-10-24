@@ -212,6 +212,16 @@ pub enum PlayerInput {
     },
     /// Selected hotbar slot changed.
     SelectSlot { connection: ConnectionId, slot: u8 },
+    /// Vanilla pick block (middle click on a block).
+    PickItemFromBlock {
+        connection: ConnectionId,
+        position: BlockPos,
+    },
+    /// Vanilla pick entity (middle click on an entity).
+    PickItemFromEntity {
+        connection: ConnectionId,
+        target: EntityId,
+    },
     /// Click in an open menu or the player inventory (window 0). The core
     /// validates against its authoritative menu at `state_id`; the client's
     /// predicted slots are hints only and are answered with authoritative
@@ -363,6 +373,8 @@ impl PlayerInput {
             | Self::VehicleInput { connection, .. }
             | Self::MoveVehicle { connection, .. }
             | Self::SelectSlot { connection, .. }
+            | Self::PickItemFromBlock { connection, .. }
+            | Self::PickItemFromEntity { connection, .. }
             | Self::ContainerClick { connection, .. }
             | Self::ContainerButton { connection, .. }
             | Self::ContainerSlotState { connection, .. }
@@ -894,6 +906,10 @@ pub enum PlayerChange {
     ClearDialog,
     MenuClosed {
         window: u8,
+    },
+    /// The server selected a hotbar slot (pick item).
+    HeldSlot {
+        slot: u8,
     },
     MerchantOffers {
         window: u8,

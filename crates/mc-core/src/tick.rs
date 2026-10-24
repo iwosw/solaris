@@ -4853,6 +4853,13 @@ fn apply_inputs<'a>(
             PlayerInput::SelectSlot { connection, slot } => {
                 input::inventory::select_slot(state, (connection, slot))
             }
+            PlayerInput::PickItemFromBlock {
+                connection,
+                position,
+            } => input::inventory::pick_item_from_block(state, (connection, position), changes),
+            PlayerInput::PickItemFromEntity { connection, target } => {
+                input::inventory::pick_item_from_entity(state, (connection, target), changes)
+            }
             PlayerInput::Dig {
                 connection,
                 position,
@@ -6856,6 +6863,8 @@ fn step_entity(row: ReadRow, ctx: &StepCtx) -> (MoveWrite, Vec<RawIntent>) {
                                 matches!(ctx.entities.body(slot).kind, EntityKind::Player { .. })
                             }) {
                                 ctx.difficulty.scale_mob_damage(attack_damage)
+                            } else {
+                                attack_damage
                             },
                             kind: crate::survival::DamageKind::Melee,
                             source: Some(crate::intent::DamageSource::Melee {
@@ -6863,8 +6872,6 @@ fn step_entity(row: ReadRow, ctx: &StepCtx) -> (MoveWrite, Vec<RawIntent>) {
                                 position: row.pos,
                                 yaw: 0.0,
                                 bonus_knockback: 0.0,
-                            } else {
-                                attack_damage
                                 sweep: false,
                                 fire_ticks: 0,
                                 bane_ticks: 0,

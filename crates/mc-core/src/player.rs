@@ -108,6 +108,23 @@ struct ItemUse {
     item_id: u32,
 }
 
+/// Slot writes and hotbar selection of one vanilla pick item.
+#[derive(Debug)]
+pub(crate) struct PickItemPlan {
+    selected: u8,
+    writes: Vec<(usize, ItemStack)>,
+}
+
+impl PickItemPlan {
+    /// Borrowed slot replacements for reservation-floor admission.
+    pub(crate) fn replacements(&self) -> Vec<(usize, &ItemStack)> {
+        self.writes
+            .iter()
+            .map(|(slot, stack)| (*slot, stack))
+            .collect()
+    }
+}
+
 /// What one input did to the player.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct PlayerEffects {
@@ -408,6 +425,71 @@ impl PlayerState {
             self.using = None;
         }
         self.inventory.selected = slot;
+    }
+
+    /// Vanilla `tryPickItem`: select a hotbar stack matching `picked`, swap a
+    /// main-inventory match into the suitable hotbar slot, or, in creative only,
+    /// put `picked` there (moving the displaced stack to a free slot). `None`
+    /// changes nothing.
+    pub(crate) fn plan_pick_item(&self, picked: &ItemStack) -> Option<PickItemPlan> {
+        if self.spectator() || picked.is_empty() {
+            return None;
+        }
+        let slots = &self.inventory.slots;
+        let target = self.suitable_hotbar_slot();
+        let mut writes = Vec::new();
+        let selected = match (0..36)
+            .find(|&slot| mc_data::inventory_semantics_26_1_2::can_stack(&slots[slot], picked))
+        {
+            Some(found) if found < 9 => found,
+            Some(found) => {
+                writes.push((target, slots[found].clone()));
+                writes.push((found, slots[target].clone()));
+                target
+            }
+            None if self.creative() => {
+                if !slots[target].is_empty()
+                    && let Some(free) = (0..36).find(|&slot| slots[slot].is_empty())
+                {
+                    writes.push((free, slots[target].clone()));
+                }
+                writes.push((target, picked.clone()));
+                target
+            }
+            None => return None,
+        };
+        Some(PickItemPlan {
+            selected: selected as u8,
+            writes,
+        })
+    }
+
+    pub(crate) fn apply_pick_item(&mut self, plan: PickItemPlan) -> PlayerEffects {
+        let before = self.snapshot();
+        for (slot, stack) in plan.writes {
+            self.inventory.slots[slot] = stack;
+        }
+        self.select_slot(plan.selected);
+        let mut changes = self.sync(&before);
+        changes.push(PlayerChange::HeldSlot {
+            slot: self.inventory.selected,
+        });
+        PlayerEffects {
+            changes,
+            ..PlayerEffects::default()
+        }
+    }
+
+    /// Vanilla `getSuitableHotbarSlot`: the first empty hotbar slot from the
+    /// selected one, else the first unenchanted one, else the selected slot.
+    fn suitable_hotbar_slot(&self) -> usize {
+        let selected = usize::from(self.inventory.selected.min(8));
+        let order = || (0..9).map(move |offset| (selected + offset) % 9);
+        let slots = &self.inventory.slots;
+        order()
+            .find(|&slot| slots[slot].is_empty())
+            .or_else(|| order().find(|&slot| slots[slot].enchantments.is_empty()))
+            .unwrap_or(selected)
     }
 
     /// Opens a container menu over `container`, closing any open one first.

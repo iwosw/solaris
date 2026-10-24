@@ -1033,6 +1033,13 @@ fn wall_variant<'a>(blocks: &'a BlockRegistry, id: &Identifier) -> Option<&'a Bl
     blocks.block(&Identifier::parse(format!("{}:{wall}", id.namespace())).ok()?)
 }
 
+/// Inverse of [`wall_variant`]: `oak_wall_hanging_sign` -> `oak_hanging_sign`,
+/// `wall_torch` -> `torch`; `None` for a block without a wall token.
+pub(crate) fn standing_name(path: &str) -> Option<String> {
+    path.contains("wall_")
+        .then(|| path.replacen("wall_", "", 1))
+}
+
 /// Prefer a neighboring door's opposite hinge, then the obstructed side.
 /// Cursor position breaks ties only when neither neighborhood rule decides.
 fn door_hinge(

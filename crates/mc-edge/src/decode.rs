@@ -25,12 +25,12 @@ use mc_protocol::packets::play::{
     ServerboundCustomClickAction, ServerboundCustomPayload, ServerboundInteract,
     ServerboundKeepAlive, ServerboundMovePlayerPos, ServerboundMovePlayerPosRot,
     ServerboundMovePlayerRot, ServerboundMovePlayerStatusOnly, ServerboundMoveVehicle,
-    ServerboundPlaceRecipe, ServerboundPlayerAction, ServerboundPlayerCommand,
-    ServerboundPlayerInput, ServerboundPlayerLoaded, ServerboundRenameItem,
-    ServerboundResourcePack, ServerboundSeenAdvancements, ServerboundSelectTrade,
-    ServerboundSetBeacon, ServerboundSetCarriedItem, ServerboundSetCreativeModeSlot,
-    ServerboundSignUpdate, ServerboundSwing, ServerboundUseItem, ServerboundUseItemOn,
-    unpack_block_pos,
+    ServerboundPickItemFromBlock, ServerboundPickItemFromEntity, ServerboundPlaceRecipe,
+    ServerboundPlayerAction, ServerboundPlayerCommand, ServerboundPlayerInput,
+    ServerboundPlayerLoaded, ServerboundRenameItem, ServerboundResourcePack,
+    ServerboundSeenAdvancements, ServerboundSelectTrade, ServerboundSetBeacon,
+    ServerboundSetCarriedItem, ServerboundSetCreativeModeSlot, ServerboundSignUpdate,
+    ServerboundSwing, ServerboundUseItem, ServerboundUseItemOn, unpack_block_pos,
 };
 
 /// Rotation of the last rotation-bearing movement frame, for position-only
@@ -196,6 +196,22 @@ pub fn decode_play_frame(
             out.push(PlayerInput::SelectSlot {
                 connection: conn,
                 slot,
+            });
+        }
+        // `includeData` only copies creative block-entity data or prints an
+        // avatar profile; the native pick ignores it.
+        ServerboundPickItemFromBlock::ID => {
+            let p = read::<ServerboundPickItemFromBlock>(body)?;
+            out.push(PlayerInput::PickItemFromBlock {
+                connection: conn,
+                position: block_pos(p.position),
+            });
+        }
+        ServerboundPickItemFromEntity::ID => {
+            let p = read::<ServerboundPickItemFromEntity>(body)?;
+            out.push(PlayerInput::PickItemFromEntity {
+                connection: conn,
+                target: EntityId(p.entity_id),
             });
         }
         ServerboundChat::ID => {

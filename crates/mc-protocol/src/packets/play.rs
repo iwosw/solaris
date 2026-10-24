@@ -122,9 +122,10 @@ pub use interaction::{
     PlayerCommandAction, PlayerInput, ServerboundAttack, ServerboundClientCommand,
     ServerboundClientInformation, ServerboundCustomPayload, ServerboundInteract,
     ServerboundKeepAlive, ServerboundMovePlayerPos, ServerboundMovePlayerPosRot,
-    ServerboundMovePlayerRot, ServerboundMovePlayerStatusOnly, ServerboundPlayerAction,
-    ServerboundPlayerCommand, ServerboundPlayerInput, ServerboundResourcePack, ServerboundSwing,
-    ServerboundUseItem, ServerboundUseItemOn,
+    ServerboundMovePlayerRot, ServerboundMovePlayerStatusOnly, ServerboundPickItemFromBlock,
+    ServerboundPickItemFromEntity, ServerboundPlayerAction, ServerboundPlayerCommand,
+    ServerboundPlayerInput, ServerboundResourcePack, ServerboundSwing, ServerboundUseItem,
+    ServerboundUseItemOn,
 };
 pub use inventory::{
     ClientboundContainerClose, ClientboundContainerSetContent, ClientboundContainerSetData,

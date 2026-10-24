@@ -173,6 +173,60 @@ impl Packet for ServerboundInteract {
     }
 }
 
+/// `Serverbound Pick Item From Block` (SB, middle click). Local 26.1.2
+/// `reports/packets.json`: `minecraft:pick_item_from_block` = 36 (0x24);
+/// `javap`: `ServerboundPickItemFromBlockPacket(BlockPos pos, boolean
+/// includeData)` via `composite(BlockPos.STREAM_CODEC, ByteBufCodecs.BOOL)`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ServerboundPickItemFromBlock {
+    pub position: i64,
+    pub include_data: bool,
+}
+
+impl Packet for ServerboundPickItemFromBlock {
+    const ID: i32 = 0x24;
+
+    fn encode<B: BufMut>(&self, buf: &mut B) -> Result<(), CodecError> {
+        buf.write_i64(self.position);
+        buf.write_bool(self.include_data);
+        Ok(())
+    }
+
+    fn decode<B: Buf>(buf: &mut B) -> Result<Self, CodecError> {
+        Ok(Self {
+            position: buf.read_i64()?,
+            include_data: buf.read_bool()?,
+        })
+    }
+}
+
+/// `Serverbound Pick Item From Entity` (SB, middle click). Local 26.1.2
+/// `reports/packets.json`: `minecraft:pick_item_from_entity` = 37 (0x25);
+/// `javap`: `ServerboundPickItemFromEntityPacket(int id, boolean includeData)`
+/// via `composite(ByteBufCodecs.VAR_INT, ByteBufCodecs.BOOL)`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ServerboundPickItemFromEntity {
+    pub entity_id: i32,
+    pub include_data: bool,
+}
+
+impl Packet for ServerboundPickItemFromEntity {
+    const ID: i32 = 0x25;
+
+    fn encode<B: BufMut>(&self, buf: &mut B) -> Result<(), CodecError> {
+        buf.write_varint(self.entity_id);
+        buf.write_bool(self.include_data);
+        Ok(())
+    }
+
+    fn decode<B: Buf>(buf: &mut B) -> Result<Self, CodecError> {
+        Ok(Self {
+            entity_id: buf.read_varint()?,
+            include_data: buf.read_bool()?,
+        })
+    }
+}
+
 /// Flags shared by vanilla's four `ServerboundMovePlayerPacket` variants.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MovePlayerFlags {

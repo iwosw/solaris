@@ -1424,6 +1424,30 @@ fn set_carried_item_round_trip() {
 }
 
 #[test]
+fn pick_item_packets_ids_and_layouts_match_javap() {
+    assert_eq!(ServerboundPickItemFromBlock::ID, 0x24);
+    assert_eq!(ServerboundPickItemFromEntity::ID, 0x25);
+    let block = ServerboundPickItemFromBlock {
+        position: pack_block_pos(1, 2, 3),
+        include_data: true,
+    };
+    let mut encoded = Vec::new();
+    block.encode(&mut encoded).unwrap();
+    let mut expected = pack_block_pos(1, 2, 3).to_be_bytes().to_vec();
+    expected.push(1);
+    assert_eq!(encoded, expected);
+    round_trip(block);
+    let entity = ServerboundPickItemFromEntity {
+        entity_id: 300,
+        include_data: false,
+    };
+    let mut encoded = Vec::new();
+    entity.encode(&mut encoded).unwrap();
+    assert_eq!(encoded, [0xAC, 0x02, 0x00]);
+    round_trip(entity);
+}
+
+#[test]
 fn serverbound_place_recipe_id_and_layout_match_javap() {
     assert_eq!(ServerboundPlaceRecipe::ID, 0x27);
     let packet = ServerboundPlaceRecipe {

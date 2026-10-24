@@ -630,6 +630,13 @@ fn plan_change(change: &PlayerChange, viewer: &mut ViewerState, out: &mut Vec<Pl
                 item_stack: stack_or_empty(item),
             },
         ),
+        PlayerChange::HeldSlot { slot } => push_reliable(
+            out,
+            conn,
+            &mc_protocol::packets::play::ClientboundSetHeldSlot {
+                slot: i32::from(*slot),
+            },
+        ),
         PlayerChange::MenuProperty {
             window,
             property,

@@ -24,6 +24,121 @@ pub(in crate::tick) fn select_slot(
     }
 }
 
+/// Vanilla `handlePickItemFromBlock`: within block reach (plus one block) of a
+/// loaded block whose item form exists.
+pub(in crate::tick) fn pick_item_from_block(
+    state: &mut TickState,
+    (connection, position): (&ConnectionId, &BlockPos),
+    changes: &mut ChangeSet,
+) {
+    let Some(entity) = state.connections.by_connection.get(connection).copied() else {
+        return;
+    };
+    if !crate::tick::within_block_reach(state, entity, *position) {
+        return;
+    }
+    if let Some(picked) = state
+        .world
+        .block_at(position.x, position.y, position.z)
+        .and_then(|block| block_pick_item(state, block))
+    {
+        pick_item(state, *connection, entity, &picked, changes);
+    }
+}
+
+/// Vanilla `handlePickItemFromEntity`: a mob's spawn egg, else the item of the
+/// same name (boats, minecarts, armor stands, paintings, frames, crystals).
+pub(in crate::tick) fn pick_item_from_entity(
+    state: &mut TickState,
+    (connection, target): (&ConnectionId, &EntityId),
+    changes: &mut ChangeSet,
+) {
+    let Some(entity) = state.connections.by_connection.get(connection).copied() else {
+        return;
+    };
+    if !crate::tick::within_entity_reach(state, entity, *target) {
+        return;
+    }
+    let picked = state.entities.slot_of(*target).and_then(|slot| {
+        let crate::entities::EntityKind::Mob { type_id } = state.entities.body(slot).kind else {
+            return None;
+        };
+        let name = state.registry.entity_types.name_of(type_id)?.path();
+        item_named(state, &format!("{name}_spawn_egg")).or_else(|| item_named(state, name))
+    });
+    if let Some(picked) = picked {
+        pick_item(state, *connection, entity, &picked, changes);
+    }
+}
+
+/// Vanilla `getCloneItemStack` (`Block.asItem`): the block's own item, the
+/// item that plants a crop, or the standing item of a wall variant.
+fn block_pick_item(state: &TickState, block: u32) -> Option<mc_data::ItemStack> {
+    let path = state
+        .registry
+        .blocks
+        .by_id(mc_world::BlockStateId(block))?
+        .block
+        .id
+        .path();
+    if let Some(planting) = crate::farming::planting_item(path) {
+        return item_named(state, planting);
+    }
+    item_named(state, path).or_else(|| {
+        crate::placement::standing_name(path).and_then(|standing| item_named(state, &standing))
+    })
+}
+
+/// One item of `minecraft:<name>`; air is not an item stack.
+fn item_named(state: &TickState, name: &str) -> Option<mc_data::ItemStack> {
+    let id = state
+        .registry
+        .items
+        .id_of(&mc_data::Identifier::parse(format!("minecraft:{name}")).ok()?)?;
+    (id != mc_data::ItemStack::EMPTY.item_id).then(|| mc_data::ItemStack::new(id, 1))
+}
+
+fn pick_item(
+    state: &mut TickState,
+    connection: ConnectionId,
+    entity: EntityId,
+    picked: &mc_data::ItemStack,
+    changes: &mut ChangeSet,
+) {
+    let Some(plan) = state
+        .players
+        .get(&entity)
+        .and_then(|player| player.plan_pick_item(picked))
+    else {
+        return;
+    };
+    if crate::plugin_inventories::has_reservations_for_player(state, entity)
+        && crate::plugin_inventories::below_player_replacement_floors(
+            state,
+            entity,
+            &plan.replacements(),
+        )
+    {
+        let effects = inventory_transition_refused(state, entity);
+        apply_player_effects(state, connection, entity, effects, changes);
+        return;
+    }
+    let player = state.players.get_mut(&entity).expect("planned player");
+    let held = |player: &crate::player::PlayerState| {
+        let selected = player.inventory.selected;
+        (
+            selected,
+            player.inventory.slots[usize::from(selected)].clone(),
+        )
+    };
+    let before = held(player);
+    let effects = player.apply_pick_item(plan);
+    if held(player) != before {
+        crate::projectiles::weapons::cancel_main(state, entity);
+    }
+    apply_player_effects(state, connection, entity, effects, changes);
+}
+
 pub(in crate::tick) fn container_click(
     state: &mut TickState,
     (connection, window, state_id, slot, button, mode): (
@@ -616,3 +731,7 @@ pub(in crate::tick) fn test_give(
         .unwrap_or_default();
     apply_player_effects(state, *connection, entity, effects, changes);
 }
+
+#[cfg(test)]
+#[path = "pick_item_tests.rs"]
+mod pick_item_tests;

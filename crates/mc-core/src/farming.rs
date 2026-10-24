@@ -74,9 +74,7 @@ fn kind_of(path: &str) -> Kind {
         "bamboo_sapling" | "cactus" | "sugar_cane" | "bamboo" | "nether_wart" | "melon_stem"
         | "pumpkin_stem" | "sweet_berry_bush" | "cocoa" | "kelp" | "cave_vines"
         | "weeping_vines" | "twisting_vines" | "vine" | "brown_mushroom" | "red_mushroom"
-        | "chorus_flower" => {
-            Kind::Plant
-        }
+        | "chorus_flower" => Kind::Plant,
         _ if crate::copper::family(path).is_some_and(|(_, age, waxed)| age < 3 && !waxed) => {
             Kind::Copper
         }
@@ -187,6 +185,19 @@ impl FarmSections {
     }
 }
 
+/// Items that plant a block of another name (vanilla `Items`
+/// `createBlockItemWithCustomItemName`): `(item, block)`.
+const PLANTING: [(&str, &str); 8] = [
+    ("wheat_seeds", "wheat"),
+    ("beetroot_seeds", "beetroots"),
+    ("carrot", "carrots"),
+    ("potato", "potatoes"),
+    ("melon_seeds", "melon_stem"),
+    ("pumpkin_seeds", "pumpkin_stem"),
+    ("sweet_berries", "sweet_berry_bush"),
+    ("cocoa_beans", "cocoa"),
+];
+
 /// The block an item places when it is not the block of the same name:
 /// seeds, carrots and potatoes plant crops, and the harvested wheat item
 /// places nothing.
@@ -195,19 +206,25 @@ pub fn placed_block<'a>(
     blocks: &'a BlockRegistry,
     item: &mc_data::Identifier,
 ) -> Option<&'a mc_world::Block> {
-    let crop = match item.path() {
-        "wheat_seeds" => "wheat",
-        "beetroot_seeds" => "beetroots",
-        "carrot" => "carrots",
-        "potato" => "potatoes",
-        "melon_seeds" => "melon_stem",
-        "pumpkin_seeds" => "pumpkin_stem",
-        "sweet_berries" => "sweet_berry_bush",
-        "cocoa_beans" => "cocoa",
-        "wheat" => return None,
-        _ => return blocks.block(item),
+    if item.path() == "wheat" {
+        return None;
+    }
+    let Some((_, crop)) = PLANTING
+        .iter()
+        .find(|(planting, _)| *planting == item.path())
+    else {
+        return blocks.block(item);
     };
     blocks.block(&mc_data::Identifier::parse(format!("minecraft:{crop}")).ok()?)
+}
+
+/// The item that plants `block` (a crop path such as `wheat`), if any.
+#[must_use]
+pub fn planting_item(block: &str) -> Option<&'static str> {
+    PLANTING
+        .iter()
+        .find(|(_, planted)| *planted == block)
+        .map(|(item, _)| *item)
 }
 
 /// Whether a freshly placed plant has its required native support.

@@ -659,6 +659,32 @@ fn select_slot_validates_range() {
 }
 
 #[test]
+fn pick_item_from_block_and_entity_decode() {
+    // Local 26.1.2 packets.json ids 36/37; javap bodies BlockPos+BOOL, VarInt+BOOL.
+    let mut block = pack_block_pos(3, -60, -7).to_be_bytes().to_vec();
+    block.push(1);
+    assert_eq!(
+        decode(36, block, &mut state()).unwrap(),
+        vec![PlayerInput::PickItemFromBlock {
+            connection: conn(),
+            position: BlockPos {
+                x: 3,
+                y: -60,
+                z: -7
+            },
+        }]
+    );
+    assert_eq!(
+        decode(37, vec![0xAC, 0x02, 0x00], &mut state()).unwrap(),
+        vec![PlayerInput::PickItemFromEntity {
+            connection: conn(),
+            target: EntityId(300),
+        }]
+    );
+    assert!(decode(37, vec![0xAC, 0x02], &mut state()).is_err());
+}
+
+#[test]
 fn chat_validates_length_and_controls() {
     let mut s = state();
     let mk = |message: String| {
