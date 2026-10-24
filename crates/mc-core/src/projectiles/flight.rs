@@ -358,7 +358,12 @@ fn attached(state: &mut TickState, id: EntityId, record: &mut ProjectileState) -
         .is_some_and(|p| p.fall_flying && !p.vitals.is_dead());
     if gliding {
         let yaw = state.entities.rot(target_slot)[0];
-        let dir = [-(yaw as f64).sin(), 0.0, (yaw as f64).cos()];
+        let yaw_rad = f64::from(yaw).to_radians();
+        let dir = [
+            -f64::from(mc_physics::mth::sin(yaw_rad)),
+            0.0,
+            f64::from(mc_physics::mth::cos(yaw_rad)),
+        ];
         let vel = state.entities.vel(target_slot);
         state.entities.set_vel(
             target_slot,
