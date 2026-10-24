@@ -106,6 +106,7 @@ pub(crate) fn images(
                 raids: None,
                 wandering_trader: None,
                 scheduled_functions: Vec::new(),
+                datapack_selection: None,
             }),
         );
     }

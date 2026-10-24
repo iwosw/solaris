@@ -472,6 +472,10 @@ fn entry_heap(entry: &JournalEntry) -> usize {
             value.capacity() * std::mem::size_of::<(u64, String)>()
                 + value.iter().map(|(_, name)| name.capacity()).sum::<usize>()
         }
+        E::DatapackSelection { value } => {
+            value.enabled.iter().map(String::len).sum::<usize>()
+                + value.disabled.iter().map(String::len).sum::<usize>()
+        }
         E::Settlement { image, .. } => {
             std::mem::size_of::<crate::settlements::RecordImage>()
                 + image

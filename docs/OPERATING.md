@@ -688,10 +688,15 @@ whole candidate and retains the old pack set. Load errors also retain the old se
 Functions invoked from any vanilla dimension retain their explicit command
 source; schedules and load/tick tags run from the overworld server source.
 
-Commands share a 65536-dispatch budget per tick, including `/execute` branches;
-function bodies have a further 65536-line budget. Function recursion uses an
-explicit stack, not the Rust call stack. Excess work is aborted with feedback.
-Nested cross-dimension/function dispatch also has a 64-frame stack bound.
+Each root command/function invocation gets its own
+`minecraft:max_command_sequence_length` budget, shared by nested functions and
+`execute` branches rather than by unrelated commands in the same tick. Function
+calls (including empty/tag-member calls), execute modifier stages and command
+leaves consume that budget. `minecraft:max_command_forks` bounds the contexts
+produced by a modifier stage; reaching the limit aborts that stage before its
+command leaves run. Function recursion uses an explicit stack, not the Rust call
+stack. Excess work is aborted with feedback. Nested cross-dimension/function
+dispatch also has a 64-frame stack bound.
 At most 65536 due schedules are processed per tick. Pack compilation is limited
 to 16 MiB of text, 16384 resource/directory entries and 32 nesting levels.
 No filesystem reads or whole-world scans are added to the tick path.

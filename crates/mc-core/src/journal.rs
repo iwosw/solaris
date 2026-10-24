@@ -286,6 +286,10 @@ pub enum JournalEntry {
     ScheduledFunctions {
         value: Vec<(u64, String)>,
     },
+    /// Datapack enable/disable selection; appended to preserve variant order.
+    DatapackSelection {
+        value: crate::datapacks::Selection,
+    },
 }
 
 fn deserialize_statistics_changes<'de, D: serde::Deserializer<'de>>(
@@ -843,6 +847,8 @@ pub struct CheckpointManifest {
     pub wandering_trader: Option<crate::mob_lanes::TraderSpawner>,
     #[serde(default)]
     pub scheduled_functions: Vec<(u64, String)>,
+    #[serde(default)]
+    pub datapack_selection: Option<crate::datapacks::Selection>,
     /// Durable ticket post-images by owner: centre, (capture tick, radius).
     /// Portal transfer tickets are transient and excluded from checkpoint captures.
     #[serde(default)]
@@ -1975,6 +1981,7 @@ pub struct Replay {
     pub raids: Option<crate::raids::Raids>,
     pub wandering_trader: Option<crate::mob_lanes::TraderSpawner>,
     pub scheduled_functions: Vec<(u64, String)>,
+    pub datapack_selection: Option<crate::datapacks::Selection>,
     pub generated_entity_claims: std::collections::BTreeSet<String>,
     pub block_ticks: crate::block_ticks::BlockTicksImage,
     pub fluid_ticks: crate::fluids::FluidTicksImage,
@@ -2580,6 +2587,9 @@ pub(crate) fn apply_batch_images(
                 }
                 JournalEntry::ScheduledFunctions { value } => {
                     replay.scheduled_functions.clone_from(value);
+                }
+                JournalEntry::DatapackSelection { value } => {
+                    replay.datapack_selection = Some(value.clone());
                 }
                 JournalEntry::Block { pos, state } => {
                     replay.blocks.insert((pos[0], pos[1], pos[2]), *state);

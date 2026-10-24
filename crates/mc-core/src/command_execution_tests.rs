@@ -69,6 +69,175 @@ fn has_translation(state: &TickState, connection: ConnectionId, key: &str) -> bo
 }
 
 #[test]
+fn command_parity_nearest_entity_selects_closest_alive() {
+    // SELECTOR-NEAREST-ENTITY: Java `@n` selects the nearest alive entity
+    // with default limit 1; dead entities are excluded.
+    let (mut state, alice, bob) = fixture();
+    for (entity, position) in [(alice, [0.0, 80.0, 0.0]), (bob, [10.0, 80.0, 0.0])] {
+        let slot = state.entities.slot_of(entity).unwrap();
+        state.entities.set_pos(slot, position);
+    }
+    let target = crate::commands::target_of("@n").unwrap();
+    assert_eq!(resolve_target(&state, alice, &target), vec![alice]);
+    // `@n` with grammar routes through the same nearest parser path.
+    let target = crate::commands::target_of("@n[distance=..5]").unwrap();
+    assert_eq!(resolve_target(&state, alice, &target), vec![alice]);
+    let target = crate::commands::target_of("@n[distance=6..20]").unwrap();
+    assert_eq!(resolve_target(&state, alice, &target), vec![bob]);
+}
+
+#[test]
+fn command_parity_dead_players_stay_selectable_by_name_and_all() {
+    // SELECTOR-DEAD-PLAYERS: Java @a includes dead players and @s may
+    // select a nonliving executor; @e and @n stay alive-only.
+    let (mut state, alice, bob) = fixture();
+    let slot = state.entities.slot_of(bob).unwrap();
+    state.entities.body_mut(slot).alive = false;
+    let target = crate::commands::target_of("@a").unwrap();
+    let mut selected = resolve_target(&state, alice, &target);
+    selected.sort();
+    let mut expected = vec![alice, bob];
+    expected.sort();
+    assert_eq!(selected, expected);
+    let target = crate::commands::target_of("@s").unwrap();
+    assert_eq!(resolve_target(&state, bob, &target), vec![bob]);
+    let target = crate::commands::target_of("@e").unwrap();
+    assert!(!resolve_target(&state, alice, &target).contains(&bob));
+    let target = crate::commands::target_of("@n").unwrap();
+    assert!(!resolve_target(&state, alice, &target).contains(&bob));
+}
+
+#[test]
+fn command_parity_repeated_negative_type_name_clauses() {
+    // SELECTOR-TYPE-NAME-FILTERS: repeated negative clauses all apply.
+    let (mut state, alice, _) = fixture();
+    let cow = state.spawn_mob(state.registry.cow_type_id, [2.0, 80.0, 0.0], 10.0);
+    let calf = state.spawn_mob(state.registry.cow_type_id, [3.0, 80.0, 0.0], 10.0);
+    let target =
+        crate::commands::target_of("@e[type=!minecraft:cow,type=!minecraft:player]").unwrap();
+    let selected = resolve_target(&state, alice, &target);
+    assert!(!selected.contains(&cow));
+    assert!(!selected.contains(&calf));
+    assert!(!selected.contains(&alice));
+    let target = crate::commands::target_of("@e[name=!Alice,name=!Bob]").unwrap();
+    let selected = resolve_target(&state, alice, &target);
+    assert!(!selected.contains(&alice));
+}
+
+#[test]
+fn command_parity_unnamed_mob_plain_name_and_player_type_rejection() {
+    // SELECTOR-TYPE-NAME-FILTERS subcases: unnamed mobs match vanilla plain
+    // names (`Cow`, not `minecraft:cow`), and `type=` is rejected on
+    // player-only variables.
+    let (mut state, alice, _) = fixture();
+    let cow = state.spawn_mob(state.registry.cow_type_id, [2.0, 80.0, 0.0], 10.0);
+    let target = crate::commands::target_of("@e[name=Cow]").unwrap();
+    assert!(resolve_target(&state, alice, &target).contains(&cow));
+    assert!(crate::commands::target_of("@a[type=minecraft:cow]").is_err());
+    assert!(crate::commands::target_of("@p[type=minecraft:cow]").is_err());
+}
+
+#[test]
+fn command_parity_give_rejects_entity_selector_shape() {
+    // SELECTOR-TYPED-ADMISSION: `/give @e` errors before mutation instead
+    // of granting to the player subset.
+    let (mut state, alice, _) = fixture();
+    command(&mut state, alice, "give @e minecraft:stone 1");
+    assert!(has_translation(
+        &state,
+        state.connections.entity_connection(alice).unwrap(),
+        "argument.entity.selector.not_player",
+    ));
+}
+
+#[test]
+fn command_parity_teleport_rejects_multi_target_destination() {
+    // SELECTOR-TYPED-ADMISSION: `/tp @s @a` errors on the declared maximum
+    // even when only one player happens to match.
+    let (mut state, alice, _) = fixture();
+    let before = state.entities.pos(state.entities.slot_of(alice).unwrap());
+    command(&mut state, alice, "tp @s @a");
+    assert!(has_translation(
+        &state,
+        state.connections.entity_connection(alice).unwrap(),
+        "argument.entity.toomany",
+    ));
+    assert_eq!(
+        state.entities.pos(state.entities.slot_of(alice).unwrap()),
+        before
+    );
+}
+
+#[test]
+fn command_parity_sort_limit_options_and_typed_filters() {
+    // SELECTOR-OPTION-COVERAGE spot checks through the live command path:
+    // sort/limit/level/gamemode/team/score/tag/pitch/yaw/nbt/advancement/
+    // predicate families parse and filter rather than rejecting as unknown.
+    let (mut state, alice, bob) = fixture();
+    for (entity, position) in [(alice, [0.0, 80.0, 0.0]), (bob, [10.0, 80.0, 0.0])] {
+        let slot = state.entities.slot_of(entity).unwrap();
+        state.entities.set_pos(slot, position);
+    }
+    for selector in [
+        "@a[sort=nearest,limit=1]",
+        "@a[sort=furthest,limit=1]",
+        "@a[level=0..100]",
+        "@a[gamemode=!spectator]",
+        "@a[team=]",
+        "@e[tag=!untagged]",
+        "@a[x_rotation=-90..90]",
+        "@a[y_rotation=0..360]",
+        "@a[advancements={minecraft:story/root=true}]",
+        "@e[predicate=minecraft:test]",
+    ] {
+        assert!(
+            crate::commands::target_of(selector).is_ok(),
+            "{selector} should parse"
+        );
+    }
+}
+
+#[test]
+fn command_parity_selector_box_intersects_body_and_defaults_missing_axes() {
+    let (mut state, alice, bob) = fixture();
+    let slot = state.entities.slot_of(bob).unwrap();
+    let body = state.entities.body(slot);
+    let half_width = body.half_width;
+    let height = body.height;
+    for (position, selector, expected) in [
+        ([5.1, 80.0, 0.5], "@e[x=0,y=80,z=0,dx=4,dy=1,dz=1]", true),
+        ([-0.2, 80.0, 0.5], "@e[x=4,y=80,z=0,dx=-4,dy=1,dz=1]", true),
+        ([0.5, 79.0, 0.5], "@e[x=0,y=80,z=0,dx=0]", true),
+        ([0.5, 80.0, 3.0], "@e[x=0,y=80,z=0,dx=0]", false),
+        ([0.5, 80.0, 0.5], "@e[dx=0]", true),
+        ([5.0 + half_width, 80.0, 0.5], "@e[x=0,y=80,z=0,dx=4]", false),
+        ([-half_width, 80.0, 0.5], "@e[x=0,y=80,z=0,dx=4]", false),
+        ([0.5, 81.0, 0.5], "@e[x=0,y=80,z=0,dx=0]", false),
+        ([0.5, 80.0 - height, 0.5], "@e[x=0,y=80,z=0,dx=0]", false),
+        ([1.8, 80.0, 0.5], "@e[x=0.25,y=80,z=0.25,dx=0.5]", true),
+        ([2.1, 80.0, 0.5], "@e[x=0.25,y=80,z=0.25,dx=0.5]", false),
+        ([0.5, 80.0, 0.5], "@e[x=1.25,y=80,z=0,dx=-0.5]", true),
+        ([0.4, 80.0, 0.5], "@e[x=1.25,y=80,z=0,dx=-0.5]", false),
+        ([5.1, 80.0, 0.5], "@e[x=0,y=80,z=0,dx=4,dy=1,dz=1,distance=..5]", false),
+        ([5.1, 80.0, 0.5], "@e[x=0,y=80,z=0,dx=4,dy=1,dz=1,distance=..6]", true),
+    ] {
+        state.entities.set_pos(slot, position);
+        let target = crate::commands::target_of(selector).unwrap();
+        assert_eq!(
+            resolve_target(&state, alice, &target).contains(&bob),
+            expected,
+            "{selector} at {position:?}"
+        );
+    }
+    command(&mut state, alice, "summon minecraft:pig 5.1 80 0.5");
+    let target = crate::commands::target_of(
+        "@e[type=minecraft:pig,x=0,y=80,z=0,dx=4,dy=1,dz=1]",
+    )
+    .unwrap();
+    assert_eq!(resolve_target(&state, alice, &target).len(), 1);
+}
+
+#[test]
 fn team_message_aliases_require_membership_and_exclude_locked_recipients() {
     let (mut state, alice, _) = fixture();
     command(&mut state, alice, "teammsg not on a team");
@@ -188,7 +357,13 @@ fn advancement_dispatch_validates_before_mutating_and_filters_player_targets() {
         "advancement grant Bob only test:branch missing",
     );
     assert_eq!(state.players[&bob].advancement_progress, before);
+    // SELECTOR-TYPED-ADMISSION: `grant @e` rejects the non-player shape
+    // before mutation instead of granting to the player subset.
     command(&mut state, alice, "advancement grant @e from test:branch");
+    for entity in [alice, bob] {
+        assert_eq!(state.players[&entity].advancement_progress, before);
+    }
+    command(&mut state, alice, "advancement grant @a from test:branch");
     for entity in [alice, bob] {
         let progress = &state.players[&entity].advancement_progress;
         assert_eq!(progress["test:branch"]["done"], true);
@@ -449,7 +624,7 @@ fn summon_uses_executor_position_and_kill_stages_canonical_damage() {
             .merge_damage
             .iter()
             .any(|(slot, damage)| state.entities.body(*slot).id == cow
-                && damage.kind == crate::survival::DamageKind::Void)
+                && damage.kind == crate::survival::DamageKind::GenericKill)
     );
     assert!(has_translation(
         &state,
@@ -710,7 +885,7 @@ fn command_boundary_enforces_operator_level() {
 }
 
 #[test]
-fn selector_position_overrides_distance_sort_and_old_axis_volumes() {
+fn selector_position_overrides_distance_sort_and_body_volumes() {
     let (mut state, alice, bob) = fixture();
     assert_eq!(
         resolve_target(
@@ -742,8 +917,8 @@ fn selector_position_overrides_distance_sort_and_old_axis_volumes() {
             alice,
             &crate::commands::target_of("@a[x=0,dx=9]").unwrap()
         ),
-        vec![alice],
-        "the upper axis boundary is exclusive"
+        vec![alice, bob],
+        "Bob's body crosses the exclusive upper face even though his position is on it"
     );
     command(
         &mut state,
@@ -818,7 +993,7 @@ fn json_shaped_summon_custom_name_stays_literal_in_vanilla_26() {
     let Target::Selector(mut selector) = target else {
         panic!("entity selector");
     };
-    selector.name = Some((r#"{"text":"Foo"}"#.into(), false));
+    selector.names = vec![(r#"{"text":"Foo"}"#.into(), false)];
     assert_eq!(
         resolve_target(&state, alice, &Target::Selector(selector)).len(),
         1

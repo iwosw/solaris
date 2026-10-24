@@ -325,6 +325,11 @@ pub struct TickState {
     pub registry: Arc<CoreRegistry>,
     pub(crate) datapacks: crate::datapacks::Runtime,
     pub(crate) command_context: crate::command_context::Runtime,
+    pub(crate) debug_profiler: crate::DebugProfiler,
+    /// Whether a `/debug function` trace is executing (recursive traces refuse).
+    pub(crate) debug_tracing: bool,
+    /// Completed function-trace artifacts, oldest first.
+    pub(crate) debug_traces: Vec<crate::DebugTraceArtifact>,
     pub world: ChunkWorld,
     /// This world's dimension; other worlds share its tick owner and WAL.
     pub dimension: crate::dimensions::Dimension,
@@ -623,6 +628,9 @@ impl TickState {
             native_globals: Default::default(),
             datapacks: Default::default(),
             command_context: Default::default(),
+            debug_profiler: Default::default(),
+            debug_tracing: false,
+            debug_traces: Vec::new(),
             plugins: Default::default(),
             plugin_runtime: None,
             build_queries: None,

@@ -52,12 +52,16 @@ fn target_mut(command: &mut Command) -> &mut Target {
 }
 
 pub(super) fn global_target(target: &Target) -> bool {
+    // Unqualified @e/@p join @a/@r in global routing: vanilla
+    // EntitySelector.findEntities/findPlayers iterate all levels when the
+    // selector carries no world-limiting option. Explicit position,
+    // distance or volume constrains the dimension instead.
     match target {
         Target::Player(_) | Target::AllPlayers => true,
         Target::Selector(selector) => {
             matches!(
                 selector.kind,
-                SelectorKind::AllPlayers | SelectorKind::Random
+                SelectorKind::AllPlayers | SelectorKind::Random | SelectorKind::Entities
             ) && selector.distance.is_none()
                 && selector.position.iter().all(Option::is_none)
                 && selector.extent.iter().all(Option::is_none)
@@ -115,10 +119,10 @@ pub(super) fn resolve(
         };
         match selector
             .sort
-            .unwrap_or(if selector.kind == SelectorKind::Random {
-                SelectorSort::Random
-            } else {
-                SelectorSort::Arbitrary
+            .unwrap_or(match selector.kind {
+                SelectorKind::Nearest => SelectorSort::Nearest,
+                SelectorKind::Random => SelectorSort::Random,
+                _ => SelectorSort::Arbitrary,
             }) {
             SelectorSort::Nearest => {
                 selected.sort_by(|a, b| distance(*a).total_cmp(&distance(*b)).then(a.cmp(b)))
@@ -126,24 +130,41 @@ pub(super) fn resolve(
             SelectorSort::Furthest => {
                 selected.sort_by(|a, b| distance(*b).total_cmp(&distance(*a)).then(a.cmp(b)))
             }
-            SelectorSort::Random => selected.sort_by_key(|id| {
-                let mut value = (id.0 as u32 as u64)
-                    ^ state.tick.wrapping_add(request.executor.0 as u32 as u64);
-                value = value.wrapping_add(0x9e3779b97f4a7c15);
-                value = (value ^ (value >> 30)).wrapping_mul(0xbf58476d1ce4e5b9);
-                value = (value ^ (value >> 27)).wrapping_mul(0x94d049bb133111eb);
-                value ^ (value >> 31)
-            }),
+            SelectorSort::Random => {
+                let count = state.command_context.random_draws.get();
+                state
+                    .command_context
+                    .random_draws
+                    .set(count.wrapping_add(selected.len() as u64));
+                let mut stream = count
+                    .wrapping_add(state.tick)
+                    .wrapping_add((request.executor.0 as u32 as u64) << 32);
+                let mut keyed: Vec<_> = selected
+                    .into_iter()
+                    .map(|id| {
+                        stream = stream.wrapping_add(0x9e3779b97f4a7c15);
+                        let mut value = stream;
+                        value = (value ^ (value >> 30)).wrapping_mul(0xbf58476d1ce4e5b9);
+                        value = (value ^ (value >> 27)).wrapping_mul(0x94d049bb133111eb);
+                        (id, value ^ (value >> 31))
+                    })
+                    .collect();
+                keyed.sort_by(|a, b| a.1.cmp(&b.1).then(a.0.cmp(&b.0)));
+                selected = keyed.into_iter().map(|(id, _)| id).collect();
+            }
             SelectorSort::Arbitrary => selected.sort_unstable(),
         }
         selected.truncate(
-            selector
-                .limit
-                .unwrap_or(if selector.kind == SelectorKind::Random {
+            selector.limit.unwrap_or(
+                if matches!(
+                    selector.kind,
+                    SelectorKind::Nearest | SelectorKind::Random
+                ) {
                     1
                 } else {
                     usize::MAX
-                }),
+                },
+            ),
         );
     } else {
         selected.sort_unstable();
