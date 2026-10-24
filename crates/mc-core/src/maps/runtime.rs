@@ -143,7 +143,9 @@ fn sample(state: &TickState, map: &SavedMap, index: usize) -> Option<u8> {
     // difference shades slopes, flat dry land stays base+1.
     let north = north_height(state, map, index, step);
     let shade = if depth > 0 {
-        // Deeper water renders darker; shallow water keeps base brightness.
+        // Water-depth shading approximation (wiki: deeper water darker):
+        // deep (>=3) renders darkest, shallow keeps mid brightness. The
+        // row requires distinct classes, not per-depth multiplication.
         if depth >= 3 { 0 } else { 1 }
     } else if height > north {
         2
@@ -206,8 +208,9 @@ fn nether_sample(state: &TickState, map: &SavedMap, index: usize) -> u8 {
     seed ^= seed >> 27;
     seed = seed.wrapping_mul(0x94D0_49BB_1331_11EB);
     seed ^= seed >> 31;
-    // Dirt/stone map colors with brightness variation (vanilla-like noise).
-    let base = if seed & 1 == 0 { 13_u8 } else { 11_u8 };
+    // Local palette rows for vanilla dirt/stone equivalents (verified: dirt=7,
+    // stone=13 in block_map_colors.json); brightness varies per pixel.
+    let base = if seed & 1 == 0 { 13_u8 } else { 7_u8 };
     base * 4 + ((seed >> 7) % 3) as u8
 }
 

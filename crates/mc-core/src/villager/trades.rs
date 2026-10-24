@@ -283,7 +283,15 @@ fn add_librarian_book(state: &mut VillagerState, registry: &CoreRegistry, level:
     };
     let enchantment = mc_data::Identifier::parse(&format!("minecraft:{name}"))
         .expect("librarian enchantment id");
-    let result = ItemStack::new(enchanted, 1).with_enchantment(enchantment, book_level);
+    // Enchanted books carry stored_enchantments, not the item enchantment
+    // family (vanilla StoredEnchantments component).
+    let mut result = ItemStack::new(enchanted, 1);
+    result.extended_mut().stored_enchantments.push(
+        mc_data::ItemEnchantment {
+            id: enchantment,
+            level: book_level,
+        },
+    );
     let candidate = VillagerTradeOffer {
         cost_a: ItemStack::new(emerald, price),
         cost_b: Some(ItemStack::new(book, 1)),
@@ -424,9 +432,11 @@ pub(crate) fn work(state: &mut VillagerState, registry: &CoreRegistry, tick: u64
     }
     for offer in &mut state.offers {
         // Vanilla demand adjustment per offer on every work restock:
-        // subtract maxUses, add twice actual purchases. Unused offers
-        // (uses == 0) still recover demand — the restock gate above only
-        // requires that SOME offer was used.
+        // demand += 2*uses - maxUses (wiki Sale_prices). Unused offers
+        // (uses == 0) still recover demand — the gate above only requires
+        // SOME offer was used. i32 saturating ops match Java int arithmetic
+        // in the reachable range; negative demand is a valid discount and
+        // customer_price floors the final price at 1.
         offer.demand = offer
             .demand
             .saturating_add(2 * offer.uses)

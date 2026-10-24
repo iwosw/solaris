@@ -104,13 +104,9 @@ fn mob_hostile_to_players(state: &TickState, slot: crate::entities::EntitySlot) 
     let row = state.entities.row(slot);
     // Vanilla player-kill credit persists 100 ticks after a player hit: a
     // piglin hurt by a player in that window counts as angered.
-    if row
-        .last_player_hit
+    // (last_hurt is a damage magnitude, not recency — not used here.)
+    row.last_player_hit
         .is_some_and(|(_, at)| state.tick.saturating_sub(at) <= 100)
-    {
-        return true;
-    }
-    row.last_hurt > 0.0
 }
 
 /// Publish the sleeping position (and pose) of `entity`.

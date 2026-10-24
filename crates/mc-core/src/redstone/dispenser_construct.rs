@@ -57,12 +57,25 @@ pub(super) fn complete(
     };
     // Place the head, then run the shared construction check so a completed
     // frame summons (or a Peaceful wither refuses) exactly like manual play.
+    // Snapshot the write log: on failure every entry appended below (mine and
+    // any from after_blocks) is truncated and the cell restored, so the
+    // caller's footprint stays consistent and no head block remains.
+    let writes_len = writes.len();
     state.world.set_block(target.x, target.y, target.z, head_state.default.0);
     writes.push((target, head_state.default.0));
     let before = spawned.len();
     crate::golems::after_blocks(state, writes);
     crate::special_mobs::after_blocks(state, writes);
-    let summoned = spawned.len() != before;
+    // Attribute the summon to THIS dispenser: the spawned entity must
+    // appear near the target cell (after_blocks scans all writes and could
+    // otherwise credit an unrelated frame completed by the same tick).
+    let summoned = spawned[before..].iter().any(|id| {
+        state.entities.slot_of(*id).is_some_and(|slot| {
+            let at = state.entities.pos(slot);
+            (at[0] - (f64::from(target.x) + 0.5)).abs() < 4.0
+                && (at[2] - (f64::from(target.z) + 0.5)).abs() < 4.0
+        })
+    });
     // Count golem summons routed to hostile.spawned instead.
     let summoned = summoned || {
         let before_hostile = state.hostile.spawned.len();
@@ -86,11 +99,11 @@ pub(super) fn complete(
                 .slots[index],
         );
     } else {
-        // Incomplete frame: restore air (vanilla would place the head as a
-        // block; a dispenser ejects instead — signal non-consumption so the
-        // caller ejects the item).
+        // Incomplete frame: truncate every speculative entry and restore the
+        // original cell (a dispenser ejects the head instead of placing it —
+        // returning false routes to the item-ejection path).
+        writes.truncate(writes_len);
         state.world.set_block(target.x, target.y, target.z, state.registry.states.air);
-        writes.pop();
     }
     summoned
 }

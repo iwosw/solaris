@@ -408,9 +408,30 @@ fn drop_display(
     crate::redstone::wake(state, cell(state, slot));
     true
 }
+/// Drop retained framed waypoints that belong to the broken frame's cell.
+/// Markers store block coordinates, so only that cell's markers are evicted.
+fn evict_frame_markers(state: &mut TickState, position: BlockPos) {
+    let mut dirty = Vec::new();
+    for (id, map) in state.maps.records.iter_mut() {
+        let map = std::sync::Arc::make_mut(map);
+        let before = map.frame_markers.len();
+        map.frame_markers
+            .retain(|(x, z, _)| *x != position.x || *z != position.z);
+        if map.frame_markers.len() != before {
+            dirty.push(*id);
+        }
+    }
+    for id in dirty {
+        state.maps.dirty.insert(id);
+    }
+}
+
 fn break_frame(state: &mut TickState, slot: EntitySlot, drop: bool, spawned: &mut Vec<EntityId>) {
     let kind = name(state, slot).expect("frame");
+    let position = cell(state, slot);
     drop_display(state, slot, drop, spawned);
+    // Breaking the frame evicts its retained waypoint (no ghost markers).
+    evict_frame_markers(state, position);
     if drop && crate::command_rules::boolean(state, "entity_drops") {
         let item = state
             .registry

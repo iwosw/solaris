@@ -65,6 +65,16 @@ pub fn from_tag(root: &Tag) -> Result<SavedMap, String> {
             map.banners.push(Banner { pos, color, name });
         }
     }
+    if let Some(Tag::List(list)) = field(data, "frameMarkers")? {
+        for tag in &list.elements {
+            let pos = match field(tag, "pos")? {
+                Some(Tag::IntArray(pos)) if pos.len() == 3 => [pos[0], pos[1], pos[2]],
+                _ => return Err("invalid frame marker position".into()),
+            };
+            let rotation = int(tag, "rotation", Some(0))?;
+            map.frame_markers.push((pos[0], pos[1], rotation));
+        }
+    }
     mc_nbt::write_named(&mut map.original_nbt, "", root).map_err(|e| e.to_string())?;
     map.validate()?;
     Ok(map)
@@ -158,6 +168,25 @@ pub fn to_tag(map: &SavedMap) -> Result<Tag, String> {
         Tag::List(ListTag {
             element_type: tag_type::COMPOUND,
             elements: banners,
+        }),
+    );
+    // Vanilla frameMarkers: retained framed waypoints survive restarts.
+    let frame_markers = map
+        .frame_markers
+        .iter()
+        .map(|(x, z, rotation)| {
+            Tag::Compound(vec![
+                ("pos".into(), Tag::IntArray(vec![*x, 0, *z])),
+                ("rotation".into(), Tag::Int(*rotation)),
+            ])
+        })
+        .collect();
+    put(
+        fields,
+        "frameMarkers",
+        Tag::List(ListTag {
+            element_type: tag_type::COMPOUND,
+            elements: frame_markers,
         }),
     );
     put(root_fields, "data", data);
