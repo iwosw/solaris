@@ -147,10 +147,13 @@ one picture per FRAME, Annex B. The server still never decodes: it only reads th
   FRAME (`deliver` calls `Relay::frame_dropped`), an exhausted owner byte budget drops one
   (`resync`); both put the affected viewers back in `needs_key` and request a key frame. A viewer
   whose decoder fails sends `KEY_REQUEST` (only honoured while it is watching).
-- **No periodic key frames.** The transport is reliable and OpenH264 decoding is deterministic,
-  so there is no drift to correct; a key frame is sent only on demand (first picture, new
-  watcher, resync, resolution change, oversize restart). A fixed 2 s interval would cost a
-  full key frame every 10 pictures for nothing.
+- **No client-scheduled periodic key frames.** The transport is reliable and OpenH264
+  decoding is deterministic, so the client requests key frames for the first picture,
+  new watcher, resync, resolution change and oversize restart, not a fixed 2 s interval.
+  OpenH264 additionally requires scene-change detection in screen-content real-time
+  mode and can emit key frames for content changes. Its parameter validation forces
+  detection on even if configured off; the native encoder now requests the effective
+  value explicitly. The measurements below already include these content-driven keys.
 - **Unchanged pictures cost nothing.** The owner downscales the capture to <=640 px (even
   dimensions) and compares it with the last picture sent; identical pictures send no packet at
   all (a requested key frame is still sent, from the retained last picture, so a static window
