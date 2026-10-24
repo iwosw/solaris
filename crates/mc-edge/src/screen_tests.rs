@@ -306,6 +306,34 @@ fn revoke_leave_and_disconnects_end_permission() {
 }
 
 #[test]
+fn leave_cancels_an_unanswered_request() {
+    let mut relay = relay();
+    open(&mut relay);
+    let now = Instant::now();
+    let asked = relay.handle(VIEWER, Message::Request(row()), &Monitors(true), now);
+    let request = u32::from_be_bytes(asked[0].payload[18..22].try_into().unwrap());
+    assert!(
+        relay
+            .handle(VIEWER, Message::Leave(row()), &Monitors(true), now)
+            .is_empty()
+    );
+    let answered = relay.handle(
+        OWNER,
+        Message::Answer {
+            request,
+            allow: true,
+        },
+        &Monitors(true),
+        now,
+    );
+    assert!(answered.is_empty(), "a withdrawn request grants nothing");
+    assert!(
+        relay.tick(poses(watching()), &Monitors(true)).is_empty(),
+        "no demand without a grant"
+    );
+}
+
+#[test]
 fn open_is_validated_and_exclusive() {
     let mut relay = relay();
     let now = Instant::now();
@@ -357,7 +385,11 @@ fn audio_reaches_only_looking_granted_viewers_while_demanded() {
         &Monitors(true),
         now,
     );
-    assert_eq!(kinds(&sent), [(2, 7)], "granted viewer only, never the bystander");
+    assert_eq!(
+        kinds(&sent),
+        [(2, 7)],
+        "granted viewer only, never the bystander"
+    );
     assert_eq!(&sent[0].payload[18..22], 9u32.to_be_bytes());
     assert_eq!(&sent[0].payload[22..], [0xF8, 1, 2, 3]);
     assert!(sent[0].is_media());
@@ -366,7 +398,12 @@ fn audio_reaches_only_looking_granted_viewers_while_demanded() {
     assert_eq!(kinds(&aside), [(2, 2), (1, 0)]);
     assert!(
         relay
-            .handle(OWNER, decode(&audio_part(10, b"x")).unwrap(), &Monitors(true), now)
+            .handle(
+                OWNER,
+                decode(&audio_part(10, b"x")).unwrap(),
+                &Monitors(true),
+                now
+            )
             .is_empty(),
         "no demand: dropped"
     );
@@ -391,12 +428,20 @@ fn audio_from_non_owner_or_ungranted_is_never_relayed() {
         &Monitors(true),
         now,
     );
-    assert_eq!((refused[0].payload[1], refused[0].payload[18]), (3, refused::NO_SCREEN));
+    assert_eq!(
+        (refused[0].payload[1], refused[0].payload[18]),
+        (3, refused::NO_SCREEN)
+    );
     // Permission ended: the grant is gone, so nobody watches and nothing is sent.
     relay.handle(VIEWER, Message::Leave(row()), &Monitors(true), now);
     assert!(
         relay
-            .handle(OWNER, decode(&audio_part(2, b"x")).unwrap(), &Monitors(true), now)
+            .handle(
+                OWNER,
+                decode(&audio_part(2, b"x")).unwrap(),
+                &Monitors(true),
+                now
+            )
             .iter()
             .all(|e| e.payload[1] != 7)
     );
@@ -410,7 +455,12 @@ fn audio_is_bounded_rate_limited_and_strikes_close_the_screen() {
     let delivered: usize = (0..40)
         .map(|seq| {
             relay
-                .handle(OWNER, decode(&audio_part(seq, &[7; 100])).unwrap(), &Monitors(true), now)
+                .handle(
+                    OWNER,
+                    decode(&audio_part(seq, &[7; 100])).unwrap(),
+                    &Monitors(true),
+                    now,
+                )
                 .len()
         })
         .sum();
@@ -419,7 +469,12 @@ fn audio_is_bounded_rate_limited_and_strikes_close_the_screen() {
     let later = now + Duration::from_millis(100);
     assert_eq!(
         relay
-            .handle(OWNER, decode(&audio_part(50, &[7; 100])).unwrap(), &Monitors(true), later)
+            .handle(
+                OWNER,
+                decode(&audio_part(50, &[7; 100])).unwrap(),
+                &Monitors(true),
+                later
+            )
             .len(),
         1
     );
@@ -435,11 +490,21 @@ fn audio_is_bounded_rate_limited_and_strikes_close_the_screen() {
     let (mut relay, _) = granted(away());
     let mut closed = Vec::new();
     for seq in 0..=MAX_AUDIO_STRIKES {
-        closed = relay.handle(OWNER, decode(&audio_part(seq, b"x")).unwrap(), &Monitors(true), now);
+        closed = relay.handle(
+            OWNER,
+            decode(&audio_part(seq, b"x")).unwrap(),
+            &Monitors(true),
+            now,
+        );
     }
     assert_eq!(kinds(&closed)[0], (1, 3));
     // Empty packets are malformed.
     let (mut relay, _) = granted(watching());
-    let empty = relay.handle(OWNER, decode(&audio_part(1, b"")).unwrap(), &Monitors(true), now);
+    let empty = relay.handle(
+        OWNER,
+        decode(&audio_part(1, b"")).unwrap(),
+        &Monitors(true),
+        now,
+    );
     assert_eq!(kinds(&empty)[0], (1, 3));
 }

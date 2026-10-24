@@ -103,7 +103,8 @@ be a monitor, i.e. a `minecraft:black_glazed_terracotta` carrier state whose
 with every part carrying the full header, <=30000 data bytes per part (the
 serverbound payload limit is 32767), <=5 parts, <=131072 bytes, w<=640, h<=640;
 `3 REQUEST(id)` viewer asks the owner; `4 ANSWER(u32 request, u8 allow)`;
-`5 REVOKE(id, 16-byte viewer uuid)`; `6 LEAVE(id)` viewer drops permission.
+`5 REVOKE(id, 16-byte viewer uuid)`; `6 LEAVE(id)` viewer drops permission and
+cancels its unanswered request to that owner (a later ANSWER grants nothing).
 
 Server -> client: `0 DEMAND(id, u8 on, u16 max_width=640, u8 fps=5)` to the owner;
 `1 FRAME(id, u32 seq, u16 w, u16 h, u8 codec, bytes)` reassembled, to viewers

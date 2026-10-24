@@ -587,7 +587,9 @@ impl Relay {
                     now,
                 );
             }
-            Message::AudioPart { id, seq, opus } => return self.audio_part(from, id, seq, opus, now),
+            Message::AudioPart { id, seq, opus } => {
+                return self.audio_part(from, id, seq, opus, now);
+            }
             Message::Request(id) => return self.request(from, id, now),
             Message::Answer { request, allow } => {
                 if self
@@ -626,6 +628,10 @@ impl Relay {
             Message::Leave(id) => {
                 if let Some(open) = self.screens.get(&id) {
                     let owner = open.owner;
+                    // A LEAVE before the owner answered cancels the request:
+                    // the owner's later answer no longer grants anything.
+                    self.requests
+                        .retain(|_, pending| pending.owner != owner || pending.viewer != from);
                     if self.grants.remove(&(owner, from)) {
                         for screen in self.owned(owner) {
                             self.watching.remove(&(from, screen));
@@ -844,15 +850,27 @@ impl Relay {
         if !open.demand {
             open.audio_strikes += 1;
             if open.audio_strikes > MAX_AUDIO_STRIKES {
-                self.close(&id, Some(refused::BAD_FRAME), stop::OWNER_CLOSED, &mut effects);
+                self.close(
+                    &id,
+                    Some(refused::BAD_FRAME),
+                    stop::OWNER_CLOSED,
+                    &mut effects,
+                );
             }
             return effects;
         }
         if opus.is_empty() || opus.len() > MAX_OPUS_BYTES {
-            self.close(&id, Some(refused::BAD_FRAME), stop::OWNER_CLOSED, &mut effects);
+            self.close(
+                &id,
+                Some(refused::BAD_FRAME),
+                stop::OWNER_CLOSED,
+                &mut effects,
+            );
             return effects;
         }
-        let elapsed = now.saturating_duration_since(open.audio_updated).as_secs_f64();
+        let elapsed = now
+            .saturating_duration_since(open.audio_updated)
+            .as_secs_f64();
         open.audio_updated = now;
         open.audio_packets =
             (open.audio_packets + elapsed * AUDIO_PACKETS_PER_SECOND).min(AUDIO_PACKET_BURST);
