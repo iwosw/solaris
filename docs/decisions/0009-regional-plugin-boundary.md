@@ -31,6 +31,17 @@ does not meter this separately parameter-bounded host work. Epoch interrupts
 are observed when execution returns to Wasm, not inside a blocked native import.
 Precommit hooks retain their caller's short absolute chain deadline.
 
+When native plugin login is required, every deployed `auth` capability holder
+is a required provider. A configured deployment with no provider refuses
+startup. If a provider retires, the host logs its identity, failure and
+`restart required` at ERROR once. Pending and newly joining unauthenticated
+sessions receive a clear authentication-unavailable disconnect; the native
+login fence remains enabled. Already authenticated players retain custody and
+keep playing; this failure does not halt native authority or other plugins.
+Do not resurrect a partially mutated Store or unlock unauthenticated players.
+Recovery is an operator repair and restart with the same world identity and
+durable accounts, not SIGHUP reload or automatic guest retry.
+
 The body below preserves the evolving decision record, including historical
 v1 source paths/commands; present-tense v1 descriptions apply only to their era.
 

@@ -1300,6 +1300,91 @@ async fn observation_shedding_is_per_plugin_fair_and_never_halts_authority() {
     crate::plugin::seal_events(&mut state, 2).unwrap();
 }
 
+#[test]
+fn required_auth_retirement_refuses_logins_without_stopping_established_players() {
+    use crate::boundary::{ConnectionId, PlayerChange, PlayerInput};
+    for required in [false, true] {
+        let mut state = fixture();
+        let established = join_native_player(&mut state);
+        state.require_plugin_login = required;
+        let join = |id| PlayerInput::Join {
+            connection: ConnectionId(id),
+            uuid: uuid::Uuid::from_u128(u128::from(id)),
+            name: format!("Pending{id}"),
+            permission_level: 0,
+        };
+        crate::tick::run_tick(&mut state, &[join(2)]);
+        let capacity = std::num::NonZeroUsize::new(16).unwrap();
+        let (boundary, endpoint) = mc_script::script_boundary_pair(capacity, capacity);
+        let manifest = mc_script::ScriptPluginManifest::new(
+            "authentication",
+            "Authentication",
+            "0.1.0",
+            mc_script::COMPONENT_PLUGIN_API_VERSION,
+        )
+        .validate()
+        .unwrap();
+        endpoint.register_plugin_routes(&manifest).unwrap();
+        let mut runtime = crate::plugin::PluginRuntime::with_test_boundary(boundary.clone());
+        if required {
+            runtime.required_auth_plugins.push("authentication".into());
+        }
+        state.plugin_runtime = Some(runtime);
+        crate::plugin::observe_players(&mut state);
+        assert!(state.disconnects.is_empty());
+        endpoint.unregister_plugin_routes("authentication");
+        crate::plugin::observe_players(&mut state);
+        let refused = |state: &TickState, id| {
+            state.outbox.get(&ConnectionId(id)).is_some_and(|changes| {
+                changes.iter().any(|change| {
+                    matches!(change,
+                    PlayerChange::Disconnect { reason }
+                    if reason.contains("authentication") && reason.contains("restart required"))
+                })
+            })
+        };
+        assert_eq!(refused(&state, 2), required, "pending login refusal");
+        assert!(!refused(&state, 1), "established player remains connected");
+        assert_eq!(
+            state.connections.entity_of(ConnectionId(1)),
+            Some(established)
+        );
+        assert_eq!(state.session_locked(ConnectionId(2)), required);
+        assert_eq!(crate::plugin::seal_events(&mut state, 2), Ok(true));
+        // New arrivals after retirement receive the same refusal, while ticks advance.
+        let tick = state.tick;
+        crate::tick::run_tick(&mut state, &[join(3)]);
+        assert!(state.tick > tick);
+        assert_eq!(refused(&state, 3), required);
+        assert_eq!(
+            state.connections.entity_of(ConnectionId(1)),
+            Some(established)
+        );
+        assert!(!state.session_locked(ConnectionId(1)));
+        // A fresh provider after operator recovery accepts new authentication work.
+        endpoint.register_plugin_routes(&manifest).unwrap();
+        crate::tick::run_tick(&mut state, &[join(4)]);
+        assert!(!refused(&state, 4));
+    }
+}
+
+#[test]
+fn plugin_login_rejects_a_deployment_without_an_auth_provider() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut config = crate::config::CoreConfig::new(directory.path().join("world"), 42);
+    config.plugin_directory = Some(directory.path().join("plugins"));
+    std::fs::create_dir_all(config.plugin_directory.as_ref().unwrap()).unwrap();
+    config.require_plugin_login = true;
+    let error = match crate::plugin::PluginRuntime::open(&config) {
+        Ok(_) => panic!("an auth-less deployment must not accept required logins"),
+        Err(error) => error,
+    };
+    assert!(
+        error.to_string().contains("auth-capable package"),
+        "{error}"
+    );
+}
+
 #[tokio::test]
 async fn durable_callbacks_survive_full_delivery_queue_and_remain_ack_gated() {
     use mc_script::{ScriptEvent, ScriptEventKind};

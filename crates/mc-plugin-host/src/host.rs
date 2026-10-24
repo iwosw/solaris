@@ -191,6 +191,7 @@ struct Hosted<S: HostServices + 'static> {
     /// not a subscription, so a package cannot receive commands it never declared.
     commands: BTreeSet<String>,
     admission: HostCommandAdmission,
+    auth_provider: bool,
     instance: PluginInstance<S>,
     diagnostics: InstanceDiagnostics,
     callback_latency: CallbackLatencyWindow,
@@ -674,6 +675,10 @@ where
             subscriptions,
             commands,
             admission,
+            auth_provider: package
+                .requested_capabilities()
+                .iter()
+                .any(|capability| capability == "auth"),
             instance,
             diagnostics,
             callback_latency: CallbackLatencyWindow::default(),
@@ -1042,6 +1047,10 @@ where
             subscriptions,
             commands,
             admission,
+            auth_provider: package
+                .requested_capabilities()
+                .iter()
+                .any(|capability| capability == "auth"),
             instance,
             diagnostics: InstanceDiagnostics::default(),
             callback_latency: CallbackLatencyWindow::default(),
@@ -1394,7 +1403,16 @@ fn retire<S: HostServices + 'static>(
     endpoint: &ScriptHostEndpoint,
     error: &HostError,
 ) {
-    tracing::warn!(plugin = %hosted.id, %error, "plugin instance retired after a failed callback");
+    if hosted.auth_provider {
+        tracing::error!(
+            plugin = %hosted.id,
+            %error,
+            "auth plugin {} retired: {error}; restart required",
+            hosted.id,
+        );
+    } else {
+        tracing::warn!(plugin = %hosted.id, %error, "plugin instance retired after a failed callback");
+    }
     hosted.retired = true;
     hosted.timers = TimerSchedule::default();
     endpoint.unregister_plugin_routes(&hosted.id);

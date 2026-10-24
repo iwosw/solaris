@@ -558,6 +558,9 @@ pub(crate) struct PluginRuntime {
     /// did. The native death path reads it every death, so it is resolved once at
     /// startup and never per tick.
     pub(crate) death_graves: Option<String>,
+    /// Auth-capable packages are required while the native login fence is enabled.
+    /// Retain their deployment identities even after the host unregisters them.
+    pub(crate) required_auth_plugins: Vec<String>,
     catalogs: crate::plugin_structures::Catalogs,
     pub(crate) stats: Arc<PluginStats>,
     pending_changes: Vec<(crate::boundary::ConnectionId, crate::boundary::PlayerChange)>,
@@ -617,6 +620,27 @@ impl PluginRuntime {
             .map(|p| (p.manifest().plugin_id().into(), p.root().to_owned()))
             .collect();
         let death_graves = death_graves_owner(&packages)?;
+        let required_auth_plugins = if config.require_plugin_login {
+            let providers: Vec<String> = packages
+                .iter()
+                .filter(|package| {
+                    package
+                        .requested_capabilities()
+                        .iter()
+                        .any(|capability| capability == "auth")
+                })
+                .map(|package| package.manifest().plugin_id().to_owned())
+                .collect();
+            if providers.is_empty() {
+                return Err(CoreError::Plugin(
+                    "plugin login requires an auth-capable package; repair the deployment and restart"
+                        .into(),
+                ));
+            }
+            providers
+        } else {
+            Vec::new()
+        };
         let sessions = Arc::new(Sessions::default());
         let queues = mc_plugin_host::host::HostQueues {
             defer_initial_timer_clock: true,
@@ -639,6 +663,7 @@ impl PluginRuntime {
             roots,
             commands,
             death_graves,
+            required_auth_plugins,
             stats: Arc::new(PluginStats::default()),
             pending_changes: Vec::new(),
             pending_traces: Vec::new(),
@@ -666,6 +691,7 @@ impl PluginRuntime {
             roots: BTreeMap::new(),
             commands,
             death_graves: None,
+            required_auth_plugins: Vec::new(),
             catalogs: Default::default(),
             stats: Arc::new(PluginStats::default()),
             pending_changes: Vec::new(),
@@ -2279,10 +2305,54 @@ pub(crate) fn observe_input(state: &mut TickState, input: &crate::boundary::Play
     }
 }
 
+/// Refuse only unauthenticated sessions when a required provider disappears.
+/// Established players keep their native custody and the world keeps ticking.
+fn refuse_unavailable_auth(state: &mut TickState) {
+    let Some(runtime) = &state.plugin_runtime else {
+        return;
+    };
+    let Some(plugin) = runtime
+        .required_auth_plugins
+        .iter()
+        .find(|plugin| !runtime.boundary.plugin_is_active(plugin))
+    else {
+        return;
+    };
+    let pending: Vec<_> = std::iter::once(&*state)
+        .chain(state.other_dimensions.values().map(|world| &**world))
+        .flat_map(|world| {
+            world.locked_sessions.iter().copied().filter(|connection| {
+                !world
+                    .disconnects
+                    .iter()
+                    .any(|(sealed, _)| sealed == connection)
+            })
+        })
+        .collect();
+    if pending.is_empty() {
+        return;
+    }
+    let reason = format!(
+        "Authentication unavailable: auth plugin {plugin} retired; restart required. Contact the server operator."
+    );
+    for connection in pending {
+        if let Some(world) = player_world_mut(state, connection) {
+            world.push_player(
+                connection,
+                crate::boundary::PlayerChange::Disconnect {
+                    reason: reason.clone(),
+                },
+            );
+            world.disconnects.push((connection, world.tick));
+        }
+    }
+}
+
 pub(crate) fn observe_players(state: &mut TickState) {
     if state.plugin_runtime.is_none() {
         return;
     }
+    refuse_unavailable_auth(state);
     let mut current = BTreeMap::new();
     for world in
         std::iter::once(&*state).chain(state.other_dimensions.values().map(|world| &**world))

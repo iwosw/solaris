@@ -445,6 +445,18 @@ Argon2id password work retains its fixed 19 MiB, two-pass, single-lane cost and
 does not consume guest fuel. Precommit hooks still obey their short absolute
 chain deadline rather than the ordinary callback allowance.
 
+With required plugin login, the configured deployment must contain an
+`auth`-capable package. Every such provider is required: retirement logs the
+package identity, failure and `restart required` at ERROR once. Pending and new
+unauthenticated sessions are disconnected with an authentication-unavailable
+reason; already authenticated players keep playing and native ticks continue.
+The login fence stays enabled and a trapped Store is never retried. Inspect
+the preceding callback error to distinguish fuel exhaustion from the wall-clock
+hang guard, repair the package or host capacity, then restart the server with
+the same world and account data. Do not disable required login as a recovery
+shortcut. Other retired components retain the isolated command-unavailable
+behavior above.
+
 ## Bukkit compatibility (experimental)
 
 `tools/bukkit/convert.py` is an **explicit offline converter**, not a JVM server
