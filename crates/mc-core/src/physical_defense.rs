@@ -423,6 +423,36 @@ fn apply_defense(
     piece: &mut DamagePiece,
     shields: bool,
 ) -> bool {
+    // WOLF-ARMOR-ABSORB (vanilla-like): equipped wolf body armor halves
+    // incoming damage and wears by 1 per damaging hit, breaking at max
+    // durability (armadillo scutes repair it through the interact path).
+    if !shields && piece.amount > 0.0 {
+        let kind = crate::mounts::type_id(state.entities.body(actor))
+            .and_then(|id| state.registry.blueprint(id))
+            .map(|blueprint| blueprint.name.as_str());
+        if kind == Some("minecraft:wolf")
+            && state.entities.row(actor).loot.body_armor.is_some()
+        {
+            piece.amount *= 0.5;
+            let max = state
+                .registry
+                .item_rules()
+                .facts
+                .facts_for_stack(
+                    state.entities.row(actor).loot.body_armor.as_ref().expect("armor"),
+                    &state.registry.items,
+                )
+                .and_then(|facts| facts.max_damage);
+            let row = state.entities.row_mut(actor);
+            let armor = row.loot.body_armor.as_mut().expect("armor");
+            let worn = armor.damage.unwrap_or(0).saturating_add(1);
+            if max.is_some_and(|max| worn as u32 >= max) {
+                row.loot.body_armor = None;
+            } else {
+                armor.damage = Some(worn);
+            }
+        }
+    }
     if !state.registry.item_facts.has_physical_profiles() {
         return true;
     }
