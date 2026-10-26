@@ -3000,6 +3000,11 @@ fn run_dimension_tick_inner<'a>(
         state.rain_level = 0.0;
         state.thunder_level = 0.0;
     }
+    // Vanilla `WorldBorder.tick` advances the interpolation extent every
+    // game tick, independent of weather sleep or dimension.
+    if sim {
+        state.border.advance_tick();
+    }
     crate::scoreboard::automatic(state, &[], &[]);
     crate::maps::tick(state);
     crate::command_locate::drain(state);
