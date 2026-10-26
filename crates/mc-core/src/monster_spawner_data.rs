@@ -26,6 +26,11 @@ fn light_range(fields: &Fields, name: &str) -> Result<[u8; 2], String> {
 }
 
 impl SpawnData {
+    /// Admits `{entity:{id}}` plus `custom_spawn_rules` light ranges (vanilla
+    /// `SpawnData` is entity + custom rules + equipment). Per-entity custom NBT
+    /// (beyond the id) and spawner-level `equipment` tables stay rejected:
+    /// vanilla applies them at spawn time and there is no spawn-time NBT path
+    /// yet, so admitting them would silently drop them.
     pub fn decode(fields: &Fields, registry: &crate::registry::CoreRegistry) -> Result<Self, String> {
         if fields.iter().any(|(key, _)| key != "entity" && key != "custom_spawn_rules") {
             return Err("unsupported spawner spawn data field".into());
