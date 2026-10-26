@@ -1901,10 +1901,6 @@ async fn run_connection(
         },
     )?;
     if !stashed.is_empty() {
-        let handles = server
-            .connections
-            .get(id)
-            .expect("queues inserted above for this connection");
         // Adopt the Joined entity id if stashed (matches the pump path).
         let joined_entity = stashed.iter().find_map(|change| match change {
             mc_core::boundary::PlayerChange::Joined { entity, .. } => Some(*entity),
@@ -1917,21 +1913,9 @@ async fn run_connection(
             spawn,
             dimension,
         );
-        // Skip the stale `Joined` sync itself: the join burst already sent
-        // teleport id 1 + empty inventory/health at this position, and the
-        // `Joined` arm would re-emit all four (a second teleport + a reset
-        // to empty). Replay only the authoritative tail after it.
-        let tail: Vec<mc_core::boundary::PlayerChange> = stashed
-            .into_iter()
-            .skip_while(|change| !matches!(change, mc_core::boundary::PlayerChange::Joined { .. }))
-            .skip(1)
-            .collect();
-        for planned in crate::plan::plan_player_changes(&tail, &mut replay_viewer) {
-            // case disconnect loudly instead of sending a partial burst.
-            if handles.reliable_tx.try_send(planned.data).is_err() {
-                warn!(%peer, connection = id.0, stage = "join-replay", name = %outcome.name, "stashed join burst overflows outbound queue; connection closed");
-                return Ok(());
-            }
+        if let Err(error) = replay_join_tail(&server.connections, id, stashed, &mut replay_viewer) {
+            warn!(%peer, connection = id.0, stage = "join-replay", name = %outcome.name, %error, "stashed join burst failed; connection closed");
+            return Ok(());
         }
     }
     server.connections.set_name(id, outcome.name.clone());
@@ -2484,12 +2468,32 @@ fn spawn_pump(server: Arc<EdgeServer>) -> anyhow::Result<tokio::task::JoinHandle
     }))
 }
 
-/// Drain `Core::try_drain_outbox` and route reliable changes FIRST (before
-/// the world publish). Each `PlayerChange` is mapped to framed reliable
-/// packets via `plan::plan_player_changes` (single-sourced with the world
-/// plan; includes `GameModeChanged`/cursor). A full reliable queue
-/// disconnects; changes for unknown/gone connections are dropped with the
-/// connection.
+/// Replay the authoritative join tail after outbound registration.
+fn replay_join_tail(
+    registry: &ConnectionRegistry,
+    id: ConnectionId,
+    stashed: Vec<mc_core::boundary::PlayerChange>,
+    viewer: &mut crate::plan::ViewerState,
+) -> anyhow::Result<()> {
+    let handles = registry
+        .get(id)
+        .ok_or_else(|| anyhow::anyhow!("connection closed before join replay"))?;
+    // The join burst already sent teleport id 1 and initial presentation.
+    // Replay only the authoritative tail, not another Joined/reset.
+    let tail: Vec<_> = stashed
+        .into_iter()
+        .skip_while(|change| !matches!(change, mc_core::boundary::PlayerChange::Joined { .. }))
+        .skip(1)
+        .collect();
+    for planned in crate::plan::plan_player_changes(&tail, viewer) {
+        anyhow::ensure!(
+            handles.reliable_tx.try_send(planned.data).is_ok(),
+            "stashed join burst overflows outbound queue"
+        );
+    }
+    Ok(())
+}
+
 fn configured_viewer(
     server: &EdgeServer,
     connection: ConnectionId,
@@ -2511,6 +2515,12 @@ fn configured_viewer(
     viewer
 }
 
+/// Drain `Core::try_drain_outbox` and route reliable changes FIRST (before
+/// the world publish). Each `PlayerChange` is mapped to framed reliable
+/// packets via `plan::plan_player_changes` (single-sourced with the world
+/// plan; includes `GameModeChanged`/cursor). A full reliable queue
+/// disconnects; changes for unknown/gone connections are dropped with the
+/// connection.
 fn route_outbox(
     server: &Arc<EdgeServer>,
     viewers: &mut HashMap<ConnectionId, crate::plan::ViewerState>,

@@ -195,8 +195,10 @@ pending join/reliable state. No lifetime tombstone set is needed.
 negotiated view, locale and Join. Its single-owner session retains one credit for Leave
 on that same FIFO. The edge lifecycle guard drops it on normal return, pre-Play
 failure and task cancellation, and also releases admission/admin state and the
-writer task. Cleanup never waits or retries a full ordinary-input queue. Full
-initial admission and an already stopped core are distinct refusals.
+writer task. Enqueuing Leave never waits or retries a full ordinary-input queue;
+normal and delivery-policy exits abort and await the socket writer before the
+guard releases admission. External task cancellation retains an abort-on-drop
+fallback. Full initial admission and an already stopped core are distinct refusals.
 
 Delivery overflow stops routing and pushes a cancellation event to the outer
 connection owner, even when its socket writer is blocked. Only the final guard,

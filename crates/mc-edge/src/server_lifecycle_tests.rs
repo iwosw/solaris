@@ -1,6 +1,48 @@
 use super::*;
 
 #[test]
+fn removed_registration_fails_join_replay_without_panicking() {
+    let registry = ConnectionRegistry::new();
+    let id = registry.joining_id();
+    let entity = mc_core::boundary::EntityId(1);
+    let mut changes = vec![
+        mc_core::boundary::PlayerChange::Joined {
+            entity,
+            dimension: Default::default(),
+            position: [0.0; 3],
+            yaw: 0.0,
+            pitch: 0.0,
+            game_mode: 0,
+        },
+        mc_core::boundary::PlayerChange::Chat {
+            message: "join tail".into(),
+        },
+    ];
+    assert!(registry.handles_or_stash(id, &mut changes).is_none());
+    let (reliable_tx, mut reliable_rx) = mpsc::channel(4);
+    let (world_tx, _world_rx) = mpsc::channel(4);
+    let stashed = registry
+        .register(
+            id,
+            ConnectionHandles {
+                reliable_tx,
+                world_tx,
+            },
+        )
+        .unwrap();
+    assert_eq!(stashed.len(), 2);
+    // The pump can close delivery after register succeeds, before replay.
+    registry.remove(id);
+    let mut viewer = crate::plan::ViewerState::new(id, entity, [0.0; 3]);
+    let error = replay_join_tail(&registry, id, stashed, &mut viewer).unwrap_err();
+    assert!(error.to_string().contains("closed"));
+    assert!(matches!(
+        reliable_rx.try_recv(),
+        Err(mpsc::error::TryRecvError::Disconnected)
+    ));
+}
+
+#[test]
 fn late_reliable_results_do_not_revive_removed_connection() {
     let registry = ConnectionRegistry::new();
     let id = registry.joining_id();

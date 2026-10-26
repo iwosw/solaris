@@ -1228,17 +1228,6 @@ impl Core {
         }
     }
 
-    /// Retire a submitted Join without shedding its Leave on a full gameplay
-    /// queue. The edge retains its admission reservation until this completes.
-    /// A closed receiver means the authoritative owner has already stopped.
-    pub async fn leave(&self, connection: ConnectionId) {
-        let _ = self
-            .inner
-            .input_tx
-            .send(PlayerInput::Leave { connection })
-            .await;
-    }
-
     /// Subscribe to tick outputs. Bounded broadcast; laggards see `Lagged`
     /// and skip to the latest snapshot (world state is skippable). After the
     /// tick thread exits the receiver is already `Closed`.
