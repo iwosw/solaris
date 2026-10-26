@@ -170,31 +170,191 @@ fn command_parity_teleport_rejects_multi_target_destination() {
 
 #[test]
 fn command_parity_sort_limit_options_and_typed_filters() {
-    // SELECTOR-OPTION-COVERAGE spot checks through the live command path:
-    // sort/limit/level/gamemode/team/score/tag/pitch/yaw/nbt/advancement/
-    // predicate families parse and filter rather than rejecting as unknown.
+    // SELECTOR-OPTION-COVERAGE behavior through the live command path:
+    // each family admits/rejects rather than only parsing.
     let (mut state, alice, bob) = fixture();
     for (entity, position) in [(alice, [0.0, 80.0, 0.0]), (bob, [10.0, 80.0, 0.0])] {
         let slot = state.entities.slot_of(entity).unwrap();
         state.entities.set_pos(slot, position);
     }
-    for selector in [
-        "@a[sort=nearest,limit=1]",
-        "@a[sort=furthest,limit=1]",
-        "@a[level=0..100]",
-        "@a[gamemode=!spectator]",
-        "@a[team=]",
-        "@e[tag=!untagged]",
-        "@a[x_rotation=-90..90]",
-        "@a[y_rotation=0..360]",
-        "@a[advancements={minecraft:story/root=true}]",
-        "@e[predicate=minecraft:test]",
-    ] {
+    // sort/limit still parse.
+    for selector in ["@a[sort=nearest,limit=1]", "@a[sort=furthest,limit=1]"] {
         assert!(
             crate::commands::target_of(selector).is_ok(),
             "{selector} should parse"
         );
     }
+    // level range: Alice 0 by default; Bob raised to 5.
+    state.players.get_mut(&bob).unwrap().vitals.experience.level = 5;
+    let target = crate::commands::target_of("@a[level=3..10]").unwrap();
+    assert_eq!(resolve_target(&state, alice, &target), vec![bob]);
+    let target = crate::commands::target_of("@a[level=6..]").unwrap();
+    assert!(resolve_target(&state, alice, &target).is_empty());
+    let target = crate::commands::target_of("@a[level=..4]").unwrap();
+    assert_eq!(resolve_target(&state, alice, &target), vec![alice]);
+    // gamemode: Bob switched to creative; survival filter keeps Alice only.
+    state.players.get_mut(&bob).unwrap().game_mode = crate::commands::GameMode::Creative;
+    let target = crate::commands::target_of("@a[gamemode=survival]").unwrap();
+    assert_eq!(resolve_target(&state, alice, &target), vec![alice]);
+    let target = crate::commands::target_of("@a[gamemode=!survival]").unwrap();
+    assert_eq!(resolve_target(&state, alice, &target), vec![bob]);
+    // team: Bob joins red via scored state; team=red admits Bob only.
+    state.scoreboard.teams.insert(
+        "red".into(),
+        crate::scoreboard::Team {
+            display_name: "red".into(),
+            color: 21,
+            friendly_fire: true,
+            see_friendly_invisibles: true,
+            nametag_visibility: 0,
+            death_message_visibility: 0,
+            collision_rule: 0,
+            prefix: String::new(),
+            suffix: String::new(),
+            members: ["Bob".to_owned()].into_iter().collect(),
+        },
+    );
+    let target = crate::commands::target_of("@a[team=red]").unwrap();
+    assert_eq!(resolve_target(&state, alice, &target), vec![bob]);
+    let target = crate::commands::target_of("@a[team=!red]").unwrap();
+    assert_eq!(resolve_target(&state, alice, &target), vec![alice]);
+    let target = crate::commands::target_of("@a[team=]").unwrap();
+    assert_eq!(resolve_target(&state, alice, &target), vec![alice]);
+    // scores: Alice 7, Bob 9 on objective test; range 8.. admits Bob only.
+    state.scoreboard.objectives.insert(
+        "test".into(),
+        crate::scoreboard::Objective {
+            criteria: "dummy".into(),
+            display_name: "test".into(),
+        },
+    );
+    for (holder, value) in [("Alice", 7), ("Bob", 9)] {
+        state.scoreboard.scores.entry(holder.to_owned()).or_default().insert(
+            "test".into(),
+            crate::scoreboard::Score { value, locked: false },
+        );
+    }
+    let target = crate::commands::target_of("@a[scores={test=8..}]").unwrap();
+    assert_eq!(resolve_target(&state, alice, &target), vec![bob]);
+    let target = crate::commands::target_of("@a[scores={test=..7}]").unwrap();
+    assert_eq!(resolve_target(&state, alice, &target), vec![alice]);
+    // tag: no /tag support yet, so positive matches nothing, negative admits.
+    let target = crate::commands::target_of("@e[tag=!untagged]").unwrap();
+    let selected = resolve_target(&state, alice, &target);
+    assert!(selected.contains(&alice) && selected.contains(&bob));
+    let target = crate::commands::target_of("@e[tag=untagged]").unwrap();
+    assert!(resolve_target(&state, alice, &target).is_empty());
+    // pitch/yaw: both players spawn at rot 0/0; tight 1..90 pitch rejects.
+    let target = crate::commands::target_of("@a[x_rotation=-90..90]").unwrap();
+    assert_eq!(resolve_target(&state, alice, &target).len(), 2);
+    let target = crate::commands::target_of("@a[x_rotation=1..90]").unwrap();
+    assert!(resolve_target(&state, alice, &target).is_empty());
+    let target = crate::commands::target_of("@a[y_rotation=0..360]").unwrap();
+    assert_eq!(resolve_target(&state, alice, &target).len(), 2);
+    // nbt: exact-match against the full serialized entity tag, so a
+    // single-field expectation rejects (documents the exact-match
+    // semantic rather than NBT-subset matching). Behavior covered:
+    // a mismatched expectation admits nobody.
+    let target = crate::commands::target_of("@e[nbt={Health:0.5f}]").unwrap();
+    assert!(resolve_target(&state, alice, &target).is_empty());
+    // advancements: flagged root=true admits only the granted player.
+    state.players.get_mut(&alice).unwrap().advancement_progress = std::sync::Arc::new(
+        serde_json::json!({
+            "minecraft:story/root": {"done": true},
+        }),
+    );
+    let target =
+        crate::commands::target_of("@a[advancements={minecraft:story/root=true}]").unwrap();
+    assert_eq!(resolve_target(&state, alice, &target), vec![alice]);
+    let target =
+        crate::commands::target_of("@a[advancements={minecraft:story/root=false}]").unwrap();
+    assert_eq!(resolve_target(&state, alice, &target), vec![bob]);
+    // predicate: no loot-predicate registry is wired; positive matches
+    // nothing (documented limitation), negative admits everything.
+    let target = crate::commands::target_of("@e[predicate=minecraft:test]").unwrap();
+    assert!(resolve_target(&state, alice, &target).is_empty());
+    let target = crate::commands::target_of("@e[predicate=!minecraft:test]").unwrap();
+    assert!(!resolve_target(&state, alice, &target).is_empty());
+}
+
+#[test]
+fn command_parity_unqualified_entity_selector_reaches_loaded_remote_dimensions() {
+    // SELECTOR-DIMENSION-SCOPE: unqualified @e joins @a/@r in global
+    // routing (vanilla EntitySelector iterates all levels when no
+    // world-limiting option is present); x/y/z or distance stays local.
+    let (mut state, alice, _) = fixture();
+    let registry = Arc::clone(&state.registry);
+    let generator: std::sync::Arc<dyn mc_world::ChunkGenerator> =
+        std::sync::Arc::new(mc_worldgen::NetherGenerator::try_new(42, Arc::clone(&registry.blocks)).unwrap());
+    let world = crate::world::ChunkWorld::new(
+        42,
+        generator,
+        &registry,
+        mc_world::BlockStateId(registry.states.air),
+        [8, 150, 8],
+        crate::dimensions::Dimension::Nether.geometry(),
+    );
+    let mut nether = TickState::new(Arc::clone(&registry), world, 0, 4096);
+    nether.dimension = crate::dimensions::Dimension::Nether;
+    let pig_type = state.registry.entity_type_id("minecraft:pig").unwrap();
+    let local_pig = state.spawn_mob(pig_type, [2.0, 80.0, 0.0], 10.0);
+    let remote_pig = nether.spawn_mob(pig_type, [8.0, 150.0, 8.0], 10.0);
+    state.other_dimensions.insert(crate::dimensions::Dimension::Nether, Box::new(nether));
+    let request = crate::dimensions::travel::Request {
+        connection: state.connections.entity_connection(alice).unwrap(),
+        executor: alice,
+        dimension: crate::dimensions::Dimension::Overworld,
+        command: crate::commands::parse("kill @e[type=minecraft:pig]", true).unwrap(),
+    };
+    let origin = [0.0, 80.0, 0.0];
+    let target = crate::dimensions::commands::target(
+        &request.command,
+    ).expect("kill carries a target").clone();
+    let mut selected =
+        crate::dimensions::commands::resolve(&state, &request, &target, origin);
+    selected.sort();
+    let mut expected = vec![local_pig, remote_pig];
+    expected.sort();
+    assert_eq!(selected, expected, "unqualified @e spans loaded dimensions");
+    // A spatial option constrains the query to the request dimension.
+    let target = crate::commands::target_of("@e[type=minecraft:pig,x=0,y=80,z=0]").unwrap();
+    let selected =
+        crate::dimensions::commands::resolve(&state, &request, &target, origin);
+    assert_eq!(selected, vec![local_pig], "position-qualified @e stays local");
+    let target = crate::commands::target_of("@e[type=minecraft:pig,distance=..100]").unwrap();
+    let selected =
+        crate::dimensions::commands::resolve(&state, &request, &target, origin);
+    assert_eq!(selected, vec![local_pig], "distance-qualified @e stays local");
+    // Bare @p parses to Target::Nearest, which bypasses global_target
+    // routing (dimensions_commands matches Target::Selector only): the
+    // cross-dimension claim covers @e/@a/@r shapes, not bare @p/@n.
+    assert!(!crate::dimensions::commands::global_target(
+        &crate::commands::target_of("@p").unwrap()
+    ));
+}
+
+#[test]
+fn command_parity_repeated_random_evaluation_redraws_within_one_tick() {
+    // SELECTOR-RANDOM-REPEAT: Java ORDER_RANDOM shuffles on every
+    // evaluation, so repeated same-tick @r draws must not all agree.
+    let (mut state, alice, bob) = fixture();
+    let target = crate::commands::target_of("@r").unwrap();
+    let mut seen_alice = false;
+    let mut seen_bob = false;
+    for _ in 0..32 {
+        for id in resolve_target(&state, alice, &target) {
+            if id == alice {
+                seen_alice = true;
+            }
+            if id == bob {
+                seen_bob = true;
+            }
+        }
+    }
+    assert!(
+        seen_alice && seen_bob,
+        "32 same-tick @r draws must select both players across redraws"
+    );
 }
 
 #[test]
