@@ -864,7 +864,11 @@ pub(crate) fn ageable(name: &str) -> bool {
     )
 }
 
-/// These AgeableMob subclasses override vanilla `isBaby` to always return false.
+/// These AgeableMob subclasses override vanilla `isBaby` to always return
+/// false (pinned 26.1.2 server-26.1.2.jar SHA256
+/// 4723380bd2a0a0206719b50f2e390383afdaf82b0a76a0d573baf788e6aa3e86:
+/// Frog, Parrot, CamelHusk and ZombieNautilus each carry
+/// `public boolean isBaby() { iconst_0; ireturn; }`).
 pub(crate) fn age_has_baby_model(name: &str) -> bool {
     !matches!(
         name,
