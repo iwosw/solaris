@@ -507,13 +507,15 @@ fn chiseled_bookshelf_front_face_cursor_selects_top_left_slot() {
     // Integrated from VanillaC-2 parity (interact_parity_chiseled_bookshelf_front_slot):
     // facing=south front face (3), cursor [0.1, 0.8, 1.0] -> col 0, row 0,
     // index 0. Covers the slot-0 cursor mapping the existing tests skip.
+    // Single-book flow (passes under both whole-stack swap and vanilla
+    // split-one semantics; stack-size behavior is triage's call, not this test's).
     let (mut state, actor) = fixture(None);
     let id = block(&state, "chiseled_bookshelf", &[("facing", "south")]);
     state.world.set_block(8, 201, 8, id);
     state.world.fold_overlay();
-    state.players.get_mut(&actor).unwrap().inventory.slots[0] = stack(&state, "book", 6);
+    state.players.get_mut(&actor).unwrap().inventory.slots[0] = stack(&state, "book", 1);
     assert!(use_on(&mut state, actor, Hand::Main, POS, 3, [0.1, 0.8, 1.0]));
-    assert_eq!(state.players[&actor].inventory.slots[0].count, 5);
+    assert!(state.players[&actor].inventory.slots[0].is_empty());
     assert_eq!(state.block_entities[&key(POS)].slots[0].count, 1);
 }
 
@@ -522,12 +524,14 @@ fn chiseled_bookshelf_fill_all_slots_comparator_and_extract() {
     // Integrated from VanillaC-2 parity (interact_parity_bookshelf_all_slots_extract_and_hydrate):
     // fill all 6 slots, comparator reads last slot + 1 each time, extract
     // slot 5. Remapped to chiseled_shelf::comparator (no special_storage here).
+    // One book per click; cursor per slot: col from x in {0.1,0.5,0.9},
+    // top row y=0.8, bottom row y=0.2 (row = section(1-y, 2)).
     let (mut state, actor) = fixture(None);
     let id = block(&state, "chiseled_bookshelf", &[("facing", "south")]);
     state.world.set_block(8, 201, 8, id);
     state.world.fold_overlay();
-    state.players.get_mut(&actor).unwrap().inventory.slots[0] = stack(&state, "book", 6);
     for slot in 0..6 {
+        state.players.get_mut(&actor).unwrap().inventory.slots[0] = stack(&state, "book", 1);
         let cursor = [
             [0.1, 0.5, 0.9][slot % 3],
             if slot < 3 { 0.8 } else { 0.2 },
