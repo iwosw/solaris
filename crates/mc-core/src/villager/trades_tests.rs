@@ -141,7 +141,12 @@ fn librarian_unlock_adds_enchanted_book_offer() {
     villager.data.profession = VillagerProfession::Librarian;
     villager.data.level = 5;
     for level in 1..=5 {
+        let before = villager.offers.len();
         unlock(&mut villager, &registry, level);
+        assert!(
+            villager.offers.len() - before <= 2,
+            "level {level}: the book counts within the two-offer budget"
+        );
     }
     let books: Vec<_> = villager
         .offers

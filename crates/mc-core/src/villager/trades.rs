@@ -179,10 +179,13 @@ fn unlock(state: &mut VillagerState, registry: &CoreRegistry, level: u8) {
             .wrapping_add(0x1405_7eb5_4dff_3b2b);
         order.swap(i, (seed >> 33) as usize % (i + 1));
     }
+    // Two offers per career level; a librarian's seeded book is one of them.
+    let librarian = profession.name() == "librarian";
+    let budget = if librarian { 1 } else { 2 };
     let mut added = 0;
     for index in order {
         let spec = &pool[index];
-        if added == 2 || state.offers.len() >= 10 {
+        if added == budget || state.offers.len() >= 10 {
             break;
         }
         let (Some(a), Some(result)) = (
@@ -226,7 +229,7 @@ fn unlock(state: &mut VillagerState, registry: &CoreRegistry, level: u8) {
     // offer per career level with a valid stored enchantment, emerald +
     // ordinary-book payment and tiered pricing. Excludes Soul Speed, Swift
     // Sneak and Wind Burst per the trade contract.
-    if profession.name() == "librarian" {
+    if librarian {
         add_librarian_book(state, registry, level);
     }
 }

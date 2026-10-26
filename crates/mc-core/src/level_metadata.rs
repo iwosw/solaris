@@ -534,12 +534,9 @@ pub(crate) fn checkpoint_tags(
             continue;
         };
         validate_vanilla_border(border, path)?;
-        let fresh = match saved_data(tags, path)? {
-            Some(data) => {
-                border_from_fields(data, path)?;
-                false
-            }
-            None => true,
+        let stored = match saved_data(tags, path)? {
+            Some(data) => Some(border_from_fields(data, path)?),
+            None => None,
         };
         let data = saved_data_mut(tags, path)?;
         for (key, value) in [
@@ -553,10 +550,12 @@ pub(crate) fn checkpoint_tags(
         ] {
             put(data, key, value);
         }
-        // Native metadata owns these values independently of the runtime's
-        // shared geometry. Checkpoints must not normalize imported warnings.
-        if fresh {
+        // Stored warning ticks stay exact unless a command changed the
+        // runtime value (seconds); then the new value is written.
+        if stored.is_none_or(|old| old.warning_blocks != border.warning_blocks) {
             put(data, "warning_blocks", Tag::Int(border.warning_blocks));
+        }
+        if stored.is_none_or(|old| old.warning_time != border.warning_time) {
             put(data, "warning_time", Tag::Int(border.warning_time * 20));
         }
     }
@@ -1170,6 +1169,13 @@ mod tests {
             assert_eq!(field(data, "warning_blocks"), Some(&Tag::Int(blocks)));
             assert_eq!(field(data, "warning_time"), Some(&Tag::Int(time)));
         }
+        // A `/worldborder warning` change on the imported border persists.
+        manifest.border.warning_time = 7;
+        manifest.border.warning_blocks = 9;
+        checkpoint_tags(&mut recovered, 42, &manifest).unwrap();
+        let data = saved_data(&recovered, BORDER_PATHS[0].1).unwrap().unwrap();
+        assert_eq!(field(data, "warning_time"), Some(&Tag::Int(140)));
+        assert_eq!(field(data, "warning_blocks"), Some(&Tag::Int(9)));
     }
 
     #[test]
