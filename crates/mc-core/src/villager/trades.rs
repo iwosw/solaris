@@ -145,6 +145,15 @@ pub fn reputation(state: &VillagerState, customer: Uuid) -> i32 {
         })
 }
 
+/// Deterministic per-villager seed: stable across reopen (offers persist),
+//  distinct across villagers (birth key + profession + level).
+fn villager_seed(state: &VillagerState) -> u64 {
+    let mut seed = state.birth_sequence.unwrap_or(0).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+    seed ^= state.xp as u64;
+    seed ^= state.gossips.len() as u64 * 0xBF58_476D_1CE4_E5B9;
+    seed ^ (state.data.level as u64).wrapping_mul(0x94D0_49BB_1331_11EB)
+}
+
 fn unlock(state: &mut VillagerState, registry: &CoreRegistry, level: u8) {
     let profession = match state.data.profession {
         VillagerProfession::Miner => VillagerProfession::Toolsmith,
@@ -156,8 +165,18 @@ fn unlock(state: &mut VillagerState, registry: &CoreRegistry, level: u8) {
     let Some(pool) = profession_level_offers_26_1_2(profession.name(), level) else {
         return;
     };
+    // Vanilla selects up to two offers sampled from the level pool, not the
+    // first two catalog rows. Deterministic per-villager seed keeps reopen
+    // stability (rolled offers persist on the entity).
+    let mut order: Vec<usize> = (0..pool.len()).collect();
+    let mut seed = villager_seed(state);
+    for i in (1..order.len()).rev() {
+        seed = seed.wrapping_mul(0x5851_f42d_4c95_7f2d).wrapping_add(0x1405_7eb5_4dff_3b2b);
+        order.swap(i, (seed >> 33) as usize % (i + 1));
+    }
     let mut added = 0;
-    for spec in pool {
+    for index in order {
+        let spec = &pool[index];
         if added == 2 || state.offers.len() >= 10 {
             break;
         }
@@ -167,7 +186,7 @@ fn unlock(state: &mut VillagerState, registry: &CoreRegistry, level: u8) {
         ) else {
             continue;
         };
-        let cost_b = match spec.cost_b {
+        let cost_b = match &spec.cost_b {
             Some(cost) => {
                 let Some(id) = registry.items.id_of(&cost.item) else {
                     continue;
@@ -197,6 +216,98 @@ fn unlock(state: &mut VillagerState, registry: &CoreRegistry, level: u8) {
         }
         state.offers.push(candidate);
         added += 1;
+    }
+    // Librarian enchanted books (vanilla book trade family): one seeded book
+    // offer per career level with a valid stored enchantment, emerald +
+    // ordinary-book payment and tiered pricing. Excludes Soul Speed, Swift
+    // Sneak and Wind Burst per the trade contract.
+    if profession.name() == "librarian" {
+        add_librarian_book(state, registry, level);
+    }
+}
+
+/// Seeded librarian enchanted-book offer for one career level.
+fn add_librarian_book(state: &mut VillagerState, registry: &CoreRegistry, level: u8) {
+    const POOL: &[(&str, i32, i32)] = &[
+        ("mending", 1, 1),
+        ("unbreaking", 3, 3),
+        ("efficiency", 5, 5),
+        ("fortune", 2, 3),
+        ("silk_touch", 1, 1),
+        ("sharpness", 5, 5),
+        ("smite", 5, 5),
+        ("bane_of_arthropods", 5, 5),
+        ("fire_aspect", 2, 2),
+        ("looting", 2, 3),
+        ("power", 5, 5),
+        ("punch", 2, 2),
+        ("flame", 1, 1),
+        ("infinity", 1, 1),
+        ("protection", 4, 4),
+        ("fire_protection", 4, 4),
+        ("projectile_protection", 4, 4),
+        ("blast_protection", 4, 4),
+        ("thorns", 3, 3),
+        ("respiration", 3, 3),
+        ("aqua_affinity", 1, 1),
+        ("depth_strider", 3, 3),
+        ("feather_falling", 4, 4),
+        ("loyalty", 3, 3),
+        ("riptide", 3, 3),
+        ("channeling", 1, 1),
+        ("impaling", 5, 5),
+        ("multishot", 1, 1),
+        ("piercing", 4, 4),
+        ("quick_charge", 3, 3),
+        ("sweeping_edge", 3, 3),
+        ("knockback", 2, 2),
+        ("luck_of_the_sea", 3, 3),
+        ("lure", 3, 3),
+        ("frost_walker", 2, 2),
+    ];
+    let seed = villager_seed(state).wrapping_add(u64::from(level) * 0x9E37_79B9_7F4A_7C15);
+    let (name, _weight, max) = POOL[(seed >> 17) as usize % POOL.len()];
+    let book_level = 1 + (seed >> 41) as i32 % max.max(1);
+    let book_level = book_level.clamp(1, max);
+    // Tiered emerald price by enchantment level (vanilla 2-64 range shape):
+    // base 2 + level-scaled cost, capped like the wiki tables.
+    let price = (5 + 3 * book_level + (level as i32 - 1) * 2).clamp(2, 64);
+    let (Some(emerald), Some(book), Some(enchanted)) = (
+        registry.items.id_of(&mc_data::Identifier::parse("minecraft:emerald").unwrap()),
+        registry.items.id_of(&mc_data::Identifier::parse("minecraft:book").unwrap()),
+        registry
+            .items
+            .id_of(&mc_data::Identifier::parse("minecraft:enchanted_book").unwrap()),
+    ) else {
+        return;
+    };
+    let enchantment = mc_data::Identifier::parse(format!("minecraft:{name}"))
+        .expect("librarian enchantment id");
+    // Enchanted books carry stored_enchantments, not the item enchantment
+    // family (vanilla StoredEnchantments component).
+    let mut result = ItemStack::new(enchanted, 1);
+    result.extended_mut().stored_enchantments.push(
+        mc_data::ItemEnchantment {
+            id: enchantment,
+            level: book_level,
+        },
+    );
+    let candidate = VillagerTradeOffer {
+        cost_a: ItemStack::new(emerald, price),
+        cost_b: Some(ItemStack::new(book, 1)),
+        result,
+        uses: 0,
+        max_uses: 12,
+        reward_exp: true,
+        xp: 10,
+        special_price: 0,
+        demand: 0,
+        price_multiplier: 0.2,
+    };
+    if state.offers.len() < 12
+        && !state.offers.iter().any(|o| o.result == candidate.result)
+    {
+        state.offers.push(candidate);
     }
 }
 
@@ -320,13 +431,17 @@ pub(crate) fn work(state: &mut VillagerState, registry: &CoreRegistry, tick: u64
         return;
     }
     for offer in &mut state.offers {
-        if offer.uses > 0 {
-            offer.demand = offer
-                .demand
-                .saturating_add(offer.uses)
-                .saturating_sub(offer.max_uses - offer.uses);
-            offer.uses = 0;
-        }
+        // Vanilla demand adjustment per offer on every work restock:
+        // demand += 2*uses - maxUses (wiki Sale_prices). Unused offers
+        // (uses == 0) still recover demand — the gate above only requires
+        // SOME offer was used. i32 saturating ops match Java int arithmetic
+        // in the reachable range; negative demand is a valid discount and
+        // customer_price floors the final price at 1.
+        offer.demand = offer
+            .demand
+            .saturating_add(2 * offer.uses)
+            .saturating_sub(offer.max_uses);
+        offer.uses = 0;
     }
     state.restocks_today += 1;
     state.last_restock = now;
@@ -416,6 +531,9 @@ pub struct TradeOutcome {
     pub trades: i32,
     pub experience: i32,
     pub dropped: Vec<ItemStack>,
+    /// Career level increased: the villager gains 10s Regeneration I
+    /// (vanilla trading-based healing route).
+    pub leveled_up: bool,
 }
 
 /// Every successful iteration preflights the entire result destination before
@@ -545,6 +663,7 @@ pub fn execute(
                 unlock(state, registry, level);
             }
             outcome.experience += 5;
+            outcome.leveled_up = true;
         }
         if let Some(gossip) = state
             .gossips

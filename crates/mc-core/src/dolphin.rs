@@ -1,7 +1,7 @@
 //! Air-breathing swimming companions, Grace and exact-stack fish feeding.
 use crate::boundary::{EntityId, Hand};
 use crate::effects::{ActiveEffect, EffectId};
-use crate::entities::EntitySlot;
+use crate::entities::{EntityKind, EntitySlot};
 use crate::intent::{Footprint, Intent, IntentKind, InvClaim};
 use crate::tick::TickState;
 use mc_nbt::Tag;
@@ -137,6 +137,7 @@ pub(crate) fn run(state: &mut TickState) {
         }
         crate::effects::sync_appearance(state, entity);
     }
+    treasure_search(state);
     if state.tick.is_multiple_of(40) {
         // Play by tossing the existing floating item; no pickup/drop duplication.
         for index in 0..state.entities.len() {
@@ -188,6 +189,94 @@ pub(crate) fn run(state: &mut TickState) {
                 }
             }
         }
+    }
+}
+
+/// DOLPHIN-TREASURE (DolphinSwimToTreasureGoal, 26.1.2): a fed dolphin
+/// with air >= 100 locates the nearest DOLPHIN_LOCATED structure
+/// (ocean_ruin/shipwreck via findNearestMapStructure radius 50) and swims
+/// there; arriving within 4.0 (closerToCenterThan) clears GotFish.
+/// Engine approximation (documented): the engine has no
+/// nearest-structure position lookup, so the nearest treasure container
+/// (chest/trapped chest/barrel) within 48 blocks stands in for the
+/// structure position. Gate (air >= 100) and arrival radius (4.0) match
+/// bytecode.
+pub(crate) fn treasure_search(state: &mut TickState) {
+    // Collect seekers first (immutable borrow), then steer (mutable).
+    let mut seekers: Vec<EntitySlot> = Vec::new();
+    for index in 0..state.entities.len() as u32 {
+        let slot = EntitySlot(index);
+        let body = state.entities.body(slot);
+        let EntityKind::Mob { type_id } = body.kind else {
+            continue;
+        };
+        if !body.alive
+            || body.air_supply < 100
+            || !is_dolphin(type_id)
+            || !state.entities.row(slot).entity_life.dolphin.as_ref().is_some_and(|d| d.got_fish)
+        {
+            continue;
+        }
+        seekers.push(slot);
+    }
+    for slot in seekers {
+        let at = state.entities.pos(slot);
+        if !crate::conduit::water(state, at) {
+            continue;
+        }
+        // Nearest treasure container in a 48-block cube (loaded chunks
+        // only — block_at misses unloaded cells, which bounds the scan).
+        let mut best: Option<([f64; 3], f64)> = None;
+        let (cx, cy, cz) = (at[0].floor() as i32, at[1].floor() as i32, at[2].floor() as i32);
+        for x in cx - 48..=cx + 48 {
+            for y in cy - 24..=cy + 24 {
+                for z in cz - 48..=cz + 48 {
+                    let treasure = state
+                        .world
+                        .block_at(x, y, z)
+                        .and_then(|id| state.registry.blocks.by_id(mc_world::BlockStateId(id)))
+                        .is_some_and(|b| {
+                            matches!(b.block.id.path(), "chest" | "trapped_chest" | "barrel")
+                        });
+                    if !treasure {
+                        continue;
+                    }
+                    let dx = x as f64 + 0.5 - at[0];
+                    let dy = y as f64 + 0.5 - at[1];
+                    let dz = z as f64 + 0.5 - at[2];
+                    let d2 = dx * dx + dy * dy + dz * dz;
+                    if best.is_none_or(|(_, b)| d2 < b) {
+                        best = Some(([x as f64 + 0.5, y as f64 + 0.5, z as f64 + 0.5], d2));
+                    }
+                }
+            }
+        }
+        let Some((target, d2)) = best else {
+            continue;
+        };
+        if d2 < 16.0 {
+            // Treasure found: clear GotFish (vanilla stops leading here).
+            if let Some(d) = state
+                .entities
+                .row_mut(slot)
+                .entity_life
+                .dolphin
+                .as_mut()
+            {
+                d.got_fish = false;
+            }
+            continue;
+        }
+        // Swim toward the treasure (vanilla speed ~0.5 blocks/tick pace,
+        // applied per 10-tick run: 5-block steps).
+        let dist = d2.sqrt();
+        let step = (5.0 / dist).min(1.0);
+        let next = [
+            at[0] + (target[0] - at[0]) * step,
+            at[1] + (target[1] - at[1]) * step,
+            at[2] + (target[2] - at[2]) * step,
+        ];
+        state.entities.set_pos(slot, next);
     }
 }
 

@@ -65,15 +65,39 @@ pub(crate) fn use_block(
         let Some(charges) = anchor_charge(state, current) else {
             return true;
         };
-        let slot = crate::tick::held_slot_index(player, hand);
-        let held = &player.inventory.slots[slot];
-        let glowstone = !held.is_empty()
+        // Vanilla hand arbitration: a non-fuel main hand defers to an
+        // offhand glowstone charge (main-hand PASS), before any SetRespawn
+        // or overworld explosion decision.
+        let main_slot = crate::tick::held_slot_index(player, hand);
+        let main_held = &player.inventory.slots[main_slot];
+        let main_glowstone = !main_held.is_empty()
             && state
                 .registry
                 .items
-                .name_of(held.item_id)
+                .name_of(main_held.item_id)
                 .is_some_and(|item| item.path() == "glowstone");
+        let other_hand = match hand {
+            Hand::Main => Hand::Off,
+            Hand::Off => Hand::Main,
+        };
+        let other_slot = crate::tick::held_slot_index(player, other_hand);
+        let other_held = &player.inventory.slots[other_slot];
+        let other_glowstone = !other_held.is_empty()
+            && state
+                .registry
+                .items
+                .name_of(other_held.item_id)
+                .is_some_and(|item| item.path() == "glowstone");
+        let (charge_slot, charge_hand) = if main_glowstone {
+            (main_slot, hand)
+        } else if other_glowstone {
+            (other_slot, other_hand)
+        } else {
+            (usize::MAX, hand)
+        };
+        let glowstone = charge_slot != usize::MAX;
         if glowstone && charges < 4 {
+            let charge_held = &player.inventory.slots[charge_slot];
             let Some(next) = anchor_state(state, current, charges + 1) else {
                 return true;
             };
@@ -81,9 +105,9 @@ pub(crate) fn use_block(
             if !player.creative() {
                 footprint.inv.push(InvClaim {
                     owner: actor,
-                    slot: slot as u16,
-                    expect_item: held.item_id,
-                    expect_count: held.count,
+                    slot: charge_slot as u16,
+                    expect_item: charge_held.item_id,
+                    expect_count: charge_held.count,
                     take: 1,
                     put_item: None,
                     put_count: 0,
@@ -91,7 +115,7 @@ pub(crate) fn use_block(
             }
             IntentKind::UseBlock {
                 pos,
-                hand: Some(hand),
+                hand: Some(charge_hand),
             }
         } else if charges == 0 {
             return true;
@@ -155,15 +179,44 @@ pub(crate) fn anchor_spawn(state: &TickState, pos: BlockPos) -> Option<[f64; 3]>
     {
         return None;
     }
-    let safe = |cell: BlockPos| {
-        state
-            .world
-            .block_at(cell.x, cell.y, cell.z)
-            .is_some_and(|id| {
-                state.registry.materials.classify(id) == mc_physics::BlockMaterial::Air
+    // Vanilla fits the 1.8-high player AABB above a solid floor instead of
+    // requiring whole feet/head cells to classify Air: carpet/snow layers
+    // do not invalidate the spawn; only an intersecting solid shape does.
+    // The center-top column (vanilla RESPAWN_OFFSETS final (0,1,0)) is the
+    // last fallback, not omitted.
+    let clear = |cell: BlockPos| {
+        let Some(id) = state.world.block_at(cell.x, cell.y, cell.z) else {
+            return false;
+        };
+        if state.registry.materials.classify(id) == mc_physics::BlockMaterial::Air {
+            return true;
+        }
+        if state.registry.materials.classify(id) == mc_physics::BlockMaterial::Solid {
+            return false;
+        }
+        // Non-air, non-solid (carpets, snow layers, fluids): blocked only
+        // when the actual collision shape intersects the player AABB.
+        let Some(block) = state.registry.blocks.by_id(mc_world::BlockStateId(id)) else {
+            return false;
+        };
+        !mc_data::collision_shapes::vanilla_collision_shapes()
+            .get_for_state(id, &block.block.id, &block.properties)
+            .is_some_and(|shape| {
+                shape.iter().any(|collision_box| {
+                    let [min_x, min_y, min_z, max_x, max_y, max_z] =
+                        collision_box.coordinates();
+                    let units = mc_data::collision_shapes::COLLISION_UNITS_PER_BLOCK as f64;
+                    // Player AABB at feet (cell.x+0.1..0.9, cell.y..+1.8).
+                    let feet = f64::from(cell.y);
+                    let top = f64::from(max_y) / units;
+                    let _ = (min_x, min_z, max_x, max_z);
+                    top > 0.0625 && f64::from(min_y) / units < feet + 1.8 - f64::from(cell.y)
+                })
             })
     };
     for dy in [0, 1, -1] {
+        // All eight neighbors first, then the center-top column (vanilla
+        // RESPAWN_OFFSETS final (0,1,0) fallback).
         for [dx, dz] in [
             [1, 0],
             [-1, 0],
@@ -173,14 +226,15 @@ pub(crate) fn anchor_spawn(state: &TickState, pos: BlockPos) -> Option<[f64; 3]>
             [-1, 1],
             [1, -1],
             [-1, -1],
+            [0, 0],
         ] {
             let feet = BlockPos {
                 x: pos.x + dx,
                 y: pos.y + dy,
                 z: pos.z + dz,
             };
-            if safe(feet)
-                && safe(BlockPos {
+            if clear(feet)
+                && clear(BlockPos {
                     y: feet.y + 1,
                     ..feet
                 })

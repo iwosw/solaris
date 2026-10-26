@@ -37,6 +37,10 @@ pub struct BlockEntities {
 }
 
 impl BlockEntities {
+    pub fn iter(&self) -> impl Iterator<Item = (&Cell, &BlockEntityState)> {
+        self.records.iter()
+    }
+
     pub fn get_mut(&mut self, cell: &Cell) -> Option<&mut BlockEntityState> {
         let record = self.records.get_mut(cell)?;
         self.dirty.mark_dirty(*cell);

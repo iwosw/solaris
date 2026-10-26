@@ -557,5 +557,12 @@
     "minecraft:red_wool",
     "minecraft:white_wool",
     "minecraft:yellow_wool"
+  ],
+  "minecraft:bookshelf_books": [
+    "minecraft:book",
+    "minecraft:written_book",
+    "minecraft:enchanted_book",
+    "minecraft:writable_book",
+    "minecraft:knowledge_book"
   ]
 }

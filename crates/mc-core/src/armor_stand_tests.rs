@@ -727,6 +727,51 @@ fn armor_stand_named_tag_renames_normal_and_marker_stands_instead_of_equipping()
 }
 
 #[test]
+fn weak_arrow_breaks_stand_outright() {
+    // ARMOR-STAND-PROJECTILE-BREAK: any arrow breaks the stand.
+    let (mut state, actor) = fixture();
+    let (stand, _) = place(&mut state, actor);
+    let slot = state.entities.slot_of(stand).expect("stand");
+    assert!(crate::projectiles::payloads::breaks_armor_stand(&state, stand));
+    assert!(state.entities.body(slot).alive);
+}
+
+#[test]
+fn splash_potion_ignores_stand_but_hits_cow() {
+    // ARMOR-STAND-POTION-IMMUNITY: stands reject splash effects.
+    let (mut state, actor) = fixture();
+    let (stand, _) = place(&mut state, actor);
+    let cow_type = state
+        .registry
+        .entity_types
+        .id_of(&mc_data::Identifier::parse("minecraft:cow").unwrap())
+        .unwrap();
+    let _cow = state.spawn_mob(cow_type, [6.5, 65.0, 10.5], 10.0);
+    let mut intents = Vec::new();
+    let stack = item(&state, "minecraft:splash_potion", 1);
+    let record = crate::projectiles::ProjectileState::new(
+        crate::projectiles::ProjectileKind::Potion,
+        None,
+        stack,
+    );
+    let id = state.spawn_mob(cow_type, [6.5, 66.0, 10.5], 10.0);
+    crate::projectiles::payloads::apply_potion(
+        &mut state,
+        &mut intents,
+        id,
+        &record,
+        stand,
+        1.0,
+        false,
+    );
+    let slot = state.entities.slot_of(stand).expect("stand");
+    assert!(
+        state.entities.row(slot).active_effects.entries.is_empty(),
+        "stand must not gain potion effects"
+    );
+}
+
+#[test]
 fn armor_stand_marker_equipment_interaction_passes_without_mutating_custody() {
     let (mut state, actor) = fixture();
     let (stand, _) = place(&mut state, actor);

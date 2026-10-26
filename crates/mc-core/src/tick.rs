@@ -2912,6 +2912,7 @@ fn run_dimension_tick_inner<'a>(
     if sim {
         crate::special_mobs::after_blocks(state, &mut block_writes);
         crate::bees::run(state, &mut block_writes, &mut changes);
+        crate::armadillo::run(state);
     }
     if sim {
         crate::copper_golem::after_blocks(state, &mut block_writes);

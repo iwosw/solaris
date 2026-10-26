@@ -187,7 +187,9 @@ pub(in crate::tick) fn use_item_on(
     if crate::maps::banner::use_on(state, entity, *hand, *position) {
         return;
     }
-    if crate::special_storage::use_on(state, entity, *hand, *position, *face, *cursor) {
+    if crate::special_storage::use_on(state, entity, *hand, *position, *face, *cursor)
+        || crate::chiseled_shelf::use_on(state, entity, *hand, *position, *face, *cursor)
+    {
         return;
     }
     if crate::shelf::use_on(state, entity, *hand, *position, *face, *cursor) {
@@ -536,6 +538,10 @@ pub(in crate::tick) fn interact_entity(
         return;
     }
     if crate::vehicles::interact(state, entity, *target, *hand, secondary, changes) {
+        crate::plugin::entity_interaction(state, entity, *target, *hand, secondary, None);
+        return;
+    }
+    if crate::armadillo::interact(state, entity, *target, *hand) {
         crate::plugin::entity_interaction(state, entity, *target, *hand, secondary, None);
         return;
     }

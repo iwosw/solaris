@@ -459,3 +459,86 @@ fn powered_shelf_exchange_is_atomic_with_real_player_reservations() {
             .all(ItemStack::is_empty)
     );
 }
+
+#[test]
+fn chiseled_bookshelf_stores_and_returns_books() {
+    // CHISELED-BOOKSHELF through the block-use path (ChiseledBookShelfBlock,
+    // 26.1.2): using a BOOKSHELF_BOOKS-tag book stores it (slot_4_occupied
+    // set for cursor [0.5; 3]); the comparator reads
+    // getLastInteractedSlot() + 1 = 5. Cursor math: col = section(0.5, 3)
+    // = 1, row = section(0.5, 2) = 1, index = 1 + 1 * 3 = 4.
+    let (mut state, actor) = fixture(None);
+    let id = block(&state, "chiseled_bookshelf", &[("facing", "south")]);
+    state.world.set_block(8, 201, 8, id);
+    state.world.fold_overlay();
+    let book = stack(&state, "book", 1);
+    state.players.get_mut(&actor).unwrap().inventory.slots[0] = book.clone();
+    assert!(use_on(&mut state, actor, Hand::Main, POS, 3, [0.5; 3]));
+    assert!(state.players[&actor].inventory.slots[0].is_empty());
+    let stored = state
+        .world
+        .block_at(POS.x, POS.y, POS.z)
+        .and_then(|id| state.registry.blocks.by_id(mc_world::BlockStateId(id)))
+        .unwrap();
+    assert!(
+        stored.properties.iter().any(|(k, v)| k == "slot_4_occupied" && v == "true"),
+        "stored book must mark its slot occupied"
+    );
+    state.players.get_mut(&actor).unwrap().inventory.slots[0] = ItemStack::EMPTY;
+    assert!(use_on(&mut state, actor, Hand::Main, POS, 3, [0.5; 3]));
+    assert_eq!(state.players[&actor].inventory.slots[0].count, 1);
+}
+
+#[test]
+fn chiseled_bookshelf_comparator_reads_last_interacted_slot() {
+    // Post-fix coverage (vanilla-b only): comparator = last slot + 1.
+    let (mut state, actor) = fixture(None);
+    let id = block(&state, "chiseled_bookshelf", &[("facing", "south")]);
+    state.world.set_block(8, 201, 8, id);
+    state.world.fold_overlay();
+    let book = stack(&state, "book", 1);
+    state.players.get_mut(&actor).unwrap().inventory.slots[0] = book.clone();
+    assert!(use_on(&mut state, actor, Hand::Main, POS, 3, [0.5; 3]));
+    assert_eq!(crate::chiseled_shelf::comparator(&state, POS), 5);
+}
+
+#[test]
+fn chiseled_bookshelf_front_face_cursor_selects_top_left_slot() {
+    // Integrated from VanillaC-2 parity (interact_parity_chiseled_bookshelf_front_slot):
+    // facing=south front face (3), cursor [0.1, 0.8, 1.0] -> col 0, row 0,
+    // index 0. Covers the slot-0 cursor mapping the existing tests skip.
+    let (mut state, actor) = fixture(None);
+    let id = block(&state, "chiseled_bookshelf", &[("facing", "south")]);
+    state.world.set_block(8, 201, 8, id);
+    state.world.fold_overlay();
+    state.players.get_mut(&actor).unwrap().inventory.slots[0] = stack(&state, "book", 6);
+    assert!(use_on(&mut state, actor, Hand::Main, POS, 3, [0.1, 0.8, 1.0]));
+    assert_eq!(state.players[&actor].inventory.slots[0].count, 5);
+    assert_eq!(state.block_entities[&key(POS)].slots[0].count, 1);
+}
+
+#[test]
+fn chiseled_bookshelf_fill_all_slots_comparator_and_extract() {
+    // Integrated from VanillaC-2 parity (interact_parity_bookshelf_all_slots_extract_and_hydrate):
+    // fill all 6 slots, comparator reads last slot + 1 each time, extract
+    // slot 5. Remapped to chiseled_shelf::comparator (no special_storage here).
+    let (mut state, actor) = fixture(None);
+    let id = block(&state, "chiseled_bookshelf", &[("facing", "south")]);
+    state.world.set_block(8, 201, 8, id);
+    state.world.fold_overlay();
+    state.players.get_mut(&actor).unwrap().inventory.slots[0] = stack(&state, "book", 6);
+    for slot in 0..6 {
+        let cursor = [
+            [0.1, 0.5, 0.9][slot % 3],
+            if slot < 3 { 0.8 } else { 0.2 },
+            1.0,
+        ];
+        assert!(use_on(&mut state, actor, Hand::Main, POS, 3, cursor));
+        assert_eq!(crate::chiseled_shelf::comparator(&state, POS), slot as u8 + 1);
+    }
+    assert!(state.players[&actor].inventory.slots[0].is_empty());
+    state.players.get_mut(&actor).unwrap().inventory.slots[0] = ItemStack::EMPTY;
+    assert!(use_on(&mut state, actor, Hand::Main, POS, 3, [0.9, 0.2, 1.0]));
+    assert_eq!(state.players[&actor].inventory.slots[0].count, 1);
+    assert!(state.block_entities[&key(POS)].slots[5].is_empty());
+}

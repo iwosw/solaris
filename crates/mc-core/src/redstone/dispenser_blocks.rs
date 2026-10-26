@@ -61,6 +61,15 @@ pub(super) struct Bucket {
 
 /// A successful bucket action may evaporate without writing a fluid block.
 pub(super) fn bucket(state: &TickState, target: BlockPos, name: &str) -> Option<Bucket> {
+    // Mob buckets (fish/axolotl/tadpole) and powder snow empty like water:
+    // place water plus the captured entity, or placed snow, and keep an
+    // empty bucket. Powder-snow pickup inverts the same path.
+    if let Some(plan) = mob_bucket_empty(state, target, name) {
+        return Some(plan);
+    }
+    if let Some(plan) = powder_snow_bucket(state, target, name) {
+        return Some(plan);
+    }
     let current = state.world.block_at(target.x, target.y, target.z)?;
     match name {
         "water_bucket" | "lava_bucket" => {
@@ -111,6 +120,79 @@ pub(super) fn bucket(state: &TickState, target: BlockPos, name: &str) -> Option<
                 } else {
                     "lava_bucket"
                 },
+                washed: None,
+            })
+        }
+        _ => None,
+    }
+}
+
+/// Item name of the mob released when this bucket empties, if any.
+pub(super) fn mob_bucket_mob(name: &str) -> Option<&'static str> {
+    match name.strip_prefix("minecraft:").unwrap_or(name) {
+        "cod_bucket" => Some("minecraft:cod"),
+        "salmon_bucket" => Some("minecraft:salmon"),
+        "tropical_fish_bucket" => Some("minecraft:tropical_fish"),
+        "pufferfish_bucket" => Some("minecraft:pufferfish"),
+        "axolotl_bucket" => Some("minecraft:axolotl"),
+        "tadpole_bucket" => Some("minecraft:tadpole"),
+        _ => None,
+    }
+}
+
+/// Mob buckets empty like water (plus the captured entity, spawned by the
+/// container owner after this plan commits).
+fn mob_bucket_empty(state: &TickState, target: BlockPos, name: &str) -> Option<Bucket> {
+    mob_bucket_mob(name)?;
+    // Reuse the water placement path: flow water into the target cell.
+    let current = state.world.block_at(target.x, target.y, target.z)?;
+    let wet = crate::fluids::waterlogged(state, current, true);
+    let washed = if wet.is_some()
+        || crate::fluids::fluid_at(&state.registry.states, current).is_some()
+    {
+        None
+    } else {
+        match crate::fluids::flow_into(state, target, crate::fluids::Fluid::Water)? {
+            crate::fluids::Flow::Open => None,
+            crate::fluids::Flow::Wash(block) => Some(block),
+        }
+    };
+    let new = wet.unwrap_or(state.registry.states.water_levels[0]);
+    Some(Bucket {
+        new: Some(new),
+        remainder: "bucket",
+        washed,
+    })
+}
+
+/// Powder-snow bucket pair: empty into placed snow, or collect placed snow.
+fn powder_snow_bucket(state: &TickState, target: BlockPos, name: &str) -> Option<Bucket> {
+    let current = state.world.block_at(target.x, target.y, target.z)?;
+    let entry = state.registry.blocks.by_id(mc_world::BlockStateId(current))?;
+    let is_snow = entry.block.id.path() == "powder_snow";
+    match name {
+        "powder_snow_bucket" => {
+            if state.registry.materials.classify(current) != mc_physics::BlockMaterial::Air
+                && !crate::tick::replaceable(state, current)
+            {
+                return None;
+            }
+            let snow = state
+                .registry
+                .blocks
+                .block(&mc_data::Identifier::parse("minecraft:powder_snow").expect("snow block"))
+                .map(|block| block.default.0)?;
+            Some(Bucket {
+                new: Some(snow),
+                remainder: "bucket",
+                washed: None,
+            })
+        }
+        "bucket" if is_snow => {
+            let air = state.registry.states.air;
+            Some(Bucket {
+                new: Some(air),
+                remainder: "powder_snow_bucket",
                 washed: None,
             })
         }

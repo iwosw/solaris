@@ -9,12 +9,14 @@ pub(crate) mod abstract_sim;
 mod abstract_sim_tests;
 pub mod advancements;
 pub mod allay;
+pub mod armadillo;
 mod armor_stand;
 mod beacon;
 #[cfg(test)]
 mod beacon_tests;
 pub mod bees;
 mod block_drop_context;
+pub mod chiseled_shelf;
 pub mod block_drops;
 mod block_entity_defaults;
 pub mod block_log;

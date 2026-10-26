@@ -105,6 +105,46 @@ fn offer_uses(state: &TickState, merchant: EntityId) -> i32 {
 }
 
 #[test]
+fn leveling_trade_grants_merchant_regeneration() {
+    // VILLAGER-LEVEL-REGENERATION through the existing menu click path: a
+    // level-up trade must leave Regeneration on the merchant entity row.
+    let (mut state, player, merchant) = fixture();
+    // Near-level XP so one trade levels the novice up.
+    let slot = state.entities.slot_of(merchant).unwrap();
+    state.entities.row_mut(slot).villager.as_mut().unwrap().xp = 9;
+    interact(&mut state, merchant);
+    run_tick(
+        &mut state,
+        &[PlayerInput::SelectTrade {
+            connection: ConnectionId(1),
+            offer: 0,
+        }],
+    );
+    let menu = state.players[&player].open.as_ref().unwrap();
+    assert!(!menu.result.is_empty());
+    let window = menu.window;
+    let state_id = menu.state_id;
+    run_tick(
+        &mut state,
+        &[PlayerInput::ContainerClick {
+            connection: ConnectionId(1),
+            window,
+            state_id,
+            slot: 2,
+            button: 0,
+            mode: ClickMode::Pickup,
+        }],
+    );
+    let slot = state.entities.slot_of(merchant).unwrap();
+    let level = state.entities.row(slot).villager.as_ref().unwrap().data.level;
+    assert!(level >= 2, "trade must level the villager, got {level}");
+    assert!(
+        state.entities.row(slot).active_effects.has(crate::effects::EffectId::Regeneration),
+        "level-up trade must grant the merchant Regeneration"
+    );
+}
+
+#[test]
 fn auth_gate_locked_trade_preserves_payment_until_unlock() {
     let (mut state, player, merchant) = fixture();
     interact(&mut state, merchant);

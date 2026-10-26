@@ -45,6 +45,9 @@ pub struct SavedMap {
     pub unlimited_tracking: bool,
     pub colors: Vec<u8>,
     pub banners: Vec<Banner>,
+    /// Retained framed waypoints (vanilla frameMarkers): emitted to
+    /// held-clone viewers even beyond the live frame-view radius.
+    pub frame_markers: Vec<(i32, i32, i32)>,
     pub decorations: BTreeMap<String, Decoration>,
     pub destination: Option<[i32; 3]>,
 }
@@ -68,6 +71,7 @@ impl SavedMap {
             unlimited_tracking: false,
             colors: vec![0; PIXELS],
             banners: Vec::new(),
+            frame_markers: Vec::new(),
             decorations: BTreeMap::new(),
             destination: None,
         })
@@ -79,6 +83,7 @@ impl SavedMap {
             || self.colors.iter().any(|c| *c >= 248)
             || self.banners.len() > 256
             || self.decorations.len() > 256
+            || self.frame_markers.len() > 256
             || self.decorations.values().any(|d| {
                 !d.x.is_finite()
                     || !d.z.is_finite()

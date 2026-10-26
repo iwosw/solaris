@@ -5,8 +5,12 @@ pub(crate) mod containers;
 pub(crate) mod custody;
 #[cfg(test)]
 mod dirty_signals_tests;
+mod dispenser_anchor;
 mod dispenser_blocks;
+pub(super) mod dispenser_construct;
 mod dispenser_equipment;
+mod dispenser_hive;
+pub(super) mod dispenser_vehicle;
 mod entity_query;
 mod piston;
 mod piston_motion;
@@ -108,6 +112,7 @@ pub(super) fn reactive(path: &str) -> bool {
             | "lectern"
             | "sculk_sensor"
             | "calibrated_sculk_sensor"
+            | "target"
     ) || path.ends_with("_door")
         || path.ends_with("_trapdoor")
         || path.ends_with("_fence_gate")
@@ -172,6 +177,7 @@ fn weak_output(state: &TickState, source: BlockPos, target: BlockPos) -> u8 {
             }
         }
         "trapped_chest" => chest_viewers(state, source),
+        "target" => prop(block, "power").and_then(|p| p.parse().ok()).unwrap_or(0),
         _ if matches!(path, "lever" | "detector_rail") || path.ends_with("lightning_rod") => {
             if prop(block, "powered") == Some("true") {
                 15
@@ -346,6 +352,65 @@ pub(crate) fn neighbours(state: &mut TickState, writes: &[(BlockPos, u32)]) {
 }
 pub(crate) fn wake(state: &mut TickState, pos: BlockPos) {
     state.redstone.wake.push(pos);
+}
+
+/// TARGET-PROJECTILE-POWER (TargetBlock.updateRedstoneOutput, 26.1.2):
+/// a projectile striking a target block charges it; power follows hit
+/// accuracy on the struck face (bullseye = 15, edge = 1) and decays after
+/// 20 ticks for arrows, 8 for other projectiles. Mirrors the
+/// campfire-relight direct-mutation path.
+pub(crate) fn charge_target(
+    state: &mut TickState,
+    pos: BlockPos,
+    impact: [f64; 3],
+    velocity: [f64; 3],
+    arrows: bool,
+) {
+    let Some(current) = state.world.block_at(pos.x, pos.y, pos.z) else {
+        return;
+    };
+    let Some(block) = state.registry.blocks.by_id(mc_world::BlockStateId(current)) else {
+        return;
+    };
+    if block.block.id.path() != "target" {
+        return;
+    }
+    // Accuracy (TargetBlock.getRedstoneStrength): over the two face-plane
+    // axes, max |frac(coord) - 0.5|; power = 1 + ceil(15 * clamp((0.5 -
+    // maxfrac) / 0.5, 0, 1)). The struck face is the dominant velocity axis.
+    let ax = velocity
+        .into_iter()
+        .enumerate()
+        .max_by(|(_, a), (_, b)| a.abs().total_cmp(&b.abs()))
+        .map(|(i, _)| i)
+        .unwrap_or(0);
+    let mut maxfrac = 0.0_f64;
+    for (i, c) in impact.into_iter().enumerate() {
+        if i == ax {
+            continue;
+        }
+        let frac = c - c.floor();
+        maxfrac = maxfrac.max((frac - 0.5).abs());
+    }
+    let ratio = ((0.5 - maxfrac) / 0.5).clamp(0.0, 1.0);
+    // 1 + max(1, ceil(15 * ratio)): an edge hit (ratio 0) yields 2, never 1.
+    let power = (1 + (1_i64).max((15.0 * ratio).ceil() as i64)).clamp(1, 15);
+    let mut properties = block.properties.clone();
+    let Some((_, value)) = properties.iter_mut().find(|(key, _)| key == "power") else {
+        return;
+    };
+    *value = power.to_string();
+    let Some(next) = state.registry.blocks.by_name_and_props(&block.block.id, &properties) else {
+        return;
+    };
+    state.world.set_block(pos.x, pos.y, pos.z, next.0);
+    state.merge_block_writes.push((
+        crate::boundary::BlockPos { x: pos.x, y: pos.y, z: pos.z },
+        next.0,
+    ));
+    let delay = if arrows { 20 } else { 8 };
+    schedule_cell(state, crate::boundary::BlockPos { x: pos.x, y: pos.y, z: pos.z }, delay, 4);
+    wake(state, crate::boundary::BlockPos { x: pos.x, y: pos.y, z: pos.z });
 }
 
 /// Called after all ordinary world writes, before folding the overlay.
@@ -675,6 +740,11 @@ fn tick_cell(
                 change(state, writes, pos, "powered", "false");
             }
         }
+        "target" => {
+            if tick.priority == 4 {
+                change(state, writes, pos, "power", "0");
+            }
+        }
         _ if path.ends_with("lightning_rod") => {
             if tick.priority == 4 {
                 change(state, writes, pos, "powered", "false");
@@ -684,7 +754,10 @@ fn tick_cell(
         "daylight_detector" => {
             let level = signal::daylight(state, pos, prop(block, "inverted") == Some("true"));
             change(state, writes, pos, "power", &level.to_string());
-            schedule_cell(state, pos, 20, 0);
+            // Periodic recheck on its own priority: an explicit wake
+            // (schedule priority 0) must never be swallowed by the queued
+            // 20-tick recheck — weather changes resample promptly.
+            schedule_cell(state, pos, 20, 1);
         }
         "composter" => {
             crate::composter::mature(state, pos, writes);

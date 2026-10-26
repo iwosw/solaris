@@ -111,6 +111,18 @@ fn entity_name(state: &TickState, id: EntityId) -> Option<&str> {
     }
 }
 
+/// Armor stands ignore ordinary potion sources (ArmorStand.isAffectedByPotions).
+fn potion_affected(state: &TickState, id: EntityId) -> bool {
+    if state
+        .entities
+        .slot_of(id)
+        .is_some_and(|slot| crate::armor_stand::is_stand(state, slot))
+    {
+        return false;
+    }
+    living(state, id)
+}
+
 fn living(state: &TickState, id: EntityId) -> bool {
     let Some(slot) = state.entities.slot_of(id) else {
         return false;
@@ -129,14 +141,117 @@ fn living(state: &TickState, id: EntityId) -> bool {
         })
 }
 
+/// Vanilla splash targeting: entities whose hitbox intersects the impact
+/// AABB inflated by (4, 2, 4) — not feet-distance. Rejects entities wholly
+/// above the vertical cuboid even when their feet are near the radius edge.
+/// A splash/lingering bottle whose potion contents are water (no base potion,
+/// no custom effects): the vanilla water-impact path.
+fn is_water_bottle(stack: &ItemStack) -> bool {
+    stack.extended().potion.as_ref().is_none_or(|potion| {
+        potion.as_str() == "minecraft:water" || potion.as_str() == "water"
+    }) && stack.extended().potion_custom_effects.is_empty()
+}
+
+/// Vanilla splash-water impact: extinguish burning entities, damage
+/// water-sensitive mobs, rehydrate axolotls, and douse the impacted fire
+/// block (fire, lit campfires, lit candles). Returns after handling; the
+/// projectile is consumed.
+fn water_impact(
+    state: &mut TickState,
+    intents: &mut Vec<Intent>,
+    id: EntityId,
+    record: &ProjectileState,
+    position: [f64; 3],
+) {
+    let owner = owner_id(state, record);
+    for target in targets(state, position, 4.0) {
+        let Some(slot) = state.entities.slot_of(target) else {
+            continue;
+        };
+        // Burning entities are doused (fire ticks cleared, shared flame flag
+        // removed), matching vanilla splash-water extinguishing.
+        if state.entities.body(slot).burn_ticks > 0 {
+            state.entities.body_mut(slot).burn_ticks = 0;
+            let appearance = std::sync::Arc::make_mut(&mut state.entities.row_mut(slot).appearance);
+            appearance.shared_flags &= !1;
+            state.appearance_changed.push(target);
+            touch(state, target);
+        }
+        // Axolotls out of water are rehydrated (air supply restored).
+        if entity_name(state, target) == Some("minecraft:axolotl") {
+            state.entities.body_mut(slot).air_supply = 6000;
+            touch(state, target);
+        }
+        // Water-sensitive mobs (endermen) take splash-water damage.
+        if mob_capabilities(state, target).hurt_by_water {
+            let velocity = state
+                .entities
+                .slot_of(id)
+                .map_or([0.0; 3], |slot| state.entities.vel(slot).map(|v| v / 20.0));
+            if pvp_permitted(state, owner, target) {
+                damage(
+                    state,
+                    intents,
+                    id,
+                    target,
+                    1.0,
+                    DamageKind::Projectile,
+                    owner,
+                    velocity,
+                );
+            }
+        }
+    }
+    // Douse the impacted block cell: fire burns out; lit campfires and lit
+    // candles/cakes are snuffed to their unlit state.
+    let cell = crate::boundary::BlockPos {
+        x: position[0].floor() as i32,
+        y: position[1].floor() as i32,
+        z: position[2].floor() as i32,
+    };
+    if let Some(current) = state.world.block_at(cell.x, cell.y, cell.z)
+        && let Some(block) = state.registry.blocks.by_id(mc_world::BlockStateId(current))
+    {
+        let path = block.block.id.path();
+        if matches!(path, "fire" | "soul_fire") {
+            state.world.set_block(cell.x, cell.y, cell.z, state.registry.states.air);
+            state.merge_block_writes.push((cell, state.registry.states.air));
+        } else if block.properties.iter().any(|(key, value)| key == "lit" && value == "true") {
+            let mut properties = block.properties.clone();
+            if let Some((_, value)) = properties.iter_mut().find(|(key, _)| key == "lit") {
+                *value = "false".to_owned();
+            }
+            if let Some(next) = state.registry.blocks.by_name_and_props(&block.block.id, &properties) {
+                state.world.set_block(cell.x, cell.y, cell.z, next.0);
+                state.merge_block_writes.push((cell, next.0));
+            }
+        }
+    }
+}
+
 fn targets(state: &TickState, position: [f64; 3], radius: f64) -> Vec<EntityId> {
     let mut ids: Vec<_> = state
         .entities
         .slots()
         .filter_map(|slot| {
-            let id = state.entities.body(slot).id;
-            (living(state, id) && distance_sq(state.entities.pos(slot), position) < radius * radius)
-                .then_some(id)
+            let body = state.entities.body(slot);
+            if !living(state, body.id) {
+                return None;
+            }
+            let at = state.entities.pos(slot);
+            let min = [at[0] - body.half_width, at[1], at[2] - body.half_width];
+            let max = [
+                at[0] + body.half_width,
+                at[1] + body.height,
+                at[2] + body.half_width,
+            ];
+            let overlaps = min[0] <= position[0] + radius
+                && max[0] >= position[0] - radius
+                && min[1] <= position[1] + 2.0
+                && max[1] >= position[1] - 2.0
+                && min[2] <= position[2] + radius
+                && max[2] >= position[2] - radius;
+            overlaps.then_some(body.id)
         })
         .collect();
     ids.sort_unstable();
@@ -183,10 +298,35 @@ fn potion_effects(stack: &ItemStack) -> Vec<ActiveEffect> {
             crate::effects::potion_effects(potion.path())
         })
 }
+/// Accepted custom potion payload (wire-retained component): mirrors the
+/// tipped-arrow custom loop so splash/cloud apply custom-only and
+/// base-plus-custom mixtures.
+fn custom_effects(stack: &ItemStack) -> Vec<ActiveEffect> {
+    stack
+        .extended()
+        .potion_custom_effects
+        .iter()
+        .filter_map(|effect| {
+            let mut active = ActiveEffect::new(
+                EffectId::from_name(effect.id.as_str())?,
+                effect.duration,
+                effect.amplifier,
+            );
+            active.ambient = effect.ambient;
+            active.show_particles = effect.show_particles;
+            active.show_icon = effect.show_icon;
+            Some(active)
+        })
+        .collect()
+}
 
 fn potion_color(stack: &ItemStack) -> i32 {
+    // Accepted custom color component wins over the mixed base color.
+    if let Some(color) = stack.extended().potion_custom_color {
+        return color;
+    }
     let (mut red, mut green, mut blue, mut weight) = (0_i32, 0_i32, 0_i32, 0_i32);
-    for effect in potion_effects(stack) {
+    for effect in potion_effects(stack).into_iter().chain(custom_effects(stack)) {
         let color = effect.id.color();
         let count = i32::from(effect.amplifier) + 1;
         red += ((color >> 16) & 255) * count;
@@ -272,7 +412,14 @@ pub(crate) fn apply_potion(
     scale: f64,
     cloud: bool,
 ) {
-    for mut effect in potion_effects(&record.stack) {
+    // Armor stands ignore ordinary potion sources.
+    if !potion_affected(state, target) {
+        return;
+    }
+    for mut effect in potion_effects(&record.stack)
+        .into_iter()
+        .chain(custom_effects(&record.stack))
+    {
         if !matches!(effect.id, EffectId::InstantHealth | EffectId::InstantDamage) {
             effect.duration = if cloud {
                 effect.duration / 4
@@ -328,10 +475,39 @@ fn deliver_effect(
             }
         }
     } else {
+        // Vanilla species immunity: undead reject Regeneration and Poison;
+        // spiders reject Poison. Instant inversion stays in the branch above.
+        if matches!(effect.id, EffectId::Regeneration | EffectId::Poison)
+            && mob_immune_to_effect(state, target, effect.id)
+        {
+            return;
+        }
         give_effect(state, target, effect);
     }
 }
-
+/// Vanilla species-specific duration-effect immunity: undead mobs reject
+/// Regeneration and Poison; spiders (incl. cave spiders) reject Poison.
+fn mob_immune_to_effect(state: &TickState, target: EntityId, effect: EffectId) -> bool {
+    let Some(slot) = state.entities.slot_of(target) else {
+        return false;
+    };
+    let crate::entities::EntityKind::Mob { type_id } = state.entities.body(slot).kind else {
+        return false;
+    };
+    let Some(blueprint) = state.registry.blueprint(type_id) else {
+        return false;
+    };
+    let undead = blueprint.capabilities.inverted_healing;
+    let spider = matches!(
+        blueprint.name.as_str(),
+        "minecraft:spider" | "minecraft:cave_spider"
+    );
+    match effect {
+        EffectId::Regeneration => undead,
+        EffectId::Poison => undead || spider,
+        _ => false,
+    }
+}
 pub(crate) fn arrow_effects(
     state: &mut TickState,
     _intents: &mut Vec<Intent>,
@@ -840,6 +1016,27 @@ fn pearl(
     state.entities.set_ground(slot, false);
     state.correct_position(connection, position, rotation[0], rotation[1]);
     touch(state, owner);
+    // Vanilla 5% endermite on player-thrown pearl landing (ThrownEnderpearl):
+    // only on non-Peaceful with monster spawning, at the owner's pre-teleport
+    // position. Needs a live player owner, not a dispenser throw.
+    if state.players.contains_key(&owner)
+        && state.difficulty != crate::survival::Difficulty::Peaceful
+        && crate::command_rules::boolean(state, "spawn_mobs")
+    {
+        let mut rng = crate::natural_spawn::Rng(
+            state.entities.row(slot).uuid.as_u128() as u64 ^ state.tick,
+        );
+        if rng.below(20) == 0
+            && let Some(type_id) = state.registry.entity_types.id_of(
+                &mc_data::Identifier::parse("minecraft:endermite").expect("endermite id"),
+            )
+        {
+            let before = state.entities.pos(slot);
+            let mite = state.spawn_mob(type_id, before, 4.0);
+            state.projectiles.spawned.push(mite);
+            touch(state, mite);
+        }
+    }
     damage(
         state,
         intents,
@@ -851,8 +1048,42 @@ fn pearl(
         [0.0; 3],
     );
 }
-
-fn hatch(state: &mut TickState, id: EntityId, position: [f64; 3], age: u32) {
+/// Zero-damage projectile contact (snowball/egg on a non-vulnerable target):
+/// vanilla still provokes neutral mobs and destroys end crystals through the
+/// hit path. Players take no knockback; mobs keep their ordinary impulse.
+fn zero_damage_reaction(
+    state: &mut TickState,
+    intents: &mut Vec<Intent>,
+    id: EntityId,
+    record: &ProjectileState,
+    target: EntityId,
+    _velocity: [f64; 3],
+) {
+    // End crystals break from any projectile contact: route a minimal hit
+    // through the damage path so crystal_hits detonates them.
+    if let Some(slot) = state.entities.slot_of(target)
+        && crate::end_fight::is_crystal(state, slot)
+    {
+        super::damage(
+            state,
+            intents,
+            id,
+            target,
+            1.0,
+            DamageKind::Projectile,
+            owner_id(state, record),
+            [0.0; 3],
+        );
+        return;
+    }
+    // Neutral mobs retaliate against the projectile owner (HurtByTargetGoal).
+    if let Some(owner) = owner_id(state, record)
+        && let Some(slot) = state.entities.slot_of(target)
+    {
+        crate::hostile::retaliate(state, slot, owner);
+    }
+}
+fn hatch(state: &mut TickState, id: EntityId, record: &ProjectileState, position: [f64; 3], age: u32) {
     let Some(slot) = state.entities.slot_of(id) else {
         return;
     };
@@ -867,6 +1098,20 @@ fn hatch(state: &mut TickState, id: EntityId, position: [f64; 3], age: u32) {
     } else {
         1
     };
+    // Blue eggs hatch cold (snowy) chicks, brown eggs warm (jungle) chicks;
+    // ordinary eggs hatch temperate chicks (vanilla egg-variant hatching).
+    let variant = {
+        let name = state
+            .registry
+            .items
+            .name_of(record.stack.item_id)
+            .map(|id| id.as_str());
+        match name {
+            Some("minecraft:blue_egg") => Some("cold"),
+            Some("minecraft:brown_egg") => Some("warm"),
+            _ => None,
+        }
+    };
     let Some(type_id) = state
         .registry
         .entity_types
@@ -877,6 +1122,22 @@ fn hatch(state: &mut TickState, id: EntityId, position: [f64; 3], age: u32) {
     for _ in 0..count {
         let child = state.spawn_mob(type_id, position, 4.0);
         crate::entity_life::make_child(state, child);
+        // Chicken variant is entity-data index 3 (local 26.1.2 javap: cold
+        // chicks from blue eggs, warm from brown eggs, temperate otherwise).
+        if let (Some(variant), Some(slot)) = (variant, state.entities.slot_of(child)) {
+            let data = match variant {
+                "cold" => 2,
+                "warm" => 1,
+                _ => 0,
+            };
+            let appearance = std::sync::Arc::make_mut(&mut state.entities.row_mut(slot).appearance);
+            if let Some((_, value)) = appearance.extra.iter_mut().find(|(at, _)| *at == 3) {
+                *value = crate::boundary::EntityDataValue::VarInt(data);
+            } else {
+                appearance.extra.push((3, crate::boundary::EntityDataValue::VarInt(data)));
+            }
+            state.appearance_changed.push(child);
+        }
         if let Some(slot) = state.entities.slot_of(child) {
             state.entities.row_mut(slot).breed_cooldown = state
                 .registry
@@ -1044,6 +1305,15 @@ pub(crate) fn channeling(
     true
 }
 
+/// Whether this entity is an armor stand: arrows and tridents always
+/// break it (vanilla ALWAYS_KILLS_ARMOR_STANDS damage tag).
+pub(crate) fn breaks_armor_stand(state: &TickState, target: EntityId) -> bool {
+    state
+        .entities
+        .slot_of(target)
+        .is_some_and(|slot| crate::armor_stand::is_stand(state, slot))
+}
+
 fn mob_capabilities(state: &TickState, target: EntityId) -> crate::blueprint::Capabilities {
     state
         .entities
@@ -1068,7 +1338,16 @@ pub(crate) fn impact(
     let owner = owner_id(state, record);
     match record.kind {
         ProjectileKind::EnderPearl => pearl(state, intents, id, record, position),
-        ProjectileKind::Egg => hatch(state, id, position, record.age),
+        ProjectileKind::Egg => {
+            if let Some(target) = hit {
+                let velocity = state
+                    .entities
+                    .slot_of(id)
+                    .map_or([0.0; 3], |slot| state.entities.vel(slot).map(|v| v / 20.0));
+                zero_damage_reaction(state, intents, id, record, target, velocity);
+            }
+            hatch(state, id, record, position, record.age)
+        }
         ProjectileKind::Snowball => {
             if let Some(target) = hit {
                 let velocity = state
@@ -1086,6 +1365,11 @@ pub(crate) fn impact(
                         owner,
                         velocity,
                     );
+                } else if state.players.contains_key(&target) {
+                    // Java: snowballs do not knock Survival players (no
+                    // Snowball.onHitEntity knockback); zero-damage provoke
+                    // reactions still route through the hit path below.
+                    zero_damage_reaction(state, intents, id, record, target, velocity);
                 } else if let Some(slot) = state.entities.slot_of(target) {
                     state.commit_hit_knockback(
                         slot,
@@ -1099,11 +1383,19 @@ pub(crate) fn impact(
                         },
                         crate::combat::HIT_KNOCKBACK,
                     );
+                    zero_damage_reaction(state, intents, id, record, target, velocity);
                 }
             }
         }
         ProjectileKind::Potion => {
             level_event(state, position, 2002, potion_color(&record.stack));
+            // Water bottles take the vanilla water-impact path, not the
+            // effect payload: extinguish fire at the block, douse burning
+            // entities, damage water-sensitive mobs, rehydrate axolotls.
+            if is_water_bottle(&record.stack) {
+                water_impact(state, intents, id, record, position);
+                return true;
+            }
             for target in targets(state, position, 4.0) {
                 let slot = state.entities.slot_of(target).expect("target");
                 let scale = if hit == Some(target) {
@@ -1116,6 +1408,12 @@ pub(crate) fn impact(
         }
         ProjectileKind::LingeringPotion => {
             level_event(state, position, 2002, potion_color(&record.stack));
+            // Java has no lingering water cloud: water takes the impact
+            // path instead of spawning an empty effect cloud.
+            if is_water_bottle(&record.stack) {
+                water_impact(state, intents, id, record, position);
+                return true;
+            }
             spawn_cloud(state, record, position, false);
         }
         ProjectileKind::DragonFireball => spawn_cloud(state, record, position, true),
@@ -1267,6 +1565,25 @@ pub(crate) fn impact(
     true
 }
 
+/// Whether the cloud would harm this target: instant damage, damage-dealing
+/// splash semantics, or the dragon's breath. Pure buff/heal clouds are
+/// beneficial and ignore the PvP gate.
+fn cloud_harmful(state: &TickState, record: &ProjectileState, target: EntityId) -> bool {
+    potion_effects(&record.stack)
+        .into_iter()
+        .chain(custom_effects(&record.stack))
+        .any(|effect| {
+            matches!(
+                effect.id,
+                EffectId::InstantDamage
+                    | EffectId::Poison
+                    | EffectId::Wither
+                    | EffectId::Hunger
+                    | EffectId::Slowness
+                    | EffectId::Weakness
+            ) || (matches!(effect.id, EffectId::InstantHealth) && inverted(state, target))
+        })
+}
 /// Returns true when this payload owns the tick (stationary cloud/lightning or
 /// a rocket that detonated), and flight must not move it again.
 pub(crate) fn step(
@@ -1321,9 +1638,14 @@ pub(crate) fn step(
                     } else {
                         (at[1] - position[1]).abs() <= 0.5
                     };
+                    // PvP-off blocks harmful cloud contact, but beneficial
+                    // lingering effects (heal/buff) still apply to other
+                    // players (vanilla AreaEffectCloud has no blanket
+                    // player-owner refusal for status effects).
+                    let harmful = cloud_harmful(state, record, target);
                     if !overlaps
                         || cloud.affected_until.contains_key(&uuid)
-                        || !pvp_permitted(state, owner, target)
+                        || (harmful && !pvp_permitted(state, owner, target))
                         || cloud.dragon && owner == Some(target)
                     {
                         continue;

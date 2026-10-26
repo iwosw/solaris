@@ -197,7 +197,10 @@ pub(crate) fn hydrate_chunk(
                     pos.z.rem_euclid(16) as u8,
                 )
                 .and_then(|id| registry.blocks.by_id(id))
-                .is_none_or(|b| !is_shelf(b.block.id.path()))
+                .is_none_or(|b| {
+                    !is_shelf(b.block.id.path())
+                        && !crate::chiseled_shelf::is_chiseled(b.block.id.path())
+                })
         {
             continue;
         }
@@ -254,6 +257,9 @@ pub(crate) fn use_on(
     let Some(block) = at(state, pos) else {
         return false;
     };
+    if crate::chiseled_shelf::is_chiseled(block.block.id.path()) {
+        return crate::chiseled_shelf::use_on(state, actor, hand, pos, face, cursor);
+    }
     if !is_shelf(block.block.id.path()) || hand != Hand::Main {
         return false;
     }

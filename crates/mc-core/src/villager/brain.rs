@@ -2353,6 +2353,10 @@ pub(crate) fn harmed(
         }
     }
     state.villager_pois.nearby_residents = witnesses;
+    // Vanilla damaged merchant closes trade: any living-customer menu on
+    // this victim ends (nonlethal or lethal hit alike).
+    let victim_id = state.entities.body(victim).id;
+    crate::tick::merchant::close_for(state, victim_id);
 }
 fn interact_gossip(state: &mut TickState, cache: &PoiCache) {
     let count = cache.actors().len();

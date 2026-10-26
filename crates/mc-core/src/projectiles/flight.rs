@@ -40,7 +40,12 @@ fn hittables(state: &TickState, bodies: &mut Vec<Hittable>) {
                 EntityKind::Mob { .. } => {
                     body.movement != crate::blueprint::MovementClass::Projectile
                 }
-                EntityKind::Item { .. } | EntityKind::ExperienceOrb { .. } => false,
+                // Fishing hooks retrieve dropped items (vanilla hook-vs-item
+                // collision); every other projectile passes through them.
+                EntityKind::Item { .. } => {
+                    crate::projectiles::active_hook_present(state)
+                }
+                EntityKind::ExperienceOrb { .. } => false,
             };
         hittable.then(|| {
             let pos = state.entities.pos(slot);
@@ -344,6 +349,30 @@ fn attached(state: &mut TickState, id: EntityId, record: &mut ProjectileState) -
     state
         .entities
         .set_pos(slot, state.entities.pos(target_slot));
+    // ELYTRA-FIREWORK-BOOST (FireworkRocketEntity.tick, 26.1.2): while
+    // attached and the owner is gliding, per axis v += look*0.1 +
+    // (look*1.5 - v)*0.5 (look = full 3D look angle; same mth convention as
+    // weapon geometry). Input movement recomputes velocity each tick, so the
+    // observable effect is the per-tick boost while the rocket burns.
+    let gliding = state
+        .players
+        .get(&state.entities.body(target_slot).id)
+        .is_some_and(|p| p.fall_flying && !p.vitals.is_dead());
+    if gliding {
+        let rot = state.entities.rot(target_slot);
+        let (yaw, pitch) = (f64::from(rot[0]).to_radians(), f64::from(rot[1]).to_radians());
+        let look = [
+            -f64::from(mc_physics::mth::sin(yaw)) * f64::from(mc_physics::mth::cos(pitch)),
+            -f64::from(mc_physics::mth::sin(pitch)),
+            f64::from(mc_physics::mth::cos(yaw)) * f64::from(mc_physics::mth::cos(pitch)),
+        ];
+        let vel = state.entities.vel(target_slot);
+        state.entities.set_vel(
+            target_slot,
+            std::array::from_fn(|i| vel[i] + look[i] * 0.1 + (look[i] * 1.5 - vel[i]) * 0.5),
+        );
+        state.entities.set_vel(slot, [0.0; 3]);
+    }
     true
 }
 fn arrow_damage(
@@ -594,6 +623,30 @@ fn step(
                         ..Default::default()
                     },
                 });
+            } else if record.kind.arrow()
+                && crate::item_frame::eject_on_projectile(state, body.id)
+            {
+                // Vanilla occupied frame: first non-explosive hit ejects the
+                // displayed item and leaves the frame attached. The arrow is
+                // consumed without frame damage.
+                state.projectiles.pending_arrow_removals.insert(id);
+                state.entities.set_pos(slot, impact);
+                return false;
+            } else if super::payloads::breaks_armor_stand(state, body.id)
+                && (record.kind.arrow() || record.kind == ProjectileKind::Trident)
+            {
+                // Vanilla ArmorStand.hurtServer: arrows and tridents always
+                // break the stand outright (ALWAYS_KILLS_ARMOR_STANDS tag).
+                super::damage(
+                    state,
+                    intents,
+                    id,
+                    body.id,
+                    1000.0,
+                    DamageKind::Projectile,
+                    Some(owner.unwrap_or(EntityId(0))),
+                    velocity,
+                );
             } else {
                 let amount = arrow_damage(state, id, body.id, record, velocity);
                 super::damage(
@@ -657,10 +710,19 @@ fn step(
         }
         if record.kind != ProjectileKind::Trident
             && (record.flame || state.entities.body(slot).burn_ticks != 0)
-            && crate::tnt::prime_block(state, block_position, 80).is_some()
         {
-            return true;
+            // Burning arrows ignite TNT, and relight a dry extinguished
+            // campfire (vanilla projectile ignition).
+            if crate::tnt::prime_block(state, block_position, 80).is_some() {
+                return true;
+            }
+            if crate::campfire::relight(state, block_position) {
+                return true;
+            }
         }
+        // Target blocks charge from projectile strikes (vanilla output).
+        let arrows = record.kind.arrow();
+        crate::redstone::charge_target(state, block_position, impact, velocity, arrows);
         record.stuck = true;
         record.critical = false;
         record.age = 0;

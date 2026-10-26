@@ -69,16 +69,12 @@ fn support(state: &TickState, position: BlockPos, face: u8) -> bool {
     let Some(block) = state.registry.blocks.by_id(mc_world::BlockStateId(id)) else {
         return false;
     };
-    use mc_data::block_facts::{SturdyFace, has_full_sturdy_face};
-    let sturdy = [
-        SturdyFace::Down,
-        SturdyFace::Up,
-        SturdyFace::North,
-        SturdyFace::South,
-        SturdyFace::West,
-        SturdyFace::East,
-    ][usize::from(face)];
-    has_full_sturdy_face(id, &block.block.id, &block.properties, sturdy)
+    // Vanilla ItemFrame.survives: the backing block is solid or a horizontal
+    // diode — partial blocks (chests, slabs, fences) admit frames; only air
+    // or non-solid backing rejects them.
+    state.registry.materials.classify(id) == mc_physics::BlockMaterial::Solid
+        || block.block.id.path().ends_with("repeater")
+        || block.block.id.path().ends_with("comparator")
 }
 fn frame_at(state: &TickState, position: BlockPos, face: u8) -> Option<EntitySlot> {
     let mut found = None;
@@ -109,13 +105,20 @@ pub(crate) fn spawn(
     glow: bool,
     mut item: ItemStack,
 ) -> Option<EntityId> {
-    if !support(state, position, face)
-        || frame_at(state, position, face).is_some()
-        || !state
-            .world
-            .block_at(position.x, position.y, position.z)
-            .is_some_and(|id| crate::tick::replaceable(state, id))
-    {
+    if !support(state, position, face) || frame_at(state, position, face).is_some() {
+        return None;
+    }
+    // Vanilla geometric coexistence: frames share their cell with air,
+    // fluids, replaceable blocks and redstone dust (non-solid shapes that do
+    // not intersect the frame). Full solid blocks dislodge the frame.
+    let clear = state
+        .world
+        .block_at(position.x, position.y, position.z)
+        .is_some_and(|id| {
+            crate::tick::replaceable(state, id)
+                || state.registry.materials.classify(id) != mc_physics::BlockMaterial::Solid
+        });
+    if !clear {
         return None;
     }
     let kind = if glow {
@@ -392,13 +395,12 @@ fn drop_display(
     };
     let pos = state.entities.pos(slot);
     let appearance = Arc::make_mut(&mut state.entities.row_mut(slot).appearance);
+    // Vanilla retains frame rotation while the frame survives: only the
+    // displayed item is cleared, never the orientation.
     appearance
         .extra
-        .retain(|(index, _)| *index != ITEM && *index != ROTATION);
+        .retain(|(index, _)| *index != ITEM);
     appearance.extra.push((ITEM, EntityDataValue::Item(None)));
-    appearance
-        .extra
-        .push((ROTATION, EntityDataValue::VarInt(0)));
     if drop && crate::command_rules::boolean(state, "entity_drops") {
         spawned.push(crate::tick::spawn_item_entity(state, pos, item));
     }
@@ -406,9 +408,30 @@ fn drop_display(
     crate::redstone::wake(state, cell(state, slot));
     true
 }
+/// Drop retained framed waypoints that belong to the broken frame's cell.
+/// Markers store block coordinates, so only that cell's markers are evicted.
+fn evict_frame_markers(state: &mut TickState, position: BlockPos) {
+    let mut dirty = Vec::new();
+    for (id, map) in state.maps.records.iter_mut() {
+        let map = std::sync::Arc::make_mut(map);
+        let before = map.frame_markers.len();
+        map.frame_markers
+            .retain(|(x, z, _)| *x != position.x || *z != position.z);
+        if map.frame_markers.len() != before {
+            dirty.push(*id);
+        }
+    }
+    for id in dirty {
+        state.maps.dirty.insert(id);
+    }
+}
+
 fn break_frame(state: &mut TickState, slot: EntitySlot, drop: bool, spawned: &mut Vec<EntityId>) {
     let kind = name(state, slot).expect("frame");
+    let position = cell(state, slot);
     drop_display(state, slot, drop, spawned);
+    // Breaking the frame evicts its retained waypoint (no ghost markers).
+    evict_frame_markers(state, position);
     if drop && crate::command_rules::boolean(state, "entity_drops") {
         let item = state
             .registry
@@ -426,6 +449,28 @@ fn break_frame(state: &mut TickState, slot: EntitySlot, drop: bool, spawned: &mu
     state.remove_entity(slot);
     crate::redstone::wake(state, position);
 }
+/// Vanilla frame contents rule: a non-explosive projectile hit on an
+/// occupied frame ejects the displayed item and spares the frame. Returns
+/// true when the hit was consumed by an ejection.
+pub(crate) fn eject_on_projectile(state: &mut TickState, target: EntityId) -> bool {
+    let Some(slot) = state
+        .entities
+        .slot_of(target)
+        .filter(|slot| name(state, *slot).is_some())
+    else {
+        return false;
+    };
+    if displayed(state, slot).is_none() {
+        return false;
+    }
+    let mut spawned = Vec::new();
+    let ejected = drop_display(state, slot, true, &mut spawned);
+    for id in spawned {
+        state.hostile.spawned.push(id);
+    }
+    ejected
+}
+
 pub(crate) fn attack(
     state: &mut TickState,
     actor: EntityId,
@@ -442,10 +487,9 @@ pub(crate) fn attack(
     let Some(player) = state.players.get(&actor) else {
         return true;
     };
-    if player.spectator()
-        || player.vitals.is_dead()
-        || player.game_mode == crate::commands::GameMode::Adventure
-    {
+    // Vanilla frames break by punching even in Adventure (no game-mode
+    // gate in the frame damage path); spectators and the dead stay out.
+    if player.spectator() || player.vitals.is_dead() {
         return true;
     }
     let drop = !player.creative();
@@ -544,7 +588,11 @@ pub(crate) fn blocks_changed(
                 ) || !state
                     .world
                     .block_at(position.x, position.y, position.z)
-                    .is_some_and(|id| crate::tick::replaceable(state, id)))
+                    .is_some_and(|id| {
+                        crate::tick::replaceable(state, id)
+                            || state.registry.materials.classify(id)
+                                != mc_physics::BlockMaterial::Solid
+                    }))
             {
                 invalid.push(state.entities.body(slot).id);
             }

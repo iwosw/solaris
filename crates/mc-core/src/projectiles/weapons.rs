@@ -47,10 +47,22 @@ pub(crate) fn held_slot(state: &TickState, actor: EntityId, hand: Hand) -> Optio
     })
 }
 
+/// Vanilla ThrowableProjectile/Snowball launch: eye-height origin at the
+/// shooter's eye minus 0.1, inherited shooter motion (Y only while airborne),
+/// and a -20deg pitch bias for thrown potions (ThrowablePotionItem).
 pub(crate) fn geometry(
     state: &TickState,
     actor: EntityId,
     speed: f64,
+) -> Option<([f64; 3], [f64; 3])> {
+    geometry_for(state, actor, speed, false)
+}
+
+pub(crate) fn geometry_for(
+    state: &TickState,
+    actor: EntityId,
+    speed: f64,
+    potion: bool,
 ) -> Option<([f64; 3], [f64; 3])> {
     let slot = state.entities.slot_of(actor)?;
     let pos = state.entities.pos(slot);
@@ -59,17 +71,27 @@ pub(crate) fn geometry(
     if !rot[0].is_finite() || !rot[1].is_finite() {
         return None;
     }
-    let (yaw, pitch) = (
-        f64::from(rot[0]).to_radians(),
-        f64::from(rot[1]).to_radians(),
-    );
+    let pitch_deg = f64::from(rot[1]) + if potion { -20.0 } else { 0.0 };
+    let (yaw, pitch) = (f64::from(rot[0]).to_radians(), pitch_deg.to_radians());
     let direction = [
         -f64::from(mth::sin(yaw)) * f64::from(mth::cos(pitch)),
         -f64::from(mth::sin(pitch)),
         f64::from(mth::cos(yaw)) * f64::from(mth::cos(pitch)),
     ];
-    let origin = [pos[0], pos[1] + 1.52, pos[2]];
-    Some((origin, direction.map(|v| v * speed)))
+    // Vanilla eye origin (eyeY - 0.1); pose-aware height, not a fixed 1.52.
+    let eye = pos[1] + crate::tick::player_eye_height(state.entities.row(slot).appearance.pose)
+        - 0.1;
+    let origin = [pos[0], eye, pos[2]];
+    let mut velocity = direction.map(|v| v * speed);
+    // Inherit shooter motion: full XZ drift while grounded, Y only airborne.
+    let motion = state.entities.vel(slot).map(|v| v / 20.0);
+    let airborne = !state.entities.ground(slot);
+    velocity[0] += motion[0];
+    velocity[2] += motion[2];
+    if airborne {
+        velocity[1] += motion[1];
+    }
+    Some((origin, velocity))
 }
 
 pub(crate) fn sync(state: &mut TickState, actor: EntityId) {
@@ -278,7 +300,10 @@ pub(crate) fn use_item(state: &mut TickState, actor: EntityId, hand: Hand) -> bo
     }
     let kind = match name {
         "minecraft:snowball" => Some(ProjectileKind::Snowball),
-        "minecraft:egg" => Some(ProjectileKind::Egg),
+        // Vanilla throws blue/brown eggs as ordinary egg projectiles.
+        "minecraft:egg" | "minecraft:blue_egg" | "minecraft:brown_egg" => {
+            Some(ProjectileKind::Egg)
+        }
         "minecraft:ender_pearl" => Some(ProjectileKind::EnderPearl),
         "minecraft:splash_potion" => Some(ProjectileKind::Potion),
         "minecraft:lingering_potion" => Some(ProjectileKind::LingeringPotion),
@@ -376,7 +401,8 @@ pub(crate) fn use_item(state: &mut TickState, actor: EntityId, hand: Hand) -> bo
         ProjectileKind::Firework => 0.05,
         _ => 1.5,
     };
-    let Some((origin, mut velocity)) = geometry(state, actor, speed) else {
+    let potion_throw = matches!(kind, ProjectileKind::Potion | ProjectileKind::LingeringPotion);
+    let Some((origin, mut velocity)) = geometry_for(state, actor, speed, potion_throw) else {
         return true;
     };
     if kind == ProjectileKind::Firework {

@@ -8,7 +8,7 @@ use mc_physics::{Aabb, Vec3};
 use mc_world::BlockStateId;
 
 #[derive(Clone, Copy)]
-pub(super) struct Rail {
+pub(crate) struct Rail {
     pub cell: BlockPos,
     pub ends: [[f64; 3]; 2],
     pub powered: bool,
@@ -36,7 +36,7 @@ fn property<'a>(b: &'a mc_world::BlockState, key: &str) -> Option<&'a str> {
         .find(|(k, _)| k == key)
         .map(|(_, v)| v.as_str())
 }
-pub(super) fn rail_at(state: &TickState, cell: BlockPos) -> Option<Rail> {
+pub(crate) fn rail_at(state: &TickState, cell: BlockPos) -> Option<Rail> {
     let block = state
         .registry
         .blocks
@@ -137,7 +137,7 @@ fn connected(state: &TickState, rail: Rail, endpoint: usize) -> Option<(Rail, us
     }
     None
 }
-pub(super) fn clear(state: &TickState, pos: [f64; 3], half_width: f64, height: f64) -> bool {
+pub(crate) fn clear(state: &TickState, pos: [f64; 3], half_width: f64, height: f64) -> bool {
     if pos.iter().any(|v| !v.is_finite()) {
         return false;
     }

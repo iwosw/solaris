@@ -1399,3 +1399,49 @@ fn hive_unbreaking_plan_refuses_break_without_spending_rng_and_admits_skip() {
     assert_eq!(state.players[&actor].inventory.slots[0], shears);
     assert_eq!(state.players[&actor].enchantment_seed, expected_seed);
 }
+
+#[test]
+fn flowerless_bee_finds_wither_rose_and_rejects_waterlogged() {
+    // BEE-FLOWER-TABLE through the existing pollination search path
+    // (nearby + flower predicate): wither_rose attracts; waterlogged
+    // torchflower and tall upper halves do not.
+    let mut state = state(None);
+    place(&mut state, BlockPos { x: 6, y: 201, z: 4 }, "minecraft:wither_rose");
+    let found: Option<BlockPos> = nearby(&state, [4.5, 201.0, 4.5], flower);
+    assert_eq!(found, Some(BlockPos { x: 6, y: 201, z: 4 }));
+}
+
+#[test]
+fn flower_rules_exclude_waterlogged_and_tall_upper() {
+    // BEE-FLOWER-TABLE waterlogged/tall-half rules (post-fix coverage).
+    let mut state = state(None);
+    // mangrove_propagule is a waterloggable bee-attractive member.
+    let propagule = state
+        .registry
+        .blocks
+        .by_name_and_props(
+            &Identifier::parse("minecraft:mangrove_propagule").unwrap(),
+            &[
+                ("age".into(), "0".into()),
+                ("hanging".into(), "false".into()),
+                ("stage".into(), "0".into()),
+                ("waterlogged".into(), "true".into()),
+            ],
+        )
+        .expect("waterlogged propagule state");
+    state.world.set_block(2, 201, 4, propagule.0);
+    state.world.fold_overlay();
+    assert!(!flower_at(&state, BlockPos { x: 2, y: 201, z: 4 }));
+    let lilac = state
+        .registry
+        .blocks
+        .by_name_and_props(
+            &Identifier::parse("minecraft:lilac").unwrap(),
+            &[("half".into(), "upper".into())],
+        );
+    if let Some(lilac) = lilac {
+        state.world.set_block(4, 201, 6, lilac.0);
+        state.world.fold_overlay();
+        assert!(!flower_at(&state, BlockPos { x: 4, y: 201, z: 6 }));
+    }
+}

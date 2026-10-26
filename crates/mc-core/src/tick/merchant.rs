@@ -350,7 +350,7 @@ pub(super) fn click(
         .get(crate::effects::EffectId::HeroOfTheVillage)
         .map(|effect| effect.amplifier);
     let guarded = crate::plugin_inventories::has_reservations_for_player(state, player);
-    let (effects, experience, traded_item) = if slot == 2 {
+    let (effects, experience, traded_item, leveled_up) = if slot == 2 {
         if guarded {
             let Some(villager) = state.entities.row(merchant_slot).villager.as_ref() else {
                 return;
@@ -360,8 +360,9 @@ pub(super) fn click(
             let mut candidate_villager = villager.clone();
             let mut experience = 0;
             let mut traded_item = None;
+            let mut leveled_up = false;
             let plan = p.plan_inventory_transition(&[], |candidate, _| {
-                let (effects, award, item) = result_click(
+                let (effects, award, item, leveled) = result_click(
                     candidate,
                     &mut candidate_villager,
                     &registry,
@@ -372,6 +373,7 @@ pub(super) fn click(
                 );
                 experience = award;
                 traded_item = item;
+                leveled_up = leveled;
                 effects
             });
             if crate::plugin_inventories::below_player_floors(state, player, plan.player_slots()) {
@@ -385,13 +387,15 @@ pub(super) fn click(
                 .expect("planned player")
                 .apply_inventory_transition(plan, &mut []);
             state.entities.row_mut(merchant_slot).villager = Some(candidate_villager);
-            (effects, experience, traded_item)
+            (effects, experience, traded_item, leveled_up)
         } else {
             let Some(villager) = state.entities.row_mut(merchant_slot).villager.as_mut() else {
                 return;
             };
             let p = state.players.get_mut(&player).expect("validated player");
-            result_click(p, villager, &registry, customer, hero, button, mode)
+            let (effects, experience, traded_item, leveled_up) =
+                result_click(p, villager, &registry, customer, hero, button, mode);
+            (effects, experience, traded_item, leveled_up)
         }
     } else {
         let Some(villager) = state.entities.row(merchant_slot).villager.as_ref() else {
@@ -420,8 +424,18 @@ pub(super) fn click(
                 &mut [],
             )
         };
-        (effects, 0, None)
+        (effects, 0, None, false)
     };
+    if leveled_up {
+        // Vanilla career-level healing: 10s Regeneration I on level-up,
+        // applied to the merchant entity row.
+        let effect = crate::effects::ActiveEffect::new(
+            crate::effects::EffectId::Regeneration,
+            200,
+            0,
+        );
+        crate::projectiles::payloads::give_effect(state, merchant, effect);
+    }
     if experience > 0 {
         let position = state.entities.pos(merchant_slot);
         crate::experience_orbs::award(state, position, experience, &mut changes.entities_spawned);
@@ -458,7 +472,7 @@ fn result_click(
     hero: Option<u8>,
     button: i8,
     mode: ClickMode,
-) -> (PlayerEffects, i32, Option<mc_data::ItemStack>) {
+) -> (PlayerEffects, i32, Option<mc_data::ItemStack>, bool) {
     let menu = player.open.as_mut().expect("validated merchant menu");
     if let Some(merchant) = menu.merchant.as_mut() {
         merchant.hero = hero;
@@ -498,6 +512,7 @@ fn result_click(
         },
         outcome.experience,
         traded_item,
+        outcome.leveled_up,
     )
 }
 
@@ -553,6 +568,37 @@ fn close(
         .changes
         .insert(0, PlayerChange::MenuClosed { window });
     apply_player_effects(state, connection, player, effects, changes);
+}
+
+/// Close every open customer menu on `merchant` (damage response). Queues
+/// the close through a synthetic ChangeSet merge: implemented by marking the
+/// merchant unavailable for one maintenance pass is wrong (health unchanged),
+/// so close directly here.
+pub(crate) fn close_for(state: &mut TickState, merchant: EntityId) {
+    let customers: Vec<_> = state
+        .players
+        .iter()
+        .filter_map(|(&id, p)| {
+            p.open
+                .as_ref()
+                .and_then(|m| m.merchant)
+                .filter(|m| m.entity == merchant)
+                .map(|_| (id, p.connection))
+        })
+        .collect();
+    if customers.is_empty() {
+        return;
+    }
+    // Direct menu close without a ChangeSet: reuse the ordinary close path
+    // through a throwaway ChangeSet, then publish its player changes.
+    let mut changes = crate::boundary::ChangeSet::default();
+    for (player, connection) in customers {
+        close(state, player, connection, &mut changes);
+    }
+    // Publish spawned/dropped custody from the closes is unnecessary (close
+    // returns inputs); entity removals never occur here. Player changes were
+    // already pushed inside close().
+    let _ = changes;
 }
 
 /// Called after villager AI. Close invalid customers and refresh result/offers

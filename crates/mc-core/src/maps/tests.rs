@@ -4,6 +4,16 @@ use crate::dimensions::Dimension;
 use crate::maps::{Maps, SavedMap, map_id};
 
 #[test]
+fn framed_waypoints_survive_nbt_roundtrip() {
+    // MAP-FRAME-WAYPOINT-PERSISTENCE: retained markers save/load.
+    let mut map = SavedMap::new([0, 0], 0, Dimension::Overworld).unwrap();
+    map.frame_markers.push((10, 20, 90));
+    let tag = crate::maps::nbt::to_tag(&map).unwrap();
+    let loaded = crate::maps::nbt::from_tag(&tag).unwrap();
+    assert_eq!(loaded.frame_markers, vec![(10, 20, 90)]);
+}
+
+#[test]
 fn saved_maps_creation_grid_colors_and_checkpoint_restart() {
     let mut state = test_state();
     let actor = join(&mut state, 1, "mapper");

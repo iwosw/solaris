@@ -612,3 +612,149 @@ fn started_riding_evidence_follows_successful_mount_only() {
     assert!(!valid(&state, actor, &plan));
     assert_eq!(state.advancement_events.len(), 1);
 }
+
+#[test]
+fn armadillo_curls_against_undead_and_halves_melee_damage() {
+    // ARMADILLO-THREAT-ROLL through the damage path: an armadillo with an
+    // undead threat adjacent takes reduced melee damage (rolled up).
+    let (mut state, _actor, pos) = fixture();
+    let armadillo = spawn(&mut state, "armadillo", pos);
+    let _threat = spawn(&mut state, "zombie", [pos[0] + 2.0, pos[1], pos[2]]);
+    for _ in 0..5 {
+        run_tick(&mut state, &[]);
+    }
+    let aslot = slot(&state, armadillo);
+    let before = state.entities.row(aslot).health;
+    state.merge_damage.push((
+        aslot,
+        crate::tick::DamagePiece {
+            physical: None,
+            custom_armor: false,
+            amount: 10.0,
+            kind: crate::survival::DamageKind::Melee,
+            source: None,
+        },
+    ));
+    state.commit_merge_effects();
+    state.commit_merge_effects();
+    let after = state.entities.row(slot(&state, armadillo)).health;
+    // Armadillo.hurtServer: scared damage maps (amount - 1) / 2.
+    assert!(
+        (before - after - 4.5).abs() < f32::EPSILON,
+        "curled armadillo must take (10 - 1) / 2 damage, took {}",
+        before - after
+    );
+}
+
+#[test]
+fn armadillo_brush_sheds_scute() {
+    // ARMADILLO-SCUTE-SHED through the interact path: brushing an adult
+    // armadillo sheds an armadillo scute.
+    let (mut state, actor, pos) = fixture();
+    let armadillo = spawn(&mut state, "armadillo", pos);
+    hold(&mut state, actor, "brush", 1);
+    run_tick(&mut state, &[use_entity(armadillo)]);
+    let scutes = state
+        .entities
+        .slots()
+        .filter_map(|s| state.entities.row(s).item.as_ref())
+        .filter(|stack| {
+            state
+                .registry
+                .items
+                .name_of(stack.item_id)
+                .unwrap()
+                .as_str()
+                == "minecraft:armadillo_scute"
+        })
+        .map(|stack| stack.count)
+        .sum::<i32>();
+    assert!(scutes >= 1, "brushing an armadillo must shed a scute");
+}
+
+#[test]
+fn wolf_body_armor_absorbs_melee_damage_and_wears() {
+    // WOLF-ARMOR-ABSORB through the damage path: an armored wolf takes
+    // reduced melee damage and the armor loses durability.
+    let (mut state, actor, pos) = fixture();
+    let wolf = spawn(&mut state, "wolf", pos);
+    let wslot = slot(&state, wolf);
+    state.entities.row_mut(wslot).entity_life.tamed = true;
+    let owner = state.entities.row(slot(&state, actor)).uuid;
+    state.entities.row_mut(wslot).entity_life.taming.owner = Some(owner);
+    equip(&mut state, actor, wolf, "wolf_armor");
+    assert!(state.entities.row(slot(&state, wolf)).loot.body_armor.is_some());
+    let before = state.entities.row(slot(&state, wolf)).health;
+    state.merge_damage.push((
+        slot(&state, wolf),
+        crate::tick::DamagePiece {
+            physical: None,
+            custom_armor: false,
+            amount: 4.0,
+            kind: crate::survival::DamageKind::Melee,
+            source: None,
+        },
+    ));
+    state.commit_merge_effects();
+    state.commit_merge_effects();
+    let after = state.entities.row(slot(&state, wolf)).health;
+    // Wolf.actuallyHurt: armor absorbs non-bypassed damage entirely.
+    assert!(
+        before - after == 0.0,
+        "armored wolf must take no melee damage, took {}",
+        before - after
+    );
+    assert!(
+        state
+            .entities
+            .row(slot(&state, wolf))
+            .loot
+            .body_armor
+            .as_ref()
+            .is_some_and(|s| s.damage.unwrap_or(0) == 4),
+        "wolf armor must wear down when absorbing damage"
+    );
+}
+
+#[test]
+fn armadillo_scute_timer_drops_scute() {
+    // ARMADILLO-SCUTE-SHED timer leg (post-fix coverage): a timer at expiry
+    // drops a scute on the next tick.
+    let (mut state, _actor, pos) = fixture();
+    let armadillo = spawn(&mut state, "armadillo", pos);
+    let slot = slot(&state, armadillo);
+    state
+        .entities
+        .row_mut(slot)
+        .entity_life
+        .armadillo
+        .get_or_insert_with(crate::armadillo::ArmadilloState::default)
+        .scute_ticks = 10;
+    state
+        .entities
+        .row_mut(slot)
+        .entity_life
+        .armadillo
+        .as_mut()
+        .expect("armadillo state")
+        .seeded = true;
+    for _ in 0..3 {
+        run_tick(&mut state, &[]);
+    }
+    let scutes = state
+        .entities
+        .slots()
+        .filter_map(|s| state.entities.row(s).item.as_ref())
+        .filter(|stack| {
+            state
+                .registry
+                .items
+                .name_of(stack.item_id)
+                .unwrap()
+                .as_str()
+                == "minecraft:armadillo_scute"
+        })
+        .map(|stack| stack.count)
+        .sum::<i32>();
+    assert!(scutes >= 1, "expired scute timer must drop a scute");
+}

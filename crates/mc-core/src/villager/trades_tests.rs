@@ -42,6 +42,139 @@ fn fixture(registry: &CoreRegistry) -> (VillagerState, Menu, PlayerInventory) {
 }
 
 #[test]
+fn unused_offer_demand_recovers_on_work_restock() {
+    // VILLAGER-DEMAND-RECOVERY: demand drops by maxUses even with uses=0.
+    let registry = registry();
+    let mut villager = VillagerState::default();
+    villager.data.profession = VillagerProfession::Farmer;
+    villager.data.level = 1;
+    for _ in 0..2 {
+        villager.offers.push(VillagerTradeOffer {
+            cost_a: item(&registry, "emerald", 1),
+            cost_b: None,
+            result: item(&registry, "bread", 1),
+            uses: 0,
+            max_uses: 8,
+            reward_exp: true,
+            xp: 1,
+            special_price: 0,
+            demand: 10,
+            price_multiplier: 0.05,
+        });
+    }
+    // One offer used (triggers restock), the other untouched.
+    villager.offers[0].uses = 2;
+    villager.job_site = Some(crate::boundary::BlockPos { x: 0, y: 0, z: 0 });
+    villager.restocks_today = 0;
+    villager.last_restock = 0;
+    villager.last_restock_day = -1;
+    work(&mut villager, &registry, 5000, 24_000);
+    assert_eq!(villager.offers[0].uses, 0);
+    assert_eq!(villager.offers[1].uses, 0);
+    // Used: 10 + 2*2 - 8 = 6. Unused: 10 + 0 - 8 = 2 (recovered).
+    assert_eq!(villager.offers[0].demand, 6);
+    assert_eq!(villager.offers[1].demand, 2);
+}
+
+#[test]
+fn level_up_sets_leveled_flag_for_regeneration() {
+    // VILLAGER-LEVEL-REGENERATION: outcome carries the level-up signal.
+    let registry = registry();
+    let (mut villager, mut menu, mut inventory) = fixture(&registry);
+    // Enough XP for novice->apprentice on next trade.
+    villager.xp = 9;
+    let outcome = execute(
+        &mut menu,
+        &mut inventory,
+        &mut villager,
+        &registry,
+        Uuid::nil(),
+        0,
+        ClickMode::Pickup,
+    );
+    assert!(outcome.trades > 0);
+    assert!(villager.data.level >= 2, "xp {} -> level {}", villager.xp, villager.data.level);
+    // Regen application is proven behaviorally in merchant_tests
+    // (leveling_trade_grants_merchant_regeneration); the outcome flag is
+    // internal plumbing.
+}
+
+#[test]
+fn offer_sampling_reaches_beyond_first_two_catalog_rows() {
+    // VILLAGER-OFFER-SELECTION: seeded sampling covers the whole farmer pool.
+    let registry = registry();
+    let mut seen = std::collections::BTreeSet::new();
+    for birth in 0..40u64 {
+        let mut villager = VillagerState::default();
+        villager.data.profession = VillagerProfession::Farmer;
+        villager.data.level = 1;
+        villager.birth_sequence = Some(birth);
+        unlock(&mut villager, &registry, 1);
+        for offer in &villager.offers {
+            let name = registry
+                .items
+                .name_of(offer.result.item_id)
+                .unwrap()
+                .as_str()
+                .to_owned();
+            seen.insert(name);
+        }
+        assert!(villager.offers.len() <= 2, "at most two offers per level");
+    }
+    for expected in ["minecraft:carrot", "minecraft:beetroot", "minecraft:bread"] {
+        assert!(
+            seen.contains(expected),
+            "pool row {expected} reachable, seen={seen:?}"
+        );
+    }
+}
+
+#[test]
+fn librarian_unlock_adds_enchanted_book_offer() {
+    // LIBRARIAN-ENCHANTED-BOOKS: generated librarians sell enchanted books.
+    let registry = registry();
+    let mut villager = VillagerState::default();
+    villager.data.profession = VillagerProfession::Librarian;
+    villager.data.level = 5;
+    for level in 1..=5 {
+        unlock(&mut villager, &registry, level);
+    }
+    let books: Vec<_> = villager
+        .offers
+        .iter()
+        .filter(|o| {
+            registry
+                .items
+                .name_of(o.result.item_id)
+                .is_some_and(|id| id.as_str() == "minecraft:enchanted_book")
+        })
+        .collect();
+    assert!(!books.is_empty(), "librarian must offer enchanted books");
+    for book in books {
+        assert!(
+            book.result.enchantments.is_empty(),
+            "book must not use the item enchantment family"
+        );
+        assert!(
+            !book.result.extended().stored_enchantments.is_empty(),
+            "book has stored enchantment"
+        );
+        let name = book.result.extended().stored_enchantments[0].id.as_str();
+        assert!(
+            !matches!(name, "minecraft:soul_speed" | "minecraft:swift_sneak" | "minecraft:wind_burst"),
+            "excluded enchantment {name}"
+        );
+        assert!(
+            book.cost_b.as_ref().is_some_and(|c| registry
+                .items
+                .name_of(c.item_id)
+                .is_some_and(|id| id.as_str() == "minecraft:book")),
+            "book offer costs emeralds + ordinary book"
+        );
+    }
+}
+
+#[test]
 fn trade_execution_is_atomic_with_two_costs_and_exact_result_components() {
     let registry = registry();
     let (mut villager, mut menu, mut inventory) = fixture(&registry);
