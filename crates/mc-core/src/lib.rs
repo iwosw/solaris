@@ -354,3 +354,15 @@ pub fn bench_seed(core: &Core, count: usize, spread: bool, zombies: usize) {
         }
     }
 }
+
+#[cfg(test)]
+mod interact_failing_first_tests;
+#[cfg(test)]
+mod interact_parity_tests;
+
+mod vanilla_interact;
+mod sponge;
+mod special_storage;
+mod brushing;
+mod painting;
+mod spawn_protection;

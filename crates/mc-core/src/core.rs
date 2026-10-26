@@ -541,6 +541,7 @@ fn load_dimension_state(
     tick_state.require_plugin_login = config.require_plugin_login;
     tick_state.max_airtime_ticks = config.max_airtime_ticks;
     tick_state.enable_command_block = config.enable_command_block;
+    tick_state.spawn_protection = config.spawn_protection;
     tick_state.mob_griefing = config.mob_griefing;
     tick_state.config_view_distance = i32::from(config.view_distance);
     tick_state.dimension = dimension;
@@ -1576,6 +1577,7 @@ pub(crate) fn restore_entity(
         crate::entity_loot::restore(state, slot);
         crate::armor_stand::restore(state, slot);
         crate::item_frame::restore(state, slot);
+        crate::painting::restore(state, slot);
         crate::vehicles::restore(state, slot);
         crate::bees::appearance(state, slot);
         crate::allay::appearance(state, slot);
@@ -1692,6 +1694,12 @@ fn restore_data_value(
         }
         crate::journal::EntityDataValueImage::CopperGolemState(v) => {
             crate::boundary::EntityDataValue::CopperGolemState(*v)
+        }
+        crate::journal::EntityDataValueImage::Direction(v) => {
+            crate::boundary::EntityDataValue::Direction(*v)
+        }
+        crate::journal::EntityDataValueImage::PaintingVariant(v) => {
+            crate::boundary::EntityDataValue::PaintingVariant(*v)
         }
         crate::journal::EntityDataValueImage::VillagerData {
             kind,
@@ -3008,6 +3016,7 @@ fn entity_capture_record(
         extra_fields,
     };
     crate::item_frame::capture(&mut record, &row.appearance);
+    crate::painting::capture(&mut record, &row.appearance, view.registry);
     if let Some(projectile) = &row.projectile {
         record
             .extra_fields

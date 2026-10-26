@@ -654,6 +654,9 @@ pub(crate) fn commit_death(
     if crate::item_frame::death(state, slot, spawned) {
         return;
     }
+    if crate::painting::death(state, slot, spawned) {
+        return;
+    }
     let body = state.entities.body(slot);
     let row = state.entities.row(slot);
     let EntityKind::Mob { type_id } = body.kind else {

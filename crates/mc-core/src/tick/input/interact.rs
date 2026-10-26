@@ -60,7 +60,8 @@ pub(in crate::tick) fn dig(
             y: position.y,
             z: position.z,
         },
-    ) || crate::plugin_inventories::has_reservations_for_block(state, *position)
+    ) || crate::spawn_protection::protected(state, entity, *position)
+        || crate::plugin_inventories::has_reservations_for_block(state, *position)
     {
         changes.blocks.push(crate::boundary::BlockChange {
             position: *position,
@@ -76,6 +77,12 @@ pub(in crate::tick) fn dig(
         return;
     }
     if current == state.registry.states.air {
+        return;
+    }
+    if *action == DigAction::Start
+        && state.players.get(&entity).is_some_and(|player| !player.creative())
+        && crate::vanilla_interact::dragon_egg(state, entity, *position)
+    {
         return;
     }
     if *action == DigAction::Finish {
@@ -166,6 +173,8 @@ pub(in crate::tick) fn use_item_on(
         || crate::spawn_egg::use_on(state, entity, *hand, *position, *face)
         || crate::armor_stand::use_on(state, entity, *hand, *position, *face)
         || crate::item_frame::use_on(state, entity, *hand, *position, *face)
+        || crate::painting::use_on(state, entity, *hand, *position, *face)
+        || crate::vanilla_interact::dragon_egg(state, entity, *position)
     {
         return;
     }
@@ -176,6 +185,9 @@ pub(in crate::tick) fn use_item_on(
         return;
     }
     if crate::maps::banner::use_on(state, entity, *hand, *position) {
+        return;
+    }
+    if crate::special_storage::use_on(state, entity, *hand, *position, *face, *cursor) {
         return;
     }
     if crate::shelf::use_on(state, entity, *hand, *position, *face, *cursor) {
@@ -308,6 +320,11 @@ pub(in crate::tick) fn use_item_on(
         return;
     }
     if crate::vault::use_key(state, entity, *hand, *position, &held, changes) {
+        return;
+    }
+    if crate::vanilla_interact::axe(state, entity, *hand, *position)
+        || crate::brushing::use_on(state, entity, *hand)
+    {
         return;
     }
     if crate::fire::use_on(
@@ -586,6 +603,7 @@ pub(in crate::tick) fn use_item(
     }
     if crate::maps::use_empty(state, entity, *hand, changes)
         || crate::books::use_item(state, entity, *hand)
+        || crate::brushing::use_on(state, entity, *hand)
     {
         return;
     }

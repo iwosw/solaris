@@ -363,6 +363,10 @@ impl EdgeServer {
         };
         let recipes = crate::recipes::RecipePackets::new(hub.registry())?;
         let admin = crate::admin::Admin::open(&cfg.server_dir)?;
+        anyhow::ensure!(
+            hub.submit(PlayerInput::SpawnProtectionOperators { operators: admin.operator_ids() }),
+            "spawn protection operator snapshot queue is full"
+        );
         if let Some(enabled) = cfg.server.whitelist
             && !cfg.server_dir.join("whitelist.enabled").exists()
         {
@@ -921,6 +925,15 @@ impl EdgeServer {
                 match root {
                     "op" | "deop" => {
                         let result = self.admin.set_op(uuid, &name, root == "op");
+                        if result.is_ok() {
+                            let snapshot = PlayerInput::SpawnProtectionOperators { operators: self.admin.operator_ids() };
+                            let mut sheds = 0;
+                            while !self.hub.submit(snapshot.clone()) {
+                                sheds += 1;
+                                anyhow::ensure!(sheds < MAX_SUBMIT_SHEDS, "spawn protection operator snapshot queue is full");
+                                tokio::task::yield_now().await;
+                            }
+                        }
                         if result.is_ok()
                             && let Some((other, _, _, _)) = live
                         {
@@ -2887,6 +2900,7 @@ pub fn core_config(cfg: &EdgeConfig) -> mc_core::config::CoreConfig {
     core.pause_when_empty_seconds =
         u32::try_from(cfg.server.pause_when_empty_seconds.max(0)).unwrap_or(0);
     core.enable_command_block = cfg.server.enable_command_block;
+    core.spawn_protection = cfg.server.spawn_protection;
     core.input_log = cfg.server.input_log;
     core.mob_griefing = mc_core::config::MobGriefingRules {
         creeper_block_damage: cfg.mob_griefing.creeper_block_damage,

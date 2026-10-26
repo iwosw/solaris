@@ -341,6 +341,9 @@ pub struct TickState {
     /// anti-flight corrects and disconnects the player; zero disables it.
     pub(crate) max_airtime_ticks: u32,
     pub(crate) enable_command_block: bool,
+    pub(crate) spawn_protection: u32,
+    pub(crate) spawn_operators: std::collections::BTreeSet<uuid::Uuid>,
+    pub(crate) brushing: crate::brushing::Brushing,
     pub(crate) command_blocks_due: Vec<BlockPos>,
     /// Per-mob switches layered under the `mob_griefing` gamerule.
     pub(crate) mob_griefing: crate::config::MobGriefingRules,
@@ -614,6 +617,9 @@ impl TickState {
             locked_sessions: BTreeSet::new(),
             max_airtime_ticks: 80,
             enable_command_block: false,
+            spawn_protection: 16,
+            spawn_operators: Default::default(),
+            brushing: Default::default(),
             command_blocks_due: Vec::new(),
             mob_griefing: crate::config::MobGriefingRules::default(),
             players: HashMap::default(),
@@ -2795,6 +2801,7 @@ fn run_dimension_tick_inner<'a>(
     let entity_start = std::time::Instant::now();
     if sim {
         crate::entity_life::advance(state);
+        crate::brushing::run(state);
         crate::piglin::run(state, &mut changes);
         crate::tnt::run(state, &mut intents);
         crate::mob_lanes::snowballs(state);
@@ -2881,6 +2888,7 @@ fn run_dimension_tick_inner<'a>(
         crate::mob_lanes::snow_trails(state, &mut block_writes);
     }
     crate::portals::nether::after_blocks(state, &mut block_writes);
+    crate::sponge::after_blocks(state, &mut block_writes, &mut popped_drops);
     crate::fluids::schedule(state, &block_writes);
     let block_time = block_start.elapsed();
 
@@ -2909,6 +2917,7 @@ fn run_dimension_tick_inner<'a>(
     crate::monster_spawner::after_blocks(state, &block_writes);
     crate::vault::after_blocks(state, &block_writes);
     crate::item_frame::blocks_changed(state, &block_writes, &mut popped_drops);
+    crate::painting::blocks_changed(state, &block_writes, &mut popped_drops);
     crate::block_log::after_blocks(state);
     if sim {
         crate::trial_spawner::run(state, &mut block_writes, &mut changes);
@@ -3664,6 +3673,7 @@ pub(crate) fn client_build_refused(
             position, action, ..
         } if *action != DigAction::Cancel => {
             !within_block_reach(state, entity, *position)
+                || crate::spawn_protection::protected(state, entity, *position)
                 || !crate::plugin_player::allows_block(state, entity, *position)
                 || crate::plugin_inventories::has_reservations_for_block(state, *position)
                 || (*action == DigAction::Finish
@@ -3676,6 +3686,9 @@ pub(crate) fn client_build_refused(
                         }))
         }
         PlayerInput::UseItemOn { position, face, .. } => {
+            if crate::spawn_protection::protected(state, entity, *position) {
+                return true;
+            }
             // A zone's public-use flag lets a non-member flip a door-like block;
             // the click then never places, so only that block is checked.
             if crate::plugin_player::public_use_override(state, entity, *position) {
@@ -3688,6 +3701,7 @@ pub(crate) fn client_build_refused(
                 z: position.z.saturating_add(step[2]),
             };
             !within_block_reach(state, entity, *position)
+                || crate::spawn_protection::protected(state, entity, adjacent)
                 || !crate::plugin_player::allows_block(state, entity, *position)
                 || !crate::plugin_player::allows_block(state, entity, adjacent)
         }
@@ -3716,7 +3730,7 @@ fn use_intercepts_build(
         return false;
     };
     let path = block.block.id.path();
-    matches!(path, "jukebox" | "vault" | "respawn_anchor")
+    matches!(path, "jukebox" | "vault" | "respawn_anchor" | "dragon_egg" | "decorated_pot" | "chiseled_bookshelf")
         || (path.ends_with("_bed")
             && (!state.dimension.beds_work()
                 || crate::placement::other_half(&state.registry.blocks, pos, current).is_some()))
@@ -4002,7 +4016,7 @@ pub(crate) fn obstructed(state: &TickState, pos: BlockPos) -> bool {
 }
 
 /// Sneaking with an occupied hand bypasses block-menu activation.
-fn secondary_use(state: &TickState, entity: EntityId) -> bool {
+pub(crate) fn secondary_use(state: &TickState, entity: EntityId) -> bool {
     state
         .entities
         .slot_of(entity)
@@ -4482,6 +4496,7 @@ fn sync_chunk_block_entities(state: &mut TickState) {
             chunk,
         );
         crate::shelf::hydrate_chunk(&mut state.block_entities, &state.registry, chunk);
+        crate::special_storage::hydrate_chunk(&mut state.block_entities, &state.registry, chunk);
         if let Err(error) =
             crate::shulker::hydrate_chunk(&mut state.block_entities, &state.registry, chunk)
         {
@@ -4850,6 +4865,9 @@ fn apply_inputs<'a>(
             PlayerInput::LoaderViewRequest { .. } => {}
             PlayerInput::PermissionLevel { connection, level } => {
                 input::session::permission_level(state, (connection, level))
+            }
+            PlayerInput::SpawnProtectionOperators { operators } => {
+                state.spawn_operators = operators.iter().copied().collect();
             }
             PlayerInput::SetViewDistance {
                 connection,

@@ -47,6 +47,8 @@ pub struct CoreConfig {
     pub pause_when_empty_seconds: u32,
     /// Vanilla command-block execution gate; disabled by default.
     pub enable_command_block: bool,
+    /// Vanilla Overworld spawn-protection radius; zero disables protection.
+    pub spawn_protection: u32,
     /// Per-mob switches layered under the `mobGriefing` gamerule.
     pub mob_griefing: MobGriefingRules,
     /// `[block_log]`: attributed block/container history for `/co`.
@@ -105,6 +107,7 @@ impl CoreConfig {
             max_airtime_ticks: 80,
             pause_when_empty_seconds: 0,
             enable_command_block: false,
+            spawn_protection: 16,
             mob_griefing: MobGriefingRules::default(),
             block_log: crate::block_log::Settings::default(),
             input_log: false,

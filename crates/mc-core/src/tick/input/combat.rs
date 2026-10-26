@@ -40,6 +40,7 @@ pub(in crate::tick) fn attack(
     }
     if crate::armor_stand::attack(state, entity, *target, changes)
         || crate::item_frame::attack(state, entity, *target, changes)
+        || crate::painting::attack(state, entity, *target, changes)
     {
         return;
     }

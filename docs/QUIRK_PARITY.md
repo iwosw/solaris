@@ -132,3 +132,23 @@ seed-dependent run of wire ids per `seeds` variant (otherwise every seed replays
 `--vanilla-results PATH` reuses a previous run's vanilla oracle output (the oracle is the slow half);
 Solaris polls every reactive cell once after chunk hydration, so scenarios that must stay un-updated
 (BUD) set `settle_ticks` before placing their power sources.
+
+## Native block interaction regressions (26.1.2)
+
+`mc-core`'s `interact_parity_tests` covers axe stripping/scraping/unwaxing,
+held-use brushing of suspicious sand/gravel, decorated-pot and chiseled-bookshelf
+custody, bounded sponge absorption, dragon-egg teleportation, eternal-fire
+supports, spawn protection, and painting placement/support removal. These are
+focused native regressions, not a claim that the graphical-client parity gate
+has exercised every interaction.
+
+Brush loot is revealed into retained block-entity NBT before completion; book
+and pot contents use native inventory custody and hydrate from retained NBT.
+Painting variants/directions are retained in entity metadata and native saves;
+the protocol regression pins the registry-holder wire encoding to local
+26.1.2 `javap` evidence.
+
+`server.spawn_protection` (vanilla `spawn-protection`, default 16) protects the
+Overworld spawn square only when the persisted operator list is nonempty.
+Operators bypass it even when other operators are offline; zero disables it.
+

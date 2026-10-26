@@ -1917,6 +1917,21 @@ const _: () = assert!(
 
 fn map_extra(index: u8, value: &mc_core::boundary::EntityDataValue) -> WireEntityDataValue {
     match value.clone() {
+        mc_core::boundary::EntityDataValue::Direction(value) => {
+            use mc_protocol::packets::play::EntityDirection;
+            let value = match value {
+                0 => EntityDirection::Down,
+                1 => EntityDirection::Up,
+                2 => EntityDirection::North,
+                3 => EntityDirection::South,
+                4 => EntityDirection::West,
+                _ => EntityDirection::East,
+            };
+            WireEntityDataValue::Direction { index, value }
+        }
+        mc_core::boundary::EntityDataValue::PaintingVariant(value) => {
+            WireEntityDataValue::PaintingVariant { index, value }
+        }
         mc_core::boundary::EntityDataValue::WeatheringCopper(value) => {
             WireEntityDataValue::WeatheringCopper { index, value }
         }

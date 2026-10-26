@@ -133,6 +133,7 @@ pub struct CoreRegistry {
     pub(crate) plugin_crafting_recipes: Vec<mc_data::recipes::Recipe>,
     /// Plugin-authored block-tool rules admitted against the block registry.
     pub(crate) block_tools: crate::block_tools::BlockToolTable,
+    pub(crate) paintings: Vec<crate::painting::Variant>,
     /// Plugin Loader blocks stored on reserved vanilla carrier states (ADR 0018).
     pub(crate) carrier_blocks: crate::carrier_blocks::CarrierBlocks,
 }
@@ -512,6 +513,7 @@ impl CoreRegistry {
             plugin_work_recipe_ids: Vec::new(),
             plugin_crafting_recipes: Vec::new(),
             block_tools: crate::block_tools::BlockToolTable::default(),
+            paintings: crate::painting::load(root)?,
             carrier_blocks: crate::carrier_blocks::CarrierBlocks::default(),
         })
     }

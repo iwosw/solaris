@@ -699,6 +699,8 @@ impl EffectParticle {
 /// serializers are rejected explicitly.
 #[derive(Debug, Clone)]
 pub enum EntityDataValue {
+    /// 26.1.2 serializer 34: registry holder reference (wire id = registry id + 1).
+    PaintingVariant { index: u8, value: u32 },
     /// CopperGolem enum serializers, javap EntityDataSerializers 26.1.2:
     /// state = 37, weathering = 38; both use VarInt ordinal codecs.
     CopperGolemState {
@@ -814,6 +816,7 @@ impl PartialEq for EntityDataValue {
         }
 
         match (self, other) {
+            (Self::PaintingVariant { value: left, .. }, Self::PaintingVariant { value: right, .. }) => left == right,
             (Self::Byte { value: left, .. }, Self::Byte { value: right, .. }) => left == right,
             (
                 Self::CopperGolemState { value: left, .. },
@@ -916,6 +919,7 @@ impl EntityDataValue {
     pub const fn index(&self) -> u8 {
         match self {
             Self::Byte { index, .. }
+            | Self::PaintingVariant { index, .. }
             | Self::CopperGolemState { index, .. }
             | Self::WeatheringCopper { index, .. }
             | Self::Int { index, .. }
@@ -945,6 +949,7 @@ impl EntityDataValue {
     #[must_use]
     pub const fn serializer_id(&self) -> i32 {
         match self {
+            Self::PaintingVariant { .. } => 34,
             Self::Byte { .. } => ENTITY_DATA_BYTE_SERIALIZER_ID,
             Self::CopperGolemState { .. } => 37,
             Self::WeatheringCopper { .. } => 38,
@@ -978,6 +983,11 @@ impl EntityDataValue {
         buf.write_u8(self.index());
         buf.write_varint(self.serializer_id());
         match self {
+            Self::PaintingVariant { value, .. } => {
+                let wire = i32::try_from(*value).ok().and_then(|value| value.checked_add(1))
+                    .ok_or(CodecError::NotSupported("painting variant id out of range"))?;
+                buf.write_varint(wire);
+            }
             Self::Byte { value, .. } => buf.write_i8(*value),
             Self::CopperGolemState { value, .. } | Self::WeatheringCopper { value, .. } => {
                 buf.write_varint(i32::from(*value))
@@ -1207,6 +1217,13 @@ impl EntityDataValue {
                     EffectParticle::decode,
                 )?,
             },
+            34 => {
+                let wire = buf.read_varint()?;
+                if wire <= 0 {
+                    return Err(CodecError::NotSupported("inline painting variant metadata"));
+                }
+                Self::PaintingVariant { index, value: (wire - 1) as u32 }
+            }
             37 | 38 => {
                 let value = buf.read_varint()?;
                 let maximum = if serializer_id == 37 { 4 } else { 3 };
@@ -1474,3 +1491,7 @@ impl Packet for RotateHead {
 #[cfg(test)]
 #[path = "entity_copper_tests.rs"]
 mod copper_tests;
+
+#[cfg(test)]
+#[path = "entity_painting_tests.rs"]
+mod painting_tests;
