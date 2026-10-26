@@ -45,7 +45,9 @@ fn saved_maps_creation_grid_colors_and_checkpoint_restart() {
     let z = pos[2].floor() as i32;
     let index = ((z - map.center[1] + 64) * 128 + x - map.center[0] + 64) as usize;
     let stone = state.registry.states.stone;
+    // Same height to the north: flat shade (base + 1), not a lit slope.
     state.world.set_block(x, 100, z, stone);
+    state.world.set_block(x, 100, z - 1, stone);
     state.maps.cursors.insert(id, index);
     state.tick = 10;
     crate::maps::tick(&mut state);

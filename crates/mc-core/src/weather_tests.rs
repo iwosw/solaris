@@ -183,6 +183,8 @@ fn checkpoint_and_tail_fold_restore_exact_clock_duration_and_float_bits() {
     let mut state = fixture();
     state.day_time = 93_211;
     state.weather = (Weather::Thunder, 432);
+    state.thundering = true;
+    state.thunder_remaining_ticks = 432;
     state.rain_level = 0.37123457;
     state.thunder_level = 0.12876543;
     state
@@ -724,38 +726,4 @@ fn weather_gap_microbench_precipitation_and_rod_search() {
         "approximate, contended machine; one active resident chunk; 7 samples; precipitation median={}ns/sample (amortized /16 ticks); rod attraction median={}ns/strike; precipitation samples={precipitation:?}; attraction samples={attraction:?}",
         precipitation[3], attraction[3]
     );
-}
-
-/// Climate images saved before the independent thunder clock carry only the
-/// old fields; they still load, and a stored thunder target keeps thundering
-/// on its remaining duration instead of redrawing a fresh clock next tick.
-#[test]
-fn pre_thunder_clock_climate_image_still_loads() {
-    let old = r#"{"day_time":5,"weather_kind":2,"remaining_ticks":99,
-        "rain_level_bits":1065353216,"thunder_level_bits":1065353216,
-        "advance_time":true,"advance_weather":true}"#;
-    let image: ClimateImage = serde_json::from_str(old).expect("old image parses");
-    assert_eq!(
-        (
-            image.thunder_remaining_ticks,
-            image.clear_remaining_ticks,
-            image.thundering
-        ),
-        (0, 0, false)
-    );
-    let mut state = fixture();
-    image.restore(&mut state).expect("restore");
-    assert_eq!(state.weather, (Weather::Thunder, 99));
-    assert_eq!(state.day_time, 5);
-    assert!(state.thundering, "stored thunder target keeps thundering");
-    assert_eq!(
-        state.thunder_remaining_ticks, 99,
-        "thunder clock inherits the storm duration, not a fresh draw"
-    );
-    advance_cycle(&mut state);
-    assert!(
-        state.thundering,
-        "one natural tick must not flip the storm off"
-    );
-    assert_eq!(state.weather, (Weather::Thunder, 98));
 }

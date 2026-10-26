@@ -409,37 +409,9 @@ impl crate::player::PlayerState {
                     .unwrap_or(0)
                     .clamp(0, 4) as u8,
             )],
-            "minecraft:golden_apple" => vec![
-                ActiveEffect::new(EffectId::Absorption, 2400, 0),
-                ActiveEffect::new(EffectId::Regeneration, 100, 1),
-            ],
-            "minecraft:enchanted_golden_apple" => vec![
-                ActiveEffect::new(EffectId::Absorption, 2400, 3),
-                ActiveEffect::new(EffectId::Regeneration, 400, 1),
-                ActiveEffect::new(EffectId::Resistance, 6000, 0),
-                ActiveEffect::new(EffectId::FireResistance, 6000, 0),
-            ],
-            "minecraft:pufferfish" => vec![
-                ActiveEffect::new(EffectId::Hunger, 1200, 2),
-                ActiveEffect::new(EffectId::Poison, 1200, 1),
-                ActiveEffect::new(EffectId::Nausea, 300, 0),
-            ],
-            "minecraft:spider_eye" => vec![ActiveEffect::new(EffectId::Poison, 100, 0)],
-            "minecraft:rotten_flesh"
-                if crate::enchantments::random(&mut self.enchantment_seed) < 0.8 =>
-            {
-                vec![ActiveEffect::new(EffectId::Hunger, 600, 0)]
-            }
-            "minecraft:chicken"
-                if crate::enchantments::random(&mut self.enchantment_seed) < 0.3 =>
-            {
-                vec![ActiveEffect::new(EffectId::Hunger, 600, 0)]
-            }
-            "minecraft:poisonous_potato"
-                if crate::enchantments::random(&mut self.enchantment_seed) < 0.6 =>
-            {
-                vec![ActiveEffect::new(EffectId::Poison, 100, 0)]
-            }
+            // Golden apples, pufferfish, spider eyes, rotten flesh, raw
+            // chicken and poisonous potatoes carry vanilla consumable
+            // on_consume_effects; the data-driven roll below owns them.
             "minecraft:potion" => stack
                 .extended()
                 .potion

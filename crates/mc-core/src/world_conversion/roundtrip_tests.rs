@@ -25,6 +25,8 @@ fn falcons_border(dimension: Dimension) -> crate::command_border::Border {
         center_x,
         center_z,
         size: 128_000.0,
+        // Import normalizes a settled border's target to its size.
+        lerp_target: 128_000.0,
         ..Default::default()
     }
 }
@@ -290,9 +292,25 @@ fn modern_all_domains_three_dimension_borders_roundtrip_and_unknown_entity_check
     )
     .unwrap();
     let checkpoint = store.read_checkpoint().unwrap();
-    assert_eq!(checkpoint.globals.len(), 9);
-    assert!(checkpoint.globals.contains_key("plugins"));
-    assert!(checkpoint.globals.contains_key("plugin_startup"));
+    assert_eq!(
+        checkpoint
+            .globals
+            .keys()
+            .map(String::as_str)
+            .collect::<Vec<_>>(),
+        [
+            "bossbars",
+            "checkpoint",
+            "conversion_extras",
+            "dimensions",
+            "generation",
+            "level_metadata",
+            "map_sequence",
+            "plugin_startup",
+            "plugins",
+            "scoreboard",
+        ]
+    );
     let manifest: CheckpointManifest =
         serde_json::from_slice(&checkpoint.globals["checkpoint"].payload).unwrap();
     assert_eq!(manifest.domain_versions, bridge::domain_versions());

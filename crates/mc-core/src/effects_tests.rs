@@ -36,10 +36,14 @@ impl Data {
                 })
                 .collect::<Vec<_>>(),
         );
+        // Golden apples take their vanilla consumable effects from the
+        // embedded component catalog, as the real registry does.
+        let required = mc_data::item_components::solaris_required_item_facts();
         let facts =
             mc_data::item_components::ItemFactsTable::from_entries(names.iter().map(|name| {
+                let name = id(&format!("minecraft:{name}"));
                 let food = matches!(
-                    *name,
+                    name.path(),
                     "golden_apple" | "enchanted_golden_apple" | "suspicious_stew"
                 )
                 .then_some(mc_data::food::FoodEntry {
@@ -47,11 +51,16 @@ impl Data {
                     saturation: 9.6,
                     can_always_eat: true,
                 });
+                let consume_effects = required
+                    .get(&name)
+                    .map(|facts| facts.consume_effects.clone())
+                    .unwrap_or_default();
                 (
-                    id(&format!("minecraft:{name}")),
+                    name,
                     ItemFacts {
                         food,
                         use_duration_ticks: Some(32),
+                        consume_effects,
                         ..Default::default()
                     },
                 )

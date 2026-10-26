@@ -117,9 +117,19 @@ fn whitelist_enabled_path(dir: &Path) -> PathBuf {
     dir.join("whitelist.enabled")
 }
 
-fn read_whitelist_enabled(dir: &Path) -> bool {
-    std::fs::read_to_string(whitelist_enabled_path(dir))
-        .is_ok_and(|text| text.trim().eq_ignore_ascii_case("true"))
+/// A missing toggle means disabled; anything but `true`/`false` fails closed.
+fn read_whitelist_enabled(dir: &Path) -> anyhow::Result<bool> {
+    let path = whitelist_enabled_path(dir);
+    let text = match std::fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => return Err(error.into()),
+    };
+    match text.trim() {
+        "true" => Ok(true),
+        "false" => Ok(false),
+        other => anyhow::bail!("{}: invalid whitelist toggle {other:?}", path.display()),
+    }
 }
 
 fn persist_whitelist_enabled(dir: &Path, enabled: bool) -> anyhow::Result<()> {
@@ -144,7 +154,7 @@ impl Admin {
                 ips: load(&dir.join("banned-ips.json"))?,
                 muted: load(&dir.join("muted-players.json"))?,
                 whitelist: load(&dir.join("whitelist.json"))?,
-                whitelist_enabled: read_whitelist_enabled(dir),
+                whitelist_enabled: read_whitelist_enabled(dir)?,
             }),
             sessions: Mutex::new(HashMap::new()),
             mutations: Mutex::new(()),
@@ -190,10 +200,14 @@ impl Admin {
         {
             return Some(ban_reason(true, entry.reason.as_deref(), &entry.expires));
         }
-        // Vanilla checks bans first and the whitelist second; an operator is
-        // not exempt from the list. `multiplayer.disconnect.not_whitelisted`
-        // is the client's own "You are not white-listed on this server!".
-        if lists.whitelist_enabled && !lists.whitelist.iter().any(|entry| entry.uuid == uuid) {
+        // Vanilla checks bans first and the whitelist second; operators are
+        // whitelisted implicitly (PlayerList.isWhiteListed checks ops first).
+        // `multiplayer.disconnect.not_whitelisted` is the client's own
+        // "You are not white-listed on this server!".
+        if lists.whitelist_enabled
+            && !lists.ops.iter().any(|entry| entry.uuid == uuid)
+            && !lists.whitelist.iter().any(|entry| entry.uuid == uuid)
+        {
             return Some(serde_json::json!({"translate":"multiplayer.disconnect.not_whitelisted"}));
         }
         if full

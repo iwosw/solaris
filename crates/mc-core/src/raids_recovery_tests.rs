@@ -43,6 +43,16 @@ fn checkpoint(root: &std::path::Path, state: &mut TickState) -> CheckpointManife
     state.other_dimensions.clear();
     manifest
 }
+/// A recovered dimension has no online players; a ticket keeps the village
+/// chunk loaded and active so the raid clock runs (inactive raids freeze).
+fn activate(state: &mut TickState) {
+    state.tickets.insert(
+        "raid-test".into(),
+        (crate::boundary::ChunkPos { x: 0, z: 0 }, 2),
+    );
+    state.world.ensure_blocking(&state.desired_chunks());
+    state.refresh_active_chunks(state.tick);
+}
 #[test]
 fn raids_checkpoint_restart_and_wal_wave_removal_resume_without_duplicates() {
     let root = tempfile::tempdir().unwrap();
@@ -130,14 +140,7 @@ fn raids_checkpoint_restart_and_wal_wave_removal_resume_without_duplicates() {
             .count(),
         4
     );
-    restored.world.ensure_blocking(
-        &[
-            (crate::boundary::ChunkPos { x: 0, z: 0 }, 0),
-            (crate::boundary::ChunkPos { x: 1, z: 0 }, 0),
-        ]
-        .into_iter()
-        .collect(),
-    );
+    activate(&mut restored);
     crate::raids::run(&mut restored, &mut ChangeSet::default());
     assert_eq!(restored.raids.raids[&2].groups_spawned, 1);
     let ids: Vec<_> = expected.raids[&2]
@@ -182,14 +185,7 @@ fn raids_checkpoint_restart_and_wal_wave_removal_resume_without_duplicates() {
     let mut replayed = load(&manifest);
     assert_eq!(replayed.raids, restored.raids);
     assert!(replayed.raids.raids[&2].members.is_empty());
-    replayed.world.ensure_blocking(
-        &[
-            (crate::boundary::ChunkPos { x: 0, z: 0 }, 0),
-            (crate::boundary::ChunkPos { x: 1, z: 0 }, 0),
-        ]
-        .into_iter()
-        .collect(),
-    );
+    activate(&mut replayed);
     for _ in 0..299 {
         crate::raids::run(&mut replayed, &mut ChangeSet::default());
         replayed.tick += 1;
@@ -253,14 +249,7 @@ fn raids_idle_ticks_skip_wal_and_restore_exact_elapsed_counters() {
         restored.raids, state.raids,
         "WAL world ticks rebase all native countdown counters"
     );
-    restored.world.ensure_blocking(
-        &[
-            (crate::boundary::ChunkPos { x: 0, z: 0 }, 0),
-            (crate::boundary::ChunkPos { x: 1, z: 0 }, 0),
-        ]
-        .into_iter()
-        .collect(),
-    );
+    activate(&mut restored);
     let remaining = restored.raids.raids[&2].cooldown_ticks;
     for _ in 0..remaining {
         crate::raids::run(&mut restored, &mut ChangeSet::default());

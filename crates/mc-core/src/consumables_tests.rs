@@ -212,7 +212,8 @@ fn harmful_foods_apply_effects_only_after_consumption_completes() {
         (
             "pufferfish",
             vec![
-                (EffectId::Hunger, 1200, 2),
+                // Vanilla 26.1.2 pufferfish: Hunger III for 15 s.
+                (EffectId::Hunger, 300, 2),
                 (EffectId::Poison, 1200, 1),
                 (EffectId::Nausea, 300, 0),
             ],
@@ -250,10 +251,11 @@ fn probabilistic_food_penalties_use_retained_gameplay_rng() {
         let player = state.players.get_mut(&entity).unwrap();
         let offer_seed = player.enchantment_offer_seed;
         let mut successes = 0;
-        for seed in 0..1000 {
+        // Consecutive meals continue one retained stream (fresh small seeds
+        // would cluster on Java's first-draw correlation).
+        let mut expected = player.enchantment_seed;
+        for _ in 0..1000 {
             player.clear_effects(None);
-            player.enchantment_seed = seed;
-            let mut expected = seed;
             let applies = crate::enchantments::random(&mut expected) < probability;
             player.consume_effects(&registry.item_rules(), &food);
             assert_eq!(player.active_effects.has(effect), applies);
