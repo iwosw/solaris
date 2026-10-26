@@ -132,15 +132,14 @@ pub(crate) fn relight(state: &mut TickState, pos: BlockPos) -> bool {
     else {
         return false;
     };
-    state.world.set_block(pos.x, pos.y, pos.z, next.0);
-    state.merge_block_writes.push((
+    state.write_block(
         crate::boundary::BlockPos {
             x: pos.x,
             y: pos.y,
             z: pos.z,
         },
         next.0,
-    ));
+    );
     true
 }
 

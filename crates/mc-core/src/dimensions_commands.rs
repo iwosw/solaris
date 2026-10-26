@@ -51,7 +51,7 @@ fn target_mut(command: &mut Command) -> &mut Target {
     }
 }
 
-pub(super) fn global_target(target: &Target) -> bool {
+pub(crate) fn global_target(target: &Target) -> bool {
     // Unqualified @e/@p join @a/@r in global routing: vanilla
     // EntitySelector.findEntities/findPlayers iterate all levels when the
     // selector carries no world-limiting option. Explicit position,
@@ -70,7 +70,7 @@ pub(super) fn global_target(target: &Target) -> bool {
     }
 }
 
-pub(super) fn resolve(
+pub(crate) fn resolve(
     state: &TickState,
     request: &Request,
     target: &Target,

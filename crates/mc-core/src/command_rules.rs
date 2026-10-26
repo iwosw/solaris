@@ -381,8 +381,9 @@ fn rule_boolean(values: &rustc_hash::FxHashMap<String, String>, rule: &Rule) -> 
     }
 }
 
-/// Name-addressed lookup for `/gamerule` queries; unknown or non-boolean
+/// Name-addressed lookup (legacy aliases included); unknown or non-boolean
 /// names return false.
+#[cfg(test)]
 fn boolean_value(values: &rustc_hash::FxHashMap<String, String>, name: &str) -> bool {
     find(name)
         .filter(|(rule, _)| rule.kind == RuleKind::Boolean)
@@ -406,8 +407,9 @@ fn rule_integer(values: &rustc_hash::FxHashMap<String, String>, rule: &Rule) -> 
         .unwrap_or(rule.default_integer)
 }
 
-/// Name-addressed lookup for `/gamerule` queries; unknown or non-integer
+/// Name-addressed lookup (legacy aliases included); unknown or non-integer
 /// names return zero.
+#[cfg(test)]
 fn integer_value(values: &rustc_hash::FxHashMap<String, String>, name: &str) -> i32 {
     find(name)
         .filter(|(rule, _)| matches!(rule.kind, RuleKind::Integer { .. }))

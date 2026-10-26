@@ -42,6 +42,38 @@ fn accepts(state: &TickState, stack: &ItemStack) -> bool {
 /// 26.1.2): getLastInteractedSlot() + 1 (block entity field, -1 when never
 /// touched). This is the last slot the player added to or removed from —
 /// not the filled count.
+/// Persisted bookshelf contents for the hydration owner; live custody wins.
+pub(crate) fn decode_chunk(
+    inventories: &crate::redstone::custody::BlockEntities,
+    registry: &crate::registry::CoreRegistry,
+    chunk: &mc_world::Chunk,
+) -> Result<Vec<((i32, i32, i32), Vec<ItemStack>)>, String> {
+    let mut decoded = Vec::new();
+    for (pos, bytes) in &chunk.block_entities {
+        if inventories.contains_key(&key(*pos))
+            || chunk
+                .get_block(
+                    pos.x.rem_euclid(16) as u8,
+                    pos.y,
+                    pos.z.rem_euclid(16) as u8,
+                )
+                .and_then(|id| registry.blocks.by_id(id))
+                .is_none_or(|block| !is_chiseled(block.block.id.path()))
+        {
+            continue;
+        }
+        let fail = |error: &dyn std::fmt::Display| format!("chiseled_bookshelf {pos:?}: {error}");
+        let Tag::Compound(fields) =
+            mc_nbt::read_network(&mut bytes.as_slice()).map_err(|e| fail(&e))?
+        else {
+            return Err(fail(&"expected compound"));
+        };
+        let slots = mc_data::storage_blocks::decode_slots(&fields, &registry.items, 6)
+            .map_err(|e| fail(&e))?;
+        decoded.push((key(*pos), slots));
+    }
+    Ok(decoded)
+}
 pub(crate) fn comparator(state: &TickState, pos: BlockPos) -> u8 {
     let chunk = state.world.chunk(crate::boundary::ChunkPos {
         x: pos.x.div_euclid(16),
@@ -103,8 +135,7 @@ fn sync_occupied(state: &mut TickState, pos: BlockPos) {
     else {
         return;
     };
-    state.world.set_block(pos.x, pos.y, pos.z, next.0);
-    state.merge_block_writes.push((pos, next.0));
+    state.write_block(pos, next.0);
 }
 
 /// Insert/swap/take a book by cursor (top row = slots 0-2, bottom = 3-5).

@@ -4381,3 +4381,20 @@ time (about 1 KB packed). A field-level delta against the baseline would shrink 
 further but changes the retention comparison; not needed at the measured size. redb
 leaf pages are not densely filled after random-order rewrites (file 40.6 MB vs 9.5 MB
 of live row bytes on the compacted live copy).
+
+## Block-entity hydration contract and block-write funnel (2026-10-26)
+
+One owner, `tick/hydration.rs`, hydrates a chunk marked pending (residency
+insert or any block-entity storage change). It decodes every persisted record of
+the chunk first (spawners, trial spawners, vaults, crafters, shelves, chiseled
+bookshelves, decorated pots, shulkers, hives, jukeboxes, campfires, lecterns,
+brewing stands, automated containers), then validates the lazily read records (beacon, conduit, sculk,
+shrieker), and only then fills vacant live entries. One malformed record rejects
+the whole chunk through `ChunkWorld::reject_resident` (unloaded, load error
+recorded); nothing is applied, so there is no rollback. None of the listed
+owners panics on, or silently drops, a persisted record; the redstone residency
+sweep uses the same container decoder and rejection.
+
+Serial passes that edit a block and must see it immediately use
+`TickState::write_block` (world write plus staging for the canonical block
+phase) instead of pairing `set_block` with `merge_block_writes.push` by hand.

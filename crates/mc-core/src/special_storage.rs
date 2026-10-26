@@ -28,14 +28,18 @@ fn fields(state: &TickState, pos: BlockPos) -> Vec<(String, Tag)> {
         })
         .unwrap_or_default()
 }
-fn decode(fields: &[(String, Tag)], items: &mc_data::items::ItemRegistry) -> Vec<ItemStack> {
-    let mut slots = vec![ItemStack::EMPTY; 1];
-    if let Some(Tag::Compound(item)) = field(fields, "item")
-        && let Ok(Some(stack)) = stack_from_fields(items, item)
-    {
-        slots[0] = stack;
-    }
-    slots
+fn decode(
+    fields: &[(String, Tag)],
+    items: &mc_data::items::ItemRegistry,
+) -> Result<Vec<ItemStack>, String> {
+    let stack = match field(fields, "item") {
+        None => ItemStack::EMPTY,
+        Some(Tag::Compound(item)) => stack_from_fields(items, item)
+            .map_err(|e| format!("item: {e}"))?
+            .ok_or("item: missing item id")?,
+        Some(_) => return Err("item: expected item compound".into()),
+    };
+    Ok(vec![stack])
 }
 pub(crate) fn decode_chunk(
     inventories: &crate::redstone::custody::BlockEntities,
@@ -63,7 +67,9 @@ pub(crate) fn decode_chunk(
             Ok(_) => return Err(format!("{} {pos:?}: expected compound", block.block.id)),
             Err(error) => return Err(format!("{} {pos:?}: {error}", block.block.id)),
         };
-        decoded.push((key, decode(&fields, &registry.items)));
+        let slots = decode(&fields, &registry.items)
+            .map_err(|e| format!("{} {pos:?}: {e}", block.block.id))?;
+        decoded.push((key, slots));
     }
     Ok(decoded)
 }
@@ -139,8 +145,10 @@ pub(crate) fn use_on(
     let held_index = crate::tick::held_slot_index(player, hand);
     let held = player.inventory.slots[held_index].clone();
     let key = (pos.x, pos.y, pos.z);
+    // Persisted pots enter custody through chunk hydration; a missing entry
+    // here is a freshly placed pot.
     if !state.block_entities.contains_key(&key) {
-        let slots = decode(&fields(state, pos), &state.registry.items);
+        let slots = vec![ItemStack::EMPTY];
         state.block_entities.insert(
             key,
             BlockEntityState {

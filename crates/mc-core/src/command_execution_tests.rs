@@ -352,7 +352,7 @@ fn command_parity_unqualified_entity_selector_reaches_loaded_remote_dimensions()
 fn command_parity_repeated_random_evaluation_redraws_within_one_tick() {
     // SELECTOR-RANDOM-REPEAT: Java ORDER_RANDOM shuffles on every
     // evaluation, so repeated same-tick @r draws must not all agree.
-    let (mut state, alice, bob) = fixture();
+    let (state, alice, bob) = fixture();
     let target = crate::commands::target_of("@r").unwrap();
     let mut seen_alice = false;
     let mut seen_bob = false;

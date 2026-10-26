@@ -76,8 +76,7 @@ fn set_dusted(state: &mut TickState, pos: BlockPos, count: u8) {
         .blocks
         .by_name_and_props(&block.block.id, &props)
     {
-        state.world.set_block(pos.x, pos.y, pos.z, next.0);
-        state.merge_block_writes.push((pos, next.0));
+        state.write_block(pos, next.0);
     }
 }
 fn loot(state: &mut TickState, pos: BlockPos, face: [i32; 3], reveal: bool) -> Option<ItemStack> {
@@ -262,8 +261,7 @@ pub(crate) fn run(state: &mut TickState) {
             .expect("brush result")
             .default
             .0;
-        state.world.set_block(pos.x, pos.y, pos.z, next);
-        state.merge_block_writes.push((pos, next));
+        state.write_block(pos, next);
         state.world.set_opaque_block_entity(pos, None);
         state.opaque_changes.push((pos, None));
         state.brushing.progress.remove(&key);

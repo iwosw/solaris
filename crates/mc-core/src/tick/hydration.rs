@@ -20,6 +20,7 @@ struct Decoded {
     shelves: Vec<((i32, i32, i32), Vec<mc_data::ItemStack>)>,
     shulkers: Vec<((i32, i32, i32), Vec<mc_data::ItemStack>)>,
     special_storage: Vec<((i32, i32, i32), Vec<mc_data::ItemStack>)>,
+    chiseled: Vec<((i32, i32, i32), Vec<mc_data::ItemStack>)>,
     hives: Vec<((i32, i32, i32), crate::bees::Hive)>,
     jukeboxes: Vec<((i32, i32, i32), crate::jukebox::Jukebox)>,
     campfires: Vec<((i32, i32, i32), crate::campfire::CampfireState)>,
@@ -33,15 +34,11 @@ struct Decoded {
 }
 
 /// Records read lazily from chunk bytes at runtime (beacon, conduit, sculk,
-/// shrieker) are validated here so those readers may treat decode as an
-/// invariant.
+/// shrieker) are validated after the typed owners, so a record's own owner
+/// names the rejection; those readers may then treat decode as an invariant.
 fn decode(state: &TickState, chunk: &mc_world::Chunk) -> Result<Decoded, String> {
-    crate::beacon::validate_chunk(state, chunk)?;
-    crate::conduit::validate_chunk(state, chunk)?;
-    crate::sculk::validate_chunk(state, chunk)?;
-    crate::shrieker::validate_chunk(state, chunk)?;
     let registry = &state.registry;
-    Ok(Decoded {
+    let decoded = Decoded {
         monster_spawners: crate::monster_spawner::decode_chunk(registry, chunk)?,
         trial_spawners: crate::trial_spawner::decode_chunk(&state.trial_spawners, registry, chunk)?,
         vaults: crate::vault::decode_chunk(&state.vaults, registry, chunk)?,
@@ -52,6 +49,7 @@ fn decode(state: &TickState, chunk: &mc_world::Chunk) -> Result<Decoded, String>
             registry,
             chunk,
         )?,
+        chiseled: crate::chiseled_shelf::decode_chunk(&state.block_entities, registry, chunk)?,
         shulkers: crate::shulker::decode_chunk(&state.block_entities, registry, chunk)
             .map_err(|e| e.to_string())?,
         hives: crate::bees::decode_chunk(&state.hives, registry, chunk)
@@ -68,7 +66,12 @@ fn decode(state: &TickState, chunk: &mc_world::Chunk) -> Result<Decoded, String>
             chunk,
             state.tick,
         )?,
-    })
+    };
+    crate::beacon::validate_chunk(state, chunk)?;
+    crate::conduit::validate_chunk(state, chunk)?;
+    crate::sculk::validate_chunk(state, chunk)?;
+    crate::shrieker::validate_chunk(state, chunk)?;
+    Ok(decoded)
 }
 
 /// Pull resident chunks' typed block-entity maps into live storage.
@@ -103,6 +106,7 @@ fn apply(state: &mut TickState, chunk_pos: ChunkPos, decoded: Decoded) {
         .shelves
         .into_iter()
         .chain(decoded.special_storage)
+        .chain(decoded.chiseled)
         .chain(decoded.shulkers)
     {
         state.block_entities.hydrate(key, || BlockEntityState {

@@ -409,15 +409,14 @@ pub(crate) fn charge_target(
     else {
         return;
     };
-    state.world.set_block(pos.x, pos.y, pos.z, next.0);
-    state.merge_block_writes.push((
+    state.write_block(
         crate::boundary::BlockPos {
             x: pos.x,
             y: pos.y,
             z: pos.z,
         },
         next.0,
-    ));
+    );
     let delay = if arrows { 20 } else { 8 };
     schedule_cell(
         state,
@@ -556,8 +555,9 @@ fn refresh_signals(state: &mut TickState, writes: &[(BlockPos, u32)], wake: &mut
 fn hydrate(state: &mut TickState) {
     // `active_revision` advances on every resident insert/remove, so an
     // unchanged stamp means every resident chunk is already in
-    // `signal_residents` and `loaded`. Chunk content (block entities, scheduled
-    // ticks) can still change in place, so those hydrations run every pass.
+    // `signal_residents` and `loaded`. Scheduled ticks can still change in
+    // place, so that hydration runs every pass; block-entity storage changes
+    // mark the chunk for the single owner in `tick/hydration.rs`.
     let stamp = (state.world.active_revision(), state.world.resident_count());
     let settled = state.redstone.hydrated == Some(stamp);
     if !settled {
@@ -577,29 +577,6 @@ fn hydrate(state: &mut TickState) {
             continue;
         };
         state.block_ticks.hydrate_chunk(chunk, state.tick);
-        // Same fail-closed policy as residency hydration: block-entity bytes
-        // installed in place after load are decoded here first.
-        let decoded = match containers::decode_chunk(
-            &state.block_entities,
-            &state.redstone_containers,
-            &state.registry,
-            chunk,
-            state.tick,
-        ) {
-            Ok(decoded) => decoded,
-            Err(error) => {
-                state.world.reject_resident(cp, error);
-                continue;
-            }
-        };
-        containers::hydrate_chunk(
-            &mut state.block_entities,
-            &mut state.redstone_containers,
-            &state.registry,
-            chunk,
-            state.tick,
-            decoded,
-        );
         if settled {
             continue;
         }

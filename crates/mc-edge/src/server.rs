@@ -68,9 +68,9 @@ pub use crate::fanout::OUTBOUND_QUEUE_BOUND;
 mod registry;
 pub use registry::*;
 mod connection;
-pub use connection::*;
+use connection::*;
 mod pump;
-pub use pump::*;
+use pump::*;
 
 /// Next-connection-id counter start (1-based; 0 is reserved as "none").
 const FIRST_CONNECTION_ID: u64 = 1;

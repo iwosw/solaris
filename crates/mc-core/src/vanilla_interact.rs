@@ -71,8 +71,7 @@ pub(crate) fn axe(state: &mut TickState, actor: EntityId, hand: Hand, pos: Block
     let Ok(wear) = crate::copper::prepare_tool_wear(state, actor, hand) else {
         return true;
     };
-    state.world.set_block(pos.x, pos.y, pos.z, next.0);
-    state.merge_block_writes.push((pos, next.0));
+    state.write_block(pos, next.0);
     crate::copper::apply_tool_wear(state, actor, wear);
     crate::advancements::accepted_block(
         state,

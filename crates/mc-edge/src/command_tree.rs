@@ -34,7 +34,7 @@ use mc_protocol::packets::play::{
     CommandNode, CommandNodeKind, CommandStringKind, CommandSuggestionEntry,
 };
 mod subtrees;
-pub(crate) use subtrees::*;
+use subtrees::*;
 mod suggest;
 pub(crate) use suggest::*;
 

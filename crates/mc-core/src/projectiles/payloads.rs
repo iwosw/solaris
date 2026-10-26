@@ -237,8 +237,7 @@ fn water_impact(
                 .blocks
                 .by_name_and_props(&block.block.id, &properties)
             {
-                state.world.set_block(cell.x, cell.y, cell.z, next.0);
-                state.merge_block_writes.push((cell, next.0));
+                state.write_block(cell, next.0);
             }
         }
     }
