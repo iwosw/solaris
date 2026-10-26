@@ -100,7 +100,7 @@ pub(crate) fn set_entity(state: &mut TickState, pos: BlockPos, type_id: u32) -> 
         "spawn_data",
         Tag::Compound(vec![(
             "entity".into(),
-            Tag::Compound(vec![("id".into(), Tag::String(name.into()))]),
+            Tag::Compound(vec![("id".into(), Tag::String(name))]),
         )]),
     );
     let mut data = match SpawnerData::from_fields(fields) {
