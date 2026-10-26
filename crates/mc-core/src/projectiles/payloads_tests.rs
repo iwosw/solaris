@@ -1545,3 +1545,282 @@ fn weather_gap_lightning_transforms_charges_and_damages_items_and_turtles() {
             .brown_mooshroom
     );
 }
+
+#[test]
+fn pearl_landing_spawns_endermite_on_winning_roll() {
+    // ENDER-PEARL-TELEPORT-SPAWN through the impact path: a winning 5%
+    // roll spawns an endermite at the owner's pre-teleport position.
+    let (mut state, owner) = fixture();
+    state.tick = 1;
+    let owner_uuid = state.entities.row(state.entities.slot_of(owner).unwrap()).uuid;
+    let tick = (1_u64..500)
+        .find(|tick| {
+            crate::natural_spawn::Rng(owner_uuid.as_u128() as u64 ^ tick).below(20) == 0
+        })
+        .expect("winning tick");
+    state.tick = tick;
+    let record = ProjectileState::new(
+        ProjectileKind::EnderPearl,
+        Some(owner_uuid),
+        item(&state, "minecraft:ender_pearl"),
+    );
+    let (id, mut record) = launch_record(&mut state, record, [0.0, 201.0, 0.0]);
+    let mut intents = Vec::new();
+    assert!(impact(&mut state, &mut intents, id, &mut record, None, [5.0, 201.0, 0.0]));
+    assert!(
+        state
+            .projectiles
+            .spawned
+            .iter()
+            .any(|spawned| entity_name(&state, *spawned) == Some("minecraft:endermite")),
+        "winning pearl roll must spawn an endermite"
+    );
+}
+
+#[test]
+fn snowball_breaks_end_crystal_through_zero_damage_path() {
+    // ZERO-DAMAGE-IMPACT through the impact path: zero-damage contact
+    // still destroys an end crystal via the shared hit path.
+    let (mut state, owner) = fixture();
+    let crystal = mob(&mut state, "minecraft:end_crystal", [2.0, 201.0, 0.0]);
+    let owner_uuid = state.entities.row(state.entities.slot_of(owner).unwrap()).uuid;
+    let record = ProjectileState::new(
+        ProjectileKind::Snowball,
+        Some(owner_uuid),
+        item(&state, "minecraft:snowball"),
+    );
+    let (id, mut record) = launch_record(&mut state, record, [0.0, 201.0, 0.0]);
+    let mut intents = Vec::new();
+    assert!(impact(
+        &mut state,
+        &mut intents,
+        id,
+        &mut record,
+        Some(crystal),
+        [2.0, 201.0, 0.0]
+    ));
+    assert!(
+        !damage_to(&intents, crystal).is_empty(),
+        "snowball contact must route damage to an end crystal"
+    );
+}
+
+#[test]
+fn splash_water_douses_burning_entity() {
+    // WATER-IMPACT-SPLASH through the impact path: a splash water bottle
+    // extinguishes a burning entity instead of resolving potion effects.
+    let (mut state, owner) = fixture();
+    let target = mob(&mut state, "minecraft:cow", [2.0, 201.0, 0.0]);
+    let target_slot = state.entities.slot_of(target).unwrap();
+    state.entities.body_mut(target_slot).burn_ticks = 100;
+    let owner_uuid = state.entities.row(state.entities.slot_of(owner).unwrap()).uuid;
+    let record = ProjectileState::new(
+        ProjectileKind::Potion,
+        Some(owner_uuid),
+        potion(&state, "minecraft:splash_potion", "minecraft:water"),
+    );
+    let (id, mut record) = launch_record(&mut state, record, [0.0, 201.0, 0.0]);
+    assert!(impact(
+        &mut state,
+        &mut Vec::new(),
+        id,
+        &mut record,
+        Some(target),
+        [2.0, 201.0, 0.0]
+    ));
+    assert_eq!(state.entities.body(state.entities.slot_of(target).unwrap()).burn_ticks, 0);
+}
+
+#[test]
+fn custom_only_splash_applies_custom_effect() {
+    // CUSTOM-POTION-EFFECTS through the impact path: a custom-only splash
+    // (no base potion) applies its custom effects to the direct hit.
+    let (mut state, owner) = fixture();
+    let mut stack = item(&state, "minecraft:splash_potion");
+    stack.extended_mut().potion_custom_effects.push(
+        mc_data::item_stack::PotionEffect {
+            id: mc_data::Identifier::parse("minecraft:speed").unwrap(),
+            amplifier: 0,
+            duration: 600,
+            ambient: false,
+            show_particles: true,
+            show_icon: true,
+            hidden: None,
+        },
+    );
+    let owner_uuid = state.entities.row(state.entities.slot_of(owner).unwrap()).uuid;
+    let record = ProjectileState::new(ProjectileKind::Potion, Some(owner_uuid), stack);
+    let (id, mut record) = launch_record(&mut state, record, [0.0, 201.0, 0.0]);
+    assert!(impact(
+        &mut state,
+        &mut Vec::new(),
+        id,
+        &mut record,
+        Some(owner),
+        [10.0, 201.0, 0.0]
+    ));
+    assert!(
+        state.players[&owner].active_effects.get(crate::effects::EffectId::Speed).is_some(),
+        "custom-only splash must apply its custom speed effect"
+    );
+}
+
+#[test]
+fn lingering_healing_cloud_heals_other_player_with_pvp_off() {
+    // LINGERING-FRIENDLY-PVP through the cloud path: a healing lingering
+    // cloud still heals another player while PvP is disabled.
+    let (mut state, _) = fixture();
+    run_tick(
+        &mut state,
+        &[PlayerInput::Join {
+            connection: ConnectionId(2),
+            uuid: Uuid::new_v4(),
+            name: "cloud-friend".into(),
+            permission_level: 0,
+        }],
+    );
+    let friend = state.connections.entity_of(ConnectionId(2)).unwrap();
+    let friend_slot = state.entities.slot_of(friend).unwrap();
+    state.entities.set_pos(friend_slot, [1.0, 201.0, 0.0]);
+    state.players.get_mut(&friend).unwrap().vitals.health = 10.0;
+    state.entities.row_mut(friend_slot).health = 10.0;
+    state.gamerules.insert("pvp".into(), "false".into());
+    let record = ProjectileState::new(
+        ProjectileKind::LingeringPotion,
+        None,
+        potion(&state, "minecraft:lingering_potion", "minecraft:healing"),
+    );
+    let (bottle, mut record) = launch_record(&mut state, record, [0.0, 201.0, 0.0]);
+    assert!(impact(
+        &mut state,
+        &mut Vec::new(),
+        bottle,
+        &mut record,
+        None,
+        [0.0, 201.0, 0.0]
+    ));
+    remove(&mut state, bottle);
+    let cloud_id = state
+        .projectiles
+        .spawned
+        .iter()
+        .copied()
+        .find(|id| {
+            state.entities.slot_of(*id).is_some_and(|slot| {
+                state.entities.row(slot).projectile.as_ref().is_some_and(|record| {
+                    record.kind == ProjectileKind::AreaEffectCloud
+                })
+            })
+        })
+        .expect("lingering cloud");
+    let cloud_slot = state.entities.slot_of(cloud_id).unwrap();
+    let mut cloud = *state.entities.row_mut(cloud_slot).projectile.take().unwrap();
+    let friend_health = |state: &TickState| state.players[&friend].vitals.health;
+    let before = friend_health(&state);
+    for _ in 0..12 {
+        state.tick += 5;
+        cloud.age += 5;
+        let mut intents = Vec::new();
+        if !step(&mut state, &mut intents, cloud_id, &mut cloud) {
+            break;
+        }
+        if friend_health(&state) > before {
+            return;
+        }
+    }
+    panic!("healing cloud must heal another player with pvp=false");
+}
+
+#[test]
+fn splash_rejects_targets_above_the_vertical_band() {
+    // POTION-TARGET-GEOMETRY through the splash path: a target 3 blocks
+    // above the burst (outside the vertical band) is not splashed.
+    let (mut state, owner) = fixture();
+    let above = mob(&mut state, "minecraft:cow", [0.0, 204.0, 0.0]);
+    let owner_uuid = state.entities.row(state.entities.slot_of(owner).unwrap()).uuid;
+    let record = ProjectileState::new(
+        ProjectileKind::Potion,
+        Some(owner_uuid),
+        potion(&state, "minecraft:splash_potion", "minecraft:harming"),
+    );
+    let (id, mut record) = launch_record(&mut state, record, [0.0, 201.0, 0.0]);
+    let mut intents = Vec::new();
+    assert!(impact(
+        &mut state,
+        &mut intents,
+        id,
+        &mut record,
+        None,
+        [0.0, 201.0, 0.0]
+    ));
+    assert!(
+        damage_to(&intents, above).is_empty(),
+        "cow 3 blocks above the burst must be outside the splash band"
+    );
+}
+
+#[test]
+fn splash_regeneration_does_not_apply_to_undead() {
+    // MOB-IMMUNITY (undead) through the splash path: regeneration from a
+    // splash potion is rejected by zombies.
+    let (mut state, owner) = fixture();
+    let zombie = mob(&mut state, "minecraft:zombie", [2.0, 201.0, 0.0]);
+    let owner_uuid = state.entities.row(state.entities.slot_of(owner).unwrap()).uuid;
+    let record = ProjectileState::new(
+        ProjectileKind::Potion,
+        Some(owner_uuid),
+        potion(&state, "minecraft:splash_potion", "minecraft:regeneration"),
+    );
+    let (id, mut record) = launch_record(&mut state, record, [0.0, 201.0, 0.0]);
+    assert!(impact(
+        &mut state,
+        &mut Vec::new(),
+        id,
+        &mut record,
+        Some(zombie),
+        [2.0, 201.0, 0.0]
+    ));
+    let zombie_slot = state.entities.slot_of(zombie).unwrap();
+    assert!(
+        state.entities.row(zombie_slot).active_effects.entries.is_empty(),
+        "undead must reject regeneration, got {:?}",
+        state.entities.row(zombie_slot).active_effects.entries
+    );
+}
+
+#[test]
+fn base_plus_custom_splash_applies_both_effects() {
+    // CUSTOM-POTION-EFFECTS composition (PotionContents.getAllEffects):
+    // base potion effects concatenated with custom effects — a
+    // swiftness-plus-custom-strength stack must yield both, not base alone.
+    let (mut state, owner) = fixture();
+    let mut stack = potion(&state, "minecraft:splash_potion", "minecraft:swiftness");
+    stack.extended_mut().potion_custom_effects.push(
+        mc_data::item_stack::PotionEffect {
+            id: mc_data::Identifier::parse("minecraft:strength").unwrap(),
+            amplifier: 0,
+            duration: 600,
+            ambient: false,
+            show_particles: true,
+            show_icon: true,
+            hidden: None,
+        },
+    );
+    let owner_uuid = state.entities.row(state.entities.slot_of(owner).unwrap()).uuid;
+    let record = ProjectileState::new(ProjectileKind::Potion, Some(owner_uuid), stack);
+    let (id, mut record) = launch_record(&mut state, record, [0.0, 201.0, 0.0]);
+    assert!(impact(
+        &mut state,
+        &mut Vec::new(),
+        id,
+        &mut record,
+        Some(owner),
+        [10.0, 201.0, 0.0]
+    ));
+    let active = &state.players[&owner].active_effects;
+    assert!(
+        active.get(crate::effects::EffectId::Speed).is_some()
+            && active.get(crate::effects::EffectId::Strength).is_some(),
+        "base+custom splash must apply both swiftness and custom strength"
+    );
+}

@@ -416,7 +416,10 @@ pub(crate) fn apply_potion(
     if !potion_affected(state, target) {
         return;
     }
-    for mut effect in potion_effects(&record.stack) {
+    for mut effect in potion_effects(&record.stack)
+        .into_iter()
+        .chain(custom_effects(&record.stack))
+    {
         if !matches!(effect.id, EffectId::InstantHealth | EffectId::InstantDamage) {
             effect.duration = if cloud {
                 effect.duration / 4
@@ -1018,7 +1021,7 @@ fn pearl(
     // position. Needs a live player owner, not a dispenser throw.
     if state.players.contains_key(&owner)
         && state.difficulty != crate::survival::Difficulty::Peaceful
-        && crate::command_rules::boolean(state, "do_mob_spawning")
+        && crate::command_rules::boolean(state, "spawn_mobs")
     {
         let mut rng = crate::natural_spawn::Rng(
             state.entities.row(slot).uuid.as_u128() as u64 ^ state.tick,

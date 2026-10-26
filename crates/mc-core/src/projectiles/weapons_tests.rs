@@ -586,3 +586,48 @@ fn gliding_rocket_attaches_consumes_survival_rocket_and_grounded_stays_free() {
         }
     }
 }
+
+#[test]
+fn blue_egg_throws_as_ordinary_egg_projectile_and_debits() {
+    // EGG-VARIANT-THROW through the item-use path: a blue egg launches an
+    // Egg-kind projectile (cold variant) and debits one item.
+    let (mut state, actor, _) = super::super::flight_tests::setup();
+    state.players.get_mut(&actor).unwrap().inventory.slots[0] = stack(&state, "blue_egg", 1);
+    assert!(use_item(&mut state, actor, Hand::Main));
+    let kinds: Vec<_> = projectiles(&state).iter().map(|r| r.kind).collect();
+    assert!(
+        kinds.contains(&ProjectileKind::Egg),
+        "blue egg must launch an Egg projectile, got {kinds:?}"
+    );
+    assert!(state.players[&actor].inventory.slots[0].is_empty());
+}
+
+#[test]
+fn thrown_snowball_inherits_shooter_motion_and_pose_eye_height() {
+    // THROWABLE-LAUNCH-GEOMETRY through the item-use path: a moving
+    // thrower's motion biases the projectile, and the origin follows the
+    // pose eye height rather than a fixed offset.
+    let (mut state, actor, _) = super::super::flight_tests::setup();
+    let slot = state.entities.slot_of(actor).unwrap();
+    state.entities.set_vel(slot, [10.0, 0.0, 0.0]);
+    state.entities.set_ground(slot, true);
+    state.players.get_mut(&actor).unwrap().inventory.slots[0] = stack(&state, "snowball", 1);
+    assert!(use_item(&mut state, actor, Hand::Main));
+    assert_eq!(projectiles(&state).len(), 1);
+    let ball = state
+        .entities
+        .slots()
+        .find(|slot| {
+            state.entities.row(*slot).projectile.as_deref().is_some_and(|r| {
+                r.kind == ProjectileKind::Snowball
+            })
+        })
+        .expect("thrown snowball");
+    // Grounded: full XZ motion inherited (10 b/s -> entity vel x = 10.0);
+    // base gives 0.0 here.
+    let vel = state.entities.vel(ball);
+    assert!(
+        (vel[0] - 10.0).abs() < 1e-9,
+        "snowball must inherit shooter motion, got {vel:?}"
+    );
+}
