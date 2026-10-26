@@ -233,7 +233,9 @@ fn schedule_checkpoint_wal_recovery_and_clear_tombstone() {
         matches!(&entries[..],[crate::journal::JournalEntry::ScheduledFunctions{value}] if value.is_empty())
     );
     let mut writer = crate::journal::JournalWriter::open(root.path(), 1).unwrap();
-    writer.append(state.tick + 1, state.tick + 1, &entries).unwrap();
+    writer
+        .append(state.tick + 1, state.tick + 1, &entries)
+        .unwrap();
     drop(writer);
     let recovered =
         crate::core::recover_dimension_state(&config, crate::dimensions::Dimension::Overworld)

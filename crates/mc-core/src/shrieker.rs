@@ -244,17 +244,19 @@ pub(crate) fn validate_record(bytes: &[u8]) -> Result<(), String> {
     Ok(())
 }
 pub(crate) fn validate_loaded(state: &TickState) -> Result<(), String> {
-    for chunk in state.world.chunks() {
-        for (pos, bytes) in &chunk.block_entities {
-            if block(state, *pos).is_some() {
-                decode(bytes, state.tick).map_err(|err| {
-                    format!("sculk_shrieker at {},{},{}: {err}", pos.x, pos.y, pos.z)
-                })?;
-            } else {
-                validate_record(bytes).map_err(|err| {
-                    format!("sculk_shrieker at {},{},{}: {err}", pos.x, pos.y, pos.z)
-                })?;
-            }
+    state
+        .world
+        .chunks()
+        .try_for_each(|chunk| validate_chunk(state, chunk))
+}
+pub(crate) fn validate_chunk(state: &TickState, chunk: &mc_world::Chunk) -> Result<(), String> {
+    for (pos, bytes) in &chunk.block_entities {
+        if block(state, *pos).is_some() {
+            decode(bytes, state.tick)
+                .map_err(|err| format!("sculk_shrieker at {},{},{}: {err}", pos.x, pos.y, pos.z))?;
+        } else {
+            validate_record(bytes)
+                .map_err(|err| format!("sculk_shrieker at {},{},{}: {err}", pos.x, pos.y, pos.z))?;
         }
     }
     Ok(())
@@ -416,8 +418,7 @@ fn set_shrieking(state: &mut TickState, pos: BlockPos, value: bool) {
         return;
     };
     if state.world.block_at(pos.x, pos.y, pos.z) != Some(next.0) {
-        state.world.set_block(pos.x, pos.y, pos.z, next.0);
-        state.merge_block_writes.push((pos, next.0));
+        state.write_block(pos, next.0);
     }
 }
 fn nearby_warden(state: &TickState, pos: [f64; 3]) -> bool {

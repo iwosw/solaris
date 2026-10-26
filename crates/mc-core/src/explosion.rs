@@ -147,8 +147,7 @@ pub(crate) fn apply(
                 + (rng.next() % u64::from(crate::tnt::DEFAULT_FUSE / 4)) as u32;
             if crate::tnt::prime_block(state, pos, fuse).is_none() {
                 crate::plugin_inventories::invalidate_block(state, pos);
-                state.world.set_block(x, y, z, air);
-                state.merge_block_writes.push((pos, air));
+                state.write_block(pos, air);
             }
             // Priming removes TNT from the live world before the normal block
             // phase. Later same-tick blasts must ray-cast that new occlusion.

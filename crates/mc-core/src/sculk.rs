@@ -301,13 +301,16 @@ pub(crate) fn checkpoint(state: &mut TickState) {
 }
 /// Validate retained records before adopting a replay/checkpoint world.
 pub(crate) fn validate(state: &TickState) -> Result<(), String> {
-    for chunk in state.world.chunks() {
-        for (pos, bytes) in &chunk.block_entities {
-            if block(state, *pos).is_some_and(|b| sculk(b.block.id.path())) {
-                decode(bytes, state.tick).map_err(|e| {
-                    format!("sculk block entity at {},{},{}: {e}", pos.x, pos.y, pos.z)
-                })?;
-            }
+    state
+        .world
+        .chunks()
+        .try_for_each(|chunk| validate_chunk(state, chunk))
+}
+pub(crate) fn validate_chunk(state: &TickState, chunk: &mc_world::Chunk) -> Result<(), String> {
+    for (pos, bytes) in &chunk.block_entities {
+        if block(state, *pos).is_some_and(|b| sculk(b.block.id.path())) {
+            decode(bytes, state.tick)
+                .map_err(|e| format!("sculk block entity at {},{},{}: {e}", pos.x, pos.y, pos.z))?;
         }
     }
     Ok(())

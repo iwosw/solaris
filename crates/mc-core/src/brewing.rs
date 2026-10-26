@@ -184,34 +184,45 @@ fn is_stand(registry: &CoreRegistry, id: u32) -> bool {
 
 /// Timers and slots hydrate independently: player/automation WAL slots are
 /// authoritative even if the native Anvil timer was not yet loaded.
+pub(crate) fn decode_chunk(
+    stands: &BrewingStands,
+    registry: &CoreRegistry,
+    chunk: &mc_world::Chunk,
+) -> Result<Vec<((i32, i32, i32), BrewingState, Vec<ItemStack>)>, String> {
+    let mut decoded = Vec::new();
+    for (pos, bytes) in &chunk.block_entities {
+        let key = (pos.x, pos.y, pos.z);
+        if stands.contains_key(&key)
+            || !chunk
+                .get_block(
+                    pos.x.rem_euclid(16) as u8,
+                    pos.y,
+                    pos.z.rem_euclid(16) as u8,
+                )
+                .is_some_and(|id| is_stand(registry, id.0))
+        {
+            continue;
+        }
+        let (stand, slots) = BrewingState::decode(bytes, &registry.items)
+            .ok_or_else(|| format!("brewing_stand {pos:?}: undecodable block entity"))?;
+        decoded.push((key, stand, slots));
+    }
+    Ok(decoded)
+}
+
 pub(crate) fn hydrate_chunk(
     stands: &mut BrewingStands,
     inventories: &mut crate::redstone::custody::BlockEntities,
     registry: &CoreRegistry,
     chunk: &mc_world::Chunk,
+    decoded: Vec<((i32, i32, i32), BrewingState, Vec<ItemStack>)>,
 ) {
-    for (pos, bytes) in &chunk.block_entities {
-        let key = (pos.x, pos.y, pos.z);
-        if stands.contains_key(&key) {
-            continue;
-        }
-        if !chunk
-            .get_block(
-                pos.x.rem_euclid(16) as u8,
-                pos.y,
-                pos.z.rem_euclid(16) as u8,
-            )
-            .is_some_and(|id| is_stand(registry, id.0))
-        {
-            continue;
-        }
-        if let Some((stand, slots)) = BrewingState::decode(bytes, &registry.items) {
-            stands.insert(key, stand);
-            inventories.hydrate(key, || BlockEntityState {
-                slots,
-                furnace: None,
-            });
-        }
+    for (key, stand, slots) in decoded {
+        stands.insert(key, stand);
+        inventories.hydrate(key, || BlockEntityState {
+            slots,
+            furnace: None,
+        });
     }
     for (pos, stand) in &chunk.brewing_stands {
         let key = (pos.x, pos.y, pos.z);

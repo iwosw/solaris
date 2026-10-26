@@ -547,12 +547,21 @@ fn hopper_nbt_roundtrip_keeps_remaining_cooldown_and_item_components() {
     assert_eq!(cooldown, 5);
     let mut inventories = crate::redstone::custody::BlockEntities::default();
     let mut containers = ContainerState::default();
+    let decoded = decode_chunk(
+        &inventories,
+        &containers,
+        &state.registry,
+        chunk,
+        state.tick,
+    )
+    .unwrap();
     hydrate_chunk(
         &mut inventories,
         &mut containers,
         &state.registry,
         chunk,
         state.tick,
+        decoded,
     );
     assert_eq!(containers.remaining(key(HOPPER), state.tick), 5);
     assert_eq!(inventories[&key(HOPPER)].slots[3], stone);
@@ -643,12 +652,21 @@ fn hopper_custody_and_cooldown_survive_real_native_checkpoint() {
     let mut restored = state_with_dir(Some(dir.clone()), false);
     restored.tick = checkpoint_tick;
     let chunk = restored.world.chunk(ChunkPos { x: 0, z: 0 }).unwrap();
+    let decoded = decode_chunk(
+        &restored.block_entities,
+        &restored.redstone_containers,
+        &restored.registry,
+        chunk,
+        restored.tick,
+    )
+    .unwrap();
     hydrate_chunk(
         &mut restored.block_entities,
         &mut restored.redstone_containers,
         &restored.registry,
         chunk,
         restored.tick,
+        decoded,
     );
     assert_eq!(restored.block_entities[&key(HOPPER)].slots[0], stone);
     assert_eq!(
@@ -835,12 +853,21 @@ fn hopper_cooldown_pauses_across_chunk_eviction_instead_of_resetting() {
         .world
         .ensure_blocking(&[(ChunkPos { x: 0, z: 0 }, 0)].into_iter().collect());
     let chunk = state.world.chunk(ChunkPos { x: 0, z: 0 }).unwrap();
+    let decoded = decode_chunk(
+        &state.block_entities,
+        &state.redstone_containers,
+        &state.registry,
+        chunk,
+        state.tick,
+    )
+    .unwrap();
     hydrate_chunk(
         &mut state.block_entities,
         &mut state.redstone_containers,
         &state.registry,
         chunk,
         state.tick,
+        decoded,
     );
     step(&mut state);
     assert_eq!(
@@ -930,12 +957,21 @@ fn automation_hydration_does_not_preempt_native_furnace_progress() {
     let chunk = state.world.chunk(ChunkPos { x: 0, z: 0 }).unwrap();
     let mut inventories = crate::redstone::custody::BlockEntities::default();
     let mut containers = ContainerState::default();
+    let decoded = decode_chunk(
+        &inventories,
+        &containers,
+        &state.registry,
+        chunk,
+        state.tick,
+    )
+    .unwrap();
     hydrate_chunk(
         &mut inventories,
         &mut containers,
         &state.registry,
         chunk,
         state.tick,
+        decoded,
     );
     assert!(
         !inventories.contains_key(&key(HOPPER)),
@@ -1062,19 +1098,20 @@ fn hopper_pushes_into_and_pulls_from_all_seventeen_shulker_variants() {
         assert_eq!(state.block_entities[&key(HOPPER)].slots[1].count, 1);
         assert_eq!(total(&state), 7);
         crate::shulker::run(&mut state);
-        let mut hydrated = crate::redstone::custody::BlockEntities::default();
-        crate::shulker::hydrate_chunk(
-            &mut hydrated,
+        let hydrated: BTreeMap<_, _> = crate::shulker::decode_chunk(
+            &crate::redstone::custody::BlockEntities::default(),
             &state.registry,
             state.world.chunk(ChunkPos { x: 0, z: 0 }).unwrap(),
         )
-        .unwrap();
+        .unwrap()
+        .into_iter()
+        .collect();
         assert_eq!(
-            hydrated[&key(destination)].slots,
+            hydrated[&key(destination)],
             state.block_entities[&key(destination)].slots
         );
         assert_eq!(
-            hydrated[&key(above)].slots,
+            hydrated[&key(above)],
             state.block_entities[&key(above)].slots
         );
     }

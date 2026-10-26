@@ -183,11 +183,12 @@ pub(crate) fn scheduled(state: &mut TickState, pos: BlockPos, writes: &mut Vec<(
         set_property(state, cell, "side_chain", part, writes);
     }
 }
-pub(crate) fn hydrate_chunk(
-    inventories: &mut crate::redstone::custody::BlockEntities,
+pub(crate) fn decode_chunk(
+    inventories: &crate::redstone::custody::BlockEntities,
     registry: &crate::registry::CoreRegistry,
     chunk: &mc_world::Chunk,
-) {
+) -> Result<Vec<((i32, i32, i32), Vec<ItemStack>)>, String> {
+    let mut decoded = Vec::new();
     for (pos, bytes) in &chunk.block_entities {
         if inventories.contains_key(&key(*pos))
             || chunk
@@ -201,21 +202,17 @@ pub(crate) fn hydrate_chunk(
         {
             continue;
         }
+        let fail = |error: &dyn std::fmt::Display| format!("shelf {pos:?}: {error}");
         let Tag::Compound(fields) =
-            mc_nbt::read_network(&mut bytes.as_slice()).expect("validated shelf NBT")
+            mc_nbt::read_network(&mut bytes.as_slice()).map_err(|e| fail(&e))?
         else {
-            continue;
+            return Err(fail(&"expected compound"));
         };
         let (_, slots) = mc_data::storage_blocks::decode_shelf(&fields, &registry.items)
-            .expect("validated shelf fields");
-        inventories.insert(
-            key(*pos),
-            BlockEntityState {
-                slots,
-                furnace: None,
-            },
-        );
+            .map_err(|e| fail(&e))?;
+        decoded.push((key(*pos), slots));
     }
+    Ok(decoded)
 }
 fn register(state: &mut TickState, pos: BlockPos) {
     state

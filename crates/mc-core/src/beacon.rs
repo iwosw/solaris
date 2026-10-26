@@ -70,6 +70,25 @@ pub(crate) fn levels(state: &TickState, pos: BlockPos) -> i32 {
     levels
 }
 
+fn decode(bytes: &[u8]) -> Result<Vec<(String, Tag)>, String> {
+    let mut reader = bytes;
+    match mc_nbt::read_network(&mut reader).map_err(|e| format!("beacon NBT: {e}"))? {
+        Tag::Compound(fields) => Ok(fields),
+        _ => Err("beacon NBT: expected TAG_Compound".into()),
+    }
+}
+
+/// Hydration rejects a chunk with an undecodable beacon, so resident
+/// beacon bytes always decode at runtime.
+pub(crate) fn validate_chunk(state: &TickState, chunk: &mc_world::Chunk) -> Result<(), String> {
+    for (pos, bytes) in &chunk.block_entities {
+        if named(state, *pos, "beacon") {
+            decode(bytes).map_err(|e| format!("beacon at {},{},{}: {e}", pos.x, pos.y, pos.z))?;
+        }
+    }
+    Ok(())
+}
+
 fn image(state: &TickState, pos: BlockPos) -> Vec<(String, Tag)> {
     state
         .world
@@ -78,14 +97,7 @@ fn image(state: &TickState, pos: BlockPos) -> Vec<(String, Tag)> {
             z: pos.z.div_euclid(16),
         })
         .and_then(|chunk| chunk.block_entities.get(&pos))
-        .map(|bytes| {
-            let mut reader = bytes.as_slice();
-            let tag = mc_nbt::read_network(&mut reader).expect("loaded beacon NBT");
-            let Tag::Compound(fields) = tag else {
-                panic!("beacon BE must be a compound")
-            };
-            fields
-        })
+        .map(|bytes| decode(bytes).expect("hydration validated resident beacon"))
         .unwrap_or_default()
 }
 fn selection(fields: &[(String, Tag)], key: &str) -> Option<EffectId> {

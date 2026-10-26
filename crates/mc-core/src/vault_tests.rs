@@ -228,8 +228,7 @@ fn vault_mid_ejection_checkpoint_retains_remaining_items_and_rewarded_uuid() {
         .unwrap();
     drop(original);
     let mut restored = state(Some(dir.clone()));
-    let chunk = restored.world.chunk(ChunkPos { x: 0, z: 0 }).unwrap();
-    hydrate_chunk(&mut restored.vaults, &restored.registry, chunk).unwrap();
+    crate::tick::sync_chunk_block_entities(&mut restored);
     let after = &restored.vaults[&key(POS)];
     assert_eq!(after.rewarded, before.rewarded);
     assert_eq!(after.items, before.items);
@@ -332,7 +331,8 @@ fn vault_wal_recovers_rewarded_player_pending_rewards_and_key_debit_together() {
             .set_opaque_block_entity(position(cell), bytes);
     }
     let chunk = restored.world.chunk(ChunkPos { x: 0, z: 0 }).unwrap();
-    hydrate_chunk(&mut restored.vaults, &restored.registry, chunk).unwrap();
+    let decoded = decode_chunk(&restored.vaults, &restored.registry, chunk).unwrap();
+    restored.vaults.extend(decoded);
     assert_eq!(restored.vaults[&key(POS)].rewarded, before.rewarded);
     assert_eq!(restored.vaults[&key(POS)].items, before.items);
     let mut drops = Vec::new();
@@ -375,7 +375,7 @@ fn vault_truncated_resident_record_returns_error_without_tick_panic() {
         .world
         .set_opaque_block_entity(POS, Some(vec![mc_nbt::tag_type::COMPOUND]));
     let chunk = state.world.chunk(chunk_pos).unwrap();
-    assert!(hydrate_chunk(&mut state.vaults, &state.registry, chunk).is_err());
+    assert!(decode_chunk(&state.vaults, &state.registry, chunk).is_err());
     run_tick(&mut state, &[]);
     assert!(!state.world.has_chunk(0, 0));
     assert_eq!(state.world.load_error(chunk_pos).unwrap().dimension, 0);

@@ -28,12 +28,13 @@ fn is_crafter(registry: &crate::registry::CoreRegistry, id: u32) -> bool {
         .by_id(mc_world::BlockStateId(id))
         .is_some_and(|b| b.block.id.path() == "crafter")
 }
-pub(crate) fn hydrate_chunk(
-    crafters: &mut Crafters,
-    inventories: &mut crate::redstone::custody::BlockEntities,
+pub(crate) type Decoded = Vec<((i32, i32, i32), CrafterSettings, Vec<ItemStack>)>;
+pub(crate) fn decode_chunk(
+    crafters: &Crafters,
     registry: &crate::registry::CoreRegistry,
     chunk: &mc_world::Chunk,
-) {
+) -> Result<Decoded, String> {
+    let mut decoded = Vec::new();
     for (pos, bytes) in &chunk.block_entities {
         let key = key(*pos);
         if crafters.contains_key(&key)
@@ -47,13 +48,24 @@ pub(crate) fn hydrate_chunk(
         {
             continue;
         }
+        let fail = |error: &dyn std::fmt::Display| format!("crafter {pos:?}: {error}");
         let Tag::Compound(fields) =
-            mc_nbt::read_network(&mut bytes.as_slice()).expect("validated crafter NBT")
+            mc_nbt::read_network(&mut bytes.as_slice()).map_err(|e| fail(&e))?
         else {
-            continue;
+            return Err(fail(&"expected compound"));
         };
         let (settings, slots) = mc_data::storage_blocks::decode_crafter(&fields, &registry.items)
-            .expect("validated crafter fields");
+            .map_err(|e| fail(&e))?;
+        decoded.push((key, settings, slots));
+    }
+    Ok(decoded)
+}
+pub(crate) fn apply_chunk(
+    crafters: &mut Crafters,
+    inventories: &mut crate::redstone::custody::BlockEntities,
+    decoded: Decoded,
+) {
+    for (key, settings, slots) in decoded {
         crafters.insert(
             key,
             Crafter {

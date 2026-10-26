@@ -679,8 +679,7 @@ pub(crate) fn revive(state: &mut TickState, pos: BlockPos) -> bool {
     } else {
         state.registry.states.air
     };
-    state.world.set_block(pos.x, pos.y, pos.z, replacement);
-    state.merge_block_writes.push((pos, replacement));
+    state.write_block(pos, replacement);
     state.world.set_opaque_block_entity(pos, None);
     state.opaque_changes.push((pos, None));
     let id = state.spawn_mob(type_id, centre(pos), 12.0);

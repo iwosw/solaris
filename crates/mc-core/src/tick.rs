@@ -37,6 +37,8 @@ mod container_access;
 mod damage;
 mod death_message;
 mod elytra;
+mod hydration;
+pub(crate) use hydration::sync_chunk_block_entities;
 mod input;
 pub(crate) mod merchant;
 pub(crate) mod mining;
@@ -589,6 +591,13 @@ pub struct MergeSpawn {
 }
 
 impl TickState {
+    /// Serial-pass block write: visible to later reads this tick and staged
+    /// for the canonical block phase (neighbours, comparators, WAL).
+    pub(crate) fn write_block(&mut self, pos: BlockPos, id: u32) {
+        self.world.set_block(pos.x, pos.y, pos.z, id);
+        self.merge_block_writes.push((pos, id));
+    }
+
     pub fn new(
         registry: Arc<CoreRegistry>,
         world: ChunkWorld,
@@ -1346,8 +1355,7 @@ impl TickState {
             }
             IntentKind::EnvironmentalExplosion { center, power } => {
                 for (pos, block) in &intent.footprint.block_write {
-                    self.world.set_block(pos.x, pos.y, pos.z, *block);
-                    self.merge_block_writes.push((*pos, *block));
+                    self.write_block(*pos, *block);
                 }
                 crate::explosion::apply(self, None, *center, *power, None, None);
             }
@@ -4440,130 +4448,6 @@ fn set_lit_prop(
             },
             next.0,
         ));
-    }
-}
-
-/// Pull resident chunks' typed block-entity maps into live storage.
-/// Journal post-images overwrite per position; unloaded chunks' records stay
-/// until their chunk reloads (eviction does not delete storage).
-fn sync_chunk_block_entities(state: &mut TickState) {
-    for chunk_pos in state.world.take_hydration_chunks() {
-        let Some(chunk) = state.world.chunk(chunk_pos) else {
-            continue;
-        };
-        if let Err(error) = crate::monster_spawner::hydrate_chunk(
-            &mut state.monster_spawners,
-            &state.registry,
-            chunk,
-        ) {
-            state.world.reject_resident(chunk_pos, error);
-            continue;
-        }
-        let trial_admission =
-            crate::trial_spawner::hydrate_chunk(&mut state.trial_spawners, &state.registry, chunk)
-                .and_then(|()| {
-                    crate::vault::hydrate_chunk(&mut state.vaults, &state.registry, chunk)
-                });
-        if let Err(error) = trial_admission {
-            state.trial_spawners.retain(|&(x, _, z), _| {
-                x.div_euclid(16) != chunk_pos.x || z.div_euclid(16) != chunk_pos.z
-            });
-            state.vaults.retain(|&(x, _, z), _| {
-                x.div_euclid(16) != chunk_pos.x || z.div_euclid(16) != chunk_pos.z
-            });
-            state.world.reject_resident(chunk_pos, error);
-            continue;
-        }
-        crate::campfire::hydrate_chunk(&mut state.campfires, &state.registry, chunk);
-        crate::crafter::hydrate_chunk(
-            &mut state.crafters,
-            &mut state.block_entities,
-            &state.registry,
-            chunk,
-        );
-        crate::shelf::hydrate_chunk(&mut state.block_entities, &state.registry, chunk);
-        if let Err(error) =
-            crate::shulker::hydrate_chunk(&mut state.block_entities, &state.registry, chunk)
-        {
-            state.block_entities.retain(|&(x, _, z), _| {
-                x.div_euclid(16) != chunk_pos.x || z.div_euclid(16) != chunk_pos.z
-            });
-            state.world.reject_resident(chunk_pos, error.to_string());
-            continue;
-        }
-        if let Err(error) = crate::bees::hydrate_chunk(&mut state.hives, &state.registry, chunk) {
-            state.hives.retain(|&(x, _, z), _| {
-                x.div_euclid(16) != chunk_pos.x || z.div_euclid(16) != chunk_pos.z
-            });
-            state.world.reject_resident(chunk_pos, error.to_string());
-            continue;
-        }
-        crate::lectern::hydrate_chunk(
-            &mut state.lecterns,
-            &mut state.block_entities,
-            &state.registry,
-            chunk,
-        );
-        crate::jukebox::hydrate_chunk(
-            &mut state.jukeboxes,
-            &mut state.block_entities,
-            &state.registry,
-            chunk,
-        )
-        .unwrap_or_else(|error| panic!("resident jukebox rejected: {error}"));
-        crate::brewing::hydrate_chunk(
-            &mut state.brewing,
-            &mut state.block_entities,
-            &state.registry,
-            chunk,
-        );
-        state.block_ticks.hydrate_chunk(chunk, state.tick);
-        crate::redstone::containers::hydrate_chunk(
-            &mut state.block_entities,
-            &mut state.redstone_containers,
-            &state.registry,
-            chunk,
-            state.tick,
-        );
-        for (block, chest) in &chunk.chests {
-            if chest.loot_table.is_some() {
-                continue;
-            }
-            state
-                .block_entities
-                .hydrate((block.x, block.y, block.z), || BlockEntityState {
-                    slots: chest.slots.iter().map(furnace_slot_to_stack).collect(),
-                    furnace: None,
-                });
-        }
-        for (block, furnace) in &chunk.furnaces {
-            // Hydrate ONLY on a vacant live entry: the live record is
-            // authoritative (player mutations, replay images). Overwriting
-            // it from the chunk every tick restores extracted items and
-            // loses inserted ones.
-            if state
-                .block_entities
-                .contains_key(&(block.x, block.y, block.z))
-            {
-                continue;
-            }
-            let mut slots = vec![mc_data::ItemStack::EMPTY; 3];
-            for (index, slot) in furnace.slots.iter().enumerate() {
-                slots[index] = furnace_slot_to_stack(slot);
-            }
-            state
-                .block_entities
-                .hydrate((block.x, block.y, block.z), || BlockEntityState {
-                    slots,
-                    furnace: Some(crate::inventory::furnace::FurnaceState {
-                        lit_remaining: i32::from(furnace.burn_remaining),
-                        lit_total: i32::from(furnace.burn_total),
-                        cook_progress: i32::from(furnace.cook_progress),
-                        cook_total: i32::from(furnace.cook_total),
-                        recipes_used: Arc::new(furnace.recipes_used.clone()),
-                    }),
-                });
-        }
     }
 }
 

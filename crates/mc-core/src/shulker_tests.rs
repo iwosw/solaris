@@ -264,9 +264,9 @@ fn shulker_checkpoint_native_restart_keeps_slot_twenty_six_and_components() {
     let chunk = world.chunk(ChunkPos { x: 0, z: 0 }).unwrap();
     assert!(!chunk.chests.contains_key(&POS));
     assert!(!chunk.furnaces.contains_key(&POS));
-    let mut custody = crate::redstone::custody::BlockEntities::default();
-    hydrate_chunk(&mut custody, &registry, chunk).unwrap();
-    assert_eq!(custody[&KEY].slots, expected);
+    let custody = crate::redstone::custody::BlockEntities::default();
+    let decoded = decode_chunk(&custody, &registry, chunk).unwrap();
+    assert_eq!(decoded, [(KEY, expected)]);
     drop(state);
     drop(world);
     std::fs::remove_dir_all(dir).unwrap();
@@ -316,12 +316,15 @@ fn hydrated_custody_skips_cached_nbt_decode_and_cold_corruption_is_sticky() {
     state.block_entities.get_mut(&KEY).unwrap().slots[26] = diamond.clone();
     // A poisoned cached image would fail decode; live custody is authoritative.
     state.world.set_opaque_block_entity(POS, Some(vec![255]));
-    hydrate_chunk(
-        &mut state.block_entities,
-        &state.registry,
-        state.world.chunk(ChunkPos { x: 0, z: 0 }).unwrap(),
-    )
-    .unwrap();
+    assert!(
+        decode_chunk(
+            &state.block_entities,
+            &state.registry,
+            state.world.chunk(ChunkPos { x: 0, z: 0 }).unwrap(),
+        )
+        .unwrap()
+        .is_empty()
+    );
     assert_eq!(state.block_entities[&KEY].slots[26], diamond);
     state.block_entities.remove(&KEY);
     run_tick(&mut state, &[]);

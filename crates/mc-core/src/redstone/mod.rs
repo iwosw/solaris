@@ -485,12 +485,28 @@ fn hydrate(state: &mut TickState) {
             continue;
         };
         state.block_ticks.hydrate_chunk(chunk, state.tick);
+        // Same fail-closed policy as residency hydration: block-entity bytes
+        // installed in place after load are decoded here first.
+        let decoded = match containers::decode_chunk(
+            &state.block_entities,
+            &state.redstone_containers,
+            &state.registry,
+            chunk,
+            state.tick,
+        ) {
+            Ok(decoded) => decoded,
+            Err(error) => {
+                state.world.reject_resident(cp, error);
+                continue;
+            }
+        };
         containers::hydrate_chunk(
             &mut state.block_entities,
             &mut state.redstone_containers,
             &state.registry,
             chunk,
             state.tick,
+            decoded,
         );
         if settled {
             continue;

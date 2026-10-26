@@ -51,12 +51,13 @@ fn accepts(state: &TickState, book: &ItemStack) -> bool {
             .name_of(book.item_id)
             .is_some_and(|name| matches!(name.path(), "writable_book" | "written_book"))
 }
-pub(crate) fn hydrate_chunk(
-    lecterns: &mut Lecterns,
-    inventories: &mut crate::redstone::custody::BlockEntities,
+pub(crate) type Decoded = Vec<(Cell, Lectern, ItemStack)>;
+pub(crate) fn decode_chunk(
+    lecterns: &Lecterns,
     registry: &crate::registry::CoreRegistry,
     chunk: &mc_world::Chunk,
-) {
+) -> Result<Decoded, String> {
+    let mut decoded = Vec::new();
     for (pos, bytes) in &chunk.block_entities {
         if lecterns.contains_key(&key(*pos))
             || chunk
@@ -70,20 +71,21 @@ pub(crate) fn hydrate_chunk(
         {
             continue;
         }
-        let Ok(Tag::Compound(fields)) = mc_nbt::read_network(&mut bytes.as_slice()) else {
-            continue;
+        let fail = |error: &dyn std::fmt::Display| format!("lectern {pos:?}: {error}");
+        let Tag::Compound(fields) =
+            mc_nbt::read_network(&mut bytes.as_slice()).map_err(|e| fail(&e))?
+        else {
+            return Err(fail(&"expected compound"));
         };
-        let book = fields
-            .iter()
-            .find_map(|(name, tag)| match (name.as_str(), tag) {
-                ("Book", Tag::Compound(fields)) => {
-                    mc_data::item_nbt::stack_from_fields(&registry.items, fields)
-                        .ok()
-                        .flatten()
-                }
-                _ => None,
-            })
-            .unwrap_or(ItemStack::EMPTY);
+        let book = match fields.iter().find(|(name, _)| name == "Book") {
+            None => ItemStack::EMPTY,
+            Some((_, Tag::Compound(fields))) => {
+                mc_data::item_nbt::stack_from_fields(&registry.items, fields)
+                    .map_err(|e| fail(&e))?
+                    .ok_or_else(|| fail(&"Book: missing item id"))?
+            }
+            Some(_) => return Err(fail(&"Book: expected item compound")),
+        };
         let pages = page_count(&book);
         let page = fields
             .iter()
@@ -93,11 +95,21 @@ pub(crate) fn hydrate_chunk(
             })
             .unwrap_or(0)
             .clamp(0, (pages - 1).max(0));
-        inventories.hydrate(key(*pos), || BlockEntityState {
+        decoded.push((key(*pos), Lectern { page, pages }, book));
+    }
+    Ok(decoded)
+}
+pub(crate) fn apply_chunk(
+    lecterns: &mut Lecterns,
+    inventories: &mut crate::redstone::custody::BlockEntities,
+    decoded: Decoded,
+) {
+    for (key, lectern, book) in decoded {
+        inventories.hydrate(key, || BlockEntityState {
             slots: vec![book],
             furnace: None,
         });
-        lecterns.insert(key(*pos), Lectern { page, pages });
+        lecterns.insert(key, lectern);
     }
 }
 fn persist(state: &mut TickState, pos: BlockPos) {
@@ -134,8 +146,7 @@ fn set_property(state: &mut TickState, pos: BlockPos, name: &str, value: &str) {
     if let Some(next) = property(state, pos, name, value)
         && state.world.block_at(pos.x, pos.y, pos.z) != Some(next)
     {
-        state.world.set_block(pos.x, pos.y, pos.z, next);
-        state.merge_block_writes.push((pos, next));
+        state.write_block(pos, next);
     }
 }
 pub(crate) fn use_on(

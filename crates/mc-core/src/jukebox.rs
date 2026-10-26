@@ -2,7 +2,7 @@
 //! Verified JukeboxBlockEntity/JukeboxSongPlayer 26.1.2: RecordItem, optional
 //! ticks_since_song_started, level events 1010(song registry id)/1011(0).
 use crate::bees::{block, centre, distance, fail, field, property};
-use crate::boundary::{BlockPos, ChangeSet, ChunkPos, EntityId, Hand, PlayerChange};
+use crate::boundary::{BlockPos, ChangeSet, EntityId, Hand, PlayerChange};
 use crate::config::CoreError;
 use crate::tick::{BlockEntityState, TickState};
 use mc_data::item_nbt::{stack_from_fields, stack_to_fields};
@@ -121,12 +121,12 @@ impl Jukebox {
         fields
     }
 }
-pub(crate) fn hydrate_chunk(
-    boxes: &mut Jukeboxes,
-    inventories: &mut crate::redstone::custody::BlockEntities,
+pub(crate) fn decode_chunk(
+    boxes: &Jukeboxes,
     registry: &crate::registry::CoreRegistry,
     chunk: &mc_world::Chunk,
-) -> Result<(), CoreError> {
+) -> Result<Vec<((i32, i32, i32), Jukebox)>, CoreError> {
+    let mut decoded = Vec::new();
     for (pos, bytes) in &chunk.block_entities {
         if chunk
             .get_block(
@@ -138,30 +138,29 @@ pub(crate) fn hydrate_chunk(
             .is_some_and(|b| b.block.id.path() == "jukebox")
             && !boxes.contains_key(&key(*pos))
         {
-            let jukebox = Jukebox::decode(bytes, &registry.items)?;
-            inventories.hydrate(key(*pos), || BlockEntityState {
-                slots: vec![jukebox.record.clone()],
-                furnace: None,
-            });
-            boxes.insert(key(*pos), jukebox);
+            decoded.push((key(*pos), Jukebox::decode(bytes, &registry.items)?));
         }
     }
-    Ok(())
+    Ok(decoded)
 }
+pub(crate) fn apply_chunk(
+    boxes: &mut Jukeboxes,
+    inventories: &mut crate::redstone::custody::BlockEntities,
+    decoded: Vec<((i32, i32, i32), Jukebox)>,
+) {
+    for (key, jukebox) in decoded {
+        inventories.hydrate(key, || BlockEntityState {
+            slots: vec![jukebox.record.clone()],
+            furnace: None,
+        });
+        boxes.insert(key, jukebox);
+    }
+}
+/// Persisted jukeboxes enter only through chunk hydration; a missing entry
+/// here is a freshly placed block.
 pub(crate) fn register(state: &mut TickState, pos: BlockPos) {
     if !state.jukeboxes.contains_key(&key(pos)) {
-        let jukebox = state
-            .world
-            .chunk(ChunkPos {
-                x: pos.x.div_euclid(16),
-                z: pos.z.div_euclid(16),
-            })
-            .and_then(|chunk| chunk.block_entities.get(&pos))
-            .map(|bytes| {
-                Jukebox::decode(bytes, &state.registry.items)
-                    .unwrap_or_else(|e| panic!("resident jukebox rejected: {e}"))
-            })
-            .unwrap_or_default();
+        let jukebox = Jukebox::default();
         state
             .block_entities
             .entry(key(pos))

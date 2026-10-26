@@ -580,21 +580,22 @@ pub(crate) fn place_from_item(
     );
     Ok(())
 }
-pub(crate) fn hydrate_chunk(
-    hives: &mut Hives,
+pub(crate) fn decode_chunk(
+    hives: &Hives,
     registry: &crate::registry::CoreRegistry,
     chunk: &mc_world::Chunk,
-) -> Result<(), CoreError> {
+) -> Result<Vec<((i32, i32, i32), Hive)>, CoreError> {
+    let mut decoded = Vec::new();
     for (p, bytes) in &chunk.block_entities {
         let is_hive = chunk
             .get_block(p.x.rem_euclid(16) as u8, p.y, p.z.rem_euclid(16) as u8)
             .and_then(|id| registry.blocks.by_id(id))
             .is_some_and(|b| matches!(b.block.id.path(), "beehive" | "bee_nest"));
         if is_hive && !hives.contains_key(&key(*p)) {
-            hives.insert(key(*p), Hive::decode(bytes)?);
+            decoded.push((key(*p), Hive::decode(bytes)?));
         }
     }
-    Ok(())
+    Ok(decoded)
 }
 fn persist(state: &mut TickState, pos: BlockPos, hive: &Hive) {
     let bytes = hive.encode(pos);
@@ -1403,8 +1404,7 @@ pub(crate) fn use_on(
             .harvest_held(&rules, hand, product, bottle)
     };
     let next = property(state, pos, "honey_level", "0").unwrap();
-    state.world.set_block(pos.x, pos.y, pos.z, next);
-    state.merge_block_writes.push((pos, next));
+    state.write_block(pos, next);
     for change in effects.changes {
         state.push_player(connection, change);
     }

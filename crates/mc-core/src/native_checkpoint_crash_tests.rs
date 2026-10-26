@@ -167,7 +167,10 @@ fn durable_checkpoint_prunes_covered_batches_and_crash_replays_only_tail() {
             &mut manifest,
             &mut Default::default(),
         );
-        assert!(outcome.is_continue(), "a checkpoint does not stop the writer");
+        assert!(
+            outcome.is_continue(),
+            "a checkpoint does not stop the writer"
+        );
         if let Some(done_rx) = done_rx {
             assert!(done_rx.recv().unwrap().is_some());
         }

@@ -114,11 +114,13 @@ fn step(state: &mut TickState) -> Vec<JournalEntry> {
 
 fn hydrate(state: &mut TickState) {
     let chunk = state.world.chunk(ChunkPos { x: 0, z: 0 }).unwrap();
+    let decoded = decode_chunk(&state.brewing, &state.registry, chunk).unwrap();
     hydrate_chunk(
         &mut state.brewing,
         &mut state.block_entities,
         &state.registry,
         chunk,
+        decoded,
     );
 }
 

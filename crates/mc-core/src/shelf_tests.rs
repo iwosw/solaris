@@ -184,9 +184,9 @@ fn shelf_checkpoint_native_chunk_restart_preserves_stacks_and_alignment() {
     );
     loaded.ensure_blocking(&[(ChunkPos { x: 0, z: 0 }, 0)].into_iter().collect());
     let chunk = loaded.chunk(ChunkPos { x: 0, z: 0 }).unwrap();
-    let mut custody = crate::redstone::custody::BlockEntities::default();
-    hydrate_chunk(&mut custody, &registry, chunk);
-    assert_eq!(custody[&key(POS)].slots, original);
+    let custody = crate::redstone::custody::BlockEntities::default();
+    let decoded = decode_chunk(&custody, &registry, chunk).unwrap();
+    assert_eq!(decoded, [(key(POS), original)]);
     let bytes = &chunk.block_entities[&POS];
     let Tag::Compound(fields) = mc_nbt::read_network(&mut &bytes[..]).unwrap() else {
         panic!()

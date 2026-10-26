@@ -152,14 +152,16 @@ fn image(state: &TickState, pos: BlockPos) -> Result<Option<Uuid>, String> {
 }
 
 pub(crate) fn validate_loaded(state: &TickState) -> Result<(), String> {
-    for chunk_pos in state.world.resident_positions() {
-        let Some(chunk) = state.world.chunk(chunk_pos) else {
-            continue;
-        };
-        for pos in chunk.block_entities.keys() {
-            if named(state, *pos, "conduit") {
-                image(state, *pos)?;
-            }
+    state
+        .world
+        .chunks()
+        .try_for_each(|chunk| validate_chunk(state, chunk))
+}
+
+pub(crate) fn validate_chunk(state: &TickState, chunk: &mc_world::Chunk) -> Result<(), String> {
+    for pos in chunk.block_entities.keys() {
+        if named(state, *pos, "conduit") {
+            image(state, *pos)?;
         }
     }
     Ok(())

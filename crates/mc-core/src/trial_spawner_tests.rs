@@ -238,8 +238,7 @@ fn trial_spawner_cooldown_and_uuid_sets_survive_native_checkpoint() {
         .unwrap();
     drop(original);
     let mut restored = state(Some(dir.clone()));
-    let chunk = restored.world.chunk(ChunkPos { x: 0, z: 0 }).unwrap();
-    hydrate_chunk(&mut restored.trial_spawners, &restored.registry, chunk).unwrap();
+    crate::tick::sync_chunk_block_entities(&mut restored);
     assert_eq!(
         restored.trial_spawners[&key(POS)].data.cooldown,
         saved.data.cooldown
@@ -327,7 +326,8 @@ fn trial_spawner_wal_postimage_is_idempotent_and_corruption_is_rejected() {
             .set_opaque_block_entity(position(cell), bytes);
     }
     let chunk = restored.world.chunk(ChunkPos { x: 0, z: 0 }).unwrap();
-    hydrate_chunk(&mut restored.trial_spawners, &restored.registry, chunk).unwrap();
+    let decoded = decode_chunk(&restored.trial_spawners, &restored.registry, chunk).unwrap();
+    restored.trial_spawners.extend(decoded);
     assert_eq!(restored.trial_spawners[&key(POS)].data.cooldown, 72_000);
     assert!(step(&mut restored).entities_spawned.is_empty());
     let corrupt = JournalEntry::OpaqueBlockEntity {
@@ -581,7 +581,7 @@ fn trial_spawner_truncated_resident_record_returns_error_without_tick_panic() {
         .world
         .set_opaque_block_entity(POS, Some(vec![mc_nbt::tag_type::COMPOUND]));
     let chunk = state.world.chunk(ChunkPos { x: 0, z: 0 }).unwrap();
-    assert!(hydrate_chunk(&mut state.trial_spawners, &state.registry, chunk).is_err());
+    assert!(decode_chunk(&state.trial_spawners, &state.registry, chunk).is_err());
     run_tick(&mut state, &[]);
     assert!(!state.world.has_chunk(0, 0));
     assert!(

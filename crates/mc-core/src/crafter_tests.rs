@@ -359,12 +359,13 @@ fn crafter_wal_checkpoint_restart_retains_slots_disabled_and_pulse_latch_once() 
     native.ensure_blocking(&[(ChunkPos { x: 0, z: 0 }, 0)].into_iter().collect());
     let mut native_crafters = BTreeMap::new();
     let mut native_custody = crate::redstone::custody::BlockEntities::default();
-    hydrate_chunk(
-        &mut native_crafters,
-        &mut native_custody,
+    let decoded = decode_chunk(
+        &native_crafters,
         &registry,
         native.chunk(ChunkPos { x: 0, z: 0 }).unwrap(),
-    );
+    )
+    .unwrap();
+    apply_chunk(&mut native_crafters, &mut native_custody, decoded);
     assert_eq!(
         native_crafters[&KEY].settings,
         original.crafters[&KEY].settings
@@ -401,11 +402,11 @@ fn crafter_wal_checkpoint_restart_retains_slots_disabled_and_pulse_latch_once() 
         restored.world.set_opaque_block_entity(position(key), bytes);
     }
     let chunk = restored.world.chunk(ChunkPos { x: 0, z: 0 }).unwrap();
-    hydrate_chunk(
+    let decoded = decode_chunk(&restored.crafters, &restored.registry, chunk).unwrap();
+    apply_chunk(
         &mut restored.crafters,
         &mut restored.block_entities,
-        &restored.registry,
-        chunk,
+        decoded,
     );
     assert_eq!(
         restored.crafters[&KEY].settings,

@@ -56,11 +56,12 @@ fn lit(state: &TickState, pos: BlockPos) -> Option<bool> {
 }
 
 /// Hydrate only vacant entries: live progress is authoritative, just like furnaces.
-pub(crate) fn hydrate_chunk(
-    campfires: &mut Campfires,
+pub(crate) fn decode_chunk(
+    campfires: &Campfires,
     registry: &crate::registry::CoreRegistry,
     chunk: &mc_world::Chunk,
-) {
+) -> Result<Vec<((i32, i32, i32), CampfireState)>, String> {
+    let mut decoded = Vec::new();
     for (pos, bytes) in &chunk.block_entities {
         if campfires.contains_key(&key(*pos)) {
             continue;
@@ -78,10 +79,13 @@ pub(crate) fn hydrate_chunk(
                     "minecraft:campfire" | "minecraft:soul_campfire"
                 )
             });
-        if is_campfire && let Some(campfire) = CampfireState::decode(bytes, &registry.items) {
-            campfires.insert(key(*pos), campfire);
+        if is_campfire {
+            let campfire = CampfireState::decode(bytes, &registry.items)
+                .ok_or_else(|| format!("campfire {pos:?}: undecodable block entity"))?;
+            decoded.push((key(*pos), campfire));
         }
     }
+    Ok(decoded)
 }
 
 /// Non-food clicks deliberately retain ordinary adjacent block placement.
