@@ -78,6 +78,49 @@ pub(crate) fn set_properties(
         writes.push((pos, next.0));
     }
 }
+/// Spawn-egg override (`TrialSpawnerBlockEntity.setEntityId`): the egg's entity
+/// replaces the trial spawn (normal/ominous configs keep their limits; only the
+/// entity is overridden, matching `TrialSpawnerConfig.withSpawning`, which builds
+/// a fresh `{id}` entity with no custom rules). Runtime waves reset by replacing
+/// the spawner state wholesale, like `TrialSpawner.overrideEntityToSpawn`
+/// (data reset + INACTIVE state). Returns false when the egg's entity cannot be
+/// admitted (no blueprint): the caller keeps the normal adjacent-spawn path.
+pub(crate) fn set_entity(state: &mut TickState, pos: BlockPos, type_id: u32) -> bool {
+    if state.registry.blueprint(type_id).is_none() {
+        return false;
+    }
+    let name = state.registry.entity_types.name_of(type_id).expect("spawn egg entity").as_str().to_owned();
+    let key = key(pos);
+    let Some(spawner) = state.trial_spawners.get_mut(&key) else {
+        return false;
+    };
+    let mut fields = spawner.data.fields.clone();
+    nbt::set(
+        &mut fields,
+        "spawn_data",
+        Tag::Compound(vec![(
+            "entity".into(),
+            Tag::Compound(vec![("id".into(), Tag::String(name.into()))]),
+        )]),
+    );
+    let mut data = match SpawnerData::from_fields(fields) {
+        Ok(data) => data,
+        Err(_) => return false,
+    };
+    // `TrialSpawnerStateData.reset`: the override drops tracked players/mobs and
+    // returns the spawner to INACTIVE.
+    data.players.clear();
+    data.mobs.clear();
+    data.cooldown = 0;
+    data.next_spawn = 0;
+    data.total = 0;
+    spawner.data = data;
+    spawner.pending = None;
+    let spawner = spawner.clone();
+    spawner.persist(state, pos);
+    true
+}
+
 pub(crate) fn persist(
     state: &mut TickState,
     pos: BlockPos,

@@ -113,7 +113,7 @@ impl Border {
         if self.lerp_remaining == 0 {
             self.size = self.lerp_target;
         } else {
-            self.size += (self.lerp_target - self.size) / f64::from(self.lerp_remaining + 1);
+            self.size += (self.lerp_target - self.size) / (self.lerp_remaining + 1) as f64;
         }
     }
 }
@@ -145,11 +145,8 @@ pub fn parse_time(raw: &str) -> Option<i64> {
     if !value.is_finite() || value < 0.0 {
         return None;
     }
-    value
-        .mul_add(f64::from(unit as i32), 0.0)
-        .round()
-        .try_into()
-        .ok()
+    let scaled = (value * unit as f64).round();
+    (scaled < i64::MAX as f64).then_some(scaled as i64)
 }
 pub fn parse(args: &[&str]) -> Result<BorderCommand, CommandError> {
     let invalid = || {
@@ -185,19 +182,11 @@ pub fn parse(args: &[&str]) -> Result<BorderCommand, CommandError> {
             Ok(BorderCommand::DamageAmount(value))
         }
         ["warning", "distance", value] => {
-            let value = value
-                .parse::<i32>()
-                .ok()
-                .filter(|v| *v >= 0)
-                .ok_or_else(invalid)?;
+            let value = value.parse::<i32>().ok().filter(|v| *v >= 0).ok_or_else(invalid)?;
             Ok(BorderCommand::WarningDistance(value))
         }
         ["warning", "time", value] => {
-            let value = value
-                .parse::<i32>()
-                .ok()
-                .filter(|v| *v >= 0)
-                .ok_or_else(invalid)?;
+            let value = value.parse::<i32>().ok().filter(|v| *v >= 0).ok_or_else(invalid)?;
             Ok(BorderCommand::WarningTime(value))
         }
         [mode @ ("set" | "add"), size] => {
@@ -208,10 +197,7 @@ pub fn parse(args: &[&str]) -> Result<BorderCommand, CommandError> {
                 }
                 Ok(BorderCommand::Set { size, time: 0 })
             } else {
-                Ok(BorderCommand::Add {
-                    delta: size,
-                    time: 0,
-                })
+                Ok(BorderCommand::Add { delta: size, time: 0 })
             }
         }
         [mode @ ("set" | "add"), size, time] => {

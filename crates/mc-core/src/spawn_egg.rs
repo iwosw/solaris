@@ -91,6 +91,42 @@ pub(crate) fn clear_body(state: &TickState, pos: [f64; 3], width: f64, height: f
     }
     true
 }
+/// Shared spawner-egg shrink path: `SpawnEggItem.useOn` shrinks the egg directly
+/// for spawners, even in creative (held-debit floors do not apply). `trial`
+/// selects the trial-spawner override, otherwise the ordinary SpawnData rewrite.
+fn configure_spawner(
+    state: &mut TickState,
+    actor: EntityId,
+    hand: Hand,
+    clicked: BlockPos,
+    type_id: u32,
+    stack_snapshot: &ItemStack,
+    trial: bool,
+) -> bool {
+    let configured = if trial {
+        crate::trial_spawner::set_entity(state, clicked, type_id)
+    } else {
+        crate::monster_spawner::set_entity(state, clicked, type_id)
+    };
+    if !configured {
+        return true;
+    }
+    let mut remaining = stack_snapshot.clone();
+    remaining.count -= 1;
+    if remaining.count == 0 {
+        remaining = ItemStack::EMPTY;
+    }
+    let changes = state.players.get_mut(&actor).expect("egg player").replace_held(hand, remaining);
+    if let Some(connection) = state.connections.entity_connection(actor) {
+        for change in changes {
+            state.push_player(connection, change);
+        }
+    }
+    crate::vibration::emit(state, [f64::from(clicked.x) + 0.5, f64::from(clicked.y) + 0.5, f64::from(clicked.z) + 0.5],
+        crate::vibration::GameEvent::BlockChange, Some(actor));
+    true
+}
+
 
 pub(crate) fn use_on(
     state: &mut TickState,
@@ -132,40 +168,16 @@ pub(crate) fn use_on(
     let Some(blueprint) = state.registry.blueprint(type_id) else {
         return true;
     };
+    // Vanilla configures either spawner kind through the `Spawner` interface
+    // (`SpawnEggItem.useOn` checks `instanceof Spawner`, which both the ordinary
+    // `SpawnerBlockEntity` and the `TrialSpawnerBlockEntity` implement): the
+    // ordinary spawner rewrites SpawnData, the trial spawner overrides its
+    // spawn entity (`TrialSpawnerBlockEntity.setEntityId`).
+    if crate::trial_spawner::block(state, clicked, "trial_spawner").is_some() {
+        return configure_spawner(state, actor, hand, clicked, type_id, &stack_snapshot, true);
+    }
     if crate::trial_spawner::block(state, clicked, "spawner").is_some() {
-        let configured = crate::monster_spawner::set_entity(state, clicked, type_id);
-        if !configured {
-            return true;
-        }
-        // SpawnEggItem.useOn shrinks directly for spawners, even in creative.
-        // (Held-debit floors do not apply: vanilla shrinks the egg here, so a
-        // direct shrink keeps survival/creative identical.)
-        let mut remaining = stack_snapshot;
-        remaining.count -= 1;
-        if remaining.count == 0 {
-            remaining = ItemStack::EMPTY;
-        }
-        let changes = state
-            .players
-            .get_mut(&actor)
-            .expect("egg player")
-            .replace_held(hand, remaining);
-        if let Some(connection) = state.connections.entity_connection(actor) {
-            for change in changes {
-                state.push_player(connection, change);
-            }
-        }
-        crate::vibration::emit(
-            state,
-            [
-                f64::from(clicked.x) + 0.5,
-                f64::from(clicked.y) + 0.5,
-                f64::from(clicked.z) + 0.5,
-            ],
-            crate::vibration::GameEvent::BlockChange,
-            Some(actor),
-        );
-        return true;
+        return configure_spawner(state, actor, hand, clicked, type_id, &stack_snapshot, false);
     }
     if state.difficulty == crate::survival::Difficulty::Peaceful
         && blueprint.category == crate::blueprint::MobCategory::Monster

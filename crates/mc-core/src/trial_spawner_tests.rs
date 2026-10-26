@@ -612,3 +612,48 @@ fn trial_spawner_truncated_resident_record_returns_error_without_tick_panic() {
         .unwrap();
     assert_eq!(durable.block_entities, saved.block_entities);
 }
+
+#[test]
+fn fix_mobs_trial_egg_use_on_overrides_spawn_through_tick() {
+    // Failing-first for SPAWN-SPAWNER-EGG (trial half): the egg must configure the
+    // trial spawner through the ordinary UseItemOn tick path, not spawn adjacent.
+    // Vanilla: both block entities implement `Spawner`, and `SpawnEggItem.useOn`
+    // configures them (`TrialSpawnerBlockEntity.setEntityId`).
+    let mut state = state(None);
+    let actor = join(&mut state, 1);
+    place(&mut state);
+    let egg = state
+        .registry
+        .items
+        .id_of(&Identifier::parse("minecraft:husk_spawn_egg").unwrap())
+        .unwrap();
+    state.players.get_mut(&actor).unwrap().inventory.slots[0] =
+        mc_data::ItemStack::new(egg, 1);
+    let before = state.entities.len();
+    run_tick(
+        &mut state,
+        &[PlayerInput::UseItemOn {
+            connection: ConnectionId(1),
+            hand: crate::boundary::Hand::Main,
+            position: POS,
+            face: 1,
+            cursor: [0.5, 1.0, 0.5],
+            sequence: 1,
+        }],
+    );
+    assert_eq!(
+        state.entities.len(),
+        before,
+        "trial-spawner click must not spawn an adjacent mob"
+    );
+    let spawner = &state.trial_spawners[&key(POS)];
+    let spawn = mc_data::trial_nbt::compound(&spawner.data.fields, "spawn_data")
+        .unwrap()
+        .unwrap();
+    let entity = mc_data::trial_nbt::compound(spawn, "entity").unwrap().unwrap();
+    assert_eq!(
+        mc_data::item_nbt::field(entity, "id"),
+        Some(&mc_nbt::Tag::String("minecraft:husk".into())),
+        "egg must override the trial spawn entity"
+    );
+}
