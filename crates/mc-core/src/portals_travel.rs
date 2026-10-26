@@ -522,9 +522,9 @@ pub(crate) fn finish_with(
                     crate::command_rules::integer(
                         world,
                         if player.creative() {
-                            "players_nether_portal_creative_delay"
+                            crate::command_rules::IntRule::PLAYERS_NETHER_PORTAL_CREATIVE_DELAY
                         } else {
-                            "players_nether_portal_default_delay"
+                            crate::command_rules::IntRule::PLAYERS_NETHER_PORTAL_DEFAULT_DELAY
                         },
                     )
                     .max(0) as u32
@@ -536,7 +536,10 @@ pub(crate) fn finish_with(
             };
             let denied = matches!(touch, Some((Kind::Nether, _)))
                 && dimension == Dimension::Overworld
-                && !crate::command_rules::boolean(world, "allow_entering_nether_using_portals");
+                && !crate::command_rules::boolean(
+                    world,
+                    crate::command_rules::BoolRule::ALLOW_ENTERING_NETHER_USING_PORTALS,
+                );
             // The reset only runs on contact during cooldown; without contact
             // the value is unused, so idle/decaying entities skip the map probe.
             let cooldown = if touch.is_some() {

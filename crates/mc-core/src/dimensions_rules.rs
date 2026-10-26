@@ -203,8 +203,7 @@ pub(crate) fn anchor_spawn(state: &TickState, pos: BlockPos) -> Option<[f64; 3]>
             .get_for_state(id, &block.block.id, &block.properties)
             .is_some_and(|shape| {
                 shape.iter().any(|collision_box| {
-                    let [min_x, min_y, min_z, max_x, max_y, max_z] =
-                        collision_box.coordinates();
+                    let [min_x, min_y, min_z, max_x, max_y, max_z] = collision_box.coordinates();
                     let units = mc_data::collision_shapes::COLLISION_UNITS_PER_BLOCK as f64;
                     // Player AABB at feet (cell.x+0.1..0.9, cell.y..+1.8).
                     let feet = f64::from(cell.y);

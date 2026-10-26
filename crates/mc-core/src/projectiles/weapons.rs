@@ -79,8 +79,8 @@ pub(crate) fn geometry_for(
         f64::from(mth::cos(yaw)) * f64::from(mth::cos(pitch)),
     ];
     // Vanilla eye origin (eyeY - 0.1); pose-aware height, not a fixed 1.52.
-    let eye = pos[1] + crate::tick::player_eye_height(state.entities.row(slot).appearance.pose)
-        - 0.1;
+    let eye =
+        pos[1] + crate::tick::player_eye_height(state.entities.row(slot).appearance.pose) - 0.1;
     let origin = [pos[0], eye, pos[2]];
     let mut velocity = direction.map(|v| v * speed);
     // Inherit shooter motion: full XZ drift while grounded, Y only airborne.
@@ -301,9 +301,7 @@ pub(crate) fn use_item(state: &mut TickState, actor: EntityId, hand: Hand) -> bo
     let kind = match name {
         "minecraft:snowball" => Some(ProjectileKind::Snowball),
         // Vanilla throws blue/brown eggs as ordinary egg projectiles.
-        "minecraft:egg" | "minecraft:blue_egg" | "minecraft:brown_egg" => {
-            Some(ProjectileKind::Egg)
-        }
+        "minecraft:egg" | "minecraft:blue_egg" | "minecraft:brown_egg" => Some(ProjectileKind::Egg),
         "minecraft:ender_pearl" => Some(ProjectileKind::EnderPearl),
         "minecraft:splash_potion" => Some(ProjectileKind::Potion),
         "minecraft:lingering_potion" => Some(ProjectileKind::LingeringPotion),
@@ -401,7 +399,10 @@ pub(crate) fn use_item(state: &mut TickState, actor: EntityId, hand: Hand) -> bo
         ProjectileKind::Firework => 0.05,
         _ => 1.5,
     };
-    let potion_throw = matches!(kind, ProjectileKind::Potion | ProjectileKind::LingeringPotion);
+    let potion_throw = matches!(
+        kind,
+        ProjectileKind::Potion | ProjectileKind::LingeringPotion
+    );
     let Some((origin, mut velocity)) = geometry_for(state, actor, speed, potion_throw) else {
         return true;
     };

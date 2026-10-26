@@ -1070,7 +1070,11 @@ fn apply(
     selected: &[usize],
     restore: bool,
 ) -> Result<(usize, usize), String> {
-    let limit = crate::command_rules::integer(state, "max_block_modifications").max(0) as usize;
+    let limit = crate::command_rules::integer(
+        state,
+        crate::command_rules::IntRule::MAX_BLOCK_MODIFICATIONS,
+    )
+    .max(0) as usize;
     if selected.len() > limit {
         return Err(format!(
             "Too many changes: {} (maximum {limit}); narrow u:, t: or r:",

@@ -319,9 +319,12 @@ pub(in crate::tick) fn join(
         let (body, row) = state.entities.parts_mut(slot);
         body.alive = false;
         row.health = 0.0;
-        if crate::command_rules::boolean(state, "immediate_respawn") {
+        if crate::command_rules::boolean(state, crate::command_rules::BoolRule::IMMEDIATE_RESPAWN) {
             respawn_player(state, *connection, changes);
-        } else if crate::command_rules::boolean(state, "show_death_messages") {
+        } else if crate::command_rules::boolean(
+            state,
+            crate::command_rules::BoolRule::SHOW_DEATH_MESSAGES,
+        ) {
             state.push_player(
                 *connection,
                 PlayerChange::Died {

@@ -82,7 +82,7 @@ pub(super) fn component(
 }
 
 pub(super) fn broadcast(state: &mut TickState, victim: EntityId, content: Tag) {
-    if !crate::command_rules::boolean(state, "show_death_messages") {
+    if !crate::command_rules::boolean(state, crate::command_rules::BoolRule::SHOW_DEATH_MESSAGES) {
         return;
     }
     let victim_name = state.connections.name_of(victim).unwrap_or("");

@@ -732,7 +732,9 @@ fn weak_arrow_breaks_stand_outright() {
     let (mut state, actor) = fixture();
     let (stand, _) = place(&mut state, actor);
     let slot = state.entities.slot_of(stand).expect("stand");
-    assert!(crate::projectiles::payloads::breaks_armor_stand(&state, stand));
+    assert!(crate::projectiles::payloads::breaks_armor_stand(
+        &state, stand
+    ));
     assert!(state.entities.body(slot).alive);
 }
 

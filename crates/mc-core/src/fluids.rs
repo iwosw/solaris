@@ -366,9 +366,9 @@ fn new_liquid(state: &TickState, pos: BlockPos, fluid: Fluid) -> u32 {
     let converts = crate::command_rules::boolean(
         state,
         if fluid == Fluid::Water {
-            "water_source_conversion"
+            crate::command_rules::BoolRule::WATER_SOURCE_CONVERSION
         } else {
-            "lava_source_conversion"
+            crate::command_rules::BoolRule::LAVA_SOURCE_CONVERSION
         },
     );
     if converts && sources >= 2 {

@@ -522,10 +522,10 @@ pub(crate) fn apply(state: &mut TickState, id: EntityId, mut image: Image) {
             |(key, value)| matches!((key.as_str(), value), ("IsBaby", Tag::Byte(v)) if *v != 0),
         ) || (image.state.entity_life.child_ticks != 0
             && crate::entity_life::age_has_baby_model(&native.id))
-        || image
-            .villager
-            .as_ref()
-            .is_some_and(|villager| villager.age < 0);
+            || image
+                .villager
+                .as_ref()
+                .is_some_and(|villager| villager.age < 0);
     if image.uuid_authored {
         state.entities.set_uuid(slot, native.uuid);
     }

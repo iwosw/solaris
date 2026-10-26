@@ -3,8 +3,8 @@ use mc_data::ItemStack;
 use serde::{Deserialize, Serialize};
 
 use crate::boundary::{EntityId, Hand};
-use crate::entities::EntitySlot;
 use crate::entities::EntityKind;
+use crate::entities::EntitySlot;
 use crate::tick::TickState;
 
 const SCARE_DISTANCE: f64 = 7.0;
@@ -14,7 +14,8 @@ const CHECK_INTERVAL: u64 = 10;
 /// Deterministic stagger for the scute countdown (vanilla
 /// pickNextScuteDropTime is 6000 + nextInt(6000) ticks).
 fn scute_period(id: crate::boundary::EntityId, drops: u32) -> u32 {
-    let mut h = (id.0 as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ (drops as u64).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    let mut h = (id.0 as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15)
+        ^ (drops as u64).wrapping_mul(0xBF58_476D_1CE4_E5B9);
     h ^= h >> 30;
     h = h.wrapping_mul(0xBF58_476D_1CE4_E5B9);
     h ^= h >> 27;
@@ -37,10 +38,11 @@ pub struct ArmadilloState {
     pub seeded: bool,
 }
 
-
-
 pub(crate) fn is_armadillo(state: &TickState, type_id: u32) -> bool {
-    state.registry.blueprint(type_id).is_some_and(|b| b.name == "minecraft:armadillo")
+    state
+        .registry
+        .blueprint(type_id)
+        .is_some_and(|b| b.name == "minecraft:armadillo")
 }
 
 fn threat_near(state: &TickState, self_slot: EntitySlot, at: [f64; 3]) -> bool {
@@ -127,7 +129,10 @@ fn run_interval(state: &mut TickState) {
         let threatened = threat_near(state, slot, at);
         let id = state.entities.body(slot).id;
         let row = state.entities.row_mut(slot);
-        let st = row.entity_life.armadillo.get_or_insert_with(ArmadilloState::default);
+        let st = row
+            .entity_life
+            .armadillo
+            .get_or_insert_with(ArmadilloState::default);
         if threatened {
             st.rolled = true;
             st.calm_ticks = 0;

@@ -117,7 +117,9 @@ impl Spawner {
                 let Tag::Compound(potential) = &list.elements[index] else {
                     unreachable!("admitted potential");
                 };
-                let selected = field(potential, "data").expect("admitted spawn data").clone();
+                let selected = field(potential, "data")
+                    .expect("admitted spawn data")
+                    .clone();
                 nbt::set(&mut self.fields, "SpawnData", selected);
                 break;
             }
@@ -219,10 +221,19 @@ pub(crate) fn set_entity(state: &mut TickState, pos: BlockPos, type_id: u32) -> 
     if state.registry.blueprint(type_id).is_none() {
         return false;
     }
-    let existing = state.monster_spawners.chunks.get_mut(&cell).and_then(|entries| entries.remove(&key));
+    let existing = state
+        .monster_spawners
+        .chunks
+        .get_mut(&cell)
+        .and_then(|entries| entries.remove(&key));
     let mut fields = if let Some(entry) = existing {
         entry.fields
-    } else if let Some(bytes) = state.world.chunk(ChunkPos { x: cell.0, z: cell.1 })
+    } else if let Some(bytes) = state
+        .world
+        .chunk(ChunkPos {
+            x: cell.0,
+            z: cell.1,
+        })
         .and_then(|chunk| chunk.block_entities.get(&pos))
     {
         let Ok(decoded) = nbt::decode(bytes) else {
@@ -244,7 +255,12 @@ pub(crate) fn set_entity(state: &mut TickState, pos: BlockPos, type_id: u32) -> 
         .flatten()
         .cloned()
         .unwrap_or_default();
-    let name = state.registry.entity_types.name_of(type_id).expect("spawn egg entity").as_str();
+    let name = state
+        .registry
+        .entity_types
+        .name_of(type_id)
+        .expect("spawn egg entity")
+        .as_str();
     let mut entity = entity;
     nbt::set(&mut entity, "id", Tag::String(name.into()));
     let mut spawn = spawn;
@@ -258,20 +274,38 @@ pub(crate) fn set_entity(state: &mut TickState, pos: BlockPos, type_id: u32) -> 
     let kind = mc_data::block_entity_kinds::BlockEntityKind::MobSpawner;
     state.world.mark_block_entity_visible(pos);
     let wire = Tag::Compound(entry.fields.clone());
-    let viewers: Vec<_> = state.players.values().map(|player| player.connection).collect();
+    let viewers: Vec<_> = state
+        .players
+        .values()
+        .map(|player| player.connection)
+        .collect();
     for connection in viewers {
-        state.push_player(connection, crate::boundary::PlayerChange::BlockEntityData {
-            position: pos, block_entity_type: kind.protocol_id(), nbt: wire.clone(),
-        });
+        state.push_player(
+            connection,
+            crate::boundary::PlayerChange::BlockEntityData {
+                position: pos,
+                block_entity_type: kind.protocol_id(),
+                nbt: wire.clone(),
+            },
+        );
     }
-    state.monster_spawners.chunks.entry(cell).or_default().insert(key, entry);
+    state
+        .monster_spawners
+        .chunks
+        .entry(cell)
+        .or_default()
+        .insert(key, entry);
     true
-
 }
 
 fn nearby(state: &TickState, key: Key, type_id: u32, range: i32, cap: usize) -> usize {
     let mut count = 0;
-    let width = state.registry.blueprint(type_id).expect("admitted blueprint").half_width.ceil() as i32;
+    let width = state
+        .registry
+        .blueprint(type_id)
+        .expect("admitted blueprint")
+        .half_width
+        .ceil() as i32;
     for x in (key.0 - range - width).div_euclid(16)..=(key.0 + range + width).div_euclid(16) {
         for z in (key.2 - range - width).div_euclid(16)..=(key.2 + range + width).div_euclid(16) {
             state
@@ -321,7 +355,11 @@ fn can_spawn(
     };
     let light_ok = if let Some([block_range, sky_range]) = light_rules {
         let sky = if state.dimension.has_weather() {
-            sky.saturating_sub(crate::light::sky_darken(state.day_time, state.rain_level, state.thunder_level))
+            sky.saturating_sub(crate::light::sky_darken(
+                state.day_time,
+                state.rain_level,
+                state.thunder_level,
+            ))
         } else {
             0
         };
@@ -334,14 +372,20 @@ fn can_spawn(
                 "minecraft:blaze" => state.brightness(x, y, z) <= 11,
                 "minecraft:silverfish" => true,
                 _ if state.dimension == crate::dimensions::Dimension::Nether => block <= 11,
-                _ => block == 0
-                    && u64::from(sky) <= rng.below(32)
-                    && u64::from(state.brightness(x, y, z)) <= rng.below(8),
+                _ => {
+                    block == 0
+                        && u64::from(sky) <= rng.below(32)
+                        && u64::from(state.brightness(x, y, z)) <= rng.below(8)
+                }
             },
             MobCategory::Creature if bp.name == "minecraft:turtle" => {
-                let sand = state.world.block_at(x, y - 1, z)
+                let sand = state
+                    .world
+                    .block_at(x, y - 1, z)
                     .and_then(|id| state.registry.blocks.by_id(mc_world::BlockStateId(id)))
-                    .is_some_and(|floor| floor.block.id.path() == "sand" || floor.block.id.path() == "red_sand");
+                    .is_some_and(|floor| {
+                        floor.block.id.path() == "sand" || floor.block.id.path() == "red_sand"
+                    });
                 sand && y < state.dimension.sea_level() + 4 && sky.max(block) > 8
             }
             MobCategory::Creature => {
@@ -349,8 +393,13 @@ fn can_spawn(
                 let grass = support == Some(state.registry.states.grass_block);
                 let tagged = support
                     .and_then(|id| state.registry.blocks.by_id(mc_world::BlockStateId(id)))
-                    .is_some_and(|floor| state.registry.tags.raw_ids("minecraft:block", "minecraft:animals_spawnable_on")
-                        .is_some_and(|ids| ids.contains(&floor.block.raw_id)));
+                    .is_some_and(|floor| {
+                        state
+                            .registry
+                            .tags
+                            .raw_ids("minecraft:block", "minecraft:animals_spawnable_on")
+                            .is_some_and(|ids| ids.contains(&floor.block.raw_id))
+                    });
                 (grass || tagged) && sky.max(block) > 8
             }
             MobCategory::Ambient => state.brightness(x, y, z) <= rng.below(4) as u8,

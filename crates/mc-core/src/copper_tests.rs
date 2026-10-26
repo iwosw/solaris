@@ -1172,7 +1172,11 @@ fn all_weathering_families_oxidize_wax_and_scrape() {
         "lightning_rod",
     ];
     for (i, fam) in families.iter().enumerate() {
-        let pos = BlockPos { x: 20 + i as i32, y: 201, z: 1 };
+        let pos = BlockPos {
+            x: 20 + i as i32,
+            y: 201,
+            z: 1,
+        };
         // Stateless families plant bare; stateful ones need explicit
         // props (registry defaults are attached/active states).
         let bare: &[(&str, &str)] = &[];
@@ -1180,16 +1184,43 @@ fn all_weathering_families_oxidize_wax_and_scrape() {
             &state,
             fam,
             match *fam {
-                "copper_bars" => &[("east", "false"), ("north", "false"), ("south", "false"), ("waterlogged", "false"), ("west", "false")][..],
+                "copper_bars" => &[
+                    ("east", "false"),
+                    ("north", "false"),
+                    ("south", "false"),
+                    ("waterlogged", "false"),
+                    ("west", "false"),
+                ][..],
                 "copper_bulb" => &[("lit", "false"), ("powered", "false")][..],
                 "copper_chain" => &[("axis", "y"), ("waterlogged", "false")][..],
-                "copper_door" => &[("facing", "north"), ("half", "lower"), ("hinge", "left"), ("open", "false"), ("powered", "false")][..],
+                "copper_door" => &[
+                    ("facing", "north"),
+                    ("half", "lower"),
+                    ("hinge", "left"),
+                    ("open", "false"),
+                    ("powered", "false"),
+                ][..],
                 "copper_grate" => &[("waterlogged", "false")][..],
                 "copper_lantern" => &[("hanging", "false"), ("waterlogged", "false")][..],
-                "copper_trapdoor" => &[("facing", "north"), ("half", "bottom"), ("open", "false"), ("powered", "false"), ("waterlogged", "false")][..],
+                "copper_trapdoor" => &[
+                    ("facing", "north"),
+                    ("half", "bottom"),
+                    ("open", "false"),
+                    ("powered", "false"),
+                    ("waterlogged", "false"),
+                ][..],
                 "cut_copper_slab" => &[("type", "bottom"), ("waterlogged", "false")][..],
-                "cut_copper_stairs" => &[("facing", "north"), ("half", "bottom"), ("shape", "straight"), ("waterlogged", "false")][..],
-                "lightning_rod" => &[("facing", "up"), ("powered", "false"), ("waterlogged", "false")][..],
+                "cut_copper_stairs" => &[
+                    ("facing", "north"),
+                    ("half", "bottom"),
+                    ("shape", "straight"),
+                    ("waterlogged", "false"),
+                ][..],
+                "lightning_rod" => &[
+                    ("facing", "up"),
+                    ("powered", "false"),
+                    ("waterlogged", "false"),
+                ][..],
                 _ => bare,
             },
         );
@@ -1211,7 +1242,10 @@ fn all_weathering_families_oxidize_wax_and_scrape() {
         state.players.get_mut(&player).unwrap().inventory.slots[0] = stack("iron_axe", 1);
         assert!(use_on(&mut state, player, Hand::Main, pos));
         let (name, age, waxed) = family(at(&state, pos).block.id.path()).unwrap();
-        assert!(!waxed && age == 1, "{fam} scraped to unwaxed age 1, got {name}");
+        assert!(
+            !waxed && age == 1,
+            "{fam} scraped to unwaxed age 1, got {name}"
+        );
     }
 }
 
@@ -1223,17 +1257,45 @@ fn copper_scan_uses_independent_draw_from_gate() {
     let mut state = fixture(None);
     // Isolated age-0 cut copper: no neighbours -> scan chance 1, gate decides.
     let lone = BlockPos { x: 1, y: 201, z: 1 };
-    state.world.set_block(lone.x, lone.y, lone.z, block(&state, "cut_copper", &[]));
+    state
+        .world
+        .set_block(lone.x, lone.y, lone.z, block(&state, "cut_copper", &[]));
     assert!(random_tick(&state, lone, at(&state, lone).id.0, 0, u32::MAX).is_some());
     assert!(random_tick(&state, lone, at(&state, lone).id.0, 954438, 0).is_none());
     // Clustered same-age: 10 same-age neighbours around an age-0 centre
     // (older=0, same=10) -> chance (1/11)^2 = 1/121 ~= 0.008264; scan roll
     // 138496 (0.008256*2^24) passes, 167772 (0.01*2^24) fails.
-    let centre = BlockPos { x: 30, y: 201, z: 30 };
-    state.world.set_block(centre.x, centre.y, centre.z, block(&state, "cut_copper", &[]));
-    for (dx, dz) in [(1, 0), (-1, 0), (0, 1), (0, -1), (2, 0), (-2, 0), (0, 2), (0, -2), (3, 0), (-3, 0)] {
-        let p = BlockPos { x: centre.x + dx, y: centre.y, z: centre.z + dz };
-        state.world.set_block(p.x, p.y, p.z, block(&state, "cut_copper", &[]));
+    let centre = BlockPos {
+        x: 30,
+        y: 201,
+        z: 30,
+    };
+    state.world.set_block(
+        centre.x,
+        centre.y,
+        centre.z,
+        block(&state, "cut_copper", &[]),
+    );
+    for (dx, dz) in [
+        (1, 0),
+        (-1, 0),
+        (0, 1),
+        (0, -1),
+        (2, 0),
+        (-2, 0),
+        (0, 2),
+        (0, -2),
+        (3, 0),
+        (-3, 0),
+    ] {
+        let p = BlockPos {
+            x: centre.x + dx,
+            y: centre.y,
+            z: centre.z + dz,
+        };
+        state
+            .world
+            .set_block(p.x, p.y, p.z, block(&state, "cut_copper", &[]));
     }
     state.world.fold_overlay();
     // Independent scan draw (138496 pass roll) weathers despite gate roll 0.
@@ -1243,13 +1305,48 @@ fn copper_scan_uses_independent_draw_from_gate() {
     // them independent.
     assert!(random_tick(&state, centre, at(&state, centre).id.0, 0, 167_772).is_none());
     // Waxed neighbours don't count: surround with waxed same-age instead.
-    let waxed_centre = BlockPos { x: 50, y: 201, z: 30 };
-    state.world.set_block(waxed_centre.x, waxed_centre.y, waxed_centre.z, block(&state, "cut_copper", &[]));
-    for (dx, dz) in [(1, 0), (-1, 0), (0, 1), (0, -1), (2, 0), (-2, 0), (0, 2), (0, -2), (3, 0), (-3, 0)] {
-        let p = BlockPos { x: waxed_centre.x + dx, y: waxed_centre.y, z: waxed_centre.z + dz };
-        state.world.set_block(p.x, p.y, p.z, block(&state, "waxed_cut_copper", &[]));
+    let waxed_centre = BlockPos {
+        x: 50,
+        y: 201,
+        z: 30,
+    };
+    state.world.set_block(
+        waxed_centre.x,
+        waxed_centre.y,
+        waxed_centre.z,
+        block(&state, "cut_copper", &[]),
+    );
+    for (dx, dz) in [
+        (1, 0),
+        (-1, 0),
+        (0, 1),
+        (0, -1),
+        (2, 0),
+        (-2, 0),
+        (0, 2),
+        (0, -2),
+        (3, 0),
+        (-3, 0),
+    ] {
+        let p = BlockPos {
+            x: waxed_centre.x + dx,
+            y: waxed_centre.y,
+            z: waxed_centre.z + dz,
+        };
+        state
+            .world
+            .set_block(p.x, p.y, p.z, block(&state, "waxed_cut_copper", &[]));
     }
     state.world.fold_overlay();
     // All neighbours waxed -> skipped -> chance 1 -> gate roll 0 weathers.
-    assert!(random_tick(&state, waxed_centre, at(&state, waxed_centre).id.0, 0, u32::MAX).is_some());
+    assert!(
+        random_tick(
+            &state,
+            waxed_centre,
+            at(&state, waxed_centre).id.0,
+            0,
+            u32::MAX
+        )
+        .is_some()
+    );
 }

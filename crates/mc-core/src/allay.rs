@@ -506,7 +506,10 @@ pub(crate) fn run(state: &mut TickState, changes: &mut ChangeSet) {
                 }
             } else if value.pickup_cooldown == 0
                 && search_tick
-                && crate::command_rules::boolean(state, "mob_griefing")
+                && crate::command_rules::boolean(
+                    state,
+                    crate::command_rules::BoolRule::MOB_GRIEFING,
+                )
             {
                 if !census_built {
                     // One current-tick rebuild for collecting allays; reuse the

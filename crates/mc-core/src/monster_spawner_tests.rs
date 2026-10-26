@@ -219,7 +219,9 @@ fn fix_mobs_passive_spawner_hydrates_and_spawns_in_peaceful() {
     state.day_time = 6000;
     for x in key.0 - 5..=key.0 + 5 {
         for z in key.2 - 5..=key.2 + 5 {
-            state.world.set_block(x, key.1 - 2, z, state.registry.states.grass_block);
+            state
+                .world
+                .set_block(x, key.1 - 2, z, state.registry.states.grass_block);
         }
     }
     assert!((0..100).any(|_| !step(&mut state).entities_spawned.is_empty()));
@@ -229,36 +231,101 @@ fn fix_mobs_passive_spawner_hydrates_and_spawns_in_peaceful() {
 fn fix_mobs_spawner_accepts_custom_light_rules() {
     let (mut state, _, key) = fixture("zombie");
     let mut fields = entry(&state, key).fields.clone();
-    let (_, Tag::Compound(spawn)) = fields.iter_mut().find(|(key, _)| key == "SpawnData").unwrap() else { panic!("SpawnData") };
-    spawn.push(("custom_spawn_rules".into(), Tag::Compound(vec![
-        ("block_light_limit".into(), Tag::Compound(vec![("min_inclusive".into(), Tag::Int(0)), ("max_inclusive".into(), Tag::Int(15))])),
-        ("sky_light_limit".into(), Tag::Compound(vec![("min_inclusive".into(), Tag::Int(0)), ("max_inclusive".into(), Tag::Int(15))])),
-    ])));
-    let bytes = nbt::encode(fields, "minecraft:mob_spawner", [key.0,key.1,key.2]);
+    let (_, Tag::Compound(spawn)) = fields
+        .iter_mut()
+        .find(|(key, _)| key == "SpawnData")
+        .unwrap()
+    else {
+        panic!("SpawnData")
+    };
+    spawn.push((
+        "custom_spawn_rules".into(),
+        Tag::Compound(vec![
+            (
+                "block_light_limit".into(),
+                Tag::Compound(vec![
+                    ("min_inclusive".into(), Tag::Int(0)),
+                    ("max_inclusive".into(), Tag::Int(15)),
+                ]),
+            ),
+            (
+                "sky_light_limit".into(),
+                Tag::Compound(vec![
+                    ("min_inclusive".into(), Tag::Int(0)),
+                    ("max_inclusive".into(), Tag::Int(15)),
+                ]),
+            ),
+        ]),
+    ));
+    let bytes = nbt::encode(fields, "minecraft:mob_spawner", [key.0, key.1, key.2]);
     let spawner = Spawner::decode(&bytes, &state.registry).unwrap();
     state.day_time = 6000;
     let at = [key.0 as f64 + 3.5, key.1 as f64, key.2 as f64 + 3.5];
-    assert!(can_spawn(&state, spawner.type_id, at, &mut crate::natural_spawn::Rng(1), spawner.light_rules));
-    assert!(!can_spawn(&state, spawner.type_id, at, &mut crate::natural_spawn::Rng(1), Some([[1, 15], [0, 15]])));
+    assert!(can_spawn(
+        &state,
+        spawner.type_id,
+        at,
+        &mut crate::natural_spawn::Rng(1),
+        spawner.light_rules
+    ));
+    assert!(!can_spawn(
+        &state,
+        spawner.type_id,
+        at,
+        &mut crate::natural_spawn::Rng(1),
+        Some([[1, 15], [0, 15]])
+    ));
     state.difficulty = crate::survival::Difficulty::Peaceful;
-    assert!(!can_spawn(&state, spawner.type_id, at, &mut crate::natural_spawn::Rng(1), spawner.light_rules));
+    assert!(!can_spawn(
+        &state,
+        spawner.type_id,
+        at,
+        &mut crate::natural_spawn::Rng(1),
+        spawner.light_rules
+    ));
 }
 
 #[test]
 fn fix_mobs_weighted_spawn_potential_replaces_current_data_on_reset() {
     let (state, _, key) = fixture("silverfish");
     let mut fields = entry(&state, key).fields.clone();
-    let cow = Tag::Compound(vec![("entity".into(), Tag::Compound(vec![("id".into(), Tag::String("minecraft:cow".into()))]))]);
-    nbt::set(&mut fields, "SpawnPotentials", Tag::List(mc_nbt::ListTag {
-        element_type: 10,
-        elements: vec![Tag::Compound(vec![("weight".into(), Tag::Int(1)), ("data".into(), cow.clone())])],
-    }));
+    let cow = Tag::Compound(vec![(
+        "entity".into(),
+        Tag::Compound(vec![("id".into(), Tag::String("minecraft:cow".into()))]),
+    )]);
+    nbt::set(
+        &mut fields,
+        "SpawnPotentials",
+        Tag::List(mc_nbt::ListTag {
+            element_type: 10,
+            elements: vec![Tag::Compound(vec![
+                ("weight".into(), Tag::Int(1)),
+                ("data".into(), cow.clone()),
+            ])],
+        }),
+    );
     let bytes = nbt::encode(fields, "minecraft:mob_spawner", [key.0, key.1, key.2]);
     let mut spawner = Spawner::decode(&bytes, &state.registry).unwrap();
     spawner.reset(100, &mut crate::natural_spawn::Rng(1));
     assert_eq!(field(&spawner.fields, "SpawnData"), Some(&cow));
-    assert_eq!(state.registry.entity_types.name_of(spawner.type_id).unwrap().as_str(), "minecraft:cow");
-    let recovered = Spawner::decode(&nbt::encode(spawner.fields, "minecraft:mob_spawner", [key.0, key.1, key.2]), &state.registry).unwrap();
+    assert_eq!(
+        state
+            .registry
+            .entity_types
+            .name_of(spawner.type_id)
+            .unwrap()
+            .as_str(),
+        "minecraft:cow"
+    );
+    let recovered = Spawner::decode(
+        &nbt::encode(
+            spawner.fields,
+            "minecraft:mob_spawner",
+            [key.0, key.1, key.2],
+        ),
+        &state.registry,
+    )
+    .unwrap();
     assert_eq!(recovered.type_id, spawner.type_id);
 }
 
@@ -267,12 +334,33 @@ fn fix_mobs_turtle_spawner_uses_sand_and_sea_level_not_grass() {
     let (mut state, _, key) = fixture("turtle");
     state.day_time = 6000;
     let type_id = entry(&state, key).type_id;
-    let sand = state.registry.blocks.block(&mc_data::Identifier::parse("minecraft:sand").unwrap()).unwrap().default.0;
+    let sand = state
+        .registry
+        .blocks
+        .block(&mc_data::Identifier::parse("minecraft:sand").unwrap())
+        .unwrap()
+        .default
+        .0;
     let x = key.0 + 14;
     let z = key.2 + 14;
-    for (y, support, expected) in [(64, sand, true), (67, sand, false), (64, state.registry.states.grass_block, false)] {
+    for (y, support, expected) in [
+        (64, sand, true),
+        (67, sand, false),
+        (64, state.registry.states.grass_block, false),
+    ] {
         state.world.set_block(x, y - 1, z, support);
-        assert_eq!(can_spawn(&state, type_id, [x as f64 + 0.5, y as f64, z as f64 + 0.5], &mut crate::natural_spawn::Rng(1), None), expected);
-        state.world.set_block(x, y - 1, z, state.registry.states.air);
+        assert_eq!(
+            can_spawn(
+                &state,
+                type_id,
+                [x as f64 + 0.5, y as f64, z as f64 + 0.5],
+                &mut crate::natural_spawn::Rng(1),
+                None
+            ),
+            expected
+        );
+        state
+            .world
+            .set_block(x, y - 1, z, state.registry.states.air);
     }
 }

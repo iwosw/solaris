@@ -109,7 +109,8 @@ pub(crate) fn death(state: &mut TickState, id: EntityId, spawned: &mut Vec<Entit
         }
     }
     if weaving
-        && (state.players.contains_key(&id) || crate::command_rules::boolean(state, "mob_griefing"))
+        && (state.players.contains_key(&id)
+            || crate::command_rules::boolean(state, crate::command_rules::BoolRule::MOB_GRIEFING))
     {
         cobwebs(state, pos, &mut random);
     }

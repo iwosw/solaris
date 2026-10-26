@@ -753,6 +753,9 @@ fn pre_thunder_clock_climate_image_still_loads() {
         "thunder clock inherits the storm duration, not a fresh draw"
     );
     advance_cycle(&mut state);
-    assert!(state.thundering, "one natural tick must not flip the storm off");
+    assert!(
+        state.thundering,
+        "one natural tick must not flip the storm off"
+    );
     assert_eq!(state.weather, (Weather::Thunder, 98));
 }

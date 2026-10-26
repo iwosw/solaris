@@ -136,11 +136,12 @@ pub(crate) fn begin_sequence(state: &mut TickState) {
         state.command_context.used = 0;
         state.command_context.limit = (crate::command_rules::integer(
             state,
-            "max_command_sequence_length",
+            crate::command_rules::IntRule::MAX_COMMAND_SEQUENCE_LENGTH,
         ) as usize)
             .max(1);
         state.command_context.forks =
-            crate::command_rules::integer(state, "max_command_forks") as usize;
+            crate::command_rules::integer(state, crate::command_rules::IntRule::MAX_COMMAND_FORKS)
+                as usize;
     }
 }
 pub(crate) fn exhausted(state: &TickState) -> bool {
@@ -345,44 +346,73 @@ pub(crate) fn run(state: &mut TickState, text: &str, context: Context, changes: 
     while let Some((mut text, mut context, mut continuation, mut stores)) = branches.pop_front() {
         let mut resume = false;
         let result = (|| -> Result<Option<(bool, i32)>, String> {
-                let first_in_stage = stage != Some(text.as_ptr());
-                if first_in_stage {
-                    stage = Some(text.as_ptr());
-                    produced = 0;
+            let first_in_stage = stage != Some(text.as_ptr());
+            if first_in_stage {
+                stage = Some(text.as_ptr());
+                produced = 0;
+            }
+            state.command_context.current = Some(context);
+            let mut rest = text;
+            let root = word(&mut rest)?;
+            if !continuation && root != "execute" {
+                if root != "function" {
+                    charge(state)?;
                 }
-                state.command_context.current = Some(context);
-                let mut rest = text;
-                let root = word(&mut rest)?;
-                if !continuation && root != "execute" {
-                    if root != "function" {
-                        charge(state)?;
+                use crate::command_execution::CommandResult;
+                return match native(state, text, context, changes, !stores.is_empty())? {
+                    CommandResult::Success(value) => Ok(Some((true, value))),
+                    CommandResult::Failed => Ok(Some((false, 0))),
+                    CommandResult::Unavailable if stores.is_empty() => Ok(None),
+                    CommandResult::Unavailable => Err("Command has no execute-store result".into()),
+                };
+            }
+            if context.permission < 2 {
+                return Err(crate::commands::CommandError::Unknown.message());
+            }
+            if !continuation {
+                text = rest;
+            }
+            continuation = true;
+            let subcommand = word(&mut text)?;
+            if subcommand != "run" && first_in_stage {
+                state.command_context.used = state.command_context.used.saturating_add(1);
+            }
+            match subcommand {
+                "run" => {
+                    continuation = false;
+                }
+                "as" | "at" => {
+                    let selected = select(state, context, word(&mut text)?)?;
+                    produced += selected.len();
+                    if produced >= state.command_context.forks {
+                        branches.clear();
+                        return Err("Execute fork budget exceeded".into());
                     }
-                    use crate::command_execution::CommandResult;
-                    return match native(state, text, context, changes, !stores.is_empty())? {
-                        CommandResult::Success(value) => Ok(Some((true, value))),
-                        CommandResult::Failed => Ok(Some((false, 0))),
-                        CommandResult::Unavailable if stores.is_empty() => Ok(None),
-                        CommandResult::Unavailable => {
-                            Err("Command has no execute-store result".into())
+                    if selected.is_empty() {
+                        return Ok(Some((false, 0)));
+                    }
+                    for id in selected {
+                        let Some((dimension, position, rotation, height)) = entity_pose(state, id)
+                        else {
+                            continue;
+                        };
+                        let mut next = context;
+                        if subcommand == "as" {
+                            next.executor = id;
+                            next.eye_height = height;
+                        } else {
+                            next.dimension = dimension;
+                            next.position = position;
+                            next.rotation = rotation;
                         }
-                    };
-                }
-                if context.permission < 2 {
-                    return Err(crate::commands::CommandError::Unknown.message());
-                }
-                if !continuation {
-                    text = rest;
-                }
-                continuation = true;
-                let subcommand = word(&mut text)?;
-                if subcommand != "run" && first_in_stage {
-                    state.command_context.used = state.command_context.used.saturating_add(1);
-                }
-                match subcommand {
-                    "run" => {
-                        continuation = false;
+                        branches.push_back((text, next, true, stores.clone()));
                     }
-                    "as" | "at" => {
+                    return Ok(None);
+                }
+                "positioned" | "rotated" => {
+                    let mut probe = text;
+                    if word(&mut probe)? == "as" {
+                        text = probe;
                         let selected = select(state, context, word(&mut text)?)?;
                         produced += selected.len();
                         if produced >= state.command_context.forks {
@@ -393,179 +423,144 @@ pub(crate) fn run(state: &mut TickState, text: &str, context: Context, changes: 
                             return Ok(Some((false, 0)));
                         }
                         for id in selected {
-                            let Some((dimension, position, rotation, height)) =
-                                entity_pose(state, id)
-                            else {
+                            let Some((_, position, rotation, _)) = entity_pose(state, id) else {
                                 continue;
                             };
                             let mut next = context;
-                            if subcommand == "as" {
-                                next.executor = id;
-                                next.eye_height = height;
-                            } else {
-                                next.dimension = dimension;
+                            if subcommand == "positioned" {
                                 next.position = position;
+                                next.eyes = false;
+                            } else {
                                 next.rotation = rotation;
                             }
                             branches.push_back((text, next, true, stores.clone()));
                         }
                         return Ok(None);
                     }
-                    "positioned" | "rotated" => {
-                        let mut probe = text;
-                        if word(&mut probe)? == "as" {
-                            text = probe;
-                            let selected = select(state, context, word(&mut text)?)?;
-                            produced += selected.len();
-                            if produced >= state.command_context.forks {
-                                branches.clear();
-                                return Err("Execute fork budget exceeded".into());
-                            }
-                            if selected.is_empty() {
-                                return Ok(Some((false, 0)));
-                            }
-                            for id in selected {
-                                let Some((_, position, rotation, _)) = entity_pose(state, id)
-                                else {
-                                    continue;
-                                };
-                                let mut next = context;
-                                if subcommand == "positioned" {
-                                    next.position = position;
-                                    next.eyes = false;
-                                } else {
-                                    next.rotation = rotation;
-                                }
-                                branches.push_back((text, next, true, stores.clone()));
-                            }
-                            return Ok(None);
-                        }
-                        if subcommand == "positioned" {
-                            context.position = coordinates(&mut text, context)?;
-                            context.eyes = false;
-                        } else {
-                            let yaw = crate::commands::coord(word(&mut text)?)
-                                .filter(|value| !value.local)
-                                .ok_or("Invalid yaw")?;
-                            let pitch = crate::commands::coord(word(&mut text)?)
-                                .filter(|value| !value.local)
-                                .ok_or("Invalid pitch")?;
-                            context.rotation = [
-                                yaw.resolve(f64::from(context.rotation[0])) as f32,
-                                pitch.resolve(f64::from(context.rotation[1])) as f32,
-                            ];
-                        }
+                    if subcommand == "positioned" {
+                        context.position = coordinates(&mut text, context)?;
+                        context.eyes = false;
+                    } else {
+                        let yaw = crate::commands::coord(word(&mut text)?)
+                            .filter(|value| !value.local)
+                            .ok_or("Invalid yaw")?;
+                        let pitch = crate::commands::coord(word(&mut text)?)
+                            .filter(|value| !value.local)
+                            .ok_or("Invalid pitch")?;
+                        context.rotation = [
+                            yaw.resolve(f64::from(context.rotation[0])) as f32,
+                            pitch.resolve(f64::from(context.rotation[1])) as f32,
+                        ];
                     }
-                    "facing" => {
-                        let mut probe = text;
-                        if word(&mut probe)? == "entity" {
-                            text = probe;
-                            let selected = select(state, context, word(&mut text)?)?;
-                            let anchor = word(&mut text)?;
-                            if !matches!(anchor, "eyes" | "feet") {
-                                return Err("Invalid entity anchor".into());
-                            }
-                            produced += selected.len();
-                            if produced >= state.command_context.forks {
-                                branches.clear();
-                                return Err("Execute fork budget exceeded".into());
-                            }
-                            if selected.is_empty() {
-                                return Ok(Some((false, 0)));
-                            }
-                            for id in selected {
-                                let Some((_, mut target, _, height)) = entity_pose(state, id)
-                                else {
-                                    continue;
-                                };
-                                if anchor == "eyes" {
-                                    target[1] += height;
-                                }
-                                let mut next = context;
-                                face(&mut next, target);
-                                branches.push_back((text, next, true, stores.clone()));
-                            }
-                            return Ok(None);
+                }
+                "facing" => {
+                    let mut probe = text;
+                    if word(&mut probe)? == "entity" {
+                        text = probe;
+                        let selected = select(state, context, word(&mut text)?)?;
+                        let anchor = word(&mut text)?;
+                        if !matches!(anchor, "eyes" | "feet") {
+                            return Err("Invalid entity anchor".into());
                         }
-                        let target = coordinates(&mut text, context)?;
-                        face(&mut context, target);
-                    }
-                    "anchored" => {
-                        context.eyes = match word(&mut text)? {
-                            "eyes" => true,
-                            "feet" => false,
-                            _ => return Err("Invalid entity anchor".into()),
-                        };
-                    }
-                    "align" => {
-                        let axes = word(&mut text)?;
-                        let mut seen = [false; 3];
-                        for axis in axes.bytes() {
-                            let index = match axis {
-                                b'x' => 0,
-                                b'y' => 1,
-                                b'z' => 2,
-                                _ => return Err("Invalid alignment axes".into()),
-                            };
-                            if seen[index] {
-                                return Err("Duplicate alignment axis".into());
-                            }
-                            seen[index] = true;
-                            context.position[index] = context.position[index].floor();
+                        produced += selected.len();
+                        if produced >= state.command_context.forks {
+                            branches.clear();
+                            return Err("Execute fork budget exceeded".into());
                         }
-                    }
-                    "in" => {
-                        let dimension = Dimension::parse(word(&mut text)?)
-                            .ok_or("Unknown execute dimension")?;
-                        if crate::dimensions::travel::world(state, dimension).is_none() {
-                            return Err("Execute dimension unavailable".into());
-                        }
-                        let scale =
-                            context.dimension.coordinate_scale() / dimension.coordinate_scale();
-                        context.position[0] *= scale;
-                        context.position[2] *= scale;
-                        context.dimension = dimension;
-                    }
-                    "if" | "unless" => {
-                        let numeric = text.split_whitespace().next() == Some("entity");
-                        let count = condition(state, context, &mut text)?;
-                        let passed = (count != 0) == (subcommand == "if");
-                        if !passed {
-                            if text.trim().is_empty() {
-                                return Err(if numeric && subcommand == "unless" {
-                                    format!("Test failed. Count: {count}")
-                                } else {
-                                    "Test failed".into()
-                                });
-                            }
+                        if selected.is_empty() {
                             return Ok(Some((false, 0)));
                         }
-                        if text.trim().is_empty() {
-                            let value = if subcommand == "if" { count } else { 1 };
-                            crate::command_execution::feedback(
-                                state,
-                                context.connection,
-                                if numeric && subcommand == "if" {
-                                    "commands.execute.conditional.pass_count"
-                                } else {
-                                    "commands.execute.conditional.pass"
-                                },
-                                if numeric && subcommand == "if" {
-                                    vec![mc_nbt::Tag::String(value.to_string())]
-                                } else {
-                                    Vec::new()
-                                },
-                            );
-                            return Ok(Some((true, value)));
+                        for id in selected {
+                            let Some((_, mut target, _, height)) = entity_pose(state, id) else {
+                                continue;
+                            };
+                            if anchor == "eyes" {
+                                target[1] += height;
+                            }
+                            let mut next = context;
+                            face(&mut next, target);
+                            branches.push_back((text, next, true, stores.clone()));
                         }
+                        return Ok(None);
                     }
-                    "store" => stores.push(crate::command_store::Store::parse(
-                        state, context, &mut text,
-                    )?),
-                    _ => return Err("Unsupported execute subcommand".into()),
+                    let target = coordinates(&mut text, context)?;
+                    face(&mut context, target);
                 }
-                resume = true;
-                Ok(None)
+                "anchored" => {
+                    context.eyes = match word(&mut text)? {
+                        "eyes" => true,
+                        "feet" => false,
+                        _ => return Err("Invalid entity anchor".into()),
+                    };
+                }
+                "align" => {
+                    let axes = word(&mut text)?;
+                    let mut seen = [false; 3];
+                    for axis in axes.bytes() {
+                        let index = match axis {
+                            b'x' => 0,
+                            b'y' => 1,
+                            b'z' => 2,
+                            _ => return Err("Invalid alignment axes".into()),
+                        };
+                        if seen[index] {
+                            return Err("Duplicate alignment axis".into());
+                        }
+                        seen[index] = true;
+                        context.position[index] = context.position[index].floor();
+                    }
+                }
+                "in" => {
+                    let dimension =
+                        Dimension::parse(word(&mut text)?).ok_or("Unknown execute dimension")?;
+                    if crate::dimensions::travel::world(state, dimension).is_none() {
+                        return Err("Execute dimension unavailable".into());
+                    }
+                    let scale = context.dimension.coordinate_scale() / dimension.coordinate_scale();
+                    context.position[0] *= scale;
+                    context.position[2] *= scale;
+                    context.dimension = dimension;
+                }
+                "if" | "unless" => {
+                    let numeric = text.split_whitespace().next() == Some("entity");
+                    let count = condition(state, context, &mut text)?;
+                    let passed = (count != 0) == (subcommand == "if");
+                    if !passed {
+                        if text.trim().is_empty() {
+                            return Err(if numeric && subcommand == "unless" {
+                                format!("Test failed. Count: {count}")
+                            } else {
+                                "Test failed".into()
+                            });
+                        }
+                        return Ok(Some((false, 0)));
+                    }
+                    if text.trim().is_empty() {
+                        let value = if subcommand == "if" { count } else { 1 };
+                        crate::command_execution::feedback(
+                            state,
+                            context.connection,
+                            if numeric && subcommand == "if" {
+                                "commands.execute.conditional.pass_count"
+                            } else {
+                                "commands.execute.conditional.pass"
+                            },
+                            if numeric && subcommand == "if" {
+                                vec![mc_nbt::Tag::String(value.to_string())]
+                            } else {
+                                Vec::new()
+                            },
+                        );
+                        return Ok(Some((true, value)));
+                    }
+                }
+                "store" => stores.push(crate::command_store::Store::parse(
+                    state, context, &mut text,
+                )?),
+                _ => return Err("Unsupported execute subcommand".into()),
+            }
+            resume = true;
+            Ok(None)
         })();
         let outcome = match result {
             Ok(outcome) => outcome,

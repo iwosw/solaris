@@ -242,7 +242,7 @@ pub(super) fn run(state: &mut TickState, intents: &mut Vec<Intent>, slot: Entity
     metadata(state, slot, 16, EntityDataValue::VarInt(phase as i32));
     heal(state, slot);
     contact(state, intents, id);
-    if crate::command_rules::boolean(state, "mob_griefing") {
+    if crate::command_rules::boolean(state, crate::command_rules::BoolRule::MOB_GRIEFING) {
         break_blocks(state, intents, id);
     }
 }

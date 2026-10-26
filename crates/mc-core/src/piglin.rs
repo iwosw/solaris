@@ -194,7 +194,7 @@ pub(crate) fn gold_target(state: &TickState, slot: EntitySlot) -> Option<(Entity
     // then the alive/NoAI/adult/busy/geared row, and only then the gamerule
     // string lookup. No entity scan happens until a real candidate needs gold.
     if !eligible(state.entities.body(slot), state.entities.row(slot))
-        || !crate::command_rules::boolean(state, "mob_griefing")
+        || !crate::command_rules::boolean(state, crate::command_rules::BoolRule::MOB_GRIEFING)
     {
         return None;
     }

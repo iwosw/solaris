@@ -668,8 +668,8 @@ fn native_offline_population_save_kill_reopen() {
             "settlement_anchors": settlement_anchors, "cohort": cohort,
             "cohort_membership_seeded": false,
             "cohort_first_uuid": identity(0), "cohort_last_uuid": identity(count - 1),
-            "spawn_mobs": crate::command_rules::boolean(&state, "spawn_mobs"),
-            "advance_time": crate::command_rules::boolean(&state, "advance_time"),
+            "spawn_mobs": crate::command_rules::boolean(&state, crate::command_rules::BoolRule::SPAWN_MOBS),
+            "advance_time": crate::command_rules::boolean(&state, crate::command_rules::BoolRule::ADVANCE_TIME),
             "day_time": state.day_time, "original_day_time": original_day_time,
             "checkpoint_tick": manifest.tick
         })).unwrap()).unwrap();
@@ -827,8 +827,14 @@ fn native_offline_population_save_kill_reopen() {
                 (*chunk, 0)
             );
         }
-        assert!(!crate::command_rules::boolean(&state, "spawn_mobs"));
-        assert!(!crate::command_rules::boolean(&state, "advance_time"));
+        assert!(!crate::command_rules::boolean(
+            &state,
+            crate::command_rules::BoolRule::SPAWN_MOBS
+        ));
+        assert!(!crate::command_rules::boolean(
+            &state,
+            crate::command_rules::BoolRule::ADVANCE_TIME
+        ));
         assert_eq!(state.day_time, 6000);
         assert_eq!(
             state.world.world_spawn(),

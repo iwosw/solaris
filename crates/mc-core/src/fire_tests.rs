@@ -915,7 +915,10 @@ fn native_flint_and_steel_spreads_into_air_over_wool_within_client_window() {
                 .all(|p| state.world.block_at(p.x, p.y, p.z) == Some(state.registry.states.air))
         );
         assert_eq!(
-            crate::command_rules::integer(&state, "fire_spread_radius_around_player"),
+            crate::command_rules::integer(
+                &state,
+                crate::command_rules::IntRule::FIRE_SPREAD_RADIUS_AROUND_PLAYER
+            ),
             128
         );
         give(

@@ -231,7 +231,7 @@ pub(crate) fn player_drops(
         }
         return Ok(Vec::new());
     }
-    if !crate::command_rules::boolean(state, "block_drops") {
+    if !crate::command_rules::boolean(state, crate::command_rules::BoolRule::BLOCK_DROPS) {
         return Ok(Vec::new());
     }
     let empty_tool = mc_data::ItemStack::EMPTY;

@@ -108,8 +108,8 @@ fn sample(state: &TickState, map: &SavedMap, index: usize) -> Option<u8> {
                 if color == 0 {
                     continue;
                 }
-                let water = state.registry.materials.classify(raw)
-                    == mc_physics::BlockMaterial::Water;
+                let water =
+                    state.registry.materials.classify(raw) == mc_physics::BlockMaterial::Water;
                 if water {
                     water_depth += 1;
                     continue;
@@ -157,7 +157,11 @@ fn sample(state: &TickState, map: &SavedMap, index: usize) -> Option<u8> {
     } else {
         1
     };
-    Some(if color == 0 { 0 } else { color * 4 + shade as u8 })
+    Some(if color == 0 {
+        0
+    } else {
+        color * 4 + shade as u8
+    })
 }
 
 /// Average surface height of the pixel row north of this pixel (for slope
@@ -223,8 +227,7 @@ pub(crate) fn tick(state: &mut TickState) {
     }
     let mut views: BTreeMap<i32, BTreeSet<ConnectionId>> = BTreeMap::new();
     // Marker: x, z, rotation, frame flag, carrier-hidden, owner connection.
-    let mut markers: BTreeMap<i32, Vec<MarkerRow>> =
-        BTreeMap::new();
+    let mut markers: BTreeMap<i32, Vec<MarkerRow>> = BTreeMap::new();
     for (&entity, player) in &state.players {
         if player.spectator() {
             continue;

@@ -618,9 +618,12 @@ fn thrown_snowball_inherits_shooter_motion_and_pose_eye_height() {
         .entities
         .slots()
         .find(|slot| {
-            state.entities.row(*slot).projectile.as_deref().is_some_and(|r| {
-                r.kind == ProjectileKind::Snowball
-            })
+            state
+                .entities
+                .row(*slot)
+                .projectile
+                .as_deref()
+                .is_some_and(|r| r.kind == ProjectileKind::Snowball)
         })
         .expect("thrown snowball");
     // Grounded: full XZ motion inherited (10 b/s -> entity vel x = 10.0);

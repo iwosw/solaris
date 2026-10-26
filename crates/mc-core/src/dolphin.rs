@@ -213,7 +213,13 @@ pub(crate) fn treasure_search(state: &mut TickState) {
         if !body.alive
             || body.air_supply < 100
             || !is_dolphin(type_id)
-            || !state.entities.row(slot).entity_life.dolphin.as_ref().is_some_and(|d| d.got_fish)
+            || !state
+                .entities
+                .row(slot)
+                .entity_life
+                .dolphin
+                .as_ref()
+                .is_some_and(|d| d.got_fish)
         {
             continue;
         }
@@ -227,7 +233,11 @@ pub(crate) fn treasure_search(state: &mut TickState) {
         // Nearest treasure container in a 48-block cube (loaded chunks
         // only — block_at misses unloaded cells, which bounds the scan).
         let mut best: Option<([f64; 3], f64)> = None;
-        let (cx, cy, cz) = (at[0].floor() as i32, at[1].floor() as i32, at[2].floor() as i32);
+        let (cx, cy, cz) = (
+            at[0].floor() as i32,
+            at[1].floor() as i32,
+            at[2].floor() as i32,
+        );
         for x in cx - 48..=cx + 48 {
             for y in cy - 24..=cy + 24 {
                 for z in cz - 48..=cz + 48 {
@@ -256,13 +266,7 @@ pub(crate) fn treasure_search(state: &mut TickState) {
         };
         if d2 < 16.0 {
             // Treasure found: clear GotFish (vanilla stops leading here).
-            if let Some(d) = state
-                .entities
-                .row_mut(slot)
-                .entity_life
-                .dolphin
-                .as_mut()
-            {
+            if let Some(d) = state.entities.row_mut(slot).entity_life.dolphin.as_mut() {
                 d.got_fish = false;
             }
             continue;

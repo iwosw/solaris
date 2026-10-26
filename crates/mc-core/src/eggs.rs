@@ -43,10 +43,7 @@ fn with_prop(state: &TickState, id: u32, name: &str, value: &str) -> Option<u32>
 }
 
 fn schedule(state: &mut TickState, pos: BlockPos, id: &Identifier, delay: u64) {
-    if state
-        .block_ticks
-        .contains(pos, id, 0)
-    {
+    if state.block_ticks.contains(pos, id, 0) {
         return;
     }
     state.block_ticks.schedule(ScheduledBlockTick::new(
@@ -70,10 +67,20 @@ pub(crate) fn changed(state: &mut TickState, pos: BlockPos) {
     let name = block.block.id.clone();
     match name.path() {
         "sniffer_egg" => {
-            let boost = at(state, BlockPos { y: pos.y - 1, ..pos })
-                .and_then(|id| state.registry.blocks.by_id(BlockStateId(id)))
-                .is_some_and(|below| below.block.id.path() == "moss_block");
-            let full = if boost { SNIFFER_FULL / 2 } else { SNIFFER_FULL };
+            let boost = at(
+                state,
+                BlockPos {
+                    y: pos.y - 1,
+                    ..pos
+                },
+            )
+            .and_then(|id| state.registry.blocks.by_id(BlockStateId(id)))
+            .is_some_and(|below| below.block.id.path() == "moss_block");
+            let full = if boost {
+                SNIFFER_FULL / 2
+            } else {
+                SNIFFER_FULL
+            };
             schedule(state, pos, &name, full / 3);
         }
         "frogspawn" => {
@@ -119,14 +126,27 @@ pub(crate) fn scheduled_tick(
                 writes.retain(|(written, _)| *written != pos);
                 writes.push((pos, next));
             }
-            let boost = at(state, BlockPos { y: pos.y - 1, ..pos })
-                .and_then(|bid| state.registry.blocks.by_id(BlockStateId(bid)))
-                .is_some_and(|below| below.block.id.path() == "moss_block");
-            let full = if boost { SNIFFER_FULL / 2 } else { SNIFFER_FULL };
+            let boost = at(
+                state,
+                BlockPos {
+                    y: pos.y - 1,
+                    ..pos
+                },
+            )
+            .and_then(|bid| state.registry.blocks.by_id(BlockStateId(bid)))
+            .is_some_and(|below| below.block.id.path() == "moss_block");
+            let full = if boost {
+                SNIFFER_FULL / 2
+            } else {
+                SNIFFER_FULL
+            };
             schedule(state, pos, &name, full / 3);
         }
         "frogspawn" => {
-            let below = BlockPos { y: pos.y - 1, ..pos };
+            let below = BlockPos {
+                y: pos.y - 1,
+                ..pos
+            };
             let water = at(state, below)
                 .and_then(|bid| state.registry.blocks.by_id(BlockStateId(bid)))
                 .is_some_and(|b| b.block.id.path() == "water");
@@ -159,7 +179,11 @@ fn birth(state: &mut TickState, name: &str, pos: BlockPos, spawned: &mut Vec<Ent
     birth_at(
         state,
         name,
-        [f64::from(pos.x) + 0.5, f64::from(pos.y) + 1.0, f64::from(pos.z) + 0.5],
+        [
+            f64::from(pos.x) + 0.5,
+            f64::from(pos.y) + 1.0,
+            f64::from(pos.z) + 0.5,
+        ],
         spawned,
     );
 }

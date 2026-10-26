@@ -136,10 +136,21 @@ fn leveling_trade_grants_merchant_regeneration() {
         }],
     );
     let slot = state.entities.slot_of(merchant).unwrap();
-    let level = state.entities.row(slot).villager.as_ref().unwrap().data.level;
+    let level = state
+        .entities
+        .row(slot)
+        .villager
+        .as_ref()
+        .unwrap()
+        .data
+        .level;
     assert!(level >= 2, "trade must level the villager, got {level}");
     assert!(
-        state.entities.row(slot).active_effects.has(crate::effects::EffectId::Regeneration),
+        state
+            .entities
+            .row(slot)
+            .active_effects
+            .has(crate::effects::EffectId::Regeneration),
         "level-up trade must grant the merchant Regeneration"
     );
 }

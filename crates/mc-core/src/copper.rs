@@ -168,7 +168,11 @@ fn oxidation_scan_passes(state: &TickState, pos: BlockPos, roll: u32) -> bool {
                 if dx.abs() + dy.abs() + dz.abs() > 4 || (dx == 0 && dy == 0 && dz == 0) {
                     continue;
                 }
-                let cell = BlockPos { x: pos.x + dx, y: pos.y + dy, z: pos.z + dz };
+                let cell = BlockPos {
+                    x: pos.x + dx,
+                    y: pos.y + dy,
+                    z: pos.z + dz,
+                };
                 let Some(id) = state.world.block_at(cell.x, cell.y, cell.z) else {
                     continue;
                 };

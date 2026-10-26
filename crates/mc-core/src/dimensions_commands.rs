@@ -104,72 +104,27 @@ pub(super) fn resolve(
             selector.as_ref().unwrap_or(target),
         ));
     }
-    if let Target::Selector(selector) = target {
-        let distance = |entity| {
+    let Target::Selector(selector) = target else {
+        selected.sort_unstable();
+        return selected;
+    };
+    let candidates = selected
+        .into_iter()
+        .map(|entity| {
             let (dimension, slot) = locate(state, entity).expect("selected entity");
             let position = world(state, dimension)
                 .expect("selected world")
                 .entities
                 .pos(slot);
-            position
+            let distance = position
                 .iter()
                 .zip(origin)
                 .map(|(coordinate, origin)| (coordinate - origin).powi(2))
-                .sum::<f64>()
-        };
-        match selector
-            .sort
-            .unwrap_or(match selector.kind {
-                SelectorKind::Nearest => SelectorSort::Nearest,
-                SelectorKind::Random => SelectorSort::Random,
-                _ => SelectorSort::Arbitrary,
-            }) {
-            SelectorSort::Nearest => {
-                selected.sort_by(|a, b| distance(*a).total_cmp(&distance(*b)).then(a.cmp(b)))
-            }
-            SelectorSort::Furthest => {
-                selected.sort_by(|a, b| distance(*b).total_cmp(&distance(*a)).then(a.cmp(b)))
-            }
-            SelectorSort::Random => {
-                let count = state.command_context.random_draws.get();
-                state
-                    .command_context
-                    .random_draws
-                    .set(count.wrapping_add(selected.len() as u64));
-                let mut stream = count
-                    .wrapping_add(state.tick)
-                    .wrapping_add((request.executor.0 as u32 as u64) << 32);
-                let mut keyed: Vec<_> = selected
-                    .into_iter()
-                    .map(|id| {
-                        stream = stream.wrapping_add(0x9e3779b97f4a7c15);
-                        let mut value = stream;
-                        value = (value ^ (value >> 30)).wrapping_mul(0xbf58476d1ce4e5b9);
-                        value = (value ^ (value >> 27)).wrapping_mul(0x94d049bb133111eb);
-                        (id, value ^ (value >> 31))
-                    })
-                    .collect();
-                keyed.sort_by(|a, b| a.1.cmp(&b.1).then(a.0.cmp(&b.0)));
-                selected = keyed.into_iter().map(|(id, _)| id).collect();
-            }
-            SelectorSort::Arbitrary => selected.sort_unstable(),
-        }
-        selected.truncate(
-            selector.limit.unwrap_or(
-                if matches!(
-                    selector.kind,
-                    SelectorKind::Nearest | SelectorKind::Random
-                ) {
-                    1
-                } else {
-                    usize::MAX
-                },
-            ),
-        );
-    } else {
-        selected.sort_unstable();
-    }
-    selected
+                .sum::<f64>();
+            (entity, distance)
+        })
+        .collect();
+    crate::command_execution::order_and_limit(state, request.executor, selector, candidates)
 }
 
 pub(crate) fn commit(world: &mut TickState, changes: &mut ChangeSet) {

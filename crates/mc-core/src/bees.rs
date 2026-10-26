@@ -1133,10 +1133,7 @@ pub(crate) fn run(
             if bee.hive.is_some_and(|p| honey(state, p).is_none()) {
                 bee.hive = None;
             }
-            if bee
-                .flower
-                .is_some_and(|p| !flower_at(state, p))
-            {
+            if bee.flower.is_some_and(|p| !flower_at(state, p)) {
                 bee.flower = None;
                 bee.pollination = 0;
             }

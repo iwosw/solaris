@@ -272,7 +272,9 @@ fn fed_dolphin_swims_toward_treasure_chest() {
         .default
         .0;
     let cx = (start[0] as i32) + 10;
-    state.world.set_block(cx, start[1] as i32, start[2] as i32, chest);
+    state
+        .world
+        .set_block(cx, start[1] as i32, start[2] as i32, chest);
     state.world.fold_overlay();
     for _ in 0..30 {
         state.tick += 10;

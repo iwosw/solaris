@@ -250,7 +250,7 @@ pub(crate) fn use_on(
         UsePlan::Direct => {}
         UsePlan::Collect { empty, bone_meal } => {
             stage_level(state, pos, empty);
-            if crate::command_rules::boolean(state, "block_drops") {
+            if crate::command_rules::boolean(state, crate::command_rules::BoolRule::BLOCK_DROPS) {
                 let drop = spawn_item_entity(
                     state,
                     [pos.x as f64 + 0.5, pos.y as f64 + 1.01, pos.z as f64 + 0.5],

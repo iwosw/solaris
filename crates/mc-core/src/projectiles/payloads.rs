@@ -147,9 +147,12 @@ fn living(state: &TickState, id: EntityId) -> bool {
 /// A splash/lingering bottle whose potion contents are water (no base potion,
 /// no custom effects): the vanilla water-impact path.
 fn is_water_bottle(stack: &ItemStack) -> bool {
-    stack.extended().potion.as_ref().is_none_or(|potion| {
-        potion.as_str() == "minecraft:water" || potion.as_str() == "water"
-    }) && stack.extended().potion_custom_effects.is_empty()
+    stack
+        .extended()
+        .potion
+        .as_ref()
+        .is_none_or(|potion| potion.as_str() == "minecraft:water" || potion.as_str() == "water")
+        && stack.extended().potion_custom_effects.is_empty()
 }
 
 /// Vanilla splash-water impact: extinguish burning entities, damage
@@ -214,14 +217,26 @@ fn water_impact(
     {
         let path = block.block.id.path();
         if matches!(path, "fire" | "soul_fire") {
-            state.world.set_block(cell.x, cell.y, cell.z, state.registry.states.air);
-            state.merge_block_writes.push((cell, state.registry.states.air));
-        } else if block.properties.iter().any(|(key, value)| key == "lit" && value == "true") {
+            state
+                .world
+                .set_block(cell.x, cell.y, cell.z, state.registry.states.air);
+            state
+                .merge_block_writes
+                .push((cell, state.registry.states.air));
+        } else if block
+            .properties
+            .iter()
+            .any(|(key, value)| key == "lit" && value == "true")
+        {
             let mut properties = block.properties.clone();
             if let Some((_, value)) = properties.iter_mut().find(|(key, _)| key == "lit") {
                 *value = "false".to_owned();
             }
-            if let Some(next) = state.registry.blocks.by_name_and_props(&block.block.id, &properties) {
+            if let Some(next) = state
+                .registry
+                .blocks
+                .by_name_and_props(&block.block.id, &properties)
+            {
                 state.world.set_block(cell.x, cell.y, cell.z, next.0);
                 state.merge_block_writes.push((cell, next.0));
             }
@@ -284,7 +299,7 @@ fn pvp_permitted(state: &TickState, owner: Option<EntityId>, target: EntityId) -
         owner == target
             || !state.players.contains_key(&owner)
             || !state.players.contains_key(&target)
-            || crate::command_rules::boolean(state, "pvp")
+            || crate::command_rules::boolean(state, crate::command_rules::BoolRule::PVP)
     })
 }
 
@@ -326,7 +341,10 @@ fn potion_color(stack: &ItemStack) -> i32 {
         return color;
     }
     let (mut red, mut green, mut blue, mut weight) = (0_i32, 0_i32, 0_i32, 0_i32);
-    for effect in potion_effects(stack).into_iter().chain(custom_effects(stack)) {
+    for effect in potion_effects(stack)
+        .into_iter()
+        .chain(custom_effects(stack))
+    {
         let color = effect.id.color();
         let count = i32::from(effect.amplifier) + 1;
         red += ((color >> 16) & 255) * count;
@@ -1021,15 +1039,15 @@ fn pearl(
     // position. Needs a live player owner, not a dispenser throw.
     if state.players.contains_key(&owner)
         && state.difficulty != crate::survival::Difficulty::Peaceful
-        && crate::command_rules::boolean(state, "spawn_mobs")
+        && crate::command_rules::boolean(state, crate::command_rules::BoolRule::SPAWN_MOBS)
     {
-        let mut rng = crate::natural_spawn::Rng(
-            state.entities.row(slot).uuid.as_u128() as u64 ^ state.tick,
-        );
+        let mut rng =
+            crate::natural_spawn::Rng(state.entities.row(slot).uuid.as_u128() as u64 ^ state.tick);
         if rng.below(20) == 0
-            && let Some(type_id) = state.registry.entity_types.id_of(
-                &mc_data::Identifier::parse("minecraft:endermite").expect("endermite id"),
-            )
+            && let Some(type_id) = state
+                .registry
+                .entity_types
+                .id_of(&mc_data::Identifier::parse("minecraft:endermite").expect("endermite id"))
         {
             let before = state.entities.pos(slot);
             let mite = state.spawn_mob(type_id, before, 4.0);
@@ -1083,7 +1101,13 @@ fn zero_damage_reaction(
         crate::hostile::retaliate(state, slot, owner);
     }
 }
-fn hatch(state: &mut TickState, id: EntityId, record: &ProjectileState, position: [f64; 3], age: u32) {
+fn hatch(
+    state: &mut TickState,
+    id: EntityId,
+    record: &ProjectileState,
+    position: [f64; 3],
+    age: u32,
+) {
     let Some(slot) = state.entities.slot_of(id) else {
         return;
     };
@@ -1134,7 +1158,9 @@ fn hatch(state: &mut TickState, id: EntityId, record: &ProjectileState, position
             if let Some((_, value)) = appearance.extra.iter_mut().find(|(at, _)| *at == 3) {
                 *value = crate::boundary::EntityDataValue::VarInt(data);
             } else {
-                appearance.extra.push((3, crate::boundary::EntityDataValue::VarInt(data)));
+                appearance
+                    .extra
+                    .push((3, crate::boundary::EntityDataValue::VarInt(data)));
             }
             state.appearance_changed.push(child);
         }

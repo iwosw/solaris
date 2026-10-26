@@ -394,7 +394,9 @@ pub(crate) fn step(
         let rise = state.entities.pos(slot);
         // Move one block per tick would tunnel through the surface check; a
         // gentle per-tick rise keeps the hook inside loaded water.
-        state.entities.set_pos(slot, [rise[0], rise[1] + 0.2, rise[2]]);
+        state
+            .entities
+            .set_pos(slot, [rise[0], rise[1] + 0.2, rise[2]]);
         state.entities.set_vel(slot, [0.0; 3]);
         metadata(state, id, None, false);
         return true;

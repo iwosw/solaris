@@ -6,7 +6,11 @@ use crate::farming_tests::{Y, block, put, setup};
 use crate::tick::run_tick;
 use mc_data::Identifier;
 
-const POS: BlockPos = BlockPos { x: 1, y: Y + 1, z: 0 };
+const POS: BlockPos = BlockPos {
+    x: 1,
+    y: Y + 1,
+    z: 0,
+};
 
 fn give(state: &mut crate::tick::TickState, actor: crate::boundary::EntityId, name: &str) {
     let id = state
@@ -14,8 +18,7 @@ fn give(state: &mut crate::tick::TickState, actor: crate::boundary::EntityId, na
         .items
         .id_of(&Identifier::parse(format!("minecraft:{name}")).unwrap())
         .unwrap();
-    state.players.get_mut(&actor).unwrap().inventory.slots[0] =
-        mc_data::ItemStack::new(id, 1);
+    state.players.get_mut(&actor).unwrap().inventory.slots[0] = mc_data::ItemStack::new(id, 1);
 }
 
 fn use_on(state: &mut crate::tick::TickState, pos: BlockPos) {
@@ -52,10 +55,7 @@ fn interact_failing_first_sponge_absorbs() {
     let water = state.registry.states.water_levels[0];
     put(&mut state, 2, Y + 1, 0, water);
     give(&mut state, actor, "sponge");
-    use_on(
-        &mut state,
-        BlockPos { y: Y, ..POS },
-    );
+    use_on(&mut state, BlockPos { y: Y, ..POS });
     assert_ne!(
         state.world.block_at(2, Y + 1, 0),
         Some(water),
@@ -129,7 +129,11 @@ fn interact_failing_first_spawn_protected_for_non_op() {
         }],
     );
     let [sx, _, sz] = state.world.world_spawn();
-    let at = BlockPos { x: sx, y: Y + 1, z: sz };
+    let at = BlockPos {
+        x: sx,
+        y: Y + 1,
+        z: sz,
+    };
     let actor = state.connections.entity_of(ConnectionId(1)).unwrap();
     assert!(
         crate::spawn_protection::protected(&state, actor, at),

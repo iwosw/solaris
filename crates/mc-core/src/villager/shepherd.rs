@@ -119,7 +119,7 @@ pub(super) fn work(
     let (anchor, radius) = (record.anchor, record.radius);
     let working = v.activity == Activity::Work
         && (2_000..9_000).contains(&state.day_time.rem_euclid(24_000))
-        && crate::command_rules::boolean(state, "mob_griefing");
+        && crate::command_rules::boolean(state, crate::command_rules::BoolRule::MOB_GRIEFING);
     if !working || v.inventory.iter().any(Option::is_some) {
         return deposit(state, slot, v);
     }

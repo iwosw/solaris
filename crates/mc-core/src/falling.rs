@@ -502,7 +502,7 @@ fn impact(
 }
 fn drop(state: &mut TickState, pos: BlockPos, block: u32, spawned: &mut Vec<EntityId>) {
     // Falling entities use entity_drops, independently of block breaking.
-    if !crate::command_rules::boolean(state, "entity_drops") {
+    if !crate::command_rules::boolean(state, crate::command_rules::BoolRule::ENTITY_DROPS) {
         return;
     }
     let stacks = match crate::block_drops::block_drops(

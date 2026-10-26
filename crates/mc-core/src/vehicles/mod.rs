@@ -395,7 +395,7 @@ pub(crate) fn interact(
             .items
             .name_of(held.item_id)
             .is_some_and(|i| matches!(i.path(), "flint_and_steel" | "fire_charge"))
-            && crate::command_rules::boolean(state, "tnt_explodes")
+            && crate::command_rules::boolean(state, crate::command_rules::BoolRule::TNT_EXPLODES)
         {
             if state
                 .entities
@@ -508,7 +508,7 @@ pub(crate) fn death(state: &mut TickState, slot: EntitySlot, spawned: &mut Vec<E
             std::mem::replace(&mut v.slots, vec![ItemStack::EMPTY; count])
         })
         .unwrap_or_default();
-    if crate::command_rules::boolean(state, "entity_drops") {
+    if crate::command_rules::boolean(state, crate::command_rules::BoolRule::ENTITY_DROPS) {
         if let Some(item) = state
             .registry
             .items

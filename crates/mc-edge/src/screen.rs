@@ -331,7 +331,14 @@ fn demand(id: &ScreenId, on: bool) -> Bytes {
     body.push(DEMAND_FPS);
     message(server_kind::DEMAND, id, &body)
 }
-fn frame(id: &ScreenId, seq: u32, width: u16, height: u16, (codec, key): (u8, u8), data: &[u8]) -> Bytes {
+fn frame(
+    id: &ScreenId,
+    seq: u32,
+    width: u16,
+    height: u16,
+    (codec, key): (u8, u8),
+    data: &[u8],
+) -> Bytes {
     let mut body = Vec::with_capacity(10 + data.len());
     body.extend(seq.to_be_bytes());
     body.extend(width.to_be_bytes());

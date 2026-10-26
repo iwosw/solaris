@@ -147,7 +147,7 @@ fn swap_drop(chance: f32, mut seed: u64) -> bool {
 /// immediately by ID makes custody exclusive even for overlapping collectors;
 /// partial stacks keep their identity and journal an updated item post-image.
 pub(crate) fn run(state: &mut TickState, changes: &mut ChangeSet) {
-    if !crate::command_rules::boolean(state, "mob_griefing") {
+    if !crate::command_rules::boolean(state, crate::command_rules::BoolRule::MOB_GRIEFING) {
         return;
     }
     let collectors: Vec<_> = state

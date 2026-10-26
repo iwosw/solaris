@@ -1552,11 +1552,12 @@ fn pearl_landing_spawns_endermite_on_winning_roll() {
     // roll spawns an endermite at the owner's pre-teleport position.
     let (mut state, owner) = fixture();
     state.tick = 1;
-    let owner_uuid = state.entities.row(state.entities.slot_of(owner).unwrap()).uuid;
+    let owner_uuid = state
+        .entities
+        .row(state.entities.slot_of(owner).unwrap())
+        .uuid;
     let tick = (1_u64..500)
-        .find(|tick| {
-            crate::natural_spawn::Rng(owner_uuid.as_u128() as u64 ^ tick).below(20) == 0
-        })
+        .find(|tick| crate::natural_spawn::Rng(owner_uuid.as_u128() as u64 ^ tick).below(20) == 0)
         .expect("winning tick");
     state.tick = tick;
     let record = ProjectileState::new(
@@ -1566,7 +1567,14 @@ fn pearl_landing_spawns_endermite_on_winning_roll() {
     );
     let (id, mut record) = launch_record(&mut state, record, [0.0, 201.0, 0.0]);
     let mut intents = Vec::new();
-    assert!(impact(&mut state, &mut intents, id, &mut record, None, [5.0, 201.0, 0.0]));
+    assert!(impact(
+        &mut state,
+        &mut intents,
+        id,
+        &mut record,
+        None,
+        [5.0, 201.0, 0.0]
+    ));
     assert!(
         state
             .projectiles
@@ -1583,7 +1591,10 @@ fn snowball_breaks_end_crystal_through_zero_damage_path() {
     // still destroys an end crystal via the shared hit path.
     let (mut state, owner) = fixture();
     let crystal = mob(&mut state, "minecraft:end_crystal", [2.0, 201.0, 0.0]);
-    let owner_uuid = state.entities.row(state.entities.slot_of(owner).unwrap()).uuid;
+    let owner_uuid = state
+        .entities
+        .row(state.entities.slot_of(owner).unwrap())
+        .uuid;
     let record = ProjectileState::new(
         ProjectileKind::Snowball,
         Some(owner_uuid),
@@ -1613,7 +1624,10 @@ fn splash_water_douses_burning_entity() {
     let target = mob(&mut state, "minecraft:cow", [2.0, 201.0, 0.0]);
     let target_slot = state.entities.slot_of(target).unwrap();
     state.entities.body_mut(target_slot).burn_ticks = 100;
-    let owner_uuid = state.entities.row(state.entities.slot_of(owner).unwrap()).uuid;
+    let owner_uuid = state
+        .entities
+        .row(state.entities.slot_of(owner).unwrap())
+        .uuid;
     let record = ProjectileState::new(
         ProjectileKind::Potion,
         Some(owner_uuid),
@@ -1628,7 +1642,13 @@ fn splash_water_douses_burning_entity() {
         Some(target),
         [2.0, 201.0, 0.0]
     ));
-    assert_eq!(state.entities.body(state.entities.slot_of(target).unwrap()).burn_ticks, 0);
+    assert_eq!(
+        state
+            .entities
+            .body(state.entities.slot_of(target).unwrap())
+            .burn_ticks,
+        0
+    );
 }
 
 #[test]
@@ -1637,8 +1657,10 @@ fn custom_only_splash_applies_custom_effect() {
     // (no base potion) applies its custom effects to the direct hit.
     let (mut state, owner) = fixture();
     let mut stack = item(&state, "minecraft:splash_potion");
-    stack.extended_mut().potion_custom_effects.push(
-        mc_data::item_stack::PotionEffect {
+    stack
+        .extended_mut()
+        .potion_custom_effects
+        .push(mc_data::item_stack::PotionEffect {
             id: mc_data::Identifier::parse("minecraft:speed").unwrap(),
             amplifier: 0,
             duration: 600,
@@ -1646,9 +1668,11 @@ fn custom_only_splash_applies_custom_effect() {
             show_particles: true,
             show_icon: true,
             hidden: None,
-        },
-    );
-    let owner_uuid = state.entities.row(state.entities.slot_of(owner).unwrap()).uuid;
+        });
+    let owner_uuid = state
+        .entities
+        .row(state.entities.slot_of(owner).unwrap())
+        .uuid;
     let record = ProjectileState::new(ProjectileKind::Potion, Some(owner_uuid), stack);
     let (id, mut record) = launch_record(&mut state, record, [0.0, 201.0, 0.0]);
     assert!(impact(
@@ -1660,7 +1684,10 @@ fn custom_only_splash_applies_custom_effect() {
         [10.0, 201.0, 0.0]
     ));
     assert!(
-        state.players[&owner].active_effects.get(crate::effects::EffectId::Speed).is_some(),
+        state.players[&owner]
+            .active_effects
+            .get(crate::effects::EffectId::Speed)
+            .is_some(),
         "custom-only splash must apply its custom speed effect"
     );
 }
@@ -1707,14 +1734,22 @@ fn lingering_healing_cloud_heals_other_player_with_pvp_off() {
         .copied()
         .find(|id| {
             state.entities.slot_of(*id).is_some_and(|slot| {
-                state.entities.row(slot).projectile.as_ref().is_some_and(|record| {
-                    record.kind == ProjectileKind::AreaEffectCloud
-                })
+                state
+                    .entities
+                    .row(slot)
+                    .projectile
+                    .as_ref()
+                    .is_some_and(|record| record.kind == ProjectileKind::AreaEffectCloud)
             })
         })
         .expect("lingering cloud");
     let cloud_slot = state.entities.slot_of(cloud_id).unwrap();
-    let mut cloud = *state.entities.row_mut(cloud_slot).projectile.take().unwrap();
+    let mut cloud = *state
+        .entities
+        .row_mut(cloud_slot)
+        .projectile
+        .take()
+        .unwrap();
     let friend_health = |state: &TickState| state.players[&friend].vitals.health;
     let before = friend_health(&state);
     for _ in 0..12 {
@@ -1737,7 +1772,10 @@ fn splash_rejects_targets_above_the_vertical_band() {
     // above the burst (outside the vertical band) is not splashed.
     let (mut state, owner) = fixture();
     let above = mob(&mut state, "minecraft:cow", [0.0, 204.0, 0.0]);
-    let owner_uuid = state.entities.row(state.entities.slot_of(owner).unwrap()).uuid;
+    let owner_uuid = state
+        .entities
+        .row(state.entities.slot_of(owner).unwrap())
+        .uuid;
     let record = ProjectileState::new(
         ProjectileKind::Potion,
         Some(owner_uuid),
@@ -1765,7 +1803,10 @@ fn splash_regeneration_does_not_apply_to_undead() {
     // splash potion is rejected by zombies.
     let (mut state, owner) = fixture();
     let zombie = mob(&mut state, "minecraft:zombie", [2.0, 201.0, 0.0]);
-    let owner_uuid = state.entities.row(state.entities.slot_of(owner).unwrap()).uuid;
+    let owner_uuid = state
+        .entities
+        .row(state.entities.slot_of(owner).unwrap())
+        .uuid;
     let record = ProjectileState::new(
         ProjectileKind::Potion,
         Some(owner_uuid),
@@ -1782,7 +1823,12 @@ fn splash_regeneration_does_not_apply_to_undead() {
     ));
     let zombie_slot = state.entities.slot_of(zombie).unwrap();
     assert!(
-        state.entities.row(zombie_slot).active_effects.entries.is_empty(),
+        state
+            .entities
+            .row(zombie_slot)
+            .active_effects
+            .entries
+            .is_empty(),
         "undead must reject regeneration, got {:?}",
         state.entities.row(zombie_slot).active_effects.entries
     );
@@ -1795,8 +1841,10 @@ fn base_plus_custom_splash_applies_both_effects() {
     // swiftness-plus-custom-strength stack must yield both, not base alone.
     let (mut state, owner) = fixture();
     let mut stack = potion(&state, "minecraft:splash_potion", "minecraft:swiftness");
-    stack.extended_mut().potion_custom_effects.push(
-        mc_data::item_stack::PotionEffect {
+    stack
+        .extended_mut()
+        .potion_custom_effects
+        .push(mc_data::item_stack::PotionEffect {
             id: mc_data::Identifier::parse("minecraft:strength").unwrap(),
             amplifier: 0,
             duration: 600,
@@ -1804,9 +1852,11 @@ fn base_plus_custom_splash_applies_both_effects() {
             show_particles: true,
             show_icon: true,
             hidden: None,
-        },
-    );
-    let owner_uuid = state.entities.row(state.entities.slot_of(owner).unwrap()).uuid;
+        });
+    let owner_uuid = state
+        .entities
+        .row(state.entities.slot_of(owner).unwrap())
+        .uuid;
     let record = ProjectileState::new(ProjectileKind::Potion, Some(owner_uuid), stack);
     let (id, mut record) = launch_record(&mut state, record, [0.0, 201.0, 0.0]);
     assert!(impact(

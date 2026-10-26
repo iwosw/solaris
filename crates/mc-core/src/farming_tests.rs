@@ -568,7 +568,10 @@ fn kelp_grows_into_falling_water_and_turns_it_into_a_source() {
     put(&mut state, 7, Y + 2, 6, air0);
     give(&mut state, player, "bone_meal", 1);
     use_on(&mut state, 6, Y + 1, 6, 1);
-    assert_eq!(at(&state, 6, Y + 2, 6), block(&state, "water", &[("level", "1")]));
+    assert_eq!(
+        at(&state, 6, Y + 2, 6),
+        block(&state, "water", &[("level", "1")])
+    );
 }
 
 #[test]
@@ -738,11 +741,7 @@ fn bone_meal_grows_azalea_and_fungi_but_rejects_wrong_soil() {
         use_on(&mut state, -6, Y + 1, 2, 1);
         give(&mut state, player, "bone_meal", 20);
     }
-    assert_eq!(
-        at(&state, -6, Y + 2, 2),
-        trunk,
-        "azalea grows a trunk"
-    );
+    assert_eq!(at(&state, -6, Y + 2, 2), trunk, "azalea grows a trunk");
     // Crimson fungus on dirt refuses; on crimson nylium it grows huge.
     put(&mut state, -7, Y, 2, dirt);
     plant(&mut state, -7, Y + 1, 2, "crimson_fungus", &[]);
@@ -1011,7 +1010,9 @@ fn budding_amethyst_sprouts_buds_that_advance_to_clusters() {
 #[test]
 fn turtle_eggs_crack_at_night_into_baby_turtles() {
     let (mut state, _) = setup();
-    state.gamerules.insert("random_tick_speed".into(), FAST.into());
+    state
+        .gamerules
+        .insert("random_tick_speed".into(), FAST.into());
     state.day_time = 15_000;
     let sand = state
         .registry
@@ -1053,7 +1054,14 @@ fn sniffer_eggs_hatch_into_baby_sniffers() {
     let (mut state, _) = setup();
     let egg = block(&state, "sniffer_egg", &[("hatch", "0")]);
     put(&mut state, 3, Y + 1, -2, egg);
-    crate::eggs::changed(&mut state, crate::boundary::BlockPos { x: 3, y: Y + 1, z: -2 });
+    crate::eggs::changed(
+        &mut state,
+        crate::boundary::BlockPos {
+            x: 3,
+            y: Y + 1,
+            z: -2,
+        },
+    );
     for _ in 0..30_000 {
         run(&mut state, 1);
         let babies = state
@@ -1077,7 +1085,14 @@ fn frogspawn_hatches_tadpoles_in_water() {
     put(&mut state, 4, Y, -2, water);
     let spawn = block(&state, "frogspawn", &[]);
     put(&mut state, 4, Y + 1, -2, spawn);
-    crate::eggs::changed(&mut state, crate::boundary::BlockPos { x: 4, y: Y + 1, z: -2 });
+    crate::eggs::changed(
+        &mut state,
+        crate::boundary::BlockPos {
+            x: 4,
+            y: Y + 1,
+            z: -2,
+        },
+    );
     for _ in 0..15_000 {
         run(&mut state, 1);
         let kinds: Vec<_> = state
@@ -1101,8 +1116,6 @@ fn frogspawn_hatches_tadpoles_in_water() {
     }
     panic!("frogspawn never hatched");
 }
-
-
 
 #[test]
 fn bone_meal_cadence_gates_azalea_fungus_and_mangrove() {
@@ -1132,7 +1145,11 @@ fn bone_meal_cadence_gates_azalea_fungus_and_mangrove() {
     near(&mut state, player, -6, Y + 1, 2);
     give(&mut state, player, "bone_meal", 1);
     use_on(&mut state, -6, Y + 1, 2, 1);
-    assert_eq!(held(&state, player).count, 0, "meal is spent even on a miss");
+    assert_eq!(
+        held(&state, player).count,
+        0,
+        "meal is spent even on a miss"
+    );
     // Huge fungus: 40% per meal on matching nylium.
     let (mut state, player) = setup();
     let nylium = block(&state, "crimson_nylium", &[]);
@@ -1159,7 +1176,12 @@ fn bone_meal_cadence_gates_azalea_fungus_and_mangrove() {
         Y + 1,
         4,
         "mangrove_propagule",
-        &[("hanging", "true"), ("age", "0"), ("stage", "0"), ("waterlogged", "false")],
+        &[
+            ("hanging", "true"),
+            ("age", "0"),
+            ("stage", "0"),
+            ("waterlogged", "false"),
+        ],
     );
     near(&mut state, player, 2, Y + 1, 4);
     give(&mut state, player, "bone_meal", 2);
@@ -1169,7 +1191,12 @@ fn bone_meal_cadence_gates_azalea_fungus_and_mangrove() {
         block(
             &state,
             "mangrove_propagule",
-            &[("hanging", "true"), ("age", "1"), ("stage", "0"), ("waterlogged", "false")]
+            &[
+                ("hanging", "true"),
+                ("age", "1"),
+                ("stage", "0"),
+                ("waterlogged", "false")
+            ]
         ),
         "hanging propagule ages one stage"
     );

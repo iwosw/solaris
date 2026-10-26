@@ -464,7 +464,7 @@ fn death_tick(state: &mut TickState, changes: &mut ChangeSet, slot: EntitySlot) 
     } else {
         12000
     };
-    if crate::command_rules::boolean(state, "mob_drops") {
+    if crate::command_rules::boolean(state, crate::command_rules::BoolRule::MOB_DROPS) {
         if time > 150 && time.is_multiple_of(5) {
             crate::experience_orbs::award(state, at, xp * 8 / 100, &mut changes.entities_spawned);
         }

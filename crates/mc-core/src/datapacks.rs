@@ -10,7 +10,6 @@ const COMMAND_BUDGET: usize = crate::command_context::LIMIT;
 const MAX_RESOURCES: usize = 16384;
 const MAX_BYTES: usize = 16 * 1024 * 1024;
 
-
 /// Ordered native authority for the enabled and explicitly disabled pack ids.
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Selection {
@@ -153,10 +152,8 @@ impl PackSet {
     pub(crate) fn load(root: &Path, mut selection: Selection) -> Result<Self, String> {
         selection.validate()?;
         let mut packs = BTreeMap::new();
-        let mut descriptions = BTreeMap::from([(
-            "vanilla".to_owned(),
-            "Vanilla built-in content".to_owned(),
-        )]);
+        let mut descriptions =
+            BTreeMap::from([("vanilla".to_owned(), "Vanilla built-in content".to_owned())]);
         let mut remaining = MAX_BYTES;
         if root.exists() {
             if std::fs::symlink_metadata(root)
@@ -180,10 +177,16 @@ impl PackSet {
                 let raw_meta = read_text(&pack.path().join("pack.mcmeta"), &mut remaining)?;
                 let metadata: serde_json::Value =
                     serde_json::from_str(&raw_meta).map_err(|e| e.to_string())?;
-                if !metadata.get("pack").is_some_and(serde_json::Value::is_object) {
+                if !metadata
+                    .get("pack")
+                    .is_some_and(serde_json::Value::is_object)
+                {
                     return Err("Datapack pack.mcmeta requires a pack object".into());
                 }
-                let name = pack.file_name().into_string().map_err(|_| "Non-UTF8 datapack name")?;
+                let name = pack
+                    .file_name()
+                    .into_string()
+                    .map_err(|_| "Non-UTF8 datapack name")?;
                 let id = format!("file/{name}");
                 let description = metadata
                     .get("pack")
@@ -200,7 +203,9 @@ impl PackSet {
                 packs.insert(id, pack.path());
             }
         }
-        selection.enabled.retain(|id| id == "vanilla" || packs.contains_key(id));
+        selection
+            .enabled
+            .retain(|id| id == "vanilla" || packs.contains_key(id));
         for id in packs.keys() {
             if !selection.enabled.contains(id) && !selection.disabled.contains(id) {
                 selection.enabled.push(id.clone());
@@ -455,13 +460,22 @@ impl Runtime {
         if self.reload.is_some() {
             return Err("Datapack reload already in progress".into());
         }
-        let root = self.root.clone().ok_or("No datapack directory configured")?;
+        let root = self
+            .root
+            .clone()
+            .ok_or("No datapack directory configured")?;
         let (tx, receiver) = std::sync::mpsc::sync_channel(1);
         std::thread::Builder::new()
             .name("datapack-reload".into())
-            .spawn(move || { let _ = tx.send(PackSet::load(&root, selection)); })
+            .spawn(move || {
+                let _ = tx.send(PackSet::load(&root, selection));
+            })
             .map_err(|error| format!("Starting datapack reload: {error}"))?;
-        self.reload = Some(Reload { receiver, connection, activation });
+        self.reload = Some(Reload {
+            receiver,
+            connection,
+            activation,
+        });
         Ok(())
     }
     pub(crate) fn image(&self) -> Vec<(u64, String)> {
@@ -491,9 +505,15 @@ impl Runtime {
         self.dirty = false;
         Ok(())
     }
-    pub(crate) fn restore_selection(&mut self, selection: Selection) -> Result<(), crate::CoreError> {
+    pub(crate) fn restore_selection(
+        &mut self,
+        selection: Selection,
+    ) -> Result<(), crate::CoreError> {
         selection.validate().map_err(crate::CoreError::Storage)?;
-        self.packs = std::sync::Arc::new(PackSet { selection, ..PackSet::default() });
+        self.packs = std::sync::Arc::new(PackSet {
+            selection,
+            ..PackSet::default()
+        });
         self.selection_dirty = false;
         Ok(())
     }
@@ -682,7 +702,8 @@ pub(crate) fn tick(state: &mut TickState, changes: &mut ChangeSet) {
                 state.datapacks.reload = None;
                 match result {
                     Ok(packs) if packs.resources == state.datapacks.packs.resources => {
-                        state.datapacks.selection_dirty |= state.datapacks.packs.selection != packs.selection;
+                        state.datapacks.selection_dirty |=
+                            state.datapacks.packs.selection != packs.selection;
                         let count = packs.selection.enabled.len();
                         state.datapacks.packs = Arc::new(packs);
                         state.datapacks.load_pending = true;
@@ -710,7 +731,11 @@ pub(crate) fn tick(state: &mut TickState, changes: &mut ChangeSet) {
             }
             Err(std::sync::mpsc::TryRecvError::Disconnected) => {
                 state.datapacks.reload = None;
-                feedback(state, connection, "Datapack reload worker disconnected; old packs and selection retained");
+                feedback(
+                    state,
+                    connection,
+                    "Datapack reload worker disconnected; old packs and selection retained",
+                );
             }
             Err(std::sync::mpsc::TryRecvError::Empty) => {}
         }

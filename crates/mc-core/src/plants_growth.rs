@@ -423,7 +423,10 @@ fn azalea_tree(
         edits.push(edit(BlockPos { y: at.y + dy, ..at }, log));
     }
     // The bend leans sideways near the top.
-    let mut top = BlockPos { y: at.y + height, ..at };
+    let mut top = BlockPos {
+        y: at.y + height,
+        ..at
+    };
     for _ in 1..=bend {
         top = BlockPos {
             x: top.x + bend_dx,
@@ -495,7 +498,14 @@ fn mangrove_tree(read: &Read<'_>, at: BlockPos, seed: u64) -> Option<Vec<PlantBl
     }
     for dx in -3i32..=3 {
         for dz in -3i32..=3 {
-            if !air(read, BlockPos { x: at.x + dx, y: at.y + height, z: at.z + dz }) {
+            if !air(
+                read,
+                BlockPos {
+                    x: at.x + dx,
+                    y: at.y + height,
+                    z: at.z + dz,
+                },
+            ) {
                 return None;
             }
         }
@@ -544,7 +554,12 @@ fn mangrove_tree(read: &Read<'_>, at: BlockPos, seed: u64) -> Option<Vec<PlantBl
 /// Vanilla huge fungi (`HugeFungusFeature`): crimson/warped fungus on
 /// its own nylium grows a stem 4-13 high (1-in-12 doubles) with a wart hat
 /// reaching up to 3 out, radius varying by layer. Wiki-level shape.
-fn huge_fungus(read: &Read<'_>, at: BlockPos, name: &str, seed: u64) -> Option<Vec<PlantBlockEdit>> {
+fn huge_fungus(
+    read: &Read<'_>,
+    at: BlockPos,
+    name: &str,
+    seed: u64,
+) -> Option<Vec<PlantBlockEdit>> {
     let blocks = &read.state.registry.blocks;
     let (stem, cap, soil) = if name == "crimson_fungus" {
         ("crimson_stem", "nether_wart_block", "crimson_nylium")
@@ -1061,10 +1076,7 @@ pub(super) fn hatch(
                 return None;
             }
             let below = BlockPos { y: at.y - 1, ..at };
-            if !matches!(
-                path(read, below)?,
-                "sand" | "red_sand" | "suspicious_sand"
-            ) {
+            if !matches!(path(read, below)?, "sand" | "red_sand" | "suspicious_sand") {
                 return None;
             }
             if roll.below(200) != 0 {

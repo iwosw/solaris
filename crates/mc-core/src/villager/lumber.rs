@@ -385,7 +385,9 @@ pub(super) fn work(
         v.lumber_progress.returning = v.inventory.iter().any(Option::is_some);
         return target;
     }
-    if !working || !crate::command_rules::boolean(state, "mob_griefing") {
+    if !working
+        || !crate::command_rules::boolean(state, crate::command_rules::BoolRule::MOB_GRIEFING)
+    {
         return None;
     }
     if !v.lumber_progress.has_target {

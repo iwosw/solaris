@@ -342,7 +342,10 @@ fn raining_at(state: &TickState, pos: BlockPos) -> bool {
 }
 
 fn spread_enabled(state: &TickState, pos: BlockPos) -> bool {
-    let radius = crate::command_rules::integer(state, "fire_spread_radius_around_player");
+    let radius = crate::command_rules::integer(
+        state,
+        crate::command_rules::IntRule::FIRE_SPREAD_RADIUS_AROUND_PLAYER,
+    );
     if radius == -1 {
         return true;
     }

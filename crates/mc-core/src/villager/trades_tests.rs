@@ -93,7 +93,12 @@ fn level_up_sets_leveled_flag_for_regeneration() {
         ClickMode::Pickup,
     );
     assert!(outcome.trades > 0);
-    assert!(villager.data.level >= 2, "xp {} -> level {}", villager.xp, villager.data.level);
+    assert!(
+        villager.data.level >= 2,
+        "xp {} -> level {}",
+        villager.xp,
+        villager.data.level
+    );
     // Regen application is proven behaviorally in merchant_tests
     // (leveling_trade_grants_merchant_regeneration); the outcome flag is
     // internal plumbing.
@@ -161,7 +166,10 @@ fn librarian_unlock_adds_enchanted_book_offer() {
         );
         let name = book.result.extended().stored_enchantments[0].id.as_str();
         assert!(
-            !matches!(name, "minecraft:soul_speed" | "minecraft:swift_sneak" | "minecraft:wind_burst"),
+            !matches!(
+                name,
+                "minecraft:soul_speed" | "minecraft:swift_sneak" | "minecraft:wind_burst"
+            ),
             "excluded enchantment {name}"
         );
         assert!(

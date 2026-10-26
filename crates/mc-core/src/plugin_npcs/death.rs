@@ -48,7 +48,7 @@ pub(super) fn record(state: &mut TickState, uuid: uuid::Uuid) {
         .map(|v| v.inventory.clone())
         .unwrap_or_else(|| std::array::from_fn(|_| None));
     let mut loot = Vec::new();
-    let drops = crate::command_rules::boolean(state, "mob_drops");
+    let drops = crate::command_rules::boolean(state, crate::command_rules::BoolRule::MOB_DROPS);
     // SDK armor slots are [hands,head,chest,legs,feet]; native columns are reversed.
     for (inventory, stacks) in [
         (ScriptNpcDeathInventory::Carry, carry.as_slice()),

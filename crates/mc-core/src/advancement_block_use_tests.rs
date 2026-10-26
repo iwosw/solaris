@@ -124,10 +124,7 @@ fn sign_glow_and_record_insertion_award_only_real_mutations() {
     // text_nbt images so the helper stays private).
     let side = |tag: mc_nbt::Tag, key: &str| {
         if let mc_nbt::Tag::Compound(fields) = tag {
-            fields
-                .into_iter()
-                .find(|(k, _)| k == key)
-                .map(|(_, v)| v)
+            fields.into_iter().find(|(k, _)| k == key).map(|(_, v)| v)
         } else {
             None
         }

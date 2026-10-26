@@ -429,11 +429,8 @@ pub(super) fn click(
     if leveled_up {
         // Vanilla career-level healing: 10s Regeneration I on level-up,
         // applied to the merchant entity row.
-        let effect = crate::effects::ActiveEffect::new(
-            crate::effects::EffectId::Regeneration,
-            200,
-            0,
-        );
+        let effect =
+            crate::effects::ActiveEffect::new(crate::effects::EffectId::Regeneration, 200, 0);
         crate::projectiles::payloads::give_effect(state, merchant, effect);
     }
     if experience > 0 {

@@ -739,7 +739,7 @@ fn scan_row(state: &mut TickState, scratch: &mut Scratch, intents: &mut Vec<Inte
     if (lava || fire)
         && !water
         && (!state.players.contains_key(&entity)
-            || crate::command_rules::boolean(state, "fire_damage"))
+            || crate::command_rules::boolean(state, crate::command_rules::BoolRule::FIRE_DAMAGE))
     {
         ignite(state, entity, if lava { 300 } else { 160 });
     }

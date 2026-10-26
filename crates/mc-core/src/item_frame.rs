@@ -397,11 +397,9 @@ fn drop_display(
     let appearance = Arc::make_mut(&mut state.entities.row_mut(slot).appearance);
     // Vanilla retains frame rotation while the frame survives: only the
     // displayed item is cleared, never the orientation.
-    appearance
-        .extra
-        .retain(|(index, _)| *index != ITEM);
+    appearance.extra.retain(|(index, _)| *index != ITEM);
     appearance.extra.push((ITEM, EntityDataValue::Item(None)));
-    if drop && crate::command_rules::boolean(state, "entity_drops") {
+    if drop && crate::command_rules::boolean(state, crate::command_rules::BoolRule::ENTITY_DROPS) {
         spawned.push(crate::tick::spawn_item_entity(state, pos, item));
     }
     state.appearance_changed.push(state.entities.body(slot).id);
@@ -432,7 +430,7 @@ fn break_frame(state: &mut TickState, slot: EntitySlot, drop: bool, spawned: &mu
     drop_display(state, slot, drop, spawned);
     // Breaking the frame evicts its retained waypoint (no ghost markers).
     evict_frame_markers(state, position);
-    if drop && crate::command_rules::boolean(state, "entity_drops") {
+    if drop && crate::command_rules::boolean(state, crate::command_rules::BoolRule::ENTITY_DROPS) {
         let item = state
             .registry
             .items
@@ -506,7 +504,7 @@ pub(crate) fn death(state: &mut TickState, slot: EntitySlot, spawned: &mut Vec<E
     };
     state.entities.row_mut(slot).loot.death_handled = true;
     drop_display(state, slot, true, spawned);
-    if crate::command_rules::boolean(state, "entity_drops") {
+    if crate::command_rules::boolean(state, crate::command_rules::BoolRule::ENTITY_DROPS) {
         let item = state
             .registry
             .items

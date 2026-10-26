@@ -49,8 +49,14 @@ impl ClimateImage {
             thundering: state.thundering,
             rain_level_bits: state.rain_level.to_bits(),
             thunder_level_bits: state.thunder_level.to_bits(),
-            advance_time: crate::command_rules::boolean(state, "advance_time"),
-            advance_weather: crate::command_rules::boolean(state, "advance_weather"),
+            advance_time: crate::command_rules::boolean(
+                state,
+                crate::command_rules::BoolRule::ADVANCE_TIME,
+            ),
+            advance_weather: crate::command_rules::boolean(
+                state,
+                crate::command_rules::BoolRule::ADVANCE_WEATHER,
+            ),
         }
     }
 
@@ -80,8 +86,8 @@ impl ClimateImage {
         // fresh natural duration on the next tick and flip `thundering` off
         // immediately, so seed it from the restored rain clock instead: the
         // storm keeps its remaining duration instead of drifting one tick.
-        state.thundering = self.thundering
-            || (kind == Weather::Thunder && self.thunder_remaining_ticks == 0);
+        state.thundering =
+            self.thundering || (kind == Weather::Thunder && self.thunder_remaining_ticks == 0);
         if kind == Weather::Thunder && self.thunder_remaining_ticks == 0 {
             state.thunder_remaining_ticks = self.remaining_ticks.max(1);
         }
@@ -150,7 +156,7 @@ pub(crate) fn default_duration(state: &TickState, weather: Weather) -> i64 {
 
 /// Rain and thunder have independent clocks; thunder can run behind a clear sky.
 pub(crate) fn advance_cycle(state: &mut TickState) {
-    if !crate::command_rules::boolean(state, "advance_weather") {
+    if !crate::command_rules::boolean(state, crate::command_rules::BoolRule::ADVANCE_WEATHER) {
         return;
     }
     if state.clear_remaining_ticks > 0 {

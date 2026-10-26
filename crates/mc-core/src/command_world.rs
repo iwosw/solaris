@@ -442,7 +442,7 @@ fn execute_inner(
                 y: coordinates[1],
                 z: coordinates[2],
             };
-            let targets = crate::tick::resolve_target(state, executor, target);
+            let targets = crate::command_execution::resolve_target(state, executor, target);
             let mut count = 0;
             for target in targets {
                 if let Some(player) = state.players.get_mut(&target) {
@@ -515,7 +515,10 @@ fn edit_region(
     let volume = (i64::from(max.x) - i64::from(min.x) + 1) as u64
         * (i64::from(max.y) - i64::from(min.y) + 1) as u64
         * (i64::from(max.z) - i64::from(min.z) + 1) as u64;
-    let limit = crate::command_rules::integer(state, "max_block_modifications") as u64;
+    let limit = crate::command_rules::integer(
+        state,
+        crate::command_rules::IntRule::MAX_BLOCK_MODIFICATIONS,
+    ) as u64;
     if volume > limit {
         return Err(message(format!(
             "Too many blocks: {volume} (maximum {limit})"

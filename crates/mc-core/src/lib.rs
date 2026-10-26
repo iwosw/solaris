@@ -16,7 +16,6 @@ mod beacon;
 mod beacon_tests;
 pub mod bees;
 mod block_drop_context;
-pub mod chiseled_shelf;
 pub mod block_drops;
 mod block_entity_defaults;
 pub mod block_log;
@@ -43,6 +42,7 @@ mod cauldron_wash;
 #[path = "cauldron_wash_tests.rs"]
 mod cauldron_wash_tests;
 mod chests;
+pub mod chiseled_shelf;
 mod chorus;
 mod chunk_loader;
 pub(crate) mod chunk_tickets;
@@ -369,9 +369,9 @@ mod interact_failing_first_tests;
 #[cfg(test)]
 mod interact_parity_tests;
 
-mod vanilla_interact;
-mod sponge;
-mod special_storage;
 mod brushing;
 mod painting;
 mod spawn_protection;
+mod special_storage;
+mod sponge;
+mod vanilla_interact;

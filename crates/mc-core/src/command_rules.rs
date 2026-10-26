@@ -243,10 +243,99 @@ fn value<'a>(values: &'a rustc_hash::FxHashMap<String, String>, rule: &Rule) -> 
     values.get(rule.name).map_or(rule.default, String::as_str)
 }
 
-/// Allocation-free typed lookup. Unknown or non-boolean names return false.
+/// Typed handle of a boolean rule. Handles exist only as the associated
+/// constants below; an unknown name or wrong kind fails const evaluation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BoolRule(usize);
+/// Typed handle of an integer rule; see [`BoolRule`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct IntRule(usize);
+
+const fn same(a: &str, b: &str) -> bool {
+    let (a, b) = (a.as_bytes(), b.as_bytes());
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut i = 0;
+    while i < a.len() {
+        if a[i] != b[i] {
+            return false;
+        }
+        i += 1;
+    }
+    true
+}
+
+const fn index(name: &str, integer: bool) -> usize {
+    let mut i = 0;
+    while i < RULES.len() {
+        if same(RULES[i].name, name) {
+            assert!(
+                matches!(RULES[i].kind, RuleKind::Integer { .. }) == integer,
+                "game rule kind mismatch"
+            );
+            return i;
+        }
+        i += 1;
+    }
+    panic!("unknown game rule")
+}
+
+macro_rules! handles {
+    ($ty:ident, $integer:literal: $($constant:ident = $name:literal),* $(,)?) => {
+        impl $ty {
+            $(pub const $constant: Self = Self(index($name, $integer));)*
+        }
+    };
+}
+
+handles!(BoolRule, false:
+    ADVANCE_TIME = "advance_time",
+    ADVANCE_WEATHER = "advance_weather",
+    ALLOW_ENTERING_NETHER_USING_PORTALS = "allow_entering_nether_using_portals",
+    BLOCK_DROPS = "block_drops",
+    DROWNING_DAMAGE = "drowning_damage",
+    ENDER_PEARLS_VANISH_ON_DEATH = "ender_pearls_vanish_on_death",
+    ENTITY_DROPS = "entity_drops",
+    FALL_DAMAGE = "fall_damage",
+    FIRE_DAMAGE = "fire_damage",
+    IMMEDIATE_RESPAWN = "immediate_respawn",
+    KEEP_INVENTORY = "keep_inventory",
+    LAVA_SOURCE_CONVERSION = "lava_source_conversion",
+    MOB_DROPS = "mob_drops",
+    MOB_EXPLOSION_DROP_DECAY = "mob_explosion_drop_decay",
+    MOB_GRIEFING = "mob_griefing",
+    NATURAL_HEALTH_REGENERATION = "natural_health_regeneration",
+    PVP = "pvp",
+    RAIDS = "raids",
+    SEND_COMMAND_FEEDBACK = "send_command_feedback",
+    SHOW_ADVANCEMENT_MESSAGES = "show_advancement_messages",
+    SHOW_DEATH_MESSAGES = "show_death_messages",
+    SPAWN_MOBS = "spawn_mobs",
+    SPAWN_MONSTERS = "spawn_monsters",
+    SPAWN_WANDERING_TRADERS = "spawn_wandering_traders",
+    SPAWN_WARDENS = "spawn_wardens",
+    TNT_EXPLODES = "tnt_explodes",
+    TNT_EXPLOSION_DROP_DECAY = "tnt_explosion_drop_decay",
+    WATER_SOURCE_CONVERSION = "water_source_conversion",
+);
+handles!(IntRule, true:
+    FIRE_SPREAD_RADIUS_AROUND_PLAYER = "fire_spread_radius_around_player",
+    MAX_BLOCK_MODIFICATIONS = "max_block_modifications",
+    MAX_COMMAND_FORKS = "max_command_forks",
+    MAX_COMMAND_SEQUENCE_LENGTH = "max_command_sequence_length",
+    MAX_SNOW_ACCUMULATION_HEIGHT = "max_snow_accumulation_height",
+    PLAYERS_NETHER_PORTAL_CREATIVE_DELAY = "players_nether_portal_creative_delay",
+    PLAYERS_NETHER_PORTAL_DEFAULT_DELAY = "players_nether_portal_default_delay",
+    PLAYERS_SLEEPING_PERCENTAGE = "players_sleeping_percentage",
+    RANDOM_TICK_SPEED = "random_tick_speed",
+    RESPAWN_RADIUS = "respawn_radius",
+);
+
+/// Allocation-free typed lookup; invalid persisted values use the default.
 #[must_use]
-pub fn boolean(state: &TickState, name: &str) -> bool {
-    boolean_value(&state.gamerules, name)
+pub fn boolean(state: &TickState, rule: BoolRule) -> bool {
+    rule_boolean(&state.gamerules, &RULES[rule.0])
 }
 
 /// Which finer block-damage switch a call site belongs to. Vanilla 26.1.2 has
@@ -269,7 +358,7 @@ pub enum MobGrief {
 /// `mobGriefing` combined with the per-mob switch for `grief`.
 #[must_use]
 pub fn mob_griefing(state: &TickState, grief: MobGrief) -> bool {
-    if !boolean(state, "mob_griefing") {
+    if !boolean(state, BoolRule::MOB_GRIEFING) {
         return false;
     }
     let rules = &state.mob_griefing;
@@ -284,13 +373,7 @@ pub fn mob_griefing(state: &TickState, grief: MobGrief) -> bool {
     }
 }
 
-fn boolean_value(values: &rustc_hash::FxHashMap<String, String>, name: &str) -> bool {
-    let Some((rule, _)) = find(name) else {
-        return false;
-    };
-    if rule.kind != RuleKind::Boolean {
-        return false;
-    }
+fn rule_boolean(values: &rustc_hash::FxHashMap<String, String>, rule: &Rule) -> bool {
     match value(values, rule) {
         "true" => true,
         "false" => false,
@@ -298,25 +381,37 @@ fn boolean_value(values: &rustc_hash::FxHashMap<String, String>, name: &str) -> 
     }
 }
 
-/// Allocation-free typed lookup. Invalid persisted values use vanilla defaults;
-/// unknown or non-integer names return zero.
-#[must_use]
-pub fn integer(state: &TickState, name: &str) -> i32 {
-    integer_value(&state.gamerules, name)
+/// Name-addressed lookup for `/gamerule` queries; unknown or non-boolean
+/// names return false.
+fn boolean_value(values: &rustc_hash::FxHashMap<String, String>, name: &str) -> bool {
+    find(name)
+        .filter(|(rule, _)| rule.kind == RuleKind::Boolean)
+        .is_some_and(|(rule, _)| rule_boolean(values, rule))
 }
 
-fn integer_value(values: &rustc_hash::FxHashMap<String, String>, name: &str) -> i32 {
-    let Some((rule, _)) = find(name) else {
-        return 0;
-    };
+/// Allocation-free typed lookup; invalid persisted values use the default.
+#[must_use]
+pub fn integer(state: &TickState, rule: IntRule) -> i32 {
+    rule_integer(&state.gamerules, &RULES[rule.0])
+}
+
+fn rule_integer(values: &rustc_hash::FxHashMap<String, String>, rule: &Rule) -> i32 {
     let RuleKind::Integer { min, max } = rule.kind else {
-        return 0;
+        unreachable!("IntRule handles only address integer rules")
     };
     values
         .get(rule.name)
         .and_then(|value| value.parse::<i32>().ok())
         .filter(|value| (min..=max).contains(value))
         .unwrap_or(rule.default_integer)
+}
+
+/// Name-addressed lookup for `/gamerule` queries; unknown or non-integer
+/// names return zero.
+fn integer_value(values: &rustc_hash::FxHashMap<String, String>, name: &str) -> i32 {
+    find(name)
+        .filter(|(rule, _)| matches!(rule.kind, RuleKind::Integer { .. }))
+        .map_or(0, |(rule, _)| rule_integer(values, rule))
 }
 
 #[cfg(test)]

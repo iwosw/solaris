@@ -303,15 +303,18 @@ pub(crate) fn run(state: &mut TickState) {
             deep_sleepers += 1;
         }
     }
-    let percentage = crate::command_rules::integer(state, "players_sleeping_percentage") as u64;
+    let percentage = crate::command_rules::integer(
+        state,
+        crate::command_rules::IntRule::PLAYERS_SLEEPING_PERCENTAGE,
+    ) as u64;
     let required = (u128::from(active) * u128::from(percentage))
         .div_ceil(100)
         .max(1);
     if u128::from(deep_sleepers) >= required {
-        if crate::command_rules::boolean(state, "advance_time") {
+        if crate::command_rules::boolean(state, crate::command_rules::BoolRule::ADVANCE_TIME) {
             state.day_time = (state.day_time.div_euclid(24_000) + 1) * 24_000;
         }
-        if crate::command_rules::boolean(state, "advance_weather")
+        if crate::command_rules::boolean(state, crate::command_rules::BoolRule::ADVANCE_WEATHER)
             && state.weather.0 != Weather::Clear
         {
             state.weather = (Weather::Clear, 0);
@@ -410,13 +413,11 @@ fn bed_exit(state: &TickState, head: BlockPos, yaw: f32) -> Option<[f64; 3]> {
             .get_for_state(id, &block.block.id, &block.properties)
             .is_some_and(|shape| {
                 shape.iter().any(|collision_box| {
-                    let units =
-                        mc_data::collision_shapes::COLLISION_UNITS_PER_BLOCK as f64;
+                    let units = mc_data::collision_shapes::COLLISION_UNITS_PER_BLOCK as f64;
                     let [_, min_y, _, _, max_y, _] = collision_box.coordinates();
                     // Carpet-thin shapes (<=1/16) never intersect the player
                     // AABB standing at this cell's floor.
-                    f64::from(max_y) / units > 0.0625
-                        && f64::from(min_y) / units < 1.8
+                    f64::from(max_y) / units > 0.0625 && f64::from(min_y) / units < 1.8
                 })
             })
     };

@@ -152,7 +152,12 @@ impl Admin {
     }
 
     pub(crate) fn operator_ids(&self) -> Vec<Uuid> {
-        self.lists.lock().ops.iter().map(|entry| entry.uuid).collect()
+        self.lists
+            .lock()
+            .ops
+            .iter()
+            .map(|entry| entry.uuid)
+            .collect()
     }
 
     pub(crate) fn level(&self, uuid: Uuid) -> u8 {

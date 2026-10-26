@@ -759,7 +759,10 @@ pub(super) fn work(
         v.mining_progress.returning = v.inventory.iter().any(Option::is_some);
         return target;
     }
-    if !working || upgrading || !crate::command_rules::boolean(state, "mob_griefing") {
+    if !working
+        || upgrading
+        || !crate::command_rules::boolean(state, crate::command_rules::BoolRule::MOB_GRIEFING)
+    {
         return None;
     }
     let level = v.mining_progress.level;

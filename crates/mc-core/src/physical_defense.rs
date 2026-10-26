@@ -466,7 +466,13 @@ fn apply_defense(
                     .item_rules()
                     .facts
                     .facts_for_stack(
-                        state.entities.row(actor).loot.body_armor.as_ref().expect("armor"),
+                        state
+                            .entities
+                            .row(actor)
+                            .loot
+                            .body_armor
+                            .as_ref()
+                            .expect("armor"),
                         &state.registry.items,
                     )
                     .and_then(|facts| facts.max_damage);

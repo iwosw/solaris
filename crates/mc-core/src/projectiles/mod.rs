@@ -381,7 +381,12 @@ pub(crate) fn active_hook_present(state: &TickState) -> bool {
     state.entities.slots().any(|slot| {
         state.entities.body(slot).alive
             && matches!(
-                state.entities.row(slot).projectile.as_deref().map(|record| &record.kind),
+                state
+                    .entities
+                    .row(slot)
+                    .projectile
+                    .as_deref()
+                    .map(|record| &record.kind),
                 Some(ProjectileKind::FishingHook)
             )
     })
@@ -402,7 +407,12 @@ pub(crate) fn queue_owned_pearls_on_deaths(
     deaths: &[EntityId],
     removals: &mut Vec<EntitySlot>,
 ) {
-    if deaths.is_empty() || !crate::command_rules::boolean(state, "ender_pearls_vanish_on_death") {
+    if deaths.is_empty()
+        || !crate::command_rules::boolean(
+            state,
+            crate::command_rules::BoolRule::ENDER_PEARLS_VANISH_ON_DEATH,
+        )
+    {
         return;
     }
     let owners: rustc_hash::FxHashSet<Uuid> = deaths

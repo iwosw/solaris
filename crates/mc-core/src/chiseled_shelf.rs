@@ -1,6 +1,6 @@
 //! Chiseled bookshelf storage (vanilla 6-slot, books only).
-use mc_data::block_entity_kinds::BlockEntityKind;
 use mc_data::ItemStack;
+use mc_data::block_entity_kinds::BlockEntityKind;
 use mc_nbt::Tag;
 
 use crate::boundary::{BlockPos, EntityId, Hand, PlayerChange};
@@ -15,10 +15,9 @@ fn key(pos: BlockPos) -> (i32, i32, i32) {
 }
 
 fn at(state: &TickState, pos: BlockPos) -> Option<&mc_world::BlockState> {
-    state
-        .registry
-        .blocks
-        .by_id(mc_world::BlockStateId(state.world.block_at(pos.x, pos.y, pos.z)?))
+    state.registry.blocks.by_id(mc_world::BlockStateId(
+        state.world.block_at(pos.x, pos.y, pos.z)?,
+    ))
 }
 
 fn prop<'a>(block: &'a mc_world::BlockState, name: &str) -> Option<&'a str> {
@@ -97,7 +96,11 @@ fn sync_occupied(state: &mut TickState, pos: BlockPos) {
             *value = if *full { "true".into() } else { "false".into() };
         }
     }
-    let Some(next) = state.registry.blocks.by_name_and_props(&block.block.id, &properties) else {
+    let Some(next) = state
+        .registry
+        .blocks
+        .by_name_and_props(&block.block.id, &properties)
+    else {
         return;
     };
     state.world.set_block(pos.x, pos.y, pos.z, next.0);
@@ -149,9 +152,8 @@ pub(crate) fn use_on(
     // SelectableSlotContainer default (26.1.2): section(f, n) =
     // clamp(floor(f * 16 / (16 / n)), 0, n - 1); index = col + row * 3
     // with row from (1 - y) over 2 rows, col from u over 3 columns.
-    let section = |f: f32, n: i32| {
-        ((f * 16.0 / (16.0 / n as f32)).floor() as i32).clamp(0, n - 1) as usize
-    };
+    let section =
+        |f: f32, n: i32| ((f * 16.0 / (16.0 / n as f32)).floor() as i32).clamp(0, n - 1) as usize;
     let col = section(u, 3);
     let row = section(1.0 - cursor[1], 2);
     let index = col + row * 3;
@@ -186,7 +188,11 @@ pub(crate) fn use_on(
     for delta in [(0, 0, 0), (1, 0, 0), (-1, 0, 0), (0, 0, 1), (0, 0, -1)] {
         crate::redstone::schedule_cell(
             state,
-            BlockPos { x: pos.x + delta.0, y: pos.y + delta.1, z: pos.z + delta.2 },
+            BlockPos {
+                x: pos.x + delta.0,
+                y: pos.y + delta.1,
+                z: pos.z + delta.2,
+            },
             1,
             0,
         );
@@ -200,7 +206,10 @@ fn persist(state: &mut TickState, pos: BlockPos, last_slot: i32) {
         return;
     };
     let mut fields = vec![
-        ("id".into(), Tag::String(BlockEntityKind::ChiseledBookshelf.vanilla_id().into())),
+        (
+            "id".into(),
+            Tag::String(BlockEntityKind::ChiseledBookshelf.vanilla_id().into()),
+        ),
         ("x".into(), Tag::Int(pos.x)),
         ("y".into(), Tag::Int(pos.y)),
         ("z".into(), Tag::Int(pos.z)),
@@ -210,7 +219,9 @@ fn persist(state: &mut TickState, pos: BlockPos, last_slot: i32) {
     let nbt = Tag::Compound(fields);
     let mut bytes = Vec::new();
     mc_nbt::write_network(&mut bytes, &nbt).expect("chiseled shelf NBT encodes");
-    state.world.set_opaque_block_entity(pos, Some(bytes.clone()));
+    state
+        .world
+        .set_opaque_block_entity(pos, Some(bytes.clone()));
     state.opaque_changes.push((pos, Some(bytes)));
     state.world.mark_block_entity_visible(pos);
     let viewers: Vec<_> = state.players.values().map(|p| p.connection).collect();

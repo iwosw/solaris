@@ -156,7 +156,11 @@ pub(crate) fn egg_hatch(state: &TickState, at: BlockPos, id: u32, seed: u64) -> 
             .registry
             .blueprint(type_id)
             .map_or(10.0, |blueprint| blueprint.params.max_health);
-        births.push(EggSpawn { type_id, pos, health });
+        births.push(EggSpawn {
+            type_id,
+            pos,
+            health,
+        });
     }
     Some(Hatch {
         cells: cells

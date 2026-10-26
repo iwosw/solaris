@@ -790,8 +790,10 @@ fn reward(state: &mut TickState, entity: EntityId, id: &str, definition: &Advanc
             .get("announce_to_chat")
             .and_then(Value::as_bool)
             .unwrap_or(true)
-    }) && crate::command_rules::boolean(state, "show_advancement_messages")
-    {
+    }) && crate::command_rules::boolean(
+        state,
+        crate::command_rules::BoolRule::SHOW_ADVANCEMENT_MESSAGES,
+    ) {
         let title = definition
             .display
             .as_ref()

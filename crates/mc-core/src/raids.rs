@@ -132,7 +132,7 @@ pub(crate) fn raid_omens(state: &mut TickState) {
         };
         let uuid = state.entities.row(slot).uuid;
         let pos = state.entities.pos(slot);
-        let allowed = crate::command_rules::boolean(state, "raids")
+        let allowed = crate::command_rules::boolean(state, crate::command_rules::BoolRule::RAIDS)
             && state.difficulty != crate::survival::Difficulty::Peaceful
             && !state.players[&id].spectator();
         let bad = state.players[&id]
@@ -316,7 +316,7 @@ pub(crate) fn run(state: &mut TickState, changes: &mut ChangeSet) {
     state.raids.tick = state.raids.tick.wrapping_add(1);
     // run_dimension_tick publishes tick + 1 after this owner has advanced.
     state.raids.clock_tick = Some(state.tick + 1);
-    let enabled = crate::command_rules::boolean(state, "raids")
+    let enabled = crate::command_rules::boolean(state, crate::command_rules::BoolRule::RAIDS)
         && state.difficulty != crate::survival::Difficulty::Peaceful;
     let mut raids = std::mem::take(&mut state.raids.raids);
     for raid in raids.values_mut() {

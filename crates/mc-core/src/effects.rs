@@ -502,7 +502,10 @@ impl crate::player::PlayerState {
         let mut out = Vec::new();
         for effect in declared {
             match effect {
-                mc_data::food::ConsumeEffect::ApplyEffects { effects, probability } => {
+                mc_data::food::ConsumeEffect::ApplyEffects {
+                    effects,
+                    probability,
+                } => {
                     if *probability >= 1.0
                         || crate::enchantments::random(&mut self.enchantment_seed)
                             < f64::from(*probability)

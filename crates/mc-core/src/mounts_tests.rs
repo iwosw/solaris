@@ -683,7 +683,14 @@ fn wolf_body_armor_absorbs_melee_damage_and_wears() {
     let owner = state.entities.row(slot(&state, actor)).uuid;
     state.entities.row_mut(wslot).entity_life.taming.owner = Some(owner);
     equip(&mut state, actor, wolf, "wolf_armor");
-    assert!(state.entities.row(slot(&state, wolf)).loot.body_armor.is_some());
+    assert!(
+        state
+            .entities
+            .row(slot(&state, wolf))
+            .loot
+            .body_armor
+            .is_some()
+    );
     let before = state.entities.row(slot(&state, wolf)).health;
     state.merge_damage.push((
         slot(&state, wolf),

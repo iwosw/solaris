@@ -32,7 +32,7 @@ pub(crate) fn working(state: &TickState, v: &VillagerState) -> bool {
         && v.conversion_time.is_none()
         && v.activity == Activity::Work
         && (2_000..9_000).contains(&state.day_time.rem_euclid(24_000))
-        && crate::command_rules::boolean(state, "mob_griefing")
+        && crate::command_rules::boolean(state, crate::command_rules::BoolRule::MOB_GRIEFING)
 }
 
 fn carried(v: &VillagerState, item: u32, count: u32) -> bool {

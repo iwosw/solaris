@@ -263,7 +263,10 @@ pub(crate) fn traders(state: &mut TickState, changes: &mut ChangeSet) {
         }
     }
     if state.dimension != crate::dimensions::Dimension::Overworld
-        || !crate::command_rules::boolean(state, "spawn_wandering_traders")
+        || !crate::command_rules::boolean(
+            state,
+            crate::command_rules::BoolRule::SPAWN_WANDERING_TRADERS,
+        )
     {
         return;
     }
@@ -424,7 +427,7 @@ pub(crate) fn snow_trails(state: &mut TickState, writes: &mut Vec<(BlockPos, u32
         }
         if !cold
             || state.entities.row(slot).controls.no_ai
-            || !crate::command_rules::boolean(state, "mob_griefing")
+            || !crate::command_rules::boolean(state, crate::command_rules::BoolRule::MOB_GRIEFING)
         {
             continue;
         }

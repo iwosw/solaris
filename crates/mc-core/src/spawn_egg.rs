@@ -145,14 +145,26 @@ pub(crate) fn use_on(
         if remaining.count == 0 {
             remaining = ItemStack::EMPTY;
         }
-        let changes = state.players.get_mut(&actor).expect("egg player").replace_held(hand, remaining);
+        let changes = state
+            .players
+            .get_mut(&actor)
+            .expect("egg player")
+            .replace_held(hand, remaining);
         if let Some(connection) = state.connections.entity_connection(actor) {
             for change in changes {
                 state.push_player(connection, change);
             }
         }
-        crate::vibration::emit(state, [f64::from(clicked.x) + 0.5, f64::from(clicked.y) + 0.5, f64::from(clicked.z) + 0.5],
-            crate::vibration::GameEvent::BlockChange, Some(actor));
+        crate::vibration::emit(
+            state,
+            [
+                f64::from(clicked.x) + 0.5,
+                f64::from(clicked.y) + 0.5,
+                f64::from(clicked.z) + 0.5,
+            ],
+            crate::vibration::GameEvent::BlockChange,
+            Some(actor),
+        );
         return true;
     }
     if state.difficulty == crate::survival::Difficulty::Peaceful

@@ -357,8 +357,7 @@ fn gliding_firework_use_boosts_flight_speed() {
         .items
         .id_of(&Identifier::parse("minecraft:elytra").unwrap())
         .unwrap();
-    state.players.get_mut(&player).unwrap().inventory.slots[38] =
-        ItemStack::new(elytra, 1);
+    state.players.get_mut(&player).unwrap().inventory.slots[38] = ItemStack::new(elytra, 1);
     state.players.get_mut(&player).unwrap().fall_flying = true;
     state.entities.set_ground(slot, false);
     let rocket = state

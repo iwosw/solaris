@@ -42,9 +42,7 @@ fn hittables(state: &TickState, bodies: &mut Vec<Hittable>) {
                 }
                 // Fishing hooks retrieve dropped items (vanilla hook-vs-item
                 // collision); every other projectile passes through them.
-                EntityKind::Item { .. } => {
-                    crate::projectiles::active_hook_present(state)
-                }
+                EntityKind::Item { .. } => crate::projectiles::active_hook_present(state),
                 EntityKind::ExperienceOrb { .. } => false,
             };
         hittable.then(|| {
@@ -360,7 +358,10 @@ fn attached(state: &mut TickState, id: EntityId, record: &mut ProjectileState) -
         .is_some_and(|p| p.fall_flying && !p.vitals.is_dead());
     if gliding {
         let rot = state.entities.rot(target_slot);
-        let (yaw, pitch) = (f64::from(rot[0]).to_radians(), f64::from(rot[1]).to_radians());
+        let (yaw, pitch) = (
+            f64::from(rot[0]).to_radians(),
+            f64::from(rot[1]).to_radians(),
+        );
         let look = [
             -f64::from(mc_physics::mth::sin(yaw)) * f64::from(mc_physics::mth::cos(pitch)),
             -f64::from(mc_physics::mth::sin(pitch)),
@@ -623,8 +624,7 @@ fn step(
                         ..Default::default()
                     },
                 });
-            } else if record.kind.arrow()
-                && crate::item_frame::eject_on_projectile(state, body.id)
+            } else if record.kind.arrow() && crate::item_frame::eject_on_projectile(state, body.id)
             {
                 // Vanilla occupied frame: first non-explosive hit ejects the
                 // displayed item and leaves the frame attached. The arrow is

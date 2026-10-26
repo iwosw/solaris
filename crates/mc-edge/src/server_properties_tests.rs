@@ -74,7 +74,17 @@ fn spawn_protection_property_and_canonical_override() {
     let root = tempfile::tempdir().unwrap();
     let origin = root.path().join("server.toml");
     assert_eq!(load("", &origin).unwrap().server.spawn_protection, 16);
-    std::fs::write(root.path().join("server.properties"), "spawn-protection=9\n").unwrap();
+    std::fs::write(
+        root.path().join("server.properties"),
+        "spawn-protection=9\n",
+    )
+    .unwrap();
     assert_eq!(load("", &origin).unwrap().server.spawn_protection, 9);
-    assert_eq!(load("[server]\nspawn_protection=0\n", &origin).unwrap().server.spawn_protection, 0);
+    assert_eq!(
+        load("[server]\nspawn_protection=0\n", &origin)
+            .unwrap()
+            .server
+            .spawn_protection,
+        0
+    );
 }

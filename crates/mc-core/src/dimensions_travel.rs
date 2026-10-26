@@ -553,11 +553,12 @@ fn refresh(world: &mut TickState, output: &mut TickOutput, mut changes: ChangeSe
         let snapshot =
             Arc::get_mut(&mut output.snapshot).expect("unpublished dimensional snapshot");
         snapshot.day_time = world.day_time;
-        snapshot.day_time_rate = if crate::command_rules::boolean(world, "advance_time") {
-            1.0
-        } else {
-            0.0
-        };
+        snapshot.day_time_rate =
+            if crate::command_rules::boolean(world, crate::command_rules::BoolRule::ADVANCE_TIME) {
+                1.0
+            } else {
+                0.0
+            };
         snapshot.border = world.border;
         snapshot.raining = world.weather.0 != crate::commands::Weather::Clear;
         snapshot.rain_level = world.rain_level;
@@ -575,11 +576,12 @@ fn refresh(world: &mut TickState, output: &mut TickOutput, mut changes: ChangeSe
     let ensure_done = phase_start.map(|start| start.elapsed()).unwrap_or_default();
     let snapshot = Arc::get_mut(&mut output.snapshot).expect("unpublished dimensional snapshot");
     snapshot.day_time = world.day_time;
-    snapshot.day_time_rate = if crate::command_rules::boolean(world, "advance_time") {
-        1.0
-    } else {
-        0.0
-    };
+    snapshot.day_time_rate =
+        if crate::command_rules::boolean(world, crate::command_rules::BoolRule::ADVANCE_TIME) {
+            1.0
+        } else {
+            0.0
+        };
     snapshot.border = world.border;
     snapshot.raining = world.weather.0 != crate::commands::Weather::Clear;
     snapshot.rain_level = world.rain_level;

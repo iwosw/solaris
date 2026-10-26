@@ -24,17 +24,31 @@ fn timed_set_interpolates_linearly_and_settles_exact() {
     // progress over game time).
     let mut border = Border::default();
     execute(&mut border, parse(&["set", "100"]).unwrap(), [0.0; 3]);
-    execute(&mut border, parse(&["set", "50", "200t"]).unwrap(), [0.0; 3]);
-    assert_eq!((border.size, border.lerp_target, border.lerp_remaining), (100.0, 50.0, 200));
+    execute(
+        &mut border,
+        parse(&["set", "50", "200t"]).unwrap(),
+        [0.0; 3],
+    );
+    assert_eq!(
+        (border.size, border.lerp_target, border.lerp_remaining),
+        (100.0, 50.0, 200)
+    );
     for _ in 0..100 {
         border.advance_tick();
     }
-    assert!((border.size - 75.0).abs() < 1e-6, "mid-lerp size {}", border.size);
+    assert!(
+        (border.size - 75.0).abs() < 1e-6,
+        "mid-lerp size {}",
+        border.size
+    );
     assert_eq!(border.lerp_remaining, 100);
     for _ in 0..100 {
         border.advance_tick();
     }
-    assert_eq!((border.size, border.lerp_target, border.lerp_remaining), (50.0, 50.0, 0));
+    assert_eq!(
+        (border.size, border.lerp_target, border.lerp_remaining),
+        (50.0, 50.0, 0)
+    );
     // Time units: bare and t are ticks, s is 20x, d is 24000x.
     execute(&mut border, parse(&["set", "60", "10s"]).unwrap(), [0.0; 3]);
     assert_eq!(border.lerp_remaining, 200);
@@ -42,7 +56,11 @@ fn timed_set_interpolates_linearly_and_settles_exact() {
     assert_eq!(border.lerp_remaining, 24_000);
     // `add` targets current size + delta and stacks remaining time.
     execute(&mut border, parse(&["set", "100"]).unwrap(), [0.0; 3]);
-    execute(&mut border, parse(&["add", "-50", "100t"]).unwrap(), [0.0; 3]);
+    execute(
+        &mut border,
+        parse(&["add", "-50", "100t"]).unwrap(),
+        [0.0; 3],
+    );
     assert_eq!((border.lerp_target, border.lerp_remaining), (50.0, 100));
 }
 
@@ -52,15 +70,39 @@ fn damage_and_warning_options_mutate_named_fields() {
     // fields (vanilla setDamageBuffer/setDamagePerBlock/setWarningTime/
     // setWarningBlocks), not size or center.
     let mut border = Border::default();
-    execute(&mut border, parse(&["damage", "buffer", "0"]).unwrap(), [0.0; 3]);
-    execute(&mut border, parse(&["damage", "amount", "1"]).unwrap(), [0.0; 3]);
-    execute(&mut border, parse(&["warning", "distance", "7"]).unwrap(), [0.0; 3]);
-    execute(&mut border, parse(&["warning", "time", "3"]).unwrap(), [0.0; 3]);
+    execute(
+        &mut border,
+        parse(&["damage", "buffer", "0"]).unwrap(),
+        [0.0; 3],
+    );
+    execute(
+        &mut border,
+        parse(&["damage", "amount", "1"]).unwrap(),
+        [0.0; 3],
+    );
+    execute(
+        &mut border,
+        parse(&["warning", "distance", "7"]).unwrap(),
+        [0.0; 3],
+    );
+    execute(
+        &mut border,
+        parse(&["warning", "time", "3"]).unwrap(),
+        [0.0; 3],
+    );
     assert_eq!(
-        (border.safe_zone, border.damage_per_block, border.warning_blocks, border.warning_time),
+        (
+            border.safe_zone,
+            border.damage_per_block,
+            border.warning_blocks,
+            border.warning_time
+        ),
         (0.0, 1.0, 7, 3)
     );
-    assert_eq!((border.size, border.center_x, border.center_z), (MAX_SIZE, 0.0, 0.0));
+    assert_eq!(
+        (border.size, border.center_x, border.center_z),
+        (MAX_SIZE, 0.0, 0.0)
+    );
     assert!(parse(&["damage", "amount", "6"]).is_err());
     assert!(parse(&["damage", "buffer", "-1"]).is_err());
 }
@@ -87,7 +129,12 @@ fn checkpoint_and_fsynced_tail_keep_exact_border_and_reject_invalid_state() {
         },
     )
     .unwrap();
-    let next = Border { size: 64.0, lerp_target: 64.0, lerp_remaining: 0, ..base };
+    let next = Border {
+        size: 64.0,
+        lerp_target: 64.0,
+        lerp_remaining: 0,
+        ..base
+    };
     let mut writer = JournalWriter::open(dir.path(), 1).unwrap();
     writer
         .append(2, 2, &[JournalEntry::Border { value: next }])

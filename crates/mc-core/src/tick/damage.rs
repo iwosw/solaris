@@ -377,7 +377,10 @@ impl TickState {
                     events.push(EntityEvent::Death { entity: id });
                     crate::effects_trigger::death(self, id, &mut spawned);
                     crate::scoreboard::automatic(self, &[id], &[]);
-                    let keep_inventory = crate::command_rules::boolean(self, "keep_inventory");
+                    let keep_inventory = crate::command_rules::boolean(
+                        self,
+                        crate::command_rules::BoolRule::KEEP_INVENTORY,
+                    );
                     // A deployed `death_graves` package takes custody of the drops
                     // this death would have scattered. `keepInventory` wins, as in
                     // vanilla: a retained inventory never reaches a grave. A death
@@ -425,7 +428,10 @@ impl TickState {
                         if let Some(player) = self.players.get(&id) {
                             self.push_player(connection, player.health_change());
                         }
-                        let show = crate::command_rules::boolean(self, "show_death_messages");
+                        let show = crate::command_rules::boolean(
+                            self,
+                            crate::command_rules::BoolRule::SHOW_DEATH_MESSAGES,
+                        );
                         let message = if show {
                             super::death_message::component(
                                 self,
@@ -679,7 +685,10 @@ impl TickState {
                     if row
                         .last_player_hit
                         .is_some_and(|(_, tick)| self.tick.saturating_sub(tick) < 100)
-                        && crate::command_rules::boolean(self, "mob_drops")
+                        && crate::command_rules::boolean(
+                            self,
+                            crate::command_rules::BoolRule::MOB_DROPS,
+                        )
                         && sculk_absorbed.is_none()
                         && let EntityKind::Mob { type_id } = kind
                         && let Some(blueprint) = self.registry.blueprint(type_id)
@@ -751,15 +760,21 @@ impl TickState {
         }
         if matches!(self.entities.body(slot).kind, EntityKind::Player { .. }) {
             let rule = match piece.kind {
-                crate::survival::DamageKind::Fall => Some("fall_damage"),
-                crate::survival::DamageKind::Drowning => Some("drowning_damage"),
+                crate::survival::DamageKind::Fall => {
+                    Some(crate::command_rules::BoolRule::FALL_DAMAGE)
+                }
+                crate::survival::DamageKind::Drowning => {
+                    Some(crate::command_rules::BoolRule::DROWNING_DAMAGE)
+                }
                 crate::survival::DamageKind::InFire
                 | crate::survival::DamageKind::OnFire
                 | crate::survival::DamageKind::Lava
                 | crate::survival::DamageKind::HotFloor
                 | crate::survival::DamageKind::Fireball
                 | crate::survival::DamageKind::Lightning
-                | crate::survival::DamageKind::Campfire => Some("fire_damage"),
+                | crate::survival::DamageKind::Campfire => {
+                    Some(crate::command_rules::BoolRule::FIRE_DAMAGE)
+                }
                 _ => None,
             };
             if rule.is_some_and(|rule| !crate::command_rules::boolean(self, rule)) {
@@ -805,7 +820,7 @@ impl TickState {
                 || (attacker != target
                     && self.players.contains_key(&attacker)
                     && self.players.contains_key(&target)
-                    && !crate::command_rules::boolean(self, "pvp"))
+                    && !crate::command_rules::boolean(self, crate::command_rules::BoolRule::PVP))
             {
                 return false;
             }

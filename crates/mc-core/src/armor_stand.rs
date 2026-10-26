@@ -381,8 +381,7 @@ pub(crate) fn attack(
                 .min(8),
         );
         let wear = crate::projectiles::weapons::plan_wear(state, actor, held_slot, 1);
-        if crate::projectiles::weapons::costs_allowed(state, actor, &[], held_slot, wear.as_ref())
-        {
+        if crate::projectiles::weapons::costs_allowed(state, actor, &[], held_slot, wear.as_ref()) {
             crate::projectiles::weapons::apply_wear(state, actor, held_slot, wear);
             crate::projectiles::weapons::sync(state, actor);
         }
@@ -402,7 +401,7 @@ fn drop_items(
     stand_item: bool,
     spawned: &mut Vec<EntityId>,
 ) {
-    if !crate::command_rules::boolean(state, "entity_drops") {
+    if !crate::command_rules::boolean(state, crate::command_rules::BoolRule::ENTITY_DROPS) {
         return;
     }
     let pos = state.entities.pos(slot);

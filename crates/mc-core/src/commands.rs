@@ -318,7 +318,9 @@ pub enum Command {
     /// Vanilla `/debug stop`: end profiling, report elapsed ticks/time/TPS.
     DebugStop,
     /// Vanilla `/debug function <id|#tag>`: trace one function execution.
-    DebugFunction { name: String },
+    DebugFunction {
+        name: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -715,16 +717,18 @@ pub(crate) fn target_of(word: &str) -> Result<Target, CommandError> {
                     .strip_prefix('{')
                     .and_then(|body| body.strip_suffix('}'))
                     .ok_or_else(invalid)?;
-                for entry in body.split(',').map(str::trim).filter(|entry| !entry.is_empty()) {
+                for entry in body
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|entry| !entry.is_empty())
+                {
                     let (id, granted) = entry.split_once('=').ok_or_else(invalid)?;
                     let granted = match granted.trim() {
                         "true" => true,
                         "false" => false,
                         _ => return Err(invalid()),
                     };
-                    selector
-                        .advancements
-                        .push((id.trim().to_owned(), granted));
+                    selector.advancements.push((id.trim().to_owned(), granted));
                 }
                 if selector.advancements.is_empty() {
                     return Err(invalid());
@@ -735,7 +739,11 @@ pub(crate) fn target_of(word: &str) -> Result<Target, CommandError> {
                     .strip_prefix('{')
                     .and_then(|body| body.strip_suffix('}'))
                     .ok_or_else(invalid)?;
-                for entry in body.split(',').map(str::trim).filter(|entry| !entry.is_empty()) {
+                for entry in body
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|entry| !entry.is_empty())
+                {
                     let (objective, range) = entry.split_once('=').ok_or_else(invalid)?;
                     let objective = objective.trim().to_owned();
                     if objective.is_empty()

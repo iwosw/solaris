@@ -1114,10 +1114,19 @@ mod tests {
             assert_eq!(field(data, "OpaqueData"), Some(&Tag::Long(37)));
             assert_eq!(field(data, "center_x"), Some(&Tag::Double(border.center_x)));
             assert_eq!(field(data, "center_z"), Some(&Tag::Double(border.center_z)));
-            assert_eq!(field(data, "warning_time"), Some(&Tag::Int(border.warning_time * 20)));
+            assert_eq!(
+                field(data, "warning_time"),
+                Some(&Tag::Int(border.warning_time * 20))
+            );
             assert_eq!(field(data, "size"), Some(&Tag::Double(border.size)));
-            assert_eq!(field(data, "lerp_target"), Some(&Tag::Double(border.lerp_target)));
-            assert_eq!(field(data, "lerp_time"), Some(&Tag::Long(border.lerp_remaining)));
+            assert_eq!(
+                field(data, "lerp_target"),
+                Some(&Tag::Double(border.lerp_target))
+            );
+            assert_eq!(
+                field(data, "lerp_time"),
+                Some(&Tag::Long(border.lerp_remaining))
+            );
         }
     }
 
@@ -1145,7 +1154,10 @@ mod tests {
         for ((_, path), (blocks, time)) in BORDER_PATHS.into_iter().zip(warnings) {
             let data = saved_data(&recovered, path).unwrap().unwrap();
             assert_eq!(field(data, "warning_blocks"), Some(&Tag::Int(blocks)));
-            assert_eq!(field(data, "warning_time"), Some(&Tag::Int(time.div_euclid(20) * 20)));
+            assert_eq!(
+                field(data, "warning_time"),
+                Some(&Tag::Int(time.div_euclid(20) * 20))
+            );
         }
         manifest.border.size = 321.0;
         checkpoint_tags(&mut recovered, 42, &manifest).unwrap();
@@ -1158,7 +1170,10 @@ mod tests {
             };
             assert_eq!(field(data, "size"), Some(&Tag::Double(border.size)));
             assert_eq!(field(data, "warning_blocks"), Some(&Tag::Int(blocks)));
-            assert_eq!(field(data, "warning_time"), Some(&Tag::Int(border.warning_time * 20)));
+            assert_eq!(
+                field(data, "warning_time"),
+                Some(&Tag::Int(border.warning_time * 20))
+            );
         }
     }
 

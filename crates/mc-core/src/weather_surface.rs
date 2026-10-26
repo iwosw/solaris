@@ -127,7 +127,10 @@ pub(super) fn precipitate(
     if weather != Precipitation::Snow {
         return;
     }
-    let maximum = crate::command_rules::integer(state, "max_snow_accumulation_height");
+    let maximum = crate::command_rules::integer(
+        state,
+        crate::command_rules::IntRule::MAX_SNOW_ACCUMULATION_HEIGHT,
+    );
     if maximum == 0 {
         return;
     }

@@ -279,7 +279,8 @@ pub(crate) fn text(value: impl ToString) -> mc_nbt::Tag {
 
 /// Whether the simulated day clock advances this tick.
 pub(crate) fn advances_day(state: &TickState) -> bool {
-    state.tick_control.runs_normally() && crate::command_rules::boolean(state, "advance_time")
+    state.tick_control.runs_normally()
+        && crate::command_rules::boolean(state, crate::command_rules::BoolRule::ADVANCE_TIME)
 }
 
 /// Send `ClientboundTickingState` to every connected player in every world.

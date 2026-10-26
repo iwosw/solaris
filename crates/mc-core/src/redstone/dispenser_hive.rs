@@ -115,7 +115,10 @@ pub(super) fn harvest(
 /// Honey level of a beehive/bee nest, or None for other blocks.
 fn hive_honey(state: &TickState, target: BlockPos) -> Option<u8> {
     let current = state.world.block_at(target.x, target.y, target.z)?;
-    let block = state.registry.blocks.by_id(mc_world::BlockStateId(current))?;
+    let block = state
+        .registry
+        .blocks
+        .by_id(mc_world::BlockStateId(current))?;
     if !matches!(block.block.id.path(), "beehive" | "bee_nest") {
         return None;
     }

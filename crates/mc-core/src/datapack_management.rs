@@ -51,9 +51,7 @@ fn pack_name(word: &str) -> Option<String> {
     if word.starts_with('"') {
         return unquote(word);
     }
-    if word.is_empty()
-        || word.len() > 1024
-        || word.contains([' ', '\t', '\n', '[', ']', '{', '}'])
+    if word.is_empty() || word.len() > 1024 || word.contains([' ', '\t', '\n', '[', ']', '{', '}'])
     {
         return None;
     }
@@ -148,13 +146,21 @@ fn list(
     let mut entries = Vec::new();
     if show_available {
         for name in &selection.disabled {
-            let description = packs.descriptions.get(name).map(String::as_str).unwrap_or("");
+            let description = packs
+                .descriptions
+                .get(name)
+                .map(String::as_str)
+                .unwrap_or("");
             entries.push(hover_entry(name, description));
         }
     }
     if show_enabled {
         for name in &selection.enabled {
-            let description = packs.descriptions.get(name).map(String::as_str).unwrap_or("");
+            let description = packs
+                .descriptions
+                .get(name)
+                .map(String::as_str)
+                .unwrap_or("");
             entries.push(hover_entry(name, description));
         }
     }
@@ -198,12 +204,18 @@ fn move_enabled(selection: &mut Selection, id: &str, rest: &[&str]) -> Result<()
         ["first"] => {
             let entry = selection.enabled.remove(position);
             // `vanilla` stays first: enabling past it is unsupported.
-            let at = if selection.enabled.first().is_some_and(|first| first == "vanilla") {
+            let at = if selection
+                .enabled
+                .first()
+                .is_some_and(|first| first == "vanilla")
+            {
                 1
             } else {
                 0
             };
-            selection.enabled.insert(at.min(selection.enabled.len()), entry);
+            selection
+                .enabled
+                .insert(at.min(selection.enabled.len()), entry);
         }
         ["before", other] | ["after", other] => {
             let other = pack_name(other).ok_or_else(|| format!("Unknown datapack {other}"))?;
@@ -215,22 +227,39 @@ fn move_enabled(selection: &mut Selection, id: &str, rest: &[&str]) -> Result<()
                 .ok_or_else(|| format!("Unknown datapack {other}"))?;
             let at = if rest[0] == "after" { at + 1 } else { at };
             // Never order before the builtin vanilla pack.
-            let at = if selection.enabled.first().is_some_and(|first| first == "vanilla") {
+            let at = if selection
+                .enabled
+                .first()
+                .is_some_and(|first| first == "vanilla")
+            {
                 at.max(1)
             } else {
                 at
             };
-            selection.enabled.insert(at.min(selection.enabled.len()), entry);
+            selection
+                .enabled
+                .insert(at.min(selection.enabled.len()), entry);
         }
-        _ => return Err("Supported: datapack enable <pack> [first|last|before|after <pack>]".into()),
+        _ => {
+            return Err(
+                "Supported: datapack enable <pack> [first|last|before|after <pack>]".into(),
+            );
+        }
     }
     Ok(())
 }
 
 fn enable(state: &mut TickState, rest: &[&str]) -> Result<i32, String> {
     let (name, order) = match rest {
-        [name, order @ ..] => (reference(&[*name]).ok_or_else(|| format!("Unknown datapack {name}"))?, order),
-        [] => return Err("Supported: datapack enable <pack> [first|last|before|after <pack>]".into()),
+        [name, order @ ..] => (
+            reference(&[*name]).ok_or_else(|| format!("Unknown datapack {name}"))?,
+            order,
+        ),
+        [] => {
+            return Err(
+                "Supported: datapack enable <pack> [first|last|before|after <pack>]".into(),
+            );
+        }
     };
     if name == "vanilla" {
         return Err("Datapack vanilla is already enabled".into());

@@ -111,7 +111,7 @@ fn prime(
     fuse: u32,
     block_state: u32,
 ) -> Option<EntityId> {
-    if !crate::command_rules::boolean(state, "tnt_explodes")
+    if !crate::command_rules::boolean(state, crate::command_rules::BoolRule::TNT_EXPLODES)
         || fuse > i16::MAX as u32
         || position.iter().any(|value| !value.is_finite())
         || state
@@ -273,7 +273,7 @@ pub(crate) fn run(state: &mut TickState, intents: &mut Vec<Intent>) {
         record.on_ground = state.entities.ground(slot);
         record.fuse = record.fuse.saturating_sub(1);
         if record.fuse == 0 {
-            if crate::command_rules::boolean(state, "tnt_explodes") {
+            if crate::command_rules::boolean(state, crate::command_rules::BoolRule::TNT_EXPLODES) {
                 let mut center = state.entities.pos(slot);
                 center[1] += HEIGHT * 0.0625;
                 intents.push(Intent {

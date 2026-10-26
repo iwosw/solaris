@@ -69,7 +69,7 @@ pub(super) fn apply_edits(
     // Roll every destroyed block against the preimage before committing any
     // part of the structure. Moving blocks themselves never produce loot.
     let mut drops = Vec::new();
-    if crate::command_rules::boolean(state, "block_drops") {
+    if crate::command_rules::boolean(state, crate::command_rules::BoolRule::BLOCK_DROPS) {
         for edit in &edits {
             let old = state
                 .world

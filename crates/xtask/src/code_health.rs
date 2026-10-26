@@ -4,6 +4,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 mod ownership_rules;
+mod ratchet;
 
 use ownership_rules::{LOWER_CRATE_OWNERSHIP, OwnershipRule};
 
@@ -63,6 +64,7 @@ pub(super) fn run_code_health() -> Result<(), i32> {
 
     println!("Solaris code-health report");
     println!();
+    ratchet::report(&root);
 
     if findings.is_empty() {
         println!("summary: 0 fail");

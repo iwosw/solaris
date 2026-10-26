@@ -148,7 +148,10 @@ pub fn reputation(state: &VillagerState, customer: Uuid) -> i32 {
 /// Deterministic per-villager seed: stable across reopen (offers persist),
 //  distinct across villagers (birth key + profession + level).
 fn villager_seed(state: &VillagerState) -> u64 {
-    let mut seed = state.birth_sequence.unwrap_or(0).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+    let mut seed = state
+        .birth_sequence
+        .unwrap_or(0)
+        .wrapping_mul(0x9E37_79B9_7F4A_7C15);
     seed ^= state.xp as u64;
     seed ^= state.gossips.len() as u64 * 0xBF58_476D_1CE4_E5B9;
     seed ^ (state.data.level as u64).wrapping_mul(0x94D0_49BB_1331_11EB)
@@ -171,7 +174,9 @@ fn unlock(state: &mut VillagerState, registry: &CoreRegistry, level: u8) {
     let mut order: Vec<usize> = (0..pool.len()).collect();
     let mut seed = villager_seed(state);
     for i in (1..order.len()).rev() {
-        seed = seed.wrapping_mul(0x5851_f42d_4c95_7f2d).wrapping_add(0x1405_7eb5_4dff_3b2b);
+        seed = seed
+            .wrapping_mul(0x5851_f42d_4c95_7f2d)
+            .wrapping_add(0x1405_7eb5_4dff_3b2b);
         order.swap(i, (seed >> 33) as usize % (i + 1));
     }
     let mut added = 0;
@@ -273,25 +278,30 @@ fn add_librarian_book(state: &mut VillagerState, registry: &CoreRegistry, level:
     // base 2 + level-scaled cost, capped like the wiki tables.
     let price = (5 + 3 * book_level + (level as i32 - 1) * 2).clamp(2, 64);
     let (Some(emerald), Some(book), Some(enchanted)) = (
-        registry.items.id_of(&mc_data::Identifier::parse("minecraft:emerald").unwrap()),
-        registry.items.id_of(&mc_data::Identifier::parse("minecraft:book").unwrap()),
+        registry
+            .items
+            .id_of(&mc_data::Identifier::parse("minecraft:emerald").unwrap()),
+        registry
+            .items
+            .id_of(&mc_data::Identifier::parse("minecraft:book").unwrap()),
         registry
             .items
             .id_of(&mc_data::Identifier::parse("minecraft:enchanted_book").unwrap()),
     ) else {
         return;
     };
-    let enchantment = mc_data::Identifier::parse(format!("minecraft:{name}"))
-        .expect("librarian enchantment id");
+    let enchantment =
+        mc_data::Identifier::parse(format!("minecraft:{name}")).expect("librarian enchantment id");
     // Enchanted books carry stored_enchantments, not the item enchantment
     // family (vanilla StoredEnchantments component).
     let mut result = ItemStack::new(enchanted, 1);
-    result.extended_mut().stored_enchantments.push(
-        mc_data::ItemEnchantment {
+    result
+        .extended_mut()
+        .stored_enchantments
+        .push(mc_data::ItemEnchantment {
             id: enchantment,
             level: book_level,
-        },
-    );
+        });
     let candidate = VillagerTradeOffer {
         cost_a: ItemStack::new(emerald, price),
         cost_b: Some(ItemStack::new(book, 1)),
@@ -304,9 +314,7 @@ fn add_librarian_book(state: &mut VillagerState, registry: &CoreRegistry, level:
         demand: 0,
         price_multiplier: 0.2,
     };
-    if state.offers.len() < 12
-        && !state.offers.iter().any(|o| o.result == candidate.result)
-    {
+    if state.offers.len() < 12 && !state.offers.iter().any(|o| o.result == candidate.result) {
         state.offers.push(candidate);
     }
 }

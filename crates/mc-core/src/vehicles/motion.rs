@@ -379,7 +379,8 @@ fn cart(state: &mut TickState, slot: EntitySlot) {
     speed = speed.clamp(-max, max);
     if rail.activator && rail.powered {
         let name = super::name(state, slot);
-        let can_prime = crate::command_rules::boolean(state, "tnt_explodes");
+        let can_prime =
+            crate::command_rules::boolean(state, crate::command_rules::BoolRule::TNT_EXPLODES);
         let v = state
             .entities
             .row_mut(slot)
@@ -571,7 +572,7 @@ pub(super) fn step(state: &mut TickState, slot: EntitySlot, intents: &mut Vec<In
         v.fuse = fuse;
     }
     if fuse == 0 {
-        if !crate::command_rules::boolean(state, "tnt_explodes") {
+        if !crate::command_rules::boolean(state, crate::command_rules::BoolRule::TNT_EXPLODES) {
             state
                 .entities
                 .row_mut(slot)

@@ -1315,17 +1315,30 @@ fn fix_mobs_peaceful_command_removes_hostiles_with_spawning_disabled() {
     state.gamerules.insert("spawn_mobs".into(), "false".into());
     let mut ids = Vec::new();
     for name in ["zombie", "skeleton", "cow"] {
-        let id = state.registry.entity_types.id_of(&mc_data::Identifier::parse(format!("minecraft:{name}")).unwrap()).unwrap();
+        let id = state
+            .registry
+            .entity_types
+            .id_of(&mc_data::Identifier::parse(format!("minecraft:{name}")).unwrap())
+            .unwrap();
         ids.push(state.spawn_mob(id, centre, 20.0));
     }
-    run_tick(&mut state, &[PlayerInput::ConsoleCommand(
-        crate::command_console::ConsoleCommand::new("difficulty peaceful".into()).0,
-    )]);
+    run_tick(
+        &mut state,
+        &[PlayerInput::ConsoleCommand(
+            crate::command_console::ConsoleCommand::new("difficulty peaceful".into()).0,
+        )],
+    );
     let (output, _, _) = run_tick(&mut state, &[]);
     assert_eq!(state.difficulty, crate::survival::Difficulty::Peaceful);
     for id in &ids[..2] {
-        assert!(state.entities.slot_of(*id).is_none(), "hostile {id:?} survives peaceful");
+        assert!(
+            state.entities.slot_of(*id).is_none(),
+            "hostile {id:?} survives peaceful"
+        );
         assert!(output.changes.entities_removed.contains(id));
     }
-    assert!(state.entities.slot_of(ids[2]).is_some(), "passive control survives");
+    assert!(
+        state.entities.slot_of(ids[2]).is_some(),
+        "passive control survives"
+    );
 }

@@ -301,8 +301,10 @@ fn face_has_message(nbt: &Tag, front: bool) -> bool {
         return false;
     };
     let side = if front { "front_text" } else { "back_text" };
-    let Some(Tag::Compound(side_fields)) =
-        fields.iter().find(|(key, _)| key == side).map(|(_, value)| value)
+    let Some(Tag::Compound(side_fields)) = fields
+        .iter()
+        .find(|(key, _)| key == side)
+        .map(|(_, value)| value)
     else {
         return false;
     };

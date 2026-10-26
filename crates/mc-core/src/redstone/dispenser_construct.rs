@@ -28,25 +28,23 @@ pub(super) fn complete(
     }
     // The head cell must be empty (the dispenser places the head there);
     // a wearable entity target instead takes the equipment path.
-    let occupied = state
-        .entities
-        .slots()
-        .any(|slot| {
-            let body = state.entities.body(slot);
-            let at = state.entities.pos(slot);
-            body.alive
-                && (at[0] - (f64::from(target.x) + 0.5)).abs() < 0.6
-                && (at[2] - (f64::from(target.z) + 0.5)).abs() < 0.6
-                && at[1] < f64::from(target.y) + 1.0
-                && at[1] + body.height > f64::from(target.y)
-        });
+    let occupied = state.entities.slots().any(|slot| {
+        let body = state.entities.body(slot);
+        let at = state.entities.pos(slot);
+        body.alive
+            && (at[0] - (f64::from(target.x) + 0.5)).abs() < 0.6
+            && (at[2] - (f64::from(target.z) + 0.5)).abs() < 0.6
+            && at[1] < f64::from(target.y) + 1.0
+            && at[1] + body.height > f64::from(target.y)
+    });
     if occupied {
         return false;
     }
     let head_state = if pumpkin {
-        state.registry.blocks.block(
-            &mc_data::Identifier::parse("minecraft:carved_pumpkin").expect("pumpkin block"),
-        )
+        state
+            .registry
+            .blocks
+            .block(&mc_data::Identifier::parse("minecraft:carved_pumpkin").expect("pumpkin block"))
     } else {
         state.registry.blocks.block(
             &mc_data::Identifier::parse("minecraft:wither_skeleton_skull").expect("skull block"),
@@ -61,7 +59,9 @@ pub(super) fn complete(
     // any from after_blocks) is truncated and the cell restored, so the
     // caller's footprint stays consistent and no head block remains.
     let writes_len = writes.len();
-    state.world.set_block(target.x, target.y, target.z, head_state.default.0);
+    state
+        .world
+        .set_block(target.x, target.y, target.z, head_state.default.0);
     writes.push((target, head_state.default.0));
     let before = spawned.len();
     crate::golems::after_blocks(state, writes);
@@ -103,7 +103,9 @@ pub(super) fn complete(
         // original cell (a dispenser ejects the head instead of placing it —
         // returning false routes to the item-ejection path).
         writes.truncate(writes_len);
-        state.world.set_block(target.x, target.y, target.z, state.registry.states.air);
+        state
+            .world
+            .set_block(target.x, target.y, target.z, state.registry.states.air);
     }
     summoned
 }

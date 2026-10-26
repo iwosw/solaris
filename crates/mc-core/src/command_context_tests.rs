@@ -37,7 +37,11 @@ fn command_parity_fork_limit_is_strict_and_sequence_costs_modifier_stages() {
     command(&mut state, entity, "execute as @s run time add 1");
     assert_eq!(state.day_time, 0);
     command(&mut state, entity, "gamerule minecraft:max_command_forks 2");
-    command(&mut state, entity, "gamerule minecraft:max_command_sequence_length 2");
+    command(
+        &mut state,
+        entity,
+        "gamerule minecraft:max_command_sequence_length 2",
+    );
     command(&mut state, entity, "execute as @s run time add 1");
     assert_eq!(state.day_time, 1);
     command(&mut state, entity, "execute as @s at @s run time add 1");
@@ -52,7 +56,11 @@ fn command_parity_zero_sequence_budget_still_admits_one_root_command() {
     // one so ordinary and console administration can restore a positive
     // limit instead of rejecting every native root command.
     let (mut state, entity) = fixture();
-    command(&mut state, entity, "gamerule minecraft:max_command_sequence_length 0");
+    command(
+        &mut state,
+        entity,
+        "gamerule minecraft:max_command_sequence_length 0",
+    );
     command(&mut state, entity, "time add 5");
     assert_eq!(state.day_time, 5);
     command(
@@ -63,7 +71,6 @@ fn command_parity_zero_sequence_budget_still_admits_one_root_command() {
     command(&mut state, entity, "time add 1");
     assert_eq!(state.day_time, 6);
 }
-
 
 #[test]
 fn positioned_align_rotated_and_anchor_affect_native_local_coordinates() {
@@ -257,7 +264,11 @@ fn nested_execute_budget_and_permissions_fail_closed() {
     // Zero clamps the root quota to one command: a single chain leaf still
     // executes (no lockout), while a modifier stage plus two leaves exceeds
     // the single quota and fails closed (see the zero-budget test above).
-    command(&mut state, entity, "gamerule minecraft:max_command_sequence_length 0");
+    command(
+        &mut state,
+        entity,
+        "gamerule minecraft:max_command_sequence_length 0",
+    );
     run(
         &mut state,
         "execute as @s run execute as @s run time add 100",

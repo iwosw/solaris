@@ -99,7 +99,13 @@ fn media(effects: &[Effect]) -> Vec<(u64, u8, u8)> {
     effects
         .iter()
         .filter(|e| matches!(e.payload[1], 1 | 8))
-        .map(|e| (e.to.0, e.payload[1], if e.payload[1] == 1 { e.payload[27] } else { 0 }))
+        .map(|e| {
+            (
+                e.to.0,
+                e.payload[1],
+                if e.payload[1] == 1 { e.payload[27] } else { 0 },
+            )
+        })
         .collect()
 }
 
@@ -525,13 +531,26 @@ fn audio_is_bounded_rate_limited_and_strikes_close_the_screen() {
 }
 
 fn send(relay: &mut Relay, bytes: &[u8]) -> Vec<Effect> {
-    relay.handle(OWNER, decode(bytes).unwrap(), &Monitors(true), Instant::now())
+    relay.handle(
+        OWNER,
+        decode(bytes).unwrap(),
+        &Monitors(true),
+        Instant::now(),
+    )
 }
 fn grant(relay: &mut Relay, who: ConnectionId) {
     let now = Instant::now();
     let asked = relay.handle(who, Message::Request(row()), &Monitors(true), now);
     let request = u32::from_be_bytes(asked[0].payload[18..22].try_into().unwrap());
-    relay.handle(OWNER, Message::Answer { request, allow: true }, &Monitors(true), now);
+    relay.handle(
+        OWNER,
+        Message::Answer {
+            request,
+            allow: true,
+        },
+        &Monitors(true),
+        now,
+    );
 }
 fn key_request() -> Vec<u8> {
     let mut out = vec![1, 8];
@@ -542,16 +561,35 @@ fn key_request() -> Vec<u8> {
 #[test]
 fn deltas_wait_for_a_key_frame_per_viewer_and_new_watchers_request_one() {
     let (mut relay, _) = granted(watching());
-    assert!(media(&send(&mut relay, &delta(b"d1"))).is_empty(), "no delta before the first key frame");
+    assert!(
+        media(&send(&mut relay, &delta(b"d1"))).is_empty(),
+        "no delta before the first key frame"
+    );
     assert_eq!(media(&send(&mut relay, &part(0, 1, b"k1"))), [(2, 1, 1)]);
     assert_eq!(media(&send(&mut relay, &delta(b"d2"))), [(2, 1, 0)]);
     // BYSTANDER joins mid-stream: the owner is asked, once, for a key frame.
     grant(&mut relay, BYSTANDER);
-    assert_eq!(media(&relay.tick(poses(watching()), &Monitors(true))), [(1, 8, 0)]);
-    assert!(media(&relay.tick(poses(watching()), &Monitors(true))).is_empty(), "one outstanding request is enough");
-    assert_eq!(media(&send(&mut relay, &delta(b"d3"))), [(2, 1, 0)], "the new watcher still waits");
-    assert_eq!(media(&send(&mut relay, &part(0, 1, b"k2"))), [(2, 1, 1), (3, 1, 1)]);
-    assert_eq!(media(&send(&mut relay, &delta(b"d4"))), [(2, 1, 0), (3, 1, 0)]);
+    assert_eq!(
+        media(&relay.tick(poses(watching()), &Monitors(true))),
+        [(1, 8, 0)]
+    );
+    assert!(
+        media(&relay.tick(poses(watching()), &Monitors(true))).is_empty(),
+        "one outstanding request is enough"
+    );
+    assert_eq!(
+        media(&send(&mut relay, &delta(b"d3"))),
+        [(2, 1, 0)],
+        "the new watcher still waits"
+    );
+    assert_eq!(
+        media(&send(&mut relay, &part(0, 1, b"k2"))),
+        [(2, 1, 1), (3, 1, 1)]
+    );
+    assert_eq!(
+        media(&send(&mut relay, &delta(b"d4"))),
+        [(2, 1, 0), (3, 1, 0)]
+    );
 }
 
 #[test]
@@ -559,9 +597,17 @@ fn looking_again_restarts_the_stream_from_a_key_frame() {
     let (mut relay, _) = granted(watching());
     send(&mut relay, &part(0, 1, b"k1"));
     let aside = relay.tick(poses(away()), &Monitors(true));
-    assert_eq!(kinds(&aside), [(2, 2), (1, 0)], "STOP viewer, DEMAND off owner");
+    assert_eq!(
+        kinds(&aside),
+        [(2, 2), (1, 0)],
+        "STOP viewer, DEMAND off owner"
+    );
     let again = relay.tick(poses(watching()), &Monitors(true));
-    assert_eq!(kinds(&again), [(1, 0)], "DEMAND on is the owner's cue for a key frame");
+    assert_eq!(
+        kinds(&again),
+        [(1, 0)],
+        "DEMAND on is the owner's cue for a key frame"
+    );
     assert!(media(&send(&mut relay, &delta(b"d"))).is_empty());
     assert_eq!(media(&send(&mut relay, &part(0, 1, b"k2"))), [(2, 1, 1)]);
 }
@@ -571,8 +617,14 @@ fn a_dropped_frame_forces_the_viewer_back_to_a_key_frame() {
     let (mut relay, _) = granted(watching());
     send(&mut relay, &part(0, 1, b"k1"));
     assert_eq!(media(&relay.frame_dropped(VIEWER, row())), [(1, 8, 0)]);
-    assert!(relay.frame_dropped(VIEWER, row()).is_empty(), "already requested");
-    assert!(relay.frame_dropped(BYSTANDER, row()).is_empty(), "not watching");
+    assert!(
+        relay.frame_dropped(VIEWER, row()).is_empty(),
+        "already requested"
+    );
+    assert!(
+        relay.frame_dropped(BYSTANDER, row()).is_empty(),
+        "not watching"
+    );
     assert!(media(&send(&mut relay, &delta(b"d"))).is_empty());
     assert_eq!(media(&send(&mut relay, &part(0, 1, b"k2"))), [(2, 1, 1)]);
     assert_eq!(media(&send(&mut relay, &delta(b"d"))), [(2, 1, 0)]);
@@ -587,11 +639,19 @@ fn the_owner_budget_dropping_a_frame_resyncs_every_watcher_once() {
     let mut requests = 0;
     for _ in 0..10 {
         for index in 0..4 {
-            let effects = relay.handle(OWNER, decode(&part_kind(0, index, 4, &big)).unwrap(), &Monitors(true), now);
+            let effects = relay.handle(
+                OWNER,
+                decode(&part_kind(0, index, 4, &big)).unwrap(),
+                &Monitors(true),
+                now,
+            );
             requests += media(&effects).iter().filter(|m| **m == (1, 8, 0)).count();
         }
     }
-    assert_eq!(requests, 1, "dropping deltas asks the owner for one key frame, not one per frame");
+    assert_eq!(
+        requests, 1,
+        "dropping deltas asks the owner for one key frame, not one per frame"
+    );
 }
 
 #[test]
@@ -599,11 +659,34 @@ fn viewer_key_request_is_honoured_only_while_watching() {
     let (mut relay, _) = granted(watching());
     send(&mut relay, &part(0, 1, b"k1"));
     let wire = key_request();
-    let ask = relay.handle(VIEWER, decode(&wire).unwrap(), &Monitors(true), Instant::now());
+    let ask = relay.handle(
+        VIEWER,
+        decode(&wire).unwrap(),
+        &Monitors(true),
+        Instant::now(),
+    );
     assert_eq!(media(&ask), [(1, 8, 0)]);
-    assert!(relay.handle(BYSTANDER, decode(&wire).unwrap(), &Monitors(true), Instant::now()).is_empty());
+    assert!(
+        relay
+            .handle(
+                BYSTANDER,
+                decode(&wire).unwrap(),
+                &Monitors(true),
+                Instant::now()
+            )
+            .is_empty()
+    );
     let (mut aside, _) = granted(away());
-    assert!(aside.handle(VIEWER, decode(&wire).unwrap(), &Monitors(true), Instant::now()).is_empty());
+    assert!(
+        aside
+            .handle(
+                VIEWER,
+                decode(&wire).unwrap(),
+                &Monitors(true),
+                Instant::now()
+            )
+            .is_empty()
+    );
     assert!(decode(&[wire.as_slice(), &[0]].concat()).is_none());
 }
 
@@ -612,7 +695,14 @@ fn only_h264_with_a_boolean_key_flag_is_accepted() {
     let (mut relay, _) = granted(watching());
     let mut jpeg = part(0, 1, b"x");
     jpeg[26] = 0;
-    assert_eq!(kinds(&send(&mut relay, &jpeg))[0], (1, 3), "the removed JPEG codec closes the screen");
+    assert_eq!(
+        kinds(&send(&mut relay, &jpeg))[0],
+        (1, 3),
+        "the removed JPEG codec closes the screen"
+    );
     let (mut relay, _) = granted(watching());
-    assert_eq!(kinds(&send(&mut relay, &part_kind(2, 0, 1, b"x")))[0], (1, 3));
+    assert_eq!(
+        kinds(&send(&mut relay, &part_kind(2, 0, 1, b"x")))[0],
+        (1, 3)
+    );
 }

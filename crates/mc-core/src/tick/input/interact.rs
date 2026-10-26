@@ -80,7 +80,10 @@ pub(in crate::tick) fn dig(
         return;
     }
     if *action == DigAction::Start
-        && state.players.get(&entity).is_some_and(|player| !player.creative())
+        && state
+            .players
+            .get(&entity)
+            .is_some_and(|player| !player.creative())
         && crate::vanilla_interact::dragon_egg(state, entity, *position)
     {
         return;

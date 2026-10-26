@@ -334,7 +334,7 @@ fn run_with(
     // The disabled-spawn path only needs burn/graze: keep the position
     // projection (and its census/spawn consumers) out of it entirely.
     let cycle = state.tick.is_multiple_of(CYCLE);
-    if !crate::command_rules::boolean(state, "spawn_mobs") {
+    if !crate::command_rules::boolean(state, crate::command_rules::BoolRule::SPAWN_MOBS) {
         if cycle {
             burn(state, is_night(state.day_time), changes);
             graze(state, &mut rng, changes);
@@ -348,7 +348,8 @@ fn run_with(
     positions.extend(observers.iter().map(|(_, pos)| *pos));
 
     let night = is_night(state.day_time);
-    let spawn_monsters = crate::command_rules::boolean(state, "spawn_monsters");
+    let spawn_monsters =
+        crate::command_rules::boolean(state, crate::command_rules::BoolRule::SPAWN_MONSTERS);
     census(state, &positions);
     if spawn_monsters && state.difficulty != crate::survival::Difficulty::Peaceful {
         hostile::run(state, &positions, &mut rng, changes);
@@ -889,7 +890,10 @@ fn admitted(
     match blueprint.category {
         MobCategory::Monster => {
             if state.difficulty == crate::survival::Difficulty::Peaceful
-                || !crate::command_rules::boolean(state, "spawn_monsters")
+                || !crate::command_rules::boolean(
+                    state,
+                    crate::command_rules::BoolRule::SPAWN_MONSTERS,
+                )
                 || match state.dimension {
                     crate::dimensions::Dimension::Overworld
                         if blueprint.capabilities.slime_spawn_rules =>
@@ -1075,7 +1079,9 @@ pub(crate) fn spawn_floor(state: &TickState, x: i32, z: i32, category: MobCatego
 /// billions of unloaded positions. This runs on join/respawn, not every tick.
 pub(crate) fn player_spawn(state: &TickState, salt: u64) -> [f64; 3] {
     let spawn = state.world.world_spawn();
-    let radius = i64::from(crate::command_rules::integer(state, "respawn_radius").max(0));
+    let radius = i64::from(
+        crate::command_rules::integer(state, crate::command_rules::IntRule::RESPAWN_RADIUS).max(0),
+    );
     let seed = (state.world.seed() as u64) ^ salt.wrapping_mul(0xBF58_476D_1CE4_E5B9);
     if radius <= 31 {
         let side = (2 * radius + 1) as u64;

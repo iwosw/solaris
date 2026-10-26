@@ -736,7 +736,7 @@ pub(crate) fn commit_death(
         .as_mut()
         .map(|villager| std::mem::take(&mut villager.inventory));
     if let Some(carry) = carry
-        && crate::command_rules::boolean(state, "mob_drops")
+        && crate::command_rules::boolean(state, crate::command_rules::BoolRule::MOB_DROPS)
     {
         for stack in carry
             .into_iter()
@@ -746,7 +746,7 @@ pub(crate) fn commit_death(
             spawned.push(crate::tick::spawn_item_entity(state, pos, stack));
         }
     }
-    if crate::command_rules::boolean(state, "mob_drops") {
+    if crate::command_rules::boolean(state, crate::command_rules::BoolRule::MOB_DROPS) {
         if let Some(drop) = crate::special_mobs::death_drop(state, slot) {
             spawned.push(drop);
         }

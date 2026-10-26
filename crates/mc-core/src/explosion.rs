@@ -121,9 +121,9 @@ pub(crate) fn apply(
     let decay = crate::command_rules::boolean(
         state,
         if mob_grief.is_some() {
-            "mob_explosion_drop_decay"
+            crate::command_rules::BoolRule::MOB_EXPLOSION_DROP_DECAY
         } else {
-            "tnt_explosion_drop_decay"
+            crate::command_rules::BoolRule::TNT_EXPLOSION_DROP_DECAY
         },
     );
     for &(x, y, z) in &blocks {
@@ -155,17 +155,18 @@ pub(crate) fn apply(
             state.explosion_exposure.values.clear();
             continue;
         }
-        let rolled = if crate::command_rules::boolean(state, "block_drops") {
-            crate::block_drop_context::explosion_drops(
-                state,
-                pos,
-                old,
-                decay.then_some(power),
-                rng.next(),
-            )
-        } else {
-            Ok(Vec::new())
-        };
+        let rolled =
+            if crate::command_rules::boolean(state, crate::command_rules::BoolRule::BLOCK_DROPS) {
+                crate::block_drop_context::explosion_drops(
+                    state,
+                    pos,
+                    old,
+                    decay.then_some(power),
+                    rng.next(),
+                )
+            } else {
+                Ok(Vec::new())
+            };
         let Some(drops) = crate::block_drop_context::admit(state, pos, rolled) else {
             continue;
         };

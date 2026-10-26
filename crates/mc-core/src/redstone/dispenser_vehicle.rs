@@ -22,20 +22,18 @@ pub(super) fn place(
     let boat = path.ends_with("_boat") || path == "bamboo_raft" || path == "bamboo_chest_raft";
     let minecart = matches!(
         path,
-        "minecart" | "chest_minecart"
-            | "hopper_minecart"
-            | "furnace_minecart"
-            | "tnt_minecart"
+        "minecart" | "chest_minecart" | "hopper_minecart" | "furnace_minecart" | "tnt_minecart"
     );
     if !boat && !minecart {
         return false;
     }
-    let Some(type_id) = state
-        .registry
-        .entity_types
-        .id_of(&mc_data::Identifier::parse(name).unwrap_or_else(|_| {
-            mc_data::Identifier::parse("minecraft:boat").expect("static identifier")
-        }))
+    let Some(type_id) =
+        state
+            .registry
+            .entity_types
+            .id_of(&mc_data::Identifier::parse(name).unwrap_or_else(|_| {
+                mc_data::Identifier::parse("minecraft:boat").expect("static identifier")
+            }))
     else {
         return true;
     };

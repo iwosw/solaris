@@ -63,12 +63,7 @@ pub(crate) fn start(
     }
     state.debug_profiler.start_tick = Some(state.tick);
     state.debug_profiler.start_nanos = Some(wall_nanos());
-    crate::command_execution::feedback(
-        state,
-        connection,
-        "commands.debug.started",
-        Vec::new(),
-    );
+    crate::command_execution::feedback(state, connection, "commands.debug.started", Vec::new());
     CommandResult::Success(0)
 }
 
@@ -182,7 +177,9 @@ pub(crate) fn trace_function(
         };
         for line in lines.iter() {
             if line.trim_start_matches('/').starts_with("return run") {
-                artifact.lines.push(format!("error {target}: return run is not supported in traces"));
+                artifact.lines.push(format!(
+                    "error {target}: return run is not supported in traces"
+                ));
                 continue;
             }
             if line.trim_start_matches('/').starts_with("debug function") {
@@ -197,8 +194,7 @@ pub(crate) fn trace_function(
             }
             artifact.commands += 1;
             artifact.lines.push(format!("command {target}: {line}"));
-            let context =
-                crate::command_context::Context::source(state, connection, executor, 3);
+            let context = crate::command_context::Context::source(state, connection, executor, 3);
             let mut changes = ChangeSet::default();
             crate::command_context::submit(state, line, context, &mut changes);
             artifact.lines.push(format!("result {target}: ok"));

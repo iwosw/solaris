@@ -177,7 +177,9 @@ fn weak_output(state: &TickState, source: BlockPos, target: BlockPos) -> u8 {
             }
         }
         "trapped_chest" => chest_viewers(state, source),
-        "target" => prop(block, "power").and_then(|p| p.parse().ok()).unwrap_or(0),
+        "target" => prop(block, "power")
+            .and_then(|p| p.parse().ok())
+            .unwrap_or(0),
         _ if matches!(path, "lever" | "detector_rail") || path.ends_with("lightning_rod") => {
             if prop(block, "powered") == Some("true") {
                 15
@@ -400,17 +402,41 @@ pub(crate) fn charge_target(
         return;
     };
     *value = power.to_string();
-    let Some(next) = state.registry.blocks.by_name_and_props(&block.block.id, &properties) else {
+    let Some(next) = state
+        .registry
+        .blocks
+        .by_name_and_props(&block.block.id, &properties)
+    else {
         return;
     };
     state.world.set_block(pos.x, pos.y, pos.z, next.0);
     state.merge_block_writes.push((
-        crate::boundary::BlockPos { x: pos.x, y: pos.y, z: pos.z },
+        crate::boundary::BlockPos {
+            x: pos.x,
+            y: pos.y,
+            z: pos.z,
+        },
         next.0,
     ));
     let delay = if arrows { 20 } else { 8 };
-    schedule_cell(state, crate::boundary::BlockPos { x: pos.x, y: pos.y, z: pos.z }, delay, 4);
-    wake(state, crate::boundary::BlockPos { x: pos.x, y: pos.y, z: pos.z });
+    schedule_cell(
+        state,
+        crate::boundary::BlockPos {
+            x: pos.x,
+            y: pos.y,
+            z: pos.z,
+        },
+        delay,
+        4,
+    );
+    wake(
+        state,
+        crate::boundary::BlockPos {
+            x: pos.x,
+            y: pos.y,
+            z: pos.z,
+        },
+    );
 }
 
 /// Called after all ordinary world writes, before folding the overlay.

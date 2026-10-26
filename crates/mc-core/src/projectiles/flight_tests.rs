@@ -579,8 +579,12 @@ fn target_block_emits_power_when_shot() {
         .default
         .0;
     state.world.set_block(tx, ty, tz, target);
-    state.world.set_block(tx, ty + 1, tz, state.registry.states.air);
-    state.world.set_block(tx, ty + 2, tz, state.registry.states.air);
+    state
+        .world
+        .set_block(tx, ty + 1, tz, state.registry.states.air);
+    state
+        .world
+        .set_block(tx, ty + 2, tz, state.registry.states.air);
     state.world.fold_overlay();
     let owner = state
         .entities
@@ -607,8 +611,16 @@ fn target_block_emits_power_when_shot() {
         hit.properties.iter().any(|(k, v)| k == "power" && v != "0"),
         "shot target block must carry charge"
     );
-    let neighbor = mc_world::BlockPos { x: tx + 1, y: ty, z: tz };
-    let target_pos = mc_world::BlockPos { x: tx, y: ty, z: tz };
+    let neighbor = mc_world::BlockPos {
+        x: tx + 1,
+        y: ty,
+        z: tz,
+    };
+    let target_pos = mc_world::BlockPos {
+        x: tx,
+        y: ty,
+        z: tz,
+    };
     assert!(
         crate::redstone::output(&state, target_pos, neighbor) > 0,
         "shot target block must emit redstone power"

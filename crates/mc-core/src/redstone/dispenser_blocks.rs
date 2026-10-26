@@ -147,16 +147,15 @@ fn mob_bucket_empty(state: &TickState, target: BlockPos, name: &str) -> Option<B
     // Reuse the water placement path: flow water into the target cell.
     let current = state.world.block_at(target.x, target.y, target.z)?;
     let wet = crate::fluids::waterlogged(state, current, true);
-    let washed = if wet.is_some()
-        || crate::fluids::fluid_at(&state.registry.states, current).is_some()
-    {
-        None
-    } else {
-        match crate::fluids::flow_into(state, target, crate::fluids::Fluid::Water)? {
-            crate::fluids::Flow::Open => None,
-            crate::fluids::Flow::Wash(block) => Some(block),
-        }
-    };
+    let washed =
+        if wet.is_some() || crate::fluids::fluid_at(&state.registry.states, current).is_some() {
+            None
+        } else {
+            match crate::fluids::flow_into(state, target, crate::fluids::Fluid::Water)? {
+                crate::fluids::Flow::Open => None,
+                crate::fluids::Flow::Wash(block) => Some(block),
+            }
+        };
     let new = wet.unwrap_or(state.registry.states.water_levels[0]);
     Some(Bucket {
         new: Some(new),
@@ -168,7 +167,10 @@ fn mob_bucket_empty(state: &TickState, target: BlockPos, name: &str) -> Option<B
 /// Powder-snow bucket pair: empty into placed snow, or collect placed snow.
 fn powder_snow_bucket(state: &TickState, target: BlockPos, name: &str) -> Option<Bucket> {
     let current = state.world.block_at(target.x, target.y, target.z)?;
-    let entry = state.registry.blocks.by_id(mc_world::BlockStateId(current))?;
+    let entry = state
+        .registry
+        .blocks
+        .by_id(mc_world::BlockStateId(current))?;
     let is_snow = entry.block.id.path() == "powder_snow";
     match name {
         "powder_snow_bucket" => {

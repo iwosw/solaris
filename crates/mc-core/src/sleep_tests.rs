@@ -396,7 +396,9 @@ fn sealed_bed_refuses_entry_as_obstructed() {
     // Seal the perimeter at bed level and the exit tier above both halves.
     for dx in -1..=2 {
         for dz in -1..=1 {
-            rig.state.world.set_block(rig.foot.x + dx, rig.foot.y, rig.foot.z + dz, stone);
+            rig.state
+                .world
+                .set_block(rig.foot.x + dx, rig.foot.y, rig.foot.z + dz, stone);
             rig.state
                 .world
                 .set_block(rig.foot.x + dx, rig.foot.y + 1, rig.foot.z + dz, stone);

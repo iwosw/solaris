@@ -1004,14 +1004,14 @@ pub(super) fn run(
             && let Some(target) = super::offset(pos, travel)
         {
             moved |= transfer_one(state, pos, target, travel, false)
-                || (kind(state, target) == Some("composter")
-                    && feed_composter(state, pos, target));
+                || (kind(state, target) == Some("composter") && feed_composter(state, pos, target));
         }
         if let Some(above) = super::offset(pos, (0, 1, 0)) {
             moved |= if kind(state, above).and_then(size).is_some()
                 || kind(state, above) == Some("composter")
             {
-                take_composter(state, above, pos) || transfer_one(state, above, pos, (0, -1, 0), true)
+                take_composter(state, above, pos)
+                    || transfer_one(state, above, pos, (0, -1, 0), true)
             } else if crate::vehicles::pull_into_hopper(state, above, pos) {
                 // The vehicle syncs its own viewers; the hopper's need the same notice.
                 changed(state, pos);
@@ -1422,9 +1422,10 @@ fn nonprojectile(
         }
         // Mob buckets release the captured entity into the placed water.
         if let Some(mob) = super::dispenser_blocks::mob_bucket_mob(name)
-            && let Some(type_id) = state.registry.entity_types.id_of(
-                &mc_data::Identifier::parse(mob).expect("bucket mob id"),
-            )
+            && let Some(type_id) = state
+                .registry
+                .entity_types
+                .id_of(&mc_data::Identifier::parse(mob).expect("bucket mob id"))
         {
             let id = state.spawn_mob(
                 type_id,

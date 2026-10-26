@@ -1140,7 +1140,7 @@ fn saved_maps_upgrade_activates_native_rows_and_exports_without_source_mutation(
                 ("dimension", Tag::Byte(0)),
                 ("xCenter", Tag::Int(0)),
                 ("zCenter", Tag::Int(0)),
-                ("colors", Tag::ByteArray(vec![0;128*128])),
+                ("colors", Tag::ByteArray(vec![0; 128 * 128])),
             ]),
         ),
     ]);
@@ -1164,11 +1164,13 @@ fn saved_maps_upgrade_activates_native_rows_and_exports_without_source_mutation(
     .unwrap();
     let checkpoint = store.read_checkpoint().unwrap();
     let extras = bridge::decode_tag(&checkpoint.globals["conversion_extras"], "extras").unwrap();
-    assert!(matches!(&extras,Tag::Compound(fields) if fields.iter().all(|(key,_)| key != "data/minecraft/maps/7.dat")));
+    assert!(
+        matches!(&extras,Tag::Compound(fields) if fields.iter().all(|(key,_)| key != "data/minecraft/maps/7.dat"))
+    );
     let maps = crate::maps::recover(&checkpoint.globals).unwrap();
-    assert_eq!(maps[&7].dimension,Dimension::Overworld);
-    assert_eq!(maps[&7].colors.len(),16384);
-    assert_eq!(crate::maps::sequence(&checkpoint.globals).unwrap(),8);
+    assert_eq!(maps[&7].dimension, Dimension::Overworld);
+    assert_eq!(maps[&7].colors.len(), 16384);
+    assert_eq!(crate::maps::sequence(&checkpoint.globals).unwrap(), 8);
     drop(checkpoint);
     drop(store);
     let output = temp.path().join("exported");
@@ -1703,9 +1705,9 @@ fn java118_old_layout_import_anvil_upgrades_all_records_and_native_readback() {
     assert_eq!(field(&exported_map, "DataVersion"), &Tag::Int(4790));
     let source_map = crate::maps::nbt::from_tag(&source_map).unwrap();
     let exported_map = crate::maps::nbt::from_tag(&exported_map).unwrap();
-    assert_eq!(exported_map.colors,source_map.colors);
-    assert_eq!(exported_map.center,source_map.center);
-    assert_eq!(exported_map.scale,source_map.scale);
+    assert_eq!(exported_map.colors, source_map.colors);
+    assert_eq!(exported_map.center, source_map.center);
+    assert_eq!(exported_map.scale, source_map.scale);
     assert!(!output.join(map_source_path).exists());
     // Raids export from native custody (upgraded 4309 codec fields,
     // stamped 4790), not the raw 2860 source bytes.
@@ -2454,7 +2456,7 @@ fn saved_maps_unversioned_index_preserves_allocation_fence_without_source_mutati
         .unwrap();
         assert_eq!(exported.status, "PASS");
         let counter = read_nbt(&output.join("data/minecraft/maps/last_id.dat")).unwrap();
-        assert_eq!(crate::maps::nbt::sequence_from_tag(&counter).unwrap(),449);
+        assert_eq!(crate::maps::nbt::sequence_from_tag(&counter).unwrap(), 449);
         assert_eq!(hashes(&source).unwrap(), original);
     }
 }

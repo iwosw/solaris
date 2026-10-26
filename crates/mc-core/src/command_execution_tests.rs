@@ -229,10 +229,18 @@ fn command_parity_sort_limit_options_and_typed_filters() {
         },
     );
     for (holder, value) in [("Alice", 7), ("Bob", 9)] {
-        state.scoreboard.scores.entry(holder.to_owned()).or_default().insert(
-            "test".into(),
-            crate::scoreboard::Score { value, locked: false },
-        );
+        state
+            .scoreboard
+            .scores
+            .entry(holder.to_owned())
+            .or_default()
+            .insert(
+                "test".into(),
+                crate::scoreboard::Score {
+                    value,
+                    locked: false,
+                },
+            );
     }
     let target = crate::commands::target_of("@a[scores={test=8..}]").unwrap();
     assert_eq!(resolve_target(&state, alice, &target), vec![bob]);
@@ -258,11 +266,10 @@ fn command_parity_sort_limit_options_and_typed_filters() {
     let target = crate::commands::target_of("@e[nbt={Health:0.5f}]").unwrap();
     assert!(resolve_target(&state, alice, &target).is_empty());
     // advancements: flagged root=true admits only the granted player.
-    state.players.get_mut(&alice).unwrap().advancement_progress = std::sync::Arc::new(
-        serde_json::json!({
+    state.players.get_mut(&alice).unwrap().advancement_progress =
+        std::sync::Arc::new(serde_json::json!({
             "minecraft:story/root": {"done": true},
-        }),
-    );
+        }));
     let target =
         crate::commands::target_of("@a[advancements={minecraft:story/root=true}]").unwrap();
     assert_eq!(resolve_target(&state, alice, &target), vec![alice]);
@@ -284,8 +291,9 @@ fn command_parity_unqualified_entity_selector_reaches_loaded_remote_dimensions()
     // world-limiting option is present); x/y/z or distance stays local.
     let (mut state, alice, _) = fixture();
     let registry = Arc::clone(&state.registry);
-    let generator: std::sync::Arc<dyn mc_world::ChunkGenerator> =
-        std::sync::Arc::new(mc_worldgen::NetherGenerator::try_new(42, Arc::clone(&registry.blocks)).unwrap());
+    let generator: std::sync::Arc<dyn mc_world::ChunkGenerator> = std::sync::Arc::new(
+        mc_worldgen::NetherGenerator::try_new(42, Arc::clone(&registry.blocks)).unwrap(),
+    );
     let world = crate::world::ChunkWorld::new(
         42,
         generator,
@@ -299,7 +307,9 @@ fn command_parity_unqualified_entity_selector_reaches_loaded_remote_dimensions()
     let pig_type = state.registry.entity_type_id("minecraft:pig").unwrap();
     let local_pig = state.spawn_mob(pig_type, [2.0, 80.0, 0.0], 10.0);
     let remote_pig = nether.spawn_mob(pig_type, [8.0, 150.0, 8.0], 10.0);
-    state.other_dimensions.insert(crate::dimensions::Dimension::Nether, Box::new(nether));
+    state
+        .other_dimensions
+        .insert(crate::dimensions::Dimension::Nether, Box::new(nether));
     let request = crate::dimensions::travel::Request {
         connection: state.connections.entity_connection(alice).unwrap(),
         executor: alice,
@@ -307,24 +317,29 @@ fn command_parity_unqualified_entity_selector_reaches_loaded_remote_dimensions()
         command: crate::commands::parse("kill @e[type=minecraft:pig]", true).unwrap(),
     };
     let origin = [0.0, 80.0, 0.0];
-    let target = crate::dimensions::commands::target(
-        &request.command,
-    ).expect("kill carries a target").clone();
-    let mut selected =
-        crate::dimensions::commands::resolve(&state, &request, &target, origin);
+    let target = crate::dimensions::commands::target(&request.command)
+        .expect("kill carries a target")
+        .clone();
+    let mut selected = crate::dimensions::commands::resolve(&state, &request, &target, origin);
     selected.sort();
     let mut expected = vec![local_pig, remote_pig];
     expected.sort();
     assert_eq!(selected, expected, "unqualified @e spans loaded dimensions");
     // A spatial option constrains the query to the request dimension.
     let target = crate::commands::target_of("@e[type=minecraft:pig,x=0,y=80,z=0]").unwrap();
-    let selected =
-        crate::dimensions::commands::resolve(&state, &request, &target, origin);
-    assert_eq!(selected, vec![local_pig], "position-qualified @e stays local");
+    let selected = crate::dimensions::commands::resolve(&state, &request, &target, origin);
+    assert_eq!(
+        selected,
+        vec![local_pig],
+        "position-qualified @e stays local"
+    );
     let target = crate::commands::target_of("@e[type=minecraft:pig,distance=..100]").unwrap();
-    let selected =
-        crate::dimensions::commands::resolve(&state, &request, &target, origin);
-    assert_eq!(selected, vec![local_pig], "distance-qualified @e stays local");
+    let selected = crate::dimensions::commands::resolve(&state, &request, &target, origin);
+    assert_eq!(
+        selected,
+        vec![local_pig],
+        "distance-qualified @e stays local"
+    );
     // Bare @p parses to Target::Nearest, which bypasses global_target
     // routing (dimensions_commands matches Target::Selector only): the
     // cross-dimension claim covers @e/@a/@r shapes, not bare @p/@n.
@@ -370,7 +385,11 @@ fn command_parity_selector_box_intersects_body_and_defaults_missing_axes() {
         ([0.5, 79.0, 0.5], "@e[x=0,y=80,z=0,dx=0]", true),
         ([0.5, 80.0, 3.0], "@e[x=0,y=80,z=0,dx=0]", false),
         ([0.5, 80.0, 0.5], "@e[dx=0]", true),
-        ([5.0 + half_width, 80.0, 0.5], "@e[x=0,y=80,z=0,dx=4]", false),
+        (
+            [5.0 + half_width, 80.0, 0.5],
+            "@e[x=0,y=80,z=0,dx=4]",
+            false,
+        ),
         ([-half_width, 80.0, 0.5], "@e[x=0,y=80,z=0,dx=4]", false),
         ([0.5, 81.0, 0.5], "@e[x=0,y=80,z=0,dx=0]", false),
         ([0.5, 80.0 - height, 0.5], "@e[x=0,y=80,z=0,dx=0]", false),
@@ -378,8 +397,16 @@ fn command_parity_selector_box_intersects_body_and_defaults_missing_axes() {
         ([2.1, 80.0, 0.5], "@e[x=0.25,y=80,z=0.25,dx=0.5]", false),
         ([0.5, 80.0, 0.5], "@e[x=1.25,y=80,z=0,dx=-0.5]", true),
         ([0.4, 80.0, 0.5], "@e[x=1.25,y=80,z=0,dx=-0.5]", false),
-        ([5.1, 80.0, 0.5], "@e[x=0,y=80,z=0,dx=4,dy=1,dz=1,distance=..5]", false),
-        ([5.1, 80.0, 0.5], "@e[x=0,y=80,z=0,dx=4,dy=1,dz=1,distance=..6]", true),
+        (
+            [5.1, 80.0, 0.5],
+            "@e[x=0,y=80,z=0,dx=4,dy=1,dz=1,distance=..5]",
+            false,
+        ),
+        (
+            [5.1, 80.0, 0.5],
+            "@e[x=0,y=80,z=0,dx=4,dy=1,dz=1,distance=..6]",
+            true,
+        ),
     ] {
         state.entities.set_pos(slot, position);
         let target = crate::commands::target_of(selector).unwrap();
@@ -390,10 +417,8 @@ fn command_parity_selector_box_intersects_body_and_defaults_missing_axes() {
         );
     }
     command(&mut state, alice, "summon minecraft:pig 5.1 80 0.5");
-    let target = crate::commands::target_of(
-        "@e[type=minecraft:pig,x=0,y=80,z=0,dx=4,dy=1,dz=1]",
-    )
-    .unwrap();
+    let target =
+        crate::commands::target_of("@e[type=minecraft:pig,x=0,y=80,z=0,dx=4,dy=1,dz=1]").unwrap();
     assert_eq!(resolve_target(&state, alice, &target).len(), 1);
 }
 

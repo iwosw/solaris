@@ -595,7 +595,9 @@ enum Outcome {
 /// `writes`; popped crops drop their loot into `spawned`.
 pub fn run(state: &mut TickState, writes: &mut Vec<(BlockPos, u32)>, spawned: &mut Vec<EntityId>) {
     let air = state.registry.states.air;
-    let speed = crate::command_rules::integer(state, "random_tick_speed").max(0) as u32;
+    let speed =
+        crate::command_rules::integer(state, crate::command_rules::IntRule::RANDOM_TICK_SPEED)
+            .max(0) as u32;
     for Change { at, was, outcome } in sample(state, speed, PARALLEL_MIN_CHUNKS) {
         if state.world.block_at(at.x, at.y, at.z) != Some(was) {
             continue;
@@ -787,7 +789,9 @@ pub(crate) fn catch_up_crops(
     let Some(chunk) = state.world.chunk(pos) else {
         return Vec::new();
     };
-    let speed = crate::command_rules::integer(state, "random_tick_speed").max(0) as u64;
+    let speed =
+        crate::command_rules::integer(state, crate::command_rules::IntRule::RANDOM_TICK_SPEED)
+            .max(0) as u64;
     let start = state.tick.wrapping_sub(state.world.simulation_debt(pos));
     let mut images: FxHashMap<BlockPos, (u32, u32)> = FxHashMap::default();
     for (index, section) in chunk.sections.iter().enumerate() {

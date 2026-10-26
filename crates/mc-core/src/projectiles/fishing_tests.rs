@@ -243,7 +243,8 @@ fn hooked_item_reels_with_impulse_and_costs_three_durability() {
         .items
         .id_of(&Identifier::parse("minecraft:cobblestone").unwrap())
         .unwrap();
-    let drop = crate::tick::spawn_item_entity(&mut state,
+    let drop = crate::tick::spawn_item_entity(
+        &mut state,
         [pos[0] + 4.0, pos[1], pos[2]],
         ItemStack::new(cobble, 1),
     );
@@ -280,7 +281,9 @@ fn submerged_hook_rises_toward_the_surface() {
     let id = *state.projectiles.spawned.last().unwrap();
     let hook_slot = state.entities.slot_of(id).unwrap();
     // Sink the hook three blocks under the surface.
-    state.entities.set_pos(hook_slot, [pos[0], pos[1] - 1.0, pos[2]]);
+    state
+        .entities
+        .set_pos(hook_slot, [pos[0], pos[1] - 1.0, pos[2]]);
     let y0 = state.entities.pos(hook_slot)[1];
     let mut record = state.entities.row_mut(hook_slot).projectile.take().unwrap();
     assert!(step(&mut state, &mut Vec::new(), id, &mut record));
