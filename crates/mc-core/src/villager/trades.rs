@@ -270,7 +270,8 @@ fn add_librarian_book(state: &mut VillagerState, registry: &CoreRegistry, level:
         ("lure", 3, 3),
         ("frost_walker", 2, 2),
     ];
-    let seed = villager_seed(state).wrapping_add(u64::from(level) * 0x9E37_79B9_7F4A_7C15);
+    let seed =
+        villager_seed(state).wrapping_add(u64::from(level).wrapping_mul(0x9E37_79B9_7F4A_7C15));
     let (name, _weight, max) = POOL[(seed >> 17) as usize % POOL.len()];
     let book_level = 1 + (seed >> 41) as i32 % max.max(1);
     let book_level = book_level.clamp(1, max);
@@ -314,7 +315,8 @@ fn add_librarian_book(state: &mut VillagerState, registry: &CoreRegistry, level:
         demand: 0,
         price_multiplier: 0.2,
     };
-    if state.offers.len() < 12 && !state.offers.iter().any(|o| o.result == candidate.result) {
+    // Vanilla merchants hold at most two offers per career level (ten total).
+    if state.offers.len() < 10 && !state.offers.iter().any(|o| o.result == candidate.result) {
         state.offers.push(candidate);
     }
 }

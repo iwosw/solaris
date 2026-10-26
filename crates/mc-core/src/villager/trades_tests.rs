@@ -115,14 +115,13 @@ fn offer_sampling_reaches_beyond_first_two_catalog_rows() {
         villager.data.level = 1;
         villager.birth_sequence = Some(birth);
         unlock(&mut villager, &registry, 1);
-        for offer in &villager.offers {
-            let name = registry
-                .items
-                .name_of(offer.result.item_id)
-                .unwrap()
-                .as_str()
-                .to_owned();
-            seen.insert(name);
+        // Farmer rows buy crops (cost) and sell bread (result).
+        for item in villager
+            .offers
+            .iter()
+            .flat_map(|offer| [offer.cost_a.item_id, offer.result.item_id])
+        {
+            seen.insert(registry.items.name_of(item).unwrap().as_str().to_owned());
         }
         assert!(villager.offers.len() <= 2, "at most two offers per level");
     }

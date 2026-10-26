@@ -657,6 +657,7 @@ pub(super) fn golems(state: &mut TickState, cache: &mut PoiCache, changes: &mut 
         if let Some(ids) = state.entities.brain_sensor_chunks().get(pos) {
             for &id in ids {
                 if let Some(slot) = state.entities.slot_of(id)
+                    && state.entities.body(slot).alive
                     && state.entities.body(slot).kind == (EntityKind::Mob { type_id })
                 {
                     cache.golems.push(slot);

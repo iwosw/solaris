@@ -13,6 +13,8 @@ use crate::registry::CoreRegistry;
 use crate::tick::{BlockEntityState, TickState, spawn_item_entity};
 
 pub(crate) type BrewingStands = BTreeMap<(i32, i32, i32), BrewingState>;
+/// Opaque brewing-stand images of one chunk: (cell, timers, slots).
+pub(crate) type Decoded = Vec<((i32, i32, i32), BrewingState, Vec<ItemStack>)>;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct BrewingState {
@@ -188,7 +190,7 @@ pub(crate) fn decode_chunk(
     stands: &BrewingStands,
     registry: &CoreRegistry,
     chunk: &mc_world::Chunk,
-) -> Result<Vec<((i32, i32, i32), BrewingState, Vec<ItemStack>)>, String> {
+) -> Result<Decoded, String> {
     let mut decoded = Vec::new();
     for (pos, bytes) in &chunk.block_entities {
         let key = (pos.x, pos.y, pos.z);
@@ -215,7 +217,7 @@ pub(crate) fn hydrate_chunk(
     inventories: &mut crate::redstone::custody::BlockEntities,
     registry: &CoreRegistry,
     chunk: &mc_world::Chunk,
-    decoded: Vec<((i32, i32, i32), BrewingState, Vec<ItemStack>)>,
+    decoded: Decoded,
 ) {
     for (key, stand, slots) in decoded {
         stands.insert(key, stand);

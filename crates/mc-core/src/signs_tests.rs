@@ -48,6 +48,18 @@ fn use_item(
         .collect()
 }
 
+/// Vanilla applicators skip blank faces (SignApplicator.canApplyToSign), so
+/// decoration fixtures start with one line written on both faces.
+fn inscribe(state: &mut TickState) {
+    let Tag::Compound(mut fields) = crate::signs::text_nbt(&["line".into()]) else {
+        unreachable!()
+    };
+    fields[1].1 = fields[0].1.clone();
+    let mut bytes = Vec::new();
+    mc_nbt::write_network(&mut bytes, &Tag::Compound(fields)).unwrap();
+    state.world.set_opaque_block_entity(POS, Some(bytes));
+}
+
 fn edit(state: &mut TickState, front: bool, value: &str) {
     run_tick(
         state,
@@ -71,6 +83,7 @@ fn public_sign_payload_updates_chunk_wire_revision_without_a_block_edit() {
         "oak_sign",
         &[("rotation", "8"), ("waterlogged", "false")],
     );
+    inscribe(&mut state);
     run_tick(&mut state, &[]);
     let block = state.world.block_at(POS.x, POS.y, POS.z);
     let revision = state.world.chunk_revision(0, 0);
@@ -93,6 +106,7 @@ fn dye_glow_ink_and_wax_update_only_facing_side_and_refuse_waxed_edits() {
         "oak_sign",
         &[("rotation", "8"), ("waterlogged", "false")],
     );
+    inscribe(&mut state);
     let changes = use_item(&mut state, player, "red_dye");
     assert_eq!(held(&state, player).count, 2);
     assert!(changes.iter().any(|change| matches!(change,
@@ -200,6 +214,7 @@ fn hanging_and_wall_sign_decorations_support_offhand_and_creative() {
             vec![("facing", "north"), ("waterlogged", "false")]
         };
         plant(&mut state, POS.x, POS.y, POS.z, name, &props);
+        inscribe(&mut state);
         give(&mut state, player, "orange_dye", 2);
         let dye = held(&state, player);
         state.players.get_mut(&player).unwrap().inventory.slots[crate::inventory::OFF_HAND] = dye;
@@ -457,6 +472,7 @@ fn another_players_editor_refuses_decoration_but_allows_ordinary_item_placement(
         "oak_sign",
         &[("rotation", "8"), ("waterlogged", "false")],
     );
+    inscribe(&mut state);
     use_item(&mut state, player, "red_dye");
     let expected = image(&state);
     run_tick(
@@ -496,6 +512,7 @@ fn sign_decorations_admit_only_actual_free_source_debits() {
         "oak_sign",
         &[("rotation", "8"), ("waterlogged", "false")],
     );
+    inscribe(&mut state);
     use_item(&mut state, actor, "red_dye");
     for resource in ["blue_dye", "glow_ink_sac", "ink_sac", "honeycomb"] {
         give(&mut state, actor, resource, 3);

@@ -551,6 +551,15 @@ fn occupied_bed_blocks_claim_through_event_gate() {
     let player = state.connections.entity_of(connection).unwrap();
     let home = bed(&mut state, 8, 8);
     state.world.fold_overlay();
+    let slot = state.entities.slot_of(player).unwrap();
+    state.entities.set_pos(
+        slot,
+        [
+            f64::from(home.x) + 0.5,
+            f64::from(home.y),
+            f64::from(home.z) - 1.5,
+        ],
+    );
     let mut owner = None;
     for i in 0..ORACLE_RESIDENTS {
         let slot = villager(&mut state, [6.5, 201.0, 8.5]);

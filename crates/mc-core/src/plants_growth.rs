@@ -836,31 +836,16 @@ pub(super) fn dripstone(
     seed: u64,
 ) -> Option<Vec<PlantBlockEdit>> {
     let blocks = &read.state.registry.blocks;
+    // Pinned PointedDripstoneBlock.randomTick: fluid transfer and growth run
+    // only at isStalactiteStartPos (a down stalactite with no pointed
+    // dripstone above), then act through the column tip (findTip).
     if prop(blocks, id, "vertical_direction") != Some("down")
-        || !matches!(
-            prop(blocks, id, "thickness"),
-            Some("tip") | Some("tip_merge")
-        )
+        || path(read, BlockPos { y: at.y + 1, ..at })? == "pointed_dripstone"
     {
         return None;
     }
-    // Pinned PointedDripstoneBlock.randomTick: growth requires
-    // isStalactiteStartPos — the tip must have NO pointed dripstone above
-    // (mid-column tips never grow); only the column top is eligible.
-    if path(read, BlockPos { y: at.y + 1, ..at })? == "pointed_dripstone" {
-        return None;
-    }
     let mut roll = Roll::new(seed);
-    // Climb the stalactite column to the fluid held above it.
-    let mut top = at.y;
-    for _ in 0..16 {
-        let above = BlockPos { y: top + 1, ..at };
-        if path(read, above)? != "pointed_dripstone" {
-            break;
-        }
-        top += 1;
-    }
-    let cap = BlockPos { y: top + 1, ..at };
+    let cap = BlockPos { y: at.y + 1, ..at };
     let fluid = match path(read, cap)? {
         "dripstone_block" => {
             let source = BlockPos { y: cap.y + 1, ..at };
@@ -874,13 +859,35 @@ pub(super) fn dripstone(
         "lava" => Some(true),
         _ => None,
     }?;
+    // findTip: follow the down column (at most 11 cells) to its tip.
+    let is_tip = |state| matches!(prop(blocks, state, "thickness"), Some("tip" | "tip_merge"));
+    let (mut tip, mut tip_id) = (at, id);
+    for _ in 0..11 {
+        if is_tip(tip_id) {
+            break;
+        }
+        tip.y -= 1;
+        if path(read, tip)? != "pointed_dripstone" {
+            return None;
+        }
+        tip_id = get(read, tip)?;
+        if prop(blocks, tip_id, "vertical_direction") != Some("down") {
+            return None;
+        }
+    }
+    if !is_tip(tip_id) {
+        return None;
+    }
     // The cauldron below the tip, across a clear gap.
-    let mut cell = BlockPos { y: at.y - 1, ..at };
+    let mut cell = BlockPos {
+        y: tip.y - 1,
+        ..tip
+    };
     loop {
         match path(read, cell)? {
             "air" | "water" => {
                 cell.y -= 1;
-                if at.y - cell.y > 8 {
+                if tip.y - cell.y > 8 {
                     return None;
                 }
             }
@@ -891,7 +898,7 @@ pub(super) fn dripstone(
     if fluid {
         // Vanilla lava drip: 15/256 per tick fills an empty cauldron full.
         if roll.below(256) >= 15 {
-            return grow_dripstone(read, at, id, false, &mut roll);
+            return grow_dripstone(read, tip, tip_id, false, &mut roll);
         }
         return fill_cauldron(read, cell, "lava", &mut roll);
     }
@@ -899,7 +906,7 @@ pub(super) fn dripstone(
     if roll.below(256) < 45 {
         return fill_cauldron(read, cell, "water", &mut roll);
     }
-    grow_dripstone(read, at, id, true, &mut roll)
+    grow_dripstone(read, tip, tip_id, true, &mut roll)
 }
 
 /// Raise the cauldron at `cell` one level toward `fluid`.

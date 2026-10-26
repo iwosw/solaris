@@ -262,7 +262,7 @@ pub(crate) fn decode_chunk(
     spawners: &Spawners,
     registry: &crate::registry::CoreRegistry,
     chunk: &mc_world::Chunk,
-) -> Result<Vec<((i32, i32, i32), Spawner)>, String> {
+) -> Result<crate::tick::CellRecords<Spawner>, String> {
     let mut decoded = Vec::new();
     for (pos, bytes) in &chunk.block_entities {
         if spawners.contains_key(&key(*pos)) {

@@ -171,7 +171,7 @@ fn dispatch(state: &mut TickState, batch: CommandBatch) -> mc_script::ScriptOper
         "consumer",
         "Consumer",
         "1.0.0",
-        mc_script::ScriptApiVersion::new(0, 7, 0),
+        mc_script::COMPONENT_PLUGIN_API_VERSION,
     )
     .declare_settlements()
     .validate()

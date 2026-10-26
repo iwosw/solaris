@@ -116,14 +116,15 @@ impl Rig {
         state.world.set_block(foot.x, foot.y, foot.z, foot_state);
         state.world.set_block(head.x, head.y, head.z, head_state);
         state.world.fold_overlay();
-        // On the platform, away from the bed, so mobs near it stay in range
-        // of a player (mobs far from every player despawn).
+        // On the platform, beside the bed at the vanilla 3-block reach edge,
+        // so mobs near it stay in range of a player (mobs far from every
+        // player despawn).
         state.entities.set_pos(
             slot,
             [
                 f64::from(foot.x) + 0.5,
                 f64::from(Y + 1),
-                f64::from(foot.z) - 4.5,
+                f64::from(foot.z) - 2.5,
             ],
         );
         Self {
@@ -396,9 +397,11 @@ fn sealed_bed_refuses_entry_as_obstructed() {
     // Seal the perimeter at bed level and the exit tier above both halves.
     for dx in -1..=2 {
         for dz in -1..=1 {
-            rig.state
-                .world
-                .set_block(rig.foot.x + dx, rig.foot.y, rig.foot.z + dz, stone);
+            if dz != 0 || !(0..=1).contains(&dx) {
+                rig.state
+                    .world
+                    .set_block(rig.foot.x + dx, rig.foot.y, rig.foot.z + dz, stone);
+            }
             rig.state
                 .world
                 .set_block(rig.foot.x + dx, rig.foot.y + 1, rig.foot.z + dz, stone);

@@ -700,7 +700,10 @@ impl EffectParticle {
 #[derive(Debug, Clone)]
 pub enum EntityDataValue {
     /// 26.1.2 serializer 34: registry holder reference (wire id = registry id + 1).
-    PaintingVariant { index: u8, value: u32 },
+    PaintingVariant {
+        index: u8,
+        value: u32,
+    },
     /// CopperGolem enum serializers, javap EntityDataSerializers 26.1.2:
     /// state = 37, weathering = 38; both use VarInt ordinal codecs.
     CopperGolemState {
@@ -816,7 +819,10 @@ impl PartialEq for EntityDataValue {
         }
 
         match (self, other) {
-            (Self::PaintingVariant { value: left, .. }, Self::PaintingVariant { value: right, .. }) => left == right,
+            (
+                Self::PaintingVariant { value: left, .. },
+                Self::PaintingVariant { value: right, .. },
+            ) => left == right,
             (Self::Byte { value: left, .. }, Self::Byte { value: right, .. }) => left == right,
             (
                 Self::CopperGolemState { value: left, .. },
@@ -984,7 +990,9 @@ impl EntityDataValue {
         buf.write_varint(self.serializer_id());
         match self {
             Self::PaintingVariant { value, .. } => {
-                let wire = i32::try_from(*value).ok().and_then(|value| value.checked_add(1))
+                let wire = i32::try_from(*value)
+                    .ok()
+                    .and_then(|value| value.checked_add(1))
                     .ok_or(CodecError::NotSupported("painting variant id out of range"))?;
                 buf.write_varint(wire);
             }
@@ -1222,7 +1230,10 @@ impl EntityDataValue {
                 if wire <= 0 {
                     return Err(CodecError::NotSupported("inline painting variant metadata"));
                 }
-                Self::PaintingVariant { index, value: (wire - 1) as u32 }
+                Self::PaintingVariant {
+                    index,
+                    value: (wire - 1) as u32,
+                }
             }
             37 | 38 => {
                 let value = buf.read_varint()?;

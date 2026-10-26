@@ -14,22 +14,18 @@ use crate::boundary::ChunkPos;
 /// Owned decode of one chunk's fallible block-entity records.
 struct Decoded {
     monster_spawners: crate::monster_spawner::Decoded,
-    trial_spawners: Vec<((i32, i32, i32), crate::trial_spawner::Spawner)>,
-    vaults: Vec<((i32, i32, i32), mc_data::trial_nbt::VaultData)>,
+    trial_spawners: crate::tick::CellRecords<crate::trial_spawner::Spawner>,
+    vaults: crate::tick::CellRecords<mc_data::trial_nbt::VaultData>,
     crafters: crate::crafter::Decoded,
-    shelves: Vec<((i32, i32, i32), Vec<mc_data::ItemStack>)>,
-    shulkers: Vec<((i32, i32, i32), Vec<mc_data::ItemStack>)>,
-    special_storage: Vec<((i32, i32, i32), Vec<mc_data::ItemStack>)>,
-    chiseled: Vec<((i32, i32, i32), Vec<mc_data::ItemStack>)>,
-    hives: Vec<((i32, i32, i32), crate::bees::Hive)>,
-    jukeboxes: Vec<((i32, i32, i32), crate::jukebox::Jukebox)>,
-    campfires: Vec<((i32, i32, i32), crate::campfire::CampfireState)>,
+    shelves: crate::tick::CellRecords<Vec<mc_data::ItemStack>>,
+    shulkers: crate::tick::CellRecords<Vec<mc_data::ItemStack>>,
+    special_storage: crate::tick::CellRecords<Vec<mc_data::ItemStack>>,
+    chiseled: crate::tick::CellRecords<Vec<mc_data::ItemStack>>,
+    hives: crate::tick::CellRecords<crate::bees::Hive>,
+    jukeboxes: crate::tick::CellRecords<crate::jukebox::Jukebox>,
+    campfires: crate::tick::CellRecords<crate::campfire::CampfireState>,
     lecterns: crate::lectern::Decoded,
-    brewing: Vec<(
-        (i32, i32, i32),
-        crate::brewing::BrewingState,
-        Vec<mc_data::ItemStack>,
-    )>,
+    brewing: crate::brewing::Decoded,
     containers: crate::redstone::containers::Decoded,
 }
 

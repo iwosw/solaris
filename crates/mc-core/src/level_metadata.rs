@@ -1058,6 +1058,8 @@ mod tests {
                 center_x: 248.5,
                 center_z: -184.5,
                 size: 128_000.0,
+                // Import normalizes a settled border's target to its size.
+                lerp_target: 128_000.0,
                 ..Default::default()
             },
             ..Default::default()
@@ -1083,7 +1085,6 @@ mod tests {
             put(root, "OpaqueRoot", Tag::Long(37));
             let data = compound_field_mut(root, "data", path).unwrap();
             put(data, "OpaqueData", Tag::Long(37));
-            put(data, "warning_time", Tag::Int(15));
             assert_eq!(field(data, "lerp_time"), Some(&Tag::Long(0)));
         }
         let mut imported = CheckpointManifest::default();
@@ -1149,19 +1150,16 @@ mod tests {
         }
         let mut recovered = from_tag(&to_tag(&tags)).unwrap();
         import_tags(&recovered, &mut manifest).unwrap();
-        // warning_time is stored in ticks; import converts to command
-        // seconds (div_euclid 20), and checkpoint writes back ticks.
+        // Import converts stored ticks to command seconds; the native tags
+        // keep their exact tick values.
         for ((_, path), (blocks, time)) in BORDER_PATHS.into_iter().zip(warnings) {
             let data = saved_data(&recovered, path).unwrap().unwrap();
             assert_eq!(field(data, "warning_blocks"), Some(&Tag::Int(blocks)));
-            assert_eq!(
-                field(data, "warning_time"),
-                Some(&Tag::Int(time.div_euclid(20) * 20))
-            );
+            assert_eq!(field(data, "warning_time"), Some(&Tag::Int(time)));
         }
         manifest.border.size = 321.0;
         checkpoint_tags(&mut recovered, 42, &manifest).unwrap();
-        for ((dimension, path), (blocks, _)) in BORDER_PATHS.into_iter().zip(warnings) {
+        for ((dimension, path), (blocks, time)) in BORDER_PATHS.into_iter().zip(warnings) {
             let data = saved_data(&recovered, path).unwrap().unwrap();
             let border = if dimension == crate::dimensions::Dimension::Overworld {
                 manifest.border
@@ -1170,10 +1168,7 @@ mod tests {
             };
             assert_eq!(field(data, "size"), Some(&Tag::Double(border.size)));
             assert_eq!(field(data, "warning_blocks"), Some(&Tag::Int(blocks)));
-            assert_eq!(
-                field(data, "warning_time"),
-                Some(&Tag::Int(border.warning_time * 20))
-            );
+            assert_eq!(field(data, "warning_time"), Some(&Tag::Int(time)));
         }
     }
 

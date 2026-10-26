@@ -915,20 +915,21 @@ fn dripstone_with_lava_source_fills_the_cauldron_below() {
 }
 #[test]
 fn dripstone_mid_column_tip_does_not_grow_but_top_tip_fills() {
-    // Pinned PointedDripstoneBlock.isStalactiteStartPos: a down tip with
-    // pointed dripstone above is never the growth tip, even though the
-    // column top sees the same fluid. Lava fill is the control path.
+    // Pinned PointedDripstoneBlock.isStalactiteStartPos: only the column
+    // top (no pointed dripstone above) ticks; it fills through findTip, and
+    // the tip below it never runs its own transfer or growth. Lava fill is
+    // the control path.
     let (mut state, _) = setup();
     state
         .gamerules
         .insert("random_tick_speed".into(), FAST.into());
     let lava = state.registry.states.lava_levels[0];
     let dripstone_block = block(&state, "dripstone_block", &[]);
-    let tip = block(
+    let top = block(
         &state,
         "pointed_dripstone",
         &[
-            ("thickness", "tip"),
+            ("thickness", "frustum"),
             ("vertical_direction", "down"),
             ("waterlogged", "false"),
         ],
@@ -945,7 +946,7 @@ fn dripstone_mid_column_tip_does_not_grow_but_top_tip_fills() {
     let cauldron = block(&state, "cauldron", &[]);
     put(&mut state, 0, Y + 7, -10, lava);
     put(&mut state, 0, Y + 6, -10, dripstone_block);
-    put(&mut state, 0, Y + 5, -10, tip);
+    put(&mut state, 0, Y + 5, -10, top);
     put(&mut state, 0, Y + 4, -10, mid);
     put(&mut state, 0, Y + 1, -10, cauldron);
     let lava_cauldron = block(&state, "lava_cauldron", &[]);

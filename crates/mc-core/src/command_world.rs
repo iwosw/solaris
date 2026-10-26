@@ -1257,6 +1257,8 @@ mod tests {
         state.world.set_block(4, 200, 4, foot);
         state.world.set_block(5, 200, 4, head);
         state.world.fold_overlay();
+        let slot = state.entities.slot_of(actor).unwrap();
+        state.entities.set_pos(slot, [4.5, 200.0, 2.5]);
         assert!(crate::sleep::use_bed(
             &mut state,
             actor,

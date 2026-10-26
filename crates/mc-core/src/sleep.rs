@@ -170,15 +170,14 @@ pub(crate) fn use_bed(
         return true;
     }
     let [yaw, _, _] = state.entities.rot(slot);
-    // Vanilla sleeping distance: within 3 blocks of either half. Packet
-    // reach (4.5+1) can still target the bed from farther away.
+    // Vanilla ServerPlayer.isReachableBedBlock: within 3/2/3 blocks of either
+    // half's bottom centre. Packet reach (4.5+1) can target farther beds.
     if !creative {
         let at = state.entities.pos(slot);
         let near_half = |half: BlockPos| {
-            let dx = (f64::from(half.x) + 0.5 - at[0]).abs();
-            let dy = (f64::from(half.y) + 0.5 - at[1]).abs();
-            let dz = (f64::from(half.z) + 0.5 - at[2]).abs();
-            (dx * dx + dy * dy + dz * dz).sqrt() <= 3.0
+            (f64::from(half.x) + 0.5 - at[0]).abs() <= 3.0
+                && (f64::from(half.y) - at[1]).abs() <= 2.0
+                && (f64::from(half.z) + 0.5 - at[2]).abs() <= 3.0
         };
         if !near_half(clicked) && !near_half(head) {
             say(state, connection, "You are too far away");

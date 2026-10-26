@@ -343,6 +343,11 @@ pub(crate) fn run(state: &mut TickState, changes: &mut ChangeSet) {
                 .world
                 .block_at(raid.center[0], raid.center[1], raid.center[2])
                 .is_some();
+        // Vanilla Raid.tick returns while the centre chunk is unloaded: the
+        // wave clock, timeout and spawns all freeze until it reactivates.
+        if !raid.active {
+            continue;
+        }
         raid.ticks_active += 1;
         if !residents(state, raid.center) {
             raid.status = "loss".into();

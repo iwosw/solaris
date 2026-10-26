@@ -125,7 +125,7 @@ pub(crate) fn decode_chunk(
     boxes: &Jukeboxes,
     registry: &crate::registry::CoreRegistry,
     chunk: &mc_world::Chunk,
-) -> Result<Vec<((i32, i32, i32), Jukebox)>, CoreError> {
+) -> Result<crate::tick::CellRecords<Jukebox>, CoreError> {
     let mut decoded = Vec::new();
     for (pos, bytes) in &chunk.block_entities {
         if chunk
@@ -146,7 +146,7 @@ pub(crate) fn decode_chunk(
 pub(crate) fn apply_chunk(
     boxes: &mut Jukeboxes,
     inventories: &mut crate::redstone::custody::BlockEntities,
-    decoded: Vec<((i32, i32, i32), Jukebox)>,
+    decoded: crate::tick::CellRecords<Jukebox>,
 ) {
     for (key, jukebox) in decoded {
         inventories.hydrate(key, || BlockEntityState {

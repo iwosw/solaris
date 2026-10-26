@@ -187,7 +187,7 @@ pub(crate) fn decode_chunk(
     inventories: &crate::redstone::custody::BlockEntities,
     registry: &crate::registry::CoreRegistry,
     chunk: &mc_world::Chunk,
-) -> Result<Vec<((i32, i32, i32), Vec<ItemStack>)>, String> {
+) -> Result<crate::tick::CellRecords<Vec<ItemStack>>, String> {
     let mut decoded = Vec::new();
     for (pos, bytes) in &chunk.block_entities {
         if inventories.contains_key(&key(*pos))

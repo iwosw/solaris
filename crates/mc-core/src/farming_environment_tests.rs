@@ -294,7 +294,7 @@ fn gap_cultivation_awards_progress_and_discovery_only_on_accepted_use() {
     tree.definitions.insert("test:till".into(), AdvancementDefinition {
         criteria: BTreeMap::from([("till".into(), Criterion {
             trigger: "minecraft:item_used_on_block".into(),
-            conditions: serde_json::json!({"location":{"block":{"blocks":"minecraft:farmland"}}}),
+            conditions: serde_json::json!({"location":[{"condition":"minecraft:location_check","predicate":{"block":{"blocks":"minecraft:farmland"}}}]}),
         })]),
         requirements: vec![vec!["till".into()]],
         rewards: AdvancementRewards { recipes: vec!["minecraft:crafting_table".into()], ..Default::default() },

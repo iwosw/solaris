@@ -60,7 +60,7 @@ pub(crate) fn decode_chunk(
     campfires: &Campfires,
     registry: &crate::registry::CoreRegistry,
     chunk: &mc_world::Chunk,
-) -> Result<Vec<((i32, i32, i32), CampfireState)>, String> {
+) -> Result<crate::tick::CellRecords<CampfireState>, String> {
     let mut decoded = Vec::new();
     for (pos, bytes) in &chunk.block_entities {
         if campfires.contains_key(&key(*pos)) {

@@ -584,7 +584,7 @@ pub(crate) fn decode_chunk(
     hives: &Hives,
     registry: &crate::registry::CoreRegistry,
     chunk: &mc_world::Chunk,
-) -> Result<Vec<((i32, i32, i32), Hive)>, CoreError> {
+) -> Result<crate::tick::CellRecords<Hive>, CoreError> {
     let mut decoded = Vec::new();
     for (p, bytes) in &chunk.block_entities {
         let is_hive = chunk

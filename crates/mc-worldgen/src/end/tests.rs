@@ -252,8 +252,9 @@ fn outer_end_city_ship_and_chorus_are_chunk_order_independent() {
         .flat_map(|gx| (8..24).map(move |gz| (gx, gz)))
         .filter_map(|(gx, gz)| generator.city(gx, gz))
         .find(|(_, _, _, h)| {
-            let branches: [u64; 4] =
-                std::array::from_fn(|side| splitmix64(*h ^ (side as u64).wrapping_add(0x00B4_1D6E)));
+            let branches: [u64; 4] = std::array::from_fn(|side| {
+                splitmix64(*h ^ (side as u64).wrapping_add(0x00B4_1D6E))
+            });
             branches.iter().filter(|b| **b & 1 != 0).count() >= 2
                 && branches.iter().any(|b| *b & 1 != 0 && (b >> 1) % 8 == 0)
         })

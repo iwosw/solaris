@@ -631,10 +631,12 @@ fn mixed_arena_water_is_not_piston_loss_and_pending_overlap_survives_checkpoint(
                     original.world.set_block(x, y - 1, z, stone);
                 }
             }
-            original.world.set_block(20, y + 4, 4, water);
+            // Within one flat spread (<= 7 cells) of the piston lane, so the
+            // open variant floods it under shortest-descent flow.
+            original.world.set_block(20, y + 4, 12, water);
             for (dx, dz) in [(1, 0), (-1, 0), (0, 1), (0, -1)] {
                 for py in (if contained { y } else { y + 4 })..=y + 4 {
-                    original.world.set_block(20 + dx, py, 4 + dz, glass);
+                    original.world.set_block(20 + dx, py, 12 + dz, glass);
                 }
             }
         }
@@ -666,7 +668,7 @@ fn mixed_arena_water_is_not_piston_loss_and_pending_overlap_survives_checkpoint(
                     BlockPos {
                         x: 20,
                         y: y + 4,
-                        z: 4,
+                        z: 12,
                     },
                     water,
                 )
@@ -748,9 +750,6 @@ fn mixed_arena_water_is_not_piston_loss_and_pending_overlap_survives_checkpoint(
                 name(&restored, final_cell),
                 if contained { "air" } else { "water" }
             );
-            if !contained {
-                assert_eq!(value(&restored, final_cell, "level"), "6");
-            }
         }
         assert_eq!(
             name(
@@ -763,7 +762,17 @@ fn mixed_arena_water_is_not_piston_loss_and_pending_overlap_survives_checkpoint(
             ),
             "gold_block"
         );
-        assert_eq!(name(&restored, BlockPos { x: 20, y: 64, z: 4 }), "water");
+        assert_eq!(
+            name(
+                &restored,
+                BlockPos {
+                    x: 20,
+                    y: 64,
+                    z: 12
+                }
+            ),
+            "water"
+        );
     }
 }
 

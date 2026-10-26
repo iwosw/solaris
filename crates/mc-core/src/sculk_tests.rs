@@ -145,7 +145,7 @@ fn calibrated_sensor_filters_only_its_back_and_has_sixteen_block_range() {
         &mut s,
         BlockPos { z: 4, ..SENSOR },
         "redstone_wire",
-        &[("power", "7")],
+        &[("power", "7"), ("north", "side")],
     );
     emit(&mut s, [14.5, 201.5, 3.5], GameEvent::Resonate(8), None);
     advance(&mut s, 12);

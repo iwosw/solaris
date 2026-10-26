@@ -30,7 +30,7 @@ pub(crate) fn decode_chunk(
     vaults: &Vaults,
     registry: &crate::registry::CoreRegistry,
     chunk: &mc_world::Chunk,
-) -> Result<Vec<((i32, i32, i32), VaultData)>, String> {
+) -> Result<crate::tick::CellRecords<VaultData>, String> {
     let mut decoded = Vec::new();
     for (pos, bytes) in &chunk.block_entities {
         if vaults.contains_key(&key(*pos)) {

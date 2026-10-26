@@ -87,6 +87,25 @@ fn generated_entity_markers_survive_anvil_nbt_persistence() {
     };
 
     chunk.set_generated_entities(std::slice::from_ref(&marker));
+    let Tag::List(markers) = &chunk
+        .extras
+        .iter()
+        .find(|(key, _)| key == GENERATED_ENTITIES_KEY)
+        .unwrap()
+        .1
+    else {
+        panic!("generated entities must be a list");
+    };
+    let Tag::Compound(fields) = &markers.elements[0] else {
+        panic!("generated entity must be a compound");
+    };
+    assert_eq!(
+        fields
+            .iter()
+            .filter(|(key, _)| key == "PersistenceRequired")
+            .count(),
+        1
+    );
     let registry = crate::BlockRegistry::from_report(&[mc_data::blocks::BlockReport {
         id: Identifier::parse("minecraft:air").unwrap(),
         properties: BTreeMap::new(),

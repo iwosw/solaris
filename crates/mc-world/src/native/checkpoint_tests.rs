@@ -95,7 +95,10 @@ fn native_checkpoint_map_rows_and_sequence_roundtrip_with_strict_keys() {
     records.insert("map/0".into(), record(1, json!({})));
     records.insert("map_sequence".into(), record(1, json!(1)));
     commit(&store, 1, 0, &records, &[], &[]).unwrap();
-    assert_eq!(store.read_checkpoint().unwrap().globals["map/0"], records["map/0"]);
+    assert_eq!(
+        store.read_checkpoint().unwrap().globals["map/0"],
+        records["map/0"]
+    );
     for key in ["map/-1", "map/00", "map/2147483648", "unknown"] {
         let mut invalid = globals(2);
         invalid.insert(key.into(), record(2, json!({})));

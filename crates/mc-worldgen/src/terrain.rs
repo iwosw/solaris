@@ -2730,7 +2730,8 @@ impl ChunkGenerator for TerrainGenerator {
         min: (i32, i32),
         max: (i32, i32),
     ) -> Vec<mc_world::chunk::GeneratedStructureSite> {
-        let mut sites = self.overworld_structures
+        let mut sites = self
+            .overworld_structures
             .as_ref()
             .map_or_else(Vec::new, |structures| {
                 structures.sites(

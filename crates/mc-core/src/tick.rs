@@ -597,6 +597,9 @@ pub struct MergeSpawn {
     pub advancement_breeding: Option<(EntityId, serde_json::Value)>,
 }
 
+/// Per-cell records decoded from one chunk (hydration decode phase output).
+pub(crate) type CellRecords<T> = Vec<((i32, i32, i32), T)>;
+
 impl TickState {
     /// Serial-pass block write: visible to later reads this tick and staged
     /// for the canonical block phase (neighbours, comparators, WAL).

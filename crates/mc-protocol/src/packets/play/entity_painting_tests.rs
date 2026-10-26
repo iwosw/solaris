@@ -11,6 +11,9 @@ fn painting_variant_holder_wire_roundtrip() {
     let mut bytes = Vec::new();
     packet.encode(&mut bytes).unwrap();
     assert_eq!(bytes, [17, 9, 34, 5, 255]);
-    assert_eq!(ClientboundSetEntityData::decode(&mut bytes.as_slice()).unwrap(), packet);
+    assert_eq!(
+        ClientboundSetEntityData::decode(&mut bytes.as_slice()).unwrap(),
+        packet
+    );
     assert!(ClientboundSetEntityData::decode(&mut [17, 9, 34, 0, 255].as_slice()).is_err());
 }
