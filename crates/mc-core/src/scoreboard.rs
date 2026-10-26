@@ -428,7 +428,7 @@ fn holders(state: &TickState, executor: EntityId, input: &str) -> Result<Vec<Str
     let target = match input {
         "@s" => Target::Executor,
         "@a" => Target::AllPlayers,
-        "@p" => Target::Nearest,
+        "@p" | "@n" => Target::Nearest,
         _ => return Err("Unsupported player selector".to_owned()),
     };
     Ok(crate::tick::resolve_target(state, executor, &target)

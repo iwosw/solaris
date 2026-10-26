@@ -10,12 +10,60 @@ const COMMAND_BUDGET: usize = crate::command_context::LIMIT;
 const MAX_RESOURCES: usize = 16384;
 const MAX_BYTES: usize = 16 * 1024 * 1024;
 
-#[derive(Clone, Default)]
+
+/// Ordered native authority for the enabled and explicitly disabled pack ids.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct Selection {
+    pub enabled: Vec<String>,
+    pub disabled: Vec<String>,
+}
+
+impl Default for Selection {
+    fn default() -> Self {
+        Self {
+            enabled: vec!["vanilla".into()],
+            disabled: Vec::new(),
+        }
+    }
+}
+
+impl Selection {
+    pub(crate) fn validate(&self) -> Result<(), String> {
+        if self.enabled.len().saturating_add(self.disabled.len()) > MAX_RESOURCES {
+            return Err("Datapack selection limit exceeded".into());
+        }
+        let mut seen = BTreeSet::new();
+        for id in self.enabled.iter().chain(&self.disabled) {
+            if id.is_empty() || id.len() > 1024 || !seen.insert(id) {
+                return Err(format!("Invalid or duplicate datapack selection id: {id}"));
+            }
+        }
+        if !self.enabled.iter().any(|id| id == "vanilla") {
+            return Err("Disabling builtin vanilla content is unsupported".into());
+        }
+        Ok(())
+    }
+}
+#[derive(Clone)]
 pub(crate) struct PackSet {
-    pub names: Vec<String>,
-    functions: BTreeMap<String, Arc<[String]>>,
-    tags: BTreeMap<String, Arc<[String]>>,
+    pub selection: Selection,
+    /// Pack descriptions from `pack.mcmeta` (`file/<name>` and `vanilla`),
+    /// preserved so listing can present them through chat hover components.
+    pub descriptions: BTreeMap<String, String>,
+    pub(crate) functions: BTreeMap<String, Arc<[String]>>,
+    pub(crate) tags: BTreeMap<String, Arc<[String]>>,
     resources: BTreeMap<String, String>,
+}
+impl Default for PackSet {
+    fn default() -> Self {
+        Self {
+            selection: Selection::default(),
+            descriptions: BTreeMap::from([("vanilla".into(), "Vanilla built-in content".into())]),
+            functions: BTreeMap::new(),
+            tags: BTreeMap::new(),
+            resources: BTreeMap::new(),
+        }
+    }
 }
 
 fn identifier(value: &str) -> Result<String, String> {
@@ -102,51 +150,75 @@ fn read_text(path: &Path, remaining: &mut usize) -> Result<String, String> {
 }
 
 impl PackSet {
-    pub(crate) fn load(root: &Path) -> Result<Self, String> {
-        let mut result = Self::default();
-        if !root.exists() {
-            return Ok(result);
-        }
-        if std::fs::symlink_metadata(root)
-            .map_err(|e| e.to_string())?
-            .file_type()
-            .is_symlink()
-        {
-            return Err("Datapack root cannot be a symlink".into());
-        }
-        let mut packs = Vec::new();
-        for entry in std::fs::read_dir(root).map_err(|e| e.to_string())? {
-            if packs.len() >= MAX_RESOURCES {
-                return Err("Datapack resource limit exceeded".into());
-            }
-            packs.push(entry.map_err(|e| e.to_string())?);
-        }
-        packs.sort_by_key(|entry| entry.file_name());
+    pub(crate) fn load(root: &Path, mut selection: Selection) -> Result<Self, String> {
+        selection.validate()?;
+        let mut packs = BTreeMap::new();
+        let mut descriptions = BTreeMap::from([(
+            "vanilla".to_owned(),
+            "Vanilla built-in content".to_owned(),
+        )]);
         let mut remaining = MAX_BYTES;
+        if root.exists() {
+            if std::fs::symlink_metadata(root)
+                .map_err(|e| e.to_string())?
+                .file_type()
+                .is_symlink()
+            {
+                return Err("Datapack root cannot be a symlink".into());
+            }
+            for entry in std::fs::read_dir(root).map_err(|e| e.to_string())? {
+                if packs.len() >= MAX_RESOURCES - 1 {
+                    return Err("Datapack resource limit exceeded".into());
+                }
+                let pack = entry.map_err(|e| e.to_string())?;
+                if !pack.file_type().map_err(|e| e.to_string())?.is_dir() {
+                    return Err(format!(
+                        "Only directory datapacks are supported: {}",
+                        pack.path().display()
+                    ));
+                }
+                let raw_meta = read_text(&pack.path().join("pack.mcmeta"), &mut remaining)?;
+                let metadata: serde_json::Value =
+                    serde_json::from_str(&raw_meta).map_err(|e| e.to_string())?;
+                if !metadata.get("pack").is_some_and(serde_json::Value::is_object) {
+                    return Err("Datapack pack.mcmeta requires a pack object".into());
+                }
+                let name = pack.file_name().into_string().map_err(|_| "Non-UTF8 datapack name")?;
+                let id = format!("file/{name}");
+                let description = metadata
+                    .get("pack")
+                    .and_then(|pack| pack.get("description"))
+                    .map(|description| {
+                        if let Some(text) = description.as_str() {
+                            text.to_owned()
+                        } else {
+                            description.to_string()
+                        }
+                    })
+                    .unwrap_or_default();
+                descriptions.insert(id.clone(), description);
+                packs.insert(id, pack.path());
+            }
+        }
+        selection.enabled.retain(|id| id == "vanilla" || packs.contains_key(id));
+        for id in packs.keys() {
+            if !selection.enabled.contains(id) && !selection.disabled.contains(id) {
+                selection.enabled.push(id.clone());
+            }
+        }
+        selection.validate()?;
+        let mut result = Self {
+            selection,
+            descriptions,
+            ..Self::default()
+        };
         let mut visited = 0;
         let mut raw_tags = BTreeMap::<String, Vec<(String, bool)>>::new();
-        for pack in packs {
-            if !pack.file_type().map_err(|e| e.to_string())?.is_dir() {
-                return Err(format!(
-                    "Only directory datapacks are supported: {}",
-                    pack.path().display()
-                ));
+        for id in &result.selection.enabled {
+            if id == "vanilla" {
+                continue;
             }
-            let metadata: serde_json::Value = serde_json::from_str(&read_text(
-                &pack.path().join("pack.mcmeta"),
-                &mut remaining,
-            )?)
-            .map_err(|e| e.to_string())?;
-            if !metadata
-                .get("pack")
-                .is_some_and(serde_json::Value::is_object)
-            {
-                return Err("Datapack pack.mcmeta requires a pack object".into());
-            }
-            result
-                .names
-                .push(pack.file_name().to_string_lossy().into_owned());
-            let data = pack.path().join("data");
+            let data = packs[id].join("data");
             let mut paths = Vec::new();
             files(&data, &mut paths, 0, &mut visited)?;
             for path in paths {
@@ -321,19 +393,26 @@ impl PackSet {
 pub(crate) struct Runtime {
     packs: Arc<PackSet>,
     root: Option<PathBuf>,
-    reload: Option<std::sync::mpsc::Receiver<Result<PackSet, String>>>,
+    reload: Option<Reload>,
     load_pending: bool,
-    budget_tick: u64,
-    used: usize,
     pending: Vec<Frame>,
-    running: bool,
+    pub(crate) running: bool,
     scheduled: BTreeMap<(u64, String), ()>,
     dirty: bool,
+    selection_dirty: bool,
     pub(crate) origin: Option<[f64; 3]>,
+}
+struct Reload {
+    receiver: std::sync::mpsc::Receiver<Result<PackSet, String>>,
+    connection: ConnectionId,
+    /// Whether this worker run backs an enable/disable activation (report
+    /// loaded-pack counts) or a plain `/reload` (report reloaded functions).
+    activation: bool,
 }
 struct Frame {
     lines: Arc<[String]>,
     next: usize,
+    started: bool,
     context: crate::command_context::Context,
 }
 
@@ -348,9 +427,42 @@ impl Runtime {
         }
     }
     pub(crate) fn install(&mut self, packs: PackSet, root: PathBuf) {
+        self.selection_dirty |= self.packs.selection != packs.selection;
         self.packs = Arc::new(packs);
         self.root = Some(root);
         self.load_pending = true;
+    }
+    pub(crate) fn selection(&self) -> &Selection {
+        &self.packs.selection
+    }
+    pub(crate) fn packs(&self) -> &PackSet {
+        &self.packs
+    }
+    /// Queue a worker-thread activation for an enable/disable selection:
+    /// the worker recompiles and classifies the outcome on completion while
+    /// the old packs and selection stay authoritative. Tick-thread callers
+    /// never touch the filesystem.
+    pub(crate) fn request_activation(&mut self, selection: Selection) -> Result<(), String> {
+        selection.validate()?;
+        self.request_reload(selection, crate::command_console::CONNECTION, true)
+    }
+    fn request_reload(
+        &mut self,
+        selection: Selection,
+        connection: ConnectionId,
+        activation: bool,
+    ) -> Result<(), String> {
+        if self.reload.is_some() {
+            return Err("Datapack reload already in progress".into());
+        }
+        let root = self.root.clone().ok_or("No datapack directory configured")?;
+        let (tx, receiver) = std::sync::mpsc::sync_channel(1);
+        std::thread::Builder::new()
+            .name("datapack-reload".into())
+            .spawn(move || { let _ = tx.send(PackSet::load(&root, selection)); })
+            .map_err(|error| format!("Starting datapack reload: {error}"))?;
+        self.reload = Some(Reload { receiver, connection, activation });
+        Ok(())
     }
     pub(crate) fn image(&self) -> Vec<(u64, String)> {
         self.scheduled.keys().cloned().collect()
@@ -379,10 +491,21 @@ impl Runtime {
         self.dirty = false;
         Ok(())
     }
+    pub(crate) fn restore_selection(&mut self, selection: Selection) -> Result<(), crate::CoreError> {
+        selection.validate().map_err(crate::CoreError::Storage)?;
+        self.packs = std::sync::Arc::new(PackSet { selection, ..PackSet::default() });
+        self.selection_dirty = false;
+        Ok(())
+    }
     pub(crate) fn journal(&mut self, entries: &mut Vec<crate::journal::JournalEntry>) {
         if std::mem::take(&mut self.dirty) {
             entries.push(crate::journal::JournalEntry::ScheduledFunctions {
                 value: self.image(),
+            });
+        }
+        if std::mem::take(&mut self.selection_dirty) {
+            entries.push(crate::journal::JournalEntry::DatapackSelection {
+                value: self.selection().clone(),
             });
         }
     }
@@ -423,6 +546,7 @@ fn enqueue(
             runtime.pending.push(Frame {
                 lines: runtime.packs.functions[name].clone(),
                 next: 0,
+                started: false,
                 context,
             });
         }
@@ -436,20 +560,13 @@ fn enqueue(
         runtime.pending.push(Frame {
             lines,
             next: 0,
+            started: false,
             context,
         });
     }
     Ok(())
 }
 pub(crate) fn execute_block(state: &mut TickState, text: &str, changes: &mut ChangeSet) {
-    if state.datapacks.budget_tick != state.tick {
-        state.datapacks.budget_tick = state.tick;
-        state.datapacks.used = 0;
-    }
-    if state.datapacks.used >= COMMAND_BUDGET {
-        return;
-    }
-    state.datapacks.used += 1;
     let connection = crate::command_console::CONNECTION;
     let executor = crate::command_console::EXECUTOR;
     let text = text.trim_start_matches('/');
@@ -461,25 +578,29 @@ fn drain(state: &mut TickState, changes: &mut ChangeSet) {
     if state.datapacks.running {
         return;
     }
+    crate::command_context::begin_sequence(state);
     state.datapacks.running = true;
-    if state.datapacks.budget_tick != state.tick {
-        state.datapacks.budget_tick = state.tick;
-        state.datapacks.used = 0;
-    }
     while let Some(mut frame) = state.datapacks.pending.pop() {
+        if !frame.started {
+            if let Err(error) = crate::command_context::charge(state) {
+                state.datapacks.pending.clear();
+                feedback(state, frame.context.connection, error);
+                break;
+            }
+            frame.started = true;
+        }
         if frame.next == frame.lines.len() {
             continue;
         }
-        if state.datapacks.used >= COMMAND_BUDGET {
+        if crate::command_context::exhausted(state) {
             state.datapacks.pending.clear();
             feedback(
                 state,
                 frame.context.connection,
-                "Datapack command budget exceeded (65536 commands per tick)",
+                "Function command sequence budget exceeded",
             );
             break;
         }
-        state.datapacks.used += 1;
         let lines = frame.lines.clone();
         let index = frame.next;
         let context = frame.context;
@@ -504,7 +625,10 @@ pub(crate) fn command(
     if root == "data" {
         return crate::command_data::command(state, connection, executor, text);
     }
-    if !matches!(root, "function" | "schedule" | "reload" | "datapack") {
+    if root == "datapack" {
+        return management::command(state, connection, text);
+    }
+    if !matches!(root, "function" | "schedule" | "reload") {
         return Unavailable;
     }
     let words = text.split_whitespace().collect::<Vec<_>>();
@@ -536,20 +660,7 @@ pub(crate) fn command(
                 Ok(())
             })()
         }
-        ["reload"] => {
-            if state.datapacks.reload.is_some() { Err("Datapack reload already in progress".into()) }
-            else if let Some(root) = state.datapacks.root.clone() {
-                let (tx, rx) = std::sync::mpsc::sync_channel(1);
-                match std::thread::Builder::new().name("datapack-reload".into()).spawn(move || { let _ = tx.send(PackSet::load(&root)); }) {
-                    Ok(_) => { state.datapacks.reload = Some(rx); Ok(()) }
-                    Err(error) => Err(error.to_string()),
-                }
-            } else { Err("No datapack directory configured".into()) }
-        }
-        ["datapack", "list"] | ["datapack", "list", "enabled"] => {
-            feedback(state, connection, format!("Enabled directory datapacks: {}", state.datapacks.packs.names.join(", ")));
-            Ok(())
-        }
+        ["reload"] => state.datapacks.request_reload(state.datapacks.selection().clone(), connection, false),
         _ => Err("Supported: function <id|#tag>; schedule function <id> <time> [append|replace]; schedule clear <id>; reload; datapack list".into()),
     };
     let outcome = if let Err(error) = result {
@@ -563,45 +674,51 @@ pub(crate) fn command(
 }
 
 pub(crate) fn tick(state: &mut TickState, changes: &mut ChangeSet) {
-    if let Some(receiver) = &state.datapacks.reload {
-        match receiver.try_recv() {
+    if let Some(reload) = &state.datapacks.reload {
+        let connection = reload.connection;
+        let activation = reload.activation;
+        match reload.receiver.try_recv() {
             Ok(result) => {
                 state.datapacks.reload = None;
                 match result {
                     Ok(packs) if packs.resources == state.datapacks.packs.resources => {
+                        state.datapacks.selection_dirty |= state.datapacks.packs.selection != packs.selection;
+                        let count = packs.selection.enabled.len();
                         state.datapacks.packs = Arc::new(packs);
                         state.datapacks.load_pending = true;
                         feedback(
                             state,
-                            crate::command_console::CONNECTION,
-                            "Datapack functions reloaded",
+                            connection,
+                            if activation {
+                                format!("Datapack selection applied ({count} enabled)")
+                            } else {
+                                "Datapack functions reloaded".into()
+                            },
                         );
                     }
                     Ok(_) => feedback(
                         state,
-                        crate::command_console::CONNECTION,
-                        "Recipe/loot changes require restart; reload refused, old packs retained",
+                        connection,
+                        "Recipe/loot changes require restart; reload refused, old packs and selection retained",
                     ),
                     Err(error) => feedback(
                         state,
-                        crate::command_console::CONNECTION,
+                        connection,
                         format!("Datapack reload refused: {error}"),
                     ),
                 }
             }
             Err(std::sync::mpsc::TryRecvError::Disconnected) => {
                 state.datapacks.reload = None;
+                feedback(state, connection, "Datapack reload worker disconnected; old packs and selection retained");
             }
             Err(std::sync::mpsc::TryRecvError::Empty) => {}
         }
     }
-    let connection = crate::command_console::CONNECTION;
-    let executor = crate::command_console::EXECUTOR;
     if std::mem::take(&mut state.datapacks.load_pending)
         && state.datapacks.packs.tags.contains_key("minecraft:load")
     {
-        let _ = enqueue(state, "#minecraft:load", connection, executor);
-        drain(state, changes);
+        execute_block(state, "function #minecraft:load", changes);
     }
     for _ in 0..COMMAND_BUDGET {
         if !state
@@ -614,17 +731,16 @@ pub(crate) fn tick(state: &mut TickState, changes: &mut ChangeSet) {
         }
         let ((_, name), ()) = state.datapacks.scheduled.pop_first().expect("due entry");
         state.datapacks.dirty = true;
-        if let Err(error) = enqueue(state, &name, connection, executor) {
-            feedback(state, connection, error);
-        }
-        drain(state, changes);
+        execute_block(state, &format!("function {name}"), changes);
     }
     if state.datapacks.packs.tags.contains_key("minecraft:tick") {
-        let _ = enqueue(state, "#minecraft:tick", connection, executor);
-        drain(state, changes);
+        execute_block(state, "function #minecraft:tick", changes);
     }
 }
 
 #[cfg(test)]
 #[path = "datapacks_tests.rs"]
 mod tests;
+
+#[path = "datapack_management.rs"]
+mod management;

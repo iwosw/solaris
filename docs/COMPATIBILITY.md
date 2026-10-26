@@ -72,6 +72,14 @@ Current server-fixes behavior (source and focused regression scope, not live acc
 | Command blocks: impulse, chain, repeating | `partial` | [native scheduled execution](../crates/mc-core/src/command_blocks.rs); [regressions](../crates/mc-core/src/command_blocks_tests.rs); [configuration and limits](OPERATING.md#datapacks-and-command-blocks) | Creative operator placement; disabled by default. Unconditional impulse/chain/repeating blocks execute native commands. Configure through `/data`, not the client editor. Conditional result propagation, comparator success output, command minecarts and editor packets remain absent. |
 | Books/quills: editing and signing | `partial` | [native edit/sign tests](../crates/mc-core/src/books_tests.rs); [book packet tests](../crates/mc-protocol/src/packets/play/book_packet_tests.rs); [component codecs](../crates/mc-protocol/src/packets/play/copied_components/book_tests.rs) | EditBook now enters native admission and persists pages/title/author; written books open through edge projection ([SC-06] implementation gap closed). Actual-client editing/signing and filtered/styled imported-book coverage remain unproven. |
 
+Selector `dx`/`dy`/`dz` volumes intersect entity body bounds, not just entity
+positions. Once an extent is present, omitted extents are zero; signed/fractional
+extents retain the one-block upper expansion, and merely touching a face does
+not intersect. Distance filters still test the entity position and combine with
+the volume filter. This is a narrow selector implementation change, not complete
+selector parity or a real-client acceptance claim: option coverage, dimension
+scope, dead players, declared target types and random evaluation remain open.
+
 Saved-map implementation is **partial** ([native owner](../crates/mc-core/src/maps.rs),
 [regressions](../crates/mc-core/src/maps/tests.rs)): empty-map creation, bounded
 resident-world color sampling, hand/offhand and viewed item-frame packets,

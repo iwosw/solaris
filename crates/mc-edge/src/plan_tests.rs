@@ -2965,6 +2965,11 @@ fn world_border_init_changes_and_credit_deferral_use_vanilla_packet() {
             center_x: 2.5,
             center_z: -3.5,
             size: 100.0,
+            lerp_target: 60.0,
+            lerp_remaining: 200,
+            warning_blocks: 7,
+            warning_time: 3,
+            ..Default::default()
         };
         viewer.world_credit = 0;
         assert!(borders(plan_viewer(&output, &mut viewer, 0, cache)).is_empty());
@@ -2977,9 +2982,12 @@ fn world_border_init_changes_and_credit_deferral_use_vanilla_packet() {
                 changed[0].center_z,
                 changed[0].new_size
             ),
-            (2.5, -3.5, 100.0)
+            (2.5, -3.5, 60.0)
         );
-        assert_eq!(changed[0].lerp_time, 0);
+        assert_eq!(changed[0].old_size, 100.0);
+        assert_eq!(changed[0].lerp_time, 200);
+        assert_eq!(changed[0].warning_blocks, 7);
+        assert_eq!(changed[0].warning_time, 3);
         assert!(borders(plan_viewer(&output, &mut viewer, 0, cache)).is_empty());
     });
 }

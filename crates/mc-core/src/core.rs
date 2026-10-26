@@ -611,6 +611,9 @@ fn load_dimension_state(
     tick_state.raids.validate()?;
     tick_state.trader_spawner = replay.wandering_trader.unwrap_or_default();
     tick_state.datapacks.restore(replay.scheduled_functions)?;
+    if let Some(selection) = replay.datapack_selection {
+        tick_state.datapacks.restore_selection(selection)?;
+    }
     tick_state.block_log = crate::block_log::BlockLog::restore(config.block_log, replay.block_log);
 
     // Replay player + entity records. Full player state (inventory,
@@ -892,8 +895,11 @@ impl Core {
             runtime.load_catalogs(&registry)?;
         }
         let datapack_root = config.world_dir.join("datapacks");
-        let datapacks =
-            crate::datapacks::PackSet::load(&datapack_root).map_err(CoreError::Registry)?;
+        let datapacks = crate::datapacks::PackSet::load(
+            &datapack_root,
+            crate::datapacks::Selection::default(),
+        )
+        .map_err(CoreError::Registry)?;
         datapacks
             .install_content(&mut registry)
             .map_err(CoreError::Registry)?;
@@ -3143,6 +3149,7 @@ struct CheckpointJob {
     raids: crate::raids::Raids,
     wandering_trader: crate::mob_lanes::TraderSpawner,
     scheduled_functions: Vec<(u64, String)>,
+    datapack_selection: crate::datapacks::Selection,
     generated_entity_claims: std::collections::BTreeSet<String>,
     tickets: std::collections::BTreeMap<String, ([i32; 2], (u64, i32))>,
     block_ticks: crate::block_ticks::BlockTicksImage,
@@ -3244,6 +3251,7 @@ fn start_checkpoint_with_reply(
         raids: state.raids.clone(),
         wandering_trader: state.trader_spawner,
         scheduled_functions: state.datapacks.image(),
+        datapack_selection: state.datapacks.selection().clone(),
         generated_entity_claims: state.generated_entity_claims.clone(),
         tickets: checkpoint_tickets(state, tick),
         block_ticks: state.block_ticks.image(),
@@ -4055,6 +4063,7 @@ fn commit_checkpoint(
         raids: Some(job.raids.clone()),
         wandering_trader: Some(job.wandering_trader),
         scheduled_functions: job.scheduled_functions.clone(),
+        datapack_selection: Some(job.datapack_selection.clone()),
     };
     crate::native_checkpoint::validate_manifest(&manifest)?;
     let mut globals = job.globals.clone();

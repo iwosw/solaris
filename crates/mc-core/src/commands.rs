@@ -16,7 +16,7 @@ pub enum Target {
     Nearest,
     AllPlayers,
     Player(String),
-    Selector(Selector),
+    Selector(Box<Selector>),
     /// Already resolved by the tick owner's global command dispatcher.
     Entity(crate::boundary::EntityId),
 }
@@ -38,15 +38,43 @@ pub enum SelectorSort {
     Arbitrary,
 }
 
+/// Inclusive integer range with open ends, Java `..` grammar (`5`, `..5`,
+/// `5..`, `3..9`).
+pub type ScoreRange = (Option<i32>, Option<i32>);
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Selector {
     pub kind: SelectorKind,
-    pub entity_type: Option<(Identifier, bool)>,
-    pub name: Option<(String, bool)>,
+    /// Repeated `type=` clauses as `(id, is_entity_tag, negated)`; at most
+    /// one positive clause (Java rejects duplicate `type=` admission).
+    pub entity_types: Vec<(Identifier, bool, bool)>,
+    /// Repeated `name=` clauses with the same duplicate rule.
+    pub names: Vec<(String, bool)>,
+    /// Score filters; repeated objectives are rejected, ranges use Java
+    /// `..` grammar.
+    pub scores: Vec<(String, ScoreRange)>,
+    /// Scoreboard-tag membership filters (`tag=<id>` / `tag=!<id>`).
+    pub tags: Vec<(String, bool)>,
+    /// Team membership filter (`team=<id>` / `team=` empty / `team=!<id>`).
+    pub team: Option<(String, bool)>,
+    /// Experience-level range (`level=..5`, `level=10..`).
+    pub level: Option<ScoreRange>,
+    /// Gamemode filter (`gamemode=survival`, negatable).
+    pub gamemode: Option<(GameMode, bool)>,
+    /// Pitch range in degrees (`x_rotation=-90..90`).
+    pub pitch: Option<(Option<f32>, Option<f32>)>,
+    /// Yaw range in degrees, wrapped (`y_rotation=0..90`).
+    pub yaw: Option<(Option<f32>, Option<f32>)>,
+    /// NBT exact-match predicate (SNBT compound).
+    pub nbt: Option<mc_nbt::Tag>,
+    /// Advancement filters (`advancements={id=true}`).
+    pub advancements: Vec<(String, bool)>,
+    /// Loot-predicate filters (`predicate=namespace:id`, negatable).
+    pub predicates: Vec<(Identifier, bool)>,
     pub distance: Option<(Option<f64>, Option<f64>)>,
     /// Absolute selector-origin overrides (`x`, `y`, `z`).
     pub position: [Option<f64>; 3],
-    /// Old-supported per-axis volume extents (`dx`, `dy`, `dz`).
+    /// Signed volume extents; omitted axes are zero when any extent is present.
     pub extent: [Option<f64>; 3],
     pub limit: Option<usize>,
     pub sort: Option<SelectorSort>,
@@ -123,6 +151,7 @@ impl GameMode {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+#[allow(clippy::large_enum_variant)]
 pub enum Destination {
     Position([Coord; 3]),
     Entity(Target),
@@ -165,6 +194,7 @@ pub enum AdvancementScope {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+#[allow(clippy::large_enum_variant)]
 pub enum Command {
     Advancement {
         target: Target,
@@ -283,6 +313,12 @@ pub enum Command {
         count: i32,
         hotbar_slot: u8,
     },
+    /// Vanilla `/debug start`: begin tick-time profiling.
+    DebugStart,
+    /// Vanilla `/debug stop`: end profiling, report elapsed ticks/time/TPS.
+    DebugStop,
+    /// Vanilla `/debug function <id|#tag>`: trace one function execution.
+    DebugFunction { name: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -400,7 +436,7 @@ pub fn parse(command: &str, operator: bool) -> Result<Command, CommandError> {
     }
 }
 
-fn command_words(command: &str) -> Result<Vec<&str>, CommandError> {
+pub(crate) fn command_words(command: &str) -> Result<Vec<&str>, CommandError> {
     let mut words = Vec::new();
     let mut start = None;
     let mut depth = 0_i32;
@@ -457,12 +493,12 @@ pub(crate) fn target_of(word: &str) -> Result<Target, CommandError> {
     }
     match word {
         "@s" => return Ok(Target::Executor),
-        "@p" => return Ok(Target::Nearest),
+        "@p" | "@n" => return Ok(Target::Nearest),
         "@a" => return Ok(Target::AllPlayers),
         _ => {}
     }
     let kind = match word.as_bytes().get(1) {
-        Some(b'p') => SelectorKind::Nearest,
+        Some(b'p') | Some(b'n') => SelectorKind::Nearest,
         Some(b'a') => SelectorKind::AllPlayers,
         Some(b'r') => SelectorKind::Random,
         Some(b's') => SelectorKind::Executor,
@@ -476,8 +512,18 @@ pub(crate) fn target_of(word: &str) -> Result<Target, CommandError> {
     };
     let mut selector = Selector {
         kind,
-        entity_type: None,
-        name: None,
+        entity_types: Vec::new(),
+        names: Vec::new(),
+        scores: Vec::new(),
+        tags: Vec::new(),
+        team: None,
+        level: None,
+        gamemode: None,
+        pitch: None,
+        yaw: None,
+        nbt: None,
+        advancements: Vec::new(),
+        predicates: Vec::new(),
         distance: None,
         position: [None; 3],
         extent: [None; 3],
@@ -485,7 +531,7 @@ pub(crate) fn target_of(word: &str) -> Result<Target, CommandError> {
         sort: None,
     };
     if word.len() == 2 {
-        return Ok(Target::Selector(selector));
+        return Ok(Target::Selector(Box::new(selector)));
     }
     let options = word[2..]
         .strip_prefix('[')
@@ -531,15 +577,32 @@ pub(crate) fn target_of(word: &str) -> Result<Target, CommandError> {
                 }
                 *target = Some(number);
             }
-            "type" if selector.entity_type.is_none() => {
+            "type" => {
+                // Java forbids `type=` on player-only variables (@p/@a/@r/@s);
+                // the bare kind already constrains to players.
+                if !matches!(kind, SelectorKind::Entities) {
+                    return Err(invalid());
+                }
                 let negated = value.starts_with('!');
                 let name = value.strip_prefix('!').unwrap_or(value);
-                selector.entity_type = Some((item_id(name).ok_or_else(invalid)?, negated));
+                let (id, is_tag) = if let Some(tag) = name.strip_prefix('#') {
+                    (item_id(tag).ok_or_else(invalid)?, true)
+                } else {
+                    (item_id(name).ok_or_else(invalid)?, false)
+                };
+                if !negated && selector.entity_types.iter().any(|(_, _, neg)| !neg) {
+                    return Err(invalid());
+                }
+                selector.entity_types.push((id, is_tag, negated));
             }
-            "name" if selector.name.is_none() => {
+            "name" => {
                 let negated = value.starts_with('!');
                 let name = value.strip_prefix('!').unwrap_or(value);
-                selector.name = Some((name.trim_matches('"').to_owned(), negated));
+                let name = name.trim_matches('"').to_owned();
+                if !negated && selector.names.iter().any(|(_, neg)| !neg) {
+                    return Err(invalid());
+                }
+                selector.names.push((name, negated));
             }
             "distance" if selector.distance.is_none() => {
                 let number = |s: &str| -> Result<Option<f64>, CommandError> {
@@ -585,6 +648,109 @@ pub(crate) fn target_of(word: &str) -> Result<Target, CommandError> {
                     }
                 });
             }
+            "tag" => {
+                let negated = value.starts_with('!');
+                let tag = value.strip_prefix('!').unwrap_or(value).to_owned();
+                if tag.is_empty() {
+                    return Err(invalid());
+                }
+                selector.tags.push((tag, negated));
+            }
+            "team" => {
+                if selector.team.is_some() {
+                    return Err(invalid());
+                }
+                let negated = value.starts_with('!');
+                let team = value.strip_prefix('!').unwrap_or(value).to_owned();
+                selector.team = Some((team, negated));
+            }
+            "level" => {
+                if selector.level.is_some() {
+                    return Err(invalid());
+                }
+                selector.level = Some(int_range(value).ok_or_else(invalid)?);
+            }
+            "gamemode" => {
+                if selector.gamemode.is_some() {
+                    return Err(invalid());
+                }
+                let negated = value.starts_with('!');
+                let mode = value.strip_prefix('!').unwrap_or(value);
+                let mode = match mode {
+                    "survival" => GameMode::Survival,
+                    "creative" => GameMode::Creative,
+                    "adventure" => GameMode::Adventure,
+                    "spectator" => GameMode::Spectator,
+                    _ => return Err(invalid()),
+                };
+                selector.gamemode = Some((mode, negated));
+            }
+            "x_rotation" => {
+                if selector.pitch.is_some() {
+                    return Err(invalid());
+                }
+                selector.pitch = Some(float_range(value).ok_or_else(invalid)?);
+            }
+            "y_rotation" => {
+                if selector.yaw.is_some() {
+                    return Err(invalid());
+                }
+                selector.yaw = Some(float_range(value).ok_or_else(invalid)?);
+            }
+            "nbt" => {
+                if selector.nbt.is_some() {
+                    return Err(invalid());
+                }
+                selector.nbt = Some(crate::command_snbt::parse(value).map_err(|_| invalid())?);
+            }
+            "predicate" => {
+                let negated = value.starts_with('!');
+                let id = value.strip_prefix('!').unwrap_or(value);
+                selector
+                    .predicates
+                    .push((item_id(id).ok_or_else(invalid)?, negated));
+            }
+            "advancements" => {
+                let body = value
+                    .strip_prefix('{')
+                    .and_then(|body| body.strip_suffix('}'))
+                    .ok_or_else(invalid)?;
+                for entry in body.split(',').map(str::trim).filter(|entry| !entry.is_empty()) {
+                    let (id, granted) = entry.split_once('=').ok_or_else(invalid)?;
+                    let granted = match granted.trim() {
+                        "true" => true,
+                        "false" => false,
+                        _ => return Err(invalid()),
+                    };
+                    selector
+                        .advancements
+                        .push((id.trim().to_owned(), granted));
+                }
+                if selector.advancements.is_empty() {
+                    return Err(invalid());
+                }
+            }
+            "scores" => {
+                let body = value
+                    .strip_prefix('{')
+                    .and_then(|body| body.strip_suffix('}'))
+                    .ok_or_else(invalid)?;
+                for entry in body.split(',').map(str::trim).filter(|entry| !entry.is_empty()) {
+                    let (objective, range) = entry.split_once('=').ok_or_else(invalid)?;
+                    let objective = objective.trim().to_owned();
+                    if objective.is_empty()
+                        || selector.scores.iter().any(|(known, _)| known == &objective)
+                    {
+                        return Err(invalid());
+                    }
+                    selector
+                        .scores
+                        .push((objective, int_range(range.trim()).ok_or_else(invalid)?));
+                }
+                if selector.scores.is_empty() {
+                    return Err(invalid());
+                }
+            }
             _ => {
                 return Err(
                     if matches!(key, "type" | "name" | "distance" | "limit" | "sort") {
@@ -596,7 +762,52 @@ pub(crate) fn target_of(word: &str) -> Result<Target, CommandError> {
             }
         }
     }
-    Ok(Target::Selector(selector))
+    Ok(Target::Selector(Box::new(selector)))
+}
+
+/// Java integer `..` range grammar: `5`, `..5`, `5..`, `3..9`.
+fn int_range(value: &str) -> Option<ScoreRange> {
+    let number = |part: &str| -> Option<Option<i32>> {
+        if part.is_empty() {
+            return Some(None);
+        }
+        part.parse::<i32>().ok().map(Some)
+    };
+    let (min, max) = if let Some((min, max)) = value.split_once("..") {
+        (number(min.trim())?, number(max.trim())?)
+    } else {
+        let exact = value.parse::<i32>().ok()?;
+        (Some(exact), Some(exact))
+    };
+    if min.is_none() && max.is_none() {
+        return None;
+    }
+    if matches!((min, max), (Some(min), Some(max)) if min > max) {
+        return None;
+    }
+    Some((min, max))
+}
+
+/// Java float `..` range grammar for rotation filters.
+fn float_range(value: &str) -> Option<(Option<f32>, Option<f32>)> {
+    let number = |part: &str| -> Option<Option<f32>> {
+        if part.is_empty() {
+            return Some(None);
+        }
+        let value: f32 = part.parse().ok()?;
+        value.is_finite().then_some(Some(value))
+    };
+    let (min, max) = if let Some((min, max)) = value.split_once("..") {
+        (number(min.trim())?, number(max.trim())?)
+    } else {
+        let exact: f32 = value.parse().ok()?;
+        exact.is_finite().then_some((Some(exact), Some(exact)))?
+    };
+    if min.is_none() && max.is_none() {
+        return None;
+    }
+    // Yaw wraps, so min > max is a wrapped window; pitch is checked at match time.
+    Some((min, max))
 }
 
 fn item_id(word: &str) -> Option<Identifier> {
@@ -973,6 +1184,11 @@ fn parse_debug(args: &[&str]) -> Result<Command, CommandError> {
                 .ok()
                 .filter(|slot| *slot <= 8)
                 .ok_or(CommandError::Usage(USAGE))?,
+        }),
+        ["start"] => Ok(Command::DebugStart),
+        ["stop"] => Ok(Command::DebugStop),
+        ["function", name] => Ok(Command::DebugFunction {
+            name: (*name).to_owned(),
         }),
         _ => Err(CommandError::Usage(USAGE)),
     }

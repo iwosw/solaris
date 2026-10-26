@@ -63,16 +63,26 @@ fn targets(
         return Vec::new();
     };
     let target = match target {
-        Target::Nearest => Target::Selector(crate::commands::Selector {
+        Target::Nearest => Target::Selector(Box::new(crate::commands::Selector {
             kind: crate::commands::SelectorKind::Nearest,
-            entity_type: None,
-            name: None,
+            entity_types: Vec::new(),
+            names: Vec::new(),
+            scores: Vec::new(),
+            tags: Vec::new(),
+            team: None,
+            level: None,
+            gamemode: None,
+            pitch: None,
+            yaw: None,
+            nbt: None,
+            advancements: Vec::new(),
+            predicates: Vec::new(),
             distance: None,
             position: origin.map(Some),
             extent: [None; 3],
             limit: None,
             sort: None,
-        }),
+        })),
         Target::Selector(selector) => {
             let mut selector = selector.clone();
             for (axis, coordinate) in selector.position.iter_mut().enumerate() {

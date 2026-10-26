@@ -77,9 +77,13 @@ pub(crate) struct Runtime {
     pub shared: bool,
     pub jobs: Vec<Job>,
     pub changes: BTreeMap<Dimension, ChangeSet>,
-    tick: u64,
     used: usize,
+    limit: usize,
+    forks: usize,
     depth: usize,
+    /// Per-selection random draws this tick; each `@r`/`sort=random`
+    /// evaluation advances it so repeated same-tick evaluations draw again.
+    pub(crate) random_draws: std::cell::Cell<u64>,
 }
 fn eye_height(state: &TickState, id: EntityId) -> f64 {
     state.entities.slot_of_any(id).map_or(0.0, |slot| {
@@ -124,16 +128,32 @@ pub(crate) fn submit(state: &mut TickState, text: &str, context: Context, change
         run(state, text, context, changes);
     }
 }
-fn charge(state: &mut TickState) -> Result<(), String> {
-    let runtime = &mut state.command_context;
-    if runtime.tick != state.tick {
-        runtime.tick = state.tick;
-        runtime.used = 0;
+/// Root quota follows pinned 26.1.2 `Commands.executeCommandInContext`,
+/// which clamps the configured sequence length to at least one so a zero
+/// gamerule cannot lock out the restoring gamerule command itself.
+pub(crate) fn begin_sequence(state: &mut TickState) {
+    if state.command_context.depth == 0 {
+        state.command_context.used = 0;
+        state.command_context.limit = (crate::command_rules::integer(
+            state,
+            "max_command_sequence_length",
+        ) as usize)
+            .max(1);
+        state.command_context.forks =
+            crate::command_rules::integer(state, "max_command_forks") as usize;
     }
-    if runtime.used >= LIMIT {
-        return Err("Command chain budget exceeded (65536)".into());
+}
+pub(crate) fn exhausted(state: &TickState) -> bool {
+    state.command_context.used >= state.command_context.limit
+}
+pub(crate) fn charge(state: &mut TickState) -> Result<(), String> {
+    if exhausted(state) {
+        return Err(format!(
+            "Command chain budget exceeded ({})",
+            state.command_context.limit
+        ));
     }
-    runtime.used += 1;
+    state.command_context.used += 1;
     Ok(())
 }
 fn word<'a>(text: &mut &'a str) -> Result<&'a str, String> {
@@ -309,22 +329,34 @@ pub(crate) fn run(state: &mut TickState, text: &str, context: Context, changes: 
         );
         return;
     }
+    if !state.datapacks.running {
+        begin_sequence(state);
+    }
     state.command_context.depth += 1;
     let previous = state.command_context.current;
-    let mut branches = vec![(
+    let mut branches = std::collections::VecDeque::from([(
         text.trim(),
         context,
         false,
         Vec::<crate::command_store::Store>::new(),
-    )];
-    while let Some((mut text, mut context, mut continuation, mut stores)) = branches.pop() {
+    )]);
+    let mut stage = None;
+    let mut produced = 0usize;
+    while let Some((mut text, mut context, mut continuation, mut stores)) = branches.pop_front() {
+        let mut resume = false;
         let result = (|| -> Result<Option<(bool, i32)>, String> {
-            loop {
-                charge(state)?;
+                let first_in_stage = stage != Some(text.as_ptr());
+                if first_in_stage {
+                    stage = Some(text.as_ptr());
+                    produced = 0;
+                }
                 state.command_context.current = Some(context);
                 let mut rest = text;
                 let root = word(&mut rest)?;
                 if !continuation && root != "execute" {
+                    if root != "function" {
+                        charge(state)?;
+                    }
                     use crate::command_execution::CommandResult;
                     return match native(state, text, context, changes, !stores.is_empty())? {
                         CommandResult::Success(value) => Ok(Some((true, value))),
@@ -343,19 +375,24 @@ pub(crate) fn run(state: &mut TickState, text: &str, context: Context, changes: 
                 }
                 continuation = true;
                 let subcommand = word(&mut text)?;
+                if subcommand != "run" && first_in_stage {
+                    state.command_context.used = state.command_context.used.saturating_add(1);
+                }
                 match subcommand {
                     "run" => {
                         continuation = false;
                     }
                     "as" | "at" => {
                         let selected = select(state, context, word(&mut text)?)?;
-                        if selected.len() + branches.len() > LIMIT {
+                        produced += selected.len();
+                        if produced >= state.command_context.forks {
+                            branches.clear();
                             return Err("Execute fork budget exceeded".into());
                         }
                         if selected.is_empty() {
                             return Ok(Some((false, 0)));
                         }
-                        for id in selected.into_iter().rev() {
+                        for id in selected {
                             let Some((dimension, position, rotation, height)) =
                                 entity_pose(state, id)
                             else {
@@ -370,7 +407,7 @@ pub(crate) fn run(state: &mut TickState, text: &str, context: Context, changes: 
                                 next.position = position;
                                 next.rotation = rotation;
                             }
-                            branches.push((text, next, true, stores.clone()));
+                            branches.push_back((text, next, true, stores.clone()));
                         }
                         return Ok(None);
                     }
@@ -379,13 +416,15 @@ pub(crate) fn run(state: &mut TickState, text: &str, context: Context, changes: 
                         if word(&mut probe)? == "as" {
                             text = probe;
                             let selected = select(state, context, word(&mut text)?)?;
-                            if selected.len() + branches.len() > LIMIT {
+                            produced += selected.len();
+                            if produced >= state.command_context.forks {
+                                branches.clear();
                                 return Err("Execute fork budget exceeded".into());
                             }
                             if selected.is_empty() {
                                 return Ok(Some((false, 0)));
                             }
-                            for id in selected.into_iter().rev() {
+                            for id in selected {
                                 let Some((_, position, rotation, _)) = entity_pose(state, id)
                                 else {
                                     continue;
@@ -397,7 +436,7 @@ pub(crate) fn run(state: &mut TickState, text: &str, context: Context, changes: 
                                 } else {
                                     next.rotation = rotation;
                                 }
-                                branches.push((text, next, true, stores.clone()));
+                                branches.push_back((text, next, true, stores.clone()));
                             }
                             return Ok(None);
                         }
@@ -426,13 +465,15 @@ pub(crate) fn run(state: &mut TickState, text: &str, context: Context, changes: 
                             if !matches!(anchor, "eyes" | "feet") {
                                 return Err("Invalid entity anchor".into());
                             }
-                            if selected.len() + branches.len() > LIMIT {
+                            produced += selected.len();
+                            if produced >= state.command_context.forks {
+                                branches.clear();
                                 return Err("Execute fork budget exceeded".into());
                             }
                             if selected.is_empty() {
                                 return Ok(Some((false, 0)));
                             }
-                            for id in selected.into_iter().rev() {
+                            for id in selected {
                                 let Some((_, mut target, _, height)) = entity_pose(state, id)
                                 else {
                                     continue;
@@ -442,7 +483,7 @@ pub(crate) fn run(state: &mut TickState, text: &str, context: Context, changes: 
                                 }
                                 let mut next = context;
                                 face(&mut next, target);
-                                branches.push((text, next, true, stores.clone()));
+                                branches.push_back((text, next, true, stores.clone()));
                             }
                             return Ok(None);
                         }
@@ -523,7 +564,8 @@ pub(crate) fn run(state: &mut TickState, text: &str, context: Context, changes: 
                     )?),
                     _ => return Err("Unsupported execute subcommand".into()),
                 }
-            }
+                resume = true;
+                Ok(None)
         })();
         let outcome = match result {
             Ok(outcome) => outcome,
@@ -536,6 +578,9 @@ pub(crate) fn run(state: &mut TickState, text: &str, context: Context, changes: 
             for store in &stores {
                 store.apply(state, success, value);
             }
+        }
+        if resume {
+            branches.push_back((text, context, continuation, stores));
         }
     }
     state.command_context.current = previous;
@@ -559,7 +604,7 @@ pub(crate) fn native(
         if context.permission < 2 {
             return Err(crate::commands::CommandError::Unknown.message());
         }
-        if require_result && text.split_whitespace().next() != Some("data") {
+        if require_result && !matches!(text.split_whitespace().next(), Some("data" | "datapack")) {
             return Err("Command does not support execute store".into());
         }
         return Ok(crate::datapacks::command(

@@ -546,18 +546,18 @@ pub(crate) fn checkpoint_tags(
             ("center_x", Tag::Double(border.center_x)),
             ("center_z", Tag::Double(border.center_z)),
             ("size", Tag::Double(border.size)),
-            ("lerp_target", Tag::Double(border.size)),
-            ("lerp_time", Tag::Long(0)),
-            ("damage_per_block", Tag::Double(0.2)),
-            ("safe_zone", Tag::Double(5.0)),
+            ("lerp_target", Tag::Double(border.lerp_target)),
+            ("lerp_time", Tag::Long(border.lerp_remaining)),
+            ("damage_per_block", Tag::Double(border.damage_per_block)),
+            ("safe_zone", Tag::Double(border.safe_zone)),
         ] {
             put(data, key, value);
         }
         // Native metadata owns these values independently of the runtime's
         // shared geometry. Checkpoints must not normalize imported warnings.
         if fresh {
-            put(data, "warning_blocks", Tag::Int(5));
-            put(data, "warning_time", Tag::Int(300));
+            put(data, "warning_blocks", Tag::Int(border.warning_blocks));
+            put(data, "warning_time", Tag::Int(border.warning_time * 20));
         }
     }
     for (dimension, path) in TICKET_PATHS {
@@ -608,35 +608,34 @@ fn border_from_fields(
         Tag::Double(value) if value.is_finite() => Ok(*value),
         _ => Err(failure(path, format!("invalid double {key}"))),
     };
-    let border = crate::command_border::Border {
+    let mut border = crate::command_border::Border {
         center_x: double("center_x")?,
         center_z: double("center_z")?,
         size: double("size")?,
+        lerp_target: double("lerp_target")?,
+        lerp_remaining: match required("lerp_time")? {
+            Tag::Long(value) if *value >= 0 => *value,
+            _ => return Err(failure(path, "invalid long lerp_time")),
+        },
+        damage_per_block: double("damage_per_block")?,
+        safe_zone: double("safe_zone")?,
+        warning_blocks: match required("warning_blocks")? {
+            Tag::Int(value) if *value >= 0 => *value,
+            _ => return Err(failure(path, "invalid integer warning_blocks")),
+        },
+        // Vanilla stores warning_time in ticks (WorldBorder$Settings.CODEC);
+        // the command surface uses seconds.
+        warning_time: match required("warning_time")? {
+            Tag::Int(value) if *value >= 0 => value.div_euclid(20),
+            _ => return Err(failure(path, "invalid integer warning_time")),
+        },
     };
+    // A settled vanilla extent carries lerp_time 0 with lerp_target == size;
+    // normalize the target so a stale target cannot drift a settled border.
+    if border.lerp_remaining == 0 {
+        border.lerp_target = border.size;
+    }
     validate_vanilla_border(border, path)?;
-    // These semantic fields have no typed runtime owner, so retaining bytes
-    // cannot make non-default settings safe to import into live gameplay.
-    for (key, default) in [("damage_per_block", 0.2), ("safe_zone", 5.0)] {
-        if double(key)? != default {
-            return Err(failure(path, format!("unsupported non-default {key}")));
-        }
-    }
-    for key in ["warning_blocks", "warning_time"] {
-        match required(key)? {
-            Tag::Int(value) if *value >= 0 => {}
-            Tag::Int(_) => return Err(failure(path, format!("negative {key}"))),
-            _ => return Err(failure(path, format!("invalid integer {key}"))),
-        }
-    }
-    match required("lerp_time")? {
-        Tag::Long(0) => {}
-        Tag::Long(value) if *value > 0 => {
-            return Err(failure(path, "unsupported timed border interpolation"));
-        }
-        _ => return Err(failure(path, "invalid long lerp_time")),
-    }
-    // A zero-time vanilla extent does not use its retained lerp target.
-    double("lerp_target")?;
     Ok(border)
 }
 
@@ -1059,6 +1058,7 @@ mod tests {
                 center_x: 248.5,
                 center_z: -184.5,
                 size: 128_000.0,
+                ..Default::default()
             },
             ..Default::default()
         };
@@ -1114,9 +1114,10 @@ mod tests {
             assert_eq!(field(data, "OpaqueData"), Some(&Tag::Long(37)));
             assert_eq!(field(data, "center_x"), Some(&Tag::Double(border.center_x)));
             assert_eq!(field(data, "center_z"), Some(&Tag::Double(border.center_z)));
-            assert_eq!(field(data, "warning_time"), Some(&Tag::Int(15)));
+            assert_eq!(field(data, "warning_time"), Some(&Tag::Int(border.warning_time * 20)));
             assert_eq!(field(data, "size"), Some(&Tag::Double(border.size)));
-            assert_eq!(field(data, "lerp_target"), Some(&Tag::Double(border.size)));
+            assert_eq!(field(data, "lerp_target"), Some(&Tag::Double(border.lerp_target)));
+            assert_eq!(field(data, "lerp_time"), Some(&Tag::Long(border.lerp_remaining)));
         }
     }
 
@@ -1139,9 +1140,16 @@ mod tests {
         }
         let mut recovered = from_tag(&to_tag(&tags)).unwrap();
         import_tags(&recovered, &mut manifest).unwrap();
+        // warning_time is stored in ticks; import converts to command
+        // seconds (div_euclid 20), and checkpoint writes back ticks.
+        for ((_, path), (blocks, time)) in BORDER_PATHS.into_iter().zip(warnings) {
+            let data = saved_data(&recovered, path).unwrap().unwrap();
+            assert_eq!(field(data, "warning_blocks"), Some(&Tag::Int(blocks)));
+            assert_eq!(field(data, "warning_time"), Some(&Tag::Int(time.div_euclid(20) * 20)));
+        }
         manifest.border.size = 321.0;
         checkpoint_tags(&mut recovered, 42, &manifest).unwrap();
-        for ((dimension, path), (blocks, time)) in BORDER_PATHS.into_iter().zip(warnings) {
+        for ((dimension, path), (blocks, _)) in BORDER_PATHS.into_iter().zip(warnings) {
             let data = saved_data(&recovered, path).unwrap().unwrap();
             let border = if dimension == crate::dimensions::Dimension::Overworld {
                 manifest.border
@@ -1150,7 +1158,7 @@ mod tests {
             };
             assert_eq!(field(data, "size"), Some(&Tag::Double(border.size)));
             assert_eq!(field(data, "warning_blocks"), Some(&Tag::Int(blocks)));
-            assert_eq!(field(data, "warning_time"), Some(&Tag::Int(time)));
+            assert_eq!(field(data, "warning_time"), Some(&Tag::Int(border.warning_time * 20)));
         }
     }
 
@@ -1168,13 +1176,12 @@ mod tests {
             ("center_z", Tag::Double(30_000_000.0)),
             ("size", Tag::Double(0.0)),
             ("size", Tag::Int(100)),
-            ("damage_per_block", Tag::Double(0.3)),
-            ("safe_zone", Tag::Double(10.0)),
+            ("damage_per_block", Tag::Double(f64::NAN)),
+            ("safe_zone", Tag::Double(-1.0)),
             ("warning_blocks", Tag::Int(-1)),
-            ("warning_time", Tag::Int(-1)),
+            ("warning_time", Tag::Int(-20)),
             ("warning_blocks", Tag::Long(5)),
             ("warning_time", Tag::Float(15.0)),
-            ("lerp_time", Tag::Long(20)),
             ("lerp_time", Tag::Long(-1)),
             ("lerp_time", Tag::Int(0)),
             ("lerp_target", Tag::Double(f64::INFINITY)),

@@ -32,6 +32,75 @@ fn run(state: &mut TickState, line: &str) {
 }
 
 #[test]
+fn command_parity_configured_sequence_budget_is_per_invocation() {
+    let directory = tempfile::tempdir().unwrap();
+    pack(
+        directory.path(),
+        "test",
+        &[("test/function/three.mcfunction", "time add 1\ntime add 1\ntime add 1")],
+    );
+    let mut state = fixture(PackSet::load(directory.path(), Selection::default()).unwrap());
+    state.day_time = 0;
+    run(&mut state, "gamerule minecraft:max_command_sequence_length 1");
+    run(&mut state, "function test:three");
+    assert_eq!(state.day_time, 0, "the function call itself costs one command");
+    run(&mut state, "gamerule minecraft:max_command_sequence_length 2");
+    run(&mut state, "function test:three");
+    assert_eq!(state.day_time, 1);
+    run(&mut state, "function test:three");
+    assert_eq!(state.day_time, 2, "another invocation in the same tick has its own quota");
+}
+
+#[test]
+fn function_tag_charges_each_called_function() {
+    let directory = tempfile::tempdir().unwrap();
+    pack(
+        directory.path(),
+        "test",
+        &[
+            ("test/function/a.mcfunction", "time add 1"),
+            ("test/function/b.mcfunction", "time add 1"),
+            ("test/function/c.mcfunction", "time add 1"),
+            ("test/tags/function/all.json", r#"{"values":["test:a","test:b","test:c"]}"#),
+        ],
+    );
+    let mut state = fixture(PackSet::load(directory.path(), Selection::default()).unwrap());
+    state.day_time = 0;
+    run(&mut state, "gamerule minecraft:max_command_sequence_length 4");
+    run(&mut state, "function #test:all");
+    assert_eq!(state.day_time, 2);
+    assert!(state.datapacks.pending.is_empty());
+}
+
+#[test]
+fn deferred_tick_function_preserves_one_sequence_budget() {
+    let directory = tempfile::tempdir().unwrap();
+    pack(
+        directory.path(),
+        "test",
+        &[
+            ("test/function/three.mcfunction", "time add 1\ntime add 1\ntime add 1"),
+            ("minecraft/tags/function/tick.json", r#"{"values":["test:three"]}"#),
+        ],
+    );
+    let mut state = fixture(PackSet::load(directory.path(), Selection::default()).unwrap());
+    state.day_time = 0;
+    run(&mut state, "gamerule minecraft:max_command_sequence_length 2");
+    state.dimension_globals.active = true;
+    tick(&mut state, &mut ChangeSet::default());
+    let jobs = std::mem::take(&mut state.command_context.jobs);
+    assert_eq!(jobs.len(), 1, "defer the invocation, not independently budgeted lines");
+    assert_eq!(jobs[0].text, "function #minecraft:tick");
+    state.dimension_globals.active = false;
+    for job in jobs {
+        crate::command_context::run(
+            &mut state, &job.text, job.context, &mut ChangeSet::default(),
+        );
+    }
+    assert_eq!(state.day_time, 1);
+}
+
+#[test]
 fn directory_functions_load_tick_nested_and_schedule_use_native_commands() {
     let directory = tempfile::tempdir().unwrap();
     pack(
@@ -54,7 +123,7 @@ fn directory_functions_load_tick_nested_and_schedule_use_native_commands() {
             ),
         ],
     );
-    let mut state = fixture(PackSet::load(directory.path()).unwrap());
+    let mut state = fixture(PackSet::load(directory.path(), Selection::default()).unwrap());
     tick(&mut state, &mut ChangeSet::default());
     assert_eq!(state.day_time, 105);
     run(&mut state, "schedule function test:nested 2t");
@@ -69,7 +138,7 @@ fn directory_functions_load_tick_nested_and_schedule_use_native_commands() {
 }
 
 #[test]
-fn recursion_is_iterative_and_shares_one_tick_budget() {
+fn recursion_is_iterative_and_shares_one_invocation_budget() {
     let directory = tempfile::tempdir().unwrap();
     pack(
         directory.path(),
@@ -79,17 +148,17 @@ fn recursion_is_iterative_and_shares_one_tick_budget() {
             "time add 1\nfunction test:loop",
         )],
     );
-    let mut state = fixture(PackSet::load(directory.path()).unwrap());
+    let mut state = fixture(PackSet::load(directory.path(), Selection::default()).unwrap());
     state.day_time = 0;
+    run(&mut state, "gamerule minecraft:max_command_sequence_length 6");
     run(&mut state, "function test:loop");
-    assert_eq!(state.day_time, (COMMAND_BUDGET / 2) as i64);
-    assert_eq!(state.datapacks.used, COMMAND_BUDGET);
+    assert_eq!(state.day_time, 3);
     assert!(state.datapacks.pending.is_empty());
     run(&mut state, "function test:loop");
-    assert_eq!(state.day_time, (COMMAND_BUDGET / 2) as i64);
+    assert_eq!(state.day_time, 6);
     state.tick += 1;
     run(&mut state, "function test:loop");
-    assert_eq!(state.day_time, COMMAND_BUDGET as i64);
+    assert_eq!(state.day_time, 9);
 }
 
 #[test]
@@ -114,7 +183,7 @@ fn tags_merge_replace_optional_and_cycle_validation() {
             ),
         ],
     );
-    let mut state = fixture(PackSet::load(directory.path()).unwrap());
+    let mut state = fixture(PackSet::load(directory.path(), Selection::default()).unwrap());
     run(&mut state, "function #test:entry");
     assert_eq!(state.day_time, 2);
     pack(
@@ -126,7 +195,7 @@ fn tags_merge_replace_optional_and_cycle_validation() {
         )],
     );
     assert!(
-        PackSet::load(directory.path())
+        PackSet::load(directory.path(), Selection::default())
             .err()
             .unwrap()
             .contains("Cyclic")
@@ -150,7 +219,7 @@ fn custom_recipe_and_block_loot_override_builtins() {
             ),
         ],
     );
-    let packs = PackSet::load(directory.path()).unwrap();
+    let packs = PackSet::load(directory.path(), Selection::default()).unwrap();
     let mut registry = crate::registry::CoreRegistry::load(None).unwrap();
     packs.install_content(&mut registry).unwrap();
     let recipes = registry
@@ -183,7 +252,7 @@ fn worldgen_and_unknown_resources_fail_with_explicit_error() {
         &[("test/worldgen/biome/a.json", "{}")],
     );
     assert!(
-        PackSet::load(directory.path())
+        PackSet::load(directory.path(), Selection::default())
             .err()
             .unwrap()
             .contains("Worldgen datapacks are not supported")
@@ -198,7 +267,7 @@ fn nonoperator_cannot_invoke_function() {
         "a",
         &[("test/function/a.mcfunction", "time set 1234")],
     );
-    let mut state = fixture(PackSet::load(directory.path()).unwrap());
+    let mut state = fixture(PackSet::load(directory.path(), Selection::default()).unwrap());
     let before = state.day_time;
     crate::command_console::execute(
         &mut state,
@@ -287,7 +356,7 @@ fn nested_functions_preserve_execute_position_rotation_and_permission() {
             ),
         ],
     );
-    let mut state = fixture(PackSet::load(directory.path()).unwrap());
+    let mut state = fixture(PackSet::load(directory.path(), Selection::default()).unwrap());
     run(
         &mut state,
         "execute positioned 5 60 5 rotated 0 0 run function test:outer",
@@ -315,7 +384,7 @@ fn malformed_delay_is_rejected_without_scheduling() {
         "a",
         &[("test/function/a.mcfunction", "time add 1")],
     );
-    let mut state = fixture(PackSet::load(directory.path()).unwrap());
+    let mut state = fixture(PackSet::load(directory.path(), Selection::default()).unwrap());
     run(&mut state, "schedule function test:a 2ss");
     assert!(state.datapacks.image().is_empty());
 }
@@ -328,12 +397,12 @@ fn metadata_and_data_root_symlinks_are_rejected() {
     let external = tempfile::NamedTempFile::new().unwrap();
     std::fs::remove_file(directory.path().join("a/pack.mcmeta")).unwrap();
     std::os::unix::fs::symlink(external.path(), directory.path().join("a/pack.mcmeta")).unwrap();
-    assert!(PackSet::load(directory.path()).is_err());
+    assert!(PackSet::load(directory.path(), Selection::default()).is_err());
     std::fs::remove_file(directory.path().join("a/pack.mcmeta")).unwrap();
     pack(directory.path(), "a", &[]);
     let external = tempfile::tempdir().unwrap();
     std::os::unix::fs::symlink(external.path(), directory.path().join("a/data")).unwrap();
-    assert!(PackSet::load(directory.path()).is_err());
+    assert!(PackSet::load(directory.path(), Selection::default()).is_err());
 }
 
 #[test]

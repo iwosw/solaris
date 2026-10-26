@@ -32,6 +32,7 @@ pub enum FillMode {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+#[allow(clippy::large_enum_variant)]
 pub enum WorldCommand {
     SetBlock {
         position: [Coord; 3],

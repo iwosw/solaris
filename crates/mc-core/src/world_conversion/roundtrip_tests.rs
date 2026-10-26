@@ -25,6 +25,7 @@ fn falcons_border(dimension: Dimension) -> crate::command_border::Border {
         center_x,
         center_z,
         size: 128_000.0,
+        ..Default::default()
     }
 }
 

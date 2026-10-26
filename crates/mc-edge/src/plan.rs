@@ -708,11 +708,14 @@ fn plan_viewer_inner(
                     center_x: snapshot.border.center_x,
                     center_z: snapshot.border.center_z,
                     old_size: snapshot.border.size,
-                    new_size: snapshot.border.size,
-                    lerp_time: 0,
+                    new_size: snapshot.border.lerp_target,
+                    lerp_time: snapshot.border.lerp_remaining,
                     absolute_max_size: 29_999_984,
-                    warning_blocks: 5,
-                    warning_time: 15,
+                    warning_blocks: snapshot.border.warning_blocks,
+                    // Protocol warning time is seconds; vanilla
+                    // ClientboundInitializeBorderPacket carries
+                    // getWarningTime (seconds) alongside getLerpTime.
+                    warning_time: snapshot.border.warning_time,
                 },
             );
         })

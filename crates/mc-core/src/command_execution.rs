@@ -32,6 +32,10 @@ pub(crate) fn supports_store_result(command: &Command) -> bool {
         | Command::ExperienceSet { .. }
         | Command::ExperienceQuery { .. }
         | Command::TimeQuery(_)
+        | Command::DifficultyQuery
+        | Command::DebugStart
+        | Command::DebugStop
+        | Command::DebugFunction { .. }
         | Command::GameRule { value: None, .. }
         | Command::WorldBorder(crate::command_border::BorderCommand::Get)
         | Command::World(
@@ -97,6 +101,51 @@ fn entity_type_name(state: &TickState, entity: EntityId) -> Option<&'static str>
     }
 }
 
+/// Entity-type tag membership from the tag registry (e.g. `#minecraft:skeletons`).
+fn entity_type_tags(state: &TickState, entity: EntityId) -> Vec<&str> {
+    let Some(slot) = state.entities.slot_of_any(entity) else {
+        return Vec::new();
+    };
+    let type_id = match state.entities.body(slot).kind {
+        EntityKind::Player { .. } => return Vec::new(),
+        EntityKind::Mob { type_id }
+        | EntityKind::Item { type_id }
+        | EntityKind::ExperienceOrb { type_id } => type_id,
+    };
+    state
+        .registry
+        .tags
+        .registries
+        .iter()
+        .filter(|(registry, _)| registry.as_str() == "minecraft:entity_type")
+        .flat_map(|(_, tags)| tags.iter())
+        .filter(|(_, entries)| entries.contains(&(type_id as i32)))
+        .map(|(tag, _)| tag.as_str())
+        .collect()
+}
+
+/// Vanilla plain display name for a nameless entity: Java
+/// `Entity.getName` falls back to the entity-type description while the
+/// `name=` predicate reads `getPlainTextName`, so `@e[name=Pig]`
+/// selects an unnamed pig rather than requiring `minecraft:pig`.
+fn plain_entity_name(state: &TickState, entity: EntityId) -> String {
+    entity_type_name(state, entity)
+        .and_then(|name| name.strip_prefix("minecraft:"))
+        .map(|name| {
+            let mut plain = String::with_capacity(name.len());
+            for (index, word) in name.split('_').enumerate() {
+                if index > 0 {
+                    plain.push(' ');
+                }
+                let mut chars = word.chars();
+                plain.extend(chars.next().iter().flat_map(|first| first.to_uppercase()));
+                plain.push_str(chars.as_str());
+            }
+            plain
+        })
+        .unwrap_or_default()
+}
+
 pub(crate) fn entity_name(state: &TickState, entity: EntityId) -> Tag {
     if entity == crate::command_console::EXECUTOR {
         return text("Server");
@@ -123,6 +172,157 @@ pub(crate) fn entity_name(state: &TickState, entity: EntityId) -> Tag {
     translated(format!("entity.{name}"), Vec::new())
 }
 
+/// Java target-selector option families beyond type/name/position: scores,
+/// tag, team, level, gamemode, pitch/yaw, nbt, advancements, predicates.
+fn options_match(
+    state: &TickState,
+    executor: EntityId,
+    slot: crate::entities::EntitySlot,
+    selector: &Selector,
+) -> bool {
+    let body = state.entities.body(slot);
+    let row = state.entities.row(slot);
+    let holder = state
+        .connections
+        .name_of(body.id)
+        .map(str::to_owned)
+        .unwrap_or_else(|| format!("entity_{}", body.id.0));
+    for (objective, (min, max)) in &selector.scores {
+        let value = state
+            .scoreboard
+            .scores
+            .get(&holder)
+            .and_then(|scores| scores.get(objective))
+            .map(|score| score.value);
+        let inside = match value {
+            Some(value) => min.is_none_or(|min| value >= min) && max.is_none_or(|max| value <= max),
+            None => min.is_none() && max.is_none(),
+        };
+        if !inside {
+            return false;
+        }
+    }
+    for (tag, inverted) in &selector.tags {
+        // Scoreboard tags ride the entity's opaque NBT `Tags` list; absent
+        // `/tag` support means no entity carries one yet, so a positive
+        // filter matches nothing while a negative filter admits everything.
+        let matched = false;
+        if matched == *inverted {
+            return false;
+        }
+        let _ = tag;
+    }
+    if let Some((team, inverted)) = &selector.team {
+        let id_label = format!("entity_{}", body.id.0);
+        let member = match team.as_str() {
+            "" => state.scoreboard.teams.values().all(|entry| {
+                !entry.members.contains(&holder) && !entry.members.contains(&id_label)
+            }),
+            name => state
+                .scoreboard
+                .teams
+                .get(name)
+                .is_some_and(|entry| {
+                    entry.members.contains(&holder) || entry.members.contains(&id_label)
+                }),
+        };
+        if member == *inverted {
+            return false;
+        }
+    }
+    if let Some((min, max)) = selector.level {
+        let level = state
+            .players
+            .get(&body.id)
+            .map(|player| player.vitals.experience.level);
+        match level {
+            Some(level) => {
+                if min.is_some_and(|min| level < min) || max.is_some_and(|max| level > max) {
+                    return false;
+                }
+            }
+            None => return false,
+        }
+    }
+    if let Some((mode, inverted)) = &selector.gamemode {
+        let matched = state
+            .players
+            .get(&body.id)
+            .is_some_and(|player| &player.game_mode == mode);
+        if matched == *inverted {
+            return false;
+        }
+    }
+    if selector.pitch.is_some() || selector.yaw.is_some() {
+        let [yaw, pitch, _] = state.entities.rot(slot);
+        if let Some((min, max)) = selector.pitch {
+            let pitch = f64::from(pitch);
+            let inside = match (min, max) {
+                (Some(min), Some(max)) if min <= max => {
+                    pitch >= f64::from(min) && pitch <= f64::from(max)
+                }
+                _ => {
+                    let lo = min.map(f64::from);
+                    let hi = max.map(f64::from);
+                    lo.is_none_or(|lo| pitch >= lo) && hi.is_none_or(|hi| pitch <= hi)
+                }
+            };
+            if !inside {
+                return false;
+            }
+        }
+        if let Some((min, max)) = selector.yaw {
+            let yaw = f64::from(yaw).rem_euclid(360.0);
+            let inside = match (min, max) {
+                (Some(min), Some(max)) if f64::from(min) <= f64::from(max) => {
+                    yaw >= f64::from(min) && yaw <= f64::from(max)
+                }
+                (Some(min), Some(max)) => {
+                    yaw >= f64::from(min) || yaw <= f64::from(max)
+                }
+                (Some(min), None) => yaw >= f64::from(min),
+                (None, Some(max)) => yaw <= f64::from(max),
+                (None, None) => true,
+            };
+            if !inside {
+                return false;
+            }
+        }
+    }
+    if let Some(expected) = &selector.nbt {
+        let actual = match crate::command_data::entity(state, body.id) {
+            Ok(tag) => tag,
+            Err(_) => return false,
+        };
+        if &actual != expected {
+            return false;
+        }
+    }
+    for (id, granted) in &selector.advancements {
+        let done = state
+            .players
+            .get(&body.id)
+            .and_then(|player| player.advancement_progress.as_object())
+            .and_then(|progress| progress.get(id))
+            .and_then(|entry| entry.get("done"))
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false);
+        if done != *granted {
+            return false;
+        }
+    }
+    for (id, inverted) in &selector.predicates {
+        // No loot-predicate registry is wired to selectors yet; a positive
+        // predicate matches nothing while a negative one admits everything.
+        if !inverted {
+            return false;
+        }
+        let _ = (id, executor);
+    }
+    let _ = row;
+    true
+}
+
 fn selector(state: &TickState, executor: EntityId, selector: &Selector) -> Vec<EntityId> {
     let origin = crate::command_console::pose(state, executor)
         .map(|(position, _)| position)
@@ -139,35 +339,59 @@ fn selector(state: &TickState, executor: EntityId, selector: &Selector) -> Vec<E
         .filter_map(|slot| {
             let body = state.entities.body(slot);
             let row = state.entities.row(slot);
-            if !body.alive
+            // Java @a includes dead players and @s may select a nonliving
+            // executor; @e and @n stay alive-only.
+            let dead_player = !body.alive && matches!(body.kind, EntityKind::Player { .. });
+            let admitted = body.alive
+                || (dead_player
+                    && matches!(
+                        selector.kind,
+                        SelectorKind::AllPlayers | SelectorKind::Executor
+                    ));
+            if !admitted
                 || (players_only && !matches!(body.kind, EntityKind::Player { .. }))
                 || (selector.kind == SelectorKind::Executor && body.id != executor)
             {
                 return None;
             }
-            if let Some((kind, inverted)) = &selector.entity_type {
-                let matched = entity_type_name(state, body.id) == Some(kind.as_str());
+            for (kind, is_tag, inverted) in &selector.entity_types {
+                let matched = if *is_tag {
+                    entity_type_tags(state, body.id)
+                        .iter()
+                        .any(|tag| *tag == kind.as_str())
+                } else {
+                    entity_type_name(state, body.id) == Some(kind.as_str())
+                };
                 if matched == *inverted {
                     return None;
                 }
             }
-            if let Some((name, inverted)) = &selector.name {
+            if !selector.names.is_empty() {
                 let actual = state
                     .connections
                     .name_of(body.id)
                     .or(row.appearance.custom_name.as_deref())
-                    .unwrap_or_else(|| entity_type_name(state, body.id).unwrap_or(""));
-                if (actual == name) == *inverted {
-                    return None;
+                    .map(str::to_owned)
+                    .unwrap_or_else(|| plain_entity_name(state, body.id));
+                for (name, inverted) in &selector.names {
+                    if (actual == *name) == *inverted {
+                        return None;
+                    }
                 }
             }
+            if !options_match(state, executor, slot, selector) {
+                return None;
+            }
             let pos = state.entities.pos(slot);
-            if selector.extent.iter().enumerate().any(|(axis, extent)| {
-                extent.is_some_and(|extent| {
-                    pos[axis] < origin[axis] + extent.min(0.0)
-                        || pos[axis] >= origin[axis] + extent.max(0.0) + 1.0
+            if selector.extent.iter().any(Option::is_some)
+                && (0..3).any(|axis| {
+                    let extent = selector.extent[axis].unwrap_or(0.0);
+                    let min = pos[axis] - if axis == 1 { 0.0 } else { body.half_width };
+                    let max = pos[axis] + if axis == 1 { body.height } else { body.half_width };
+                    max <= origin[axis] + extent.min(0.0)
+                        || min >= origin[axis] + extent.max(0.0) + 1.0
                 })
-            }) {
+            {
                 return None;
             }
             let distance = (pos[0] - origin[0]).powi(2)
@@ -192,14 +416,33 @@ fn selector(state: &TickState, executor: EntityId, selector: &Selector) -> Vec<E
         SelectorSort::Furthest => {
             candidates.sort_by(|a, b| b.1.total_cmp(&a.1).then(a.0.cmp(&b.0)))
         }
-        SelectorSort::Random => candidates.sort_by_key(|(id, _)| {
-            let mut value =
-                (id.0 as u32 as u64) ^ state.tick.wrapping_add(executor.0 as u32 as u64);
-            value = value.wrapping_add(0x9e3779b97f4a7c15);
-            value = (value ^ (value >> 30)).wrapping_mul(0xbf58476d1ce4e5b9);
-            value = (value ^ (value >> 27)).wrapping_mul(0x94d049bb133111eb);
-            value ^ (value >> 31)
-        }),
+        // Java shuffles on every evaluation (`ORDER_RANDOM` calls
+        // `Collections.shuffle` per selection), so repeated same-tick
+        // evaluations draw again instead of reusing one deterministic
+        // permutation. A per-call SplitMix64 stream keyed by a shared
+        // counter gives fresh bounded randomness without vanilla bit-exact
+        // RNG claims.
+        SelectorSort::Random => {
+            let count = state.command_context.random_draws.get();
+            state
+                .command_context
+                .random_draws
+                .set(count.wrapping_add(candidates.len() as u64));
+            let mut stream = count
+                .wrapping_add(state.tick)
+                .wrapping_add((executor.0 as u32 as u64) << 32);
+            let mut keys = Vec::with_capacity(candidates.len());
+            for _ in 0..candidates.len() {
+                stream = stream.wrapping_add(0x9e3779b97f4a7c15);
+                let mut value = stream;
+                value = (value ^ (value >> 30)).wrapping_mul(0xbf58476d1ce4e5b9);
+                value = (value ^ (value >> 27)).wrapping_mul(0x94d049bb133111eb);
+                keys.push(value ^ (value >> 31));
+            }
+            let mut keyed: Vec<_> = candidates.into_iter().zip(keys).collect();
+            keyed.sort_by(|a, b| a.1.cmp(&b.1).then(a.0.0.cmp(&b.0.0)));
+            candidates = keyed.into_iter().map(|(entry, _)| entry).collect();
+        }
         SelectorSort::Arbitrary => candidates.sort_by_key(|(id, _)| *id),
     }
     let default_limit = if matches!(
@@ -230,8 +473,7 @@ pub(crate) fn resolve_target(
             .unwrap_or_default(),
         Target::Executor => state
             .entities
-            .slot_of(executor)
-            .filter(|slot| state.entities.body(*slot).alive)
+            .slot_of_any(executor)
             .map(|_| vec![executor])
             .unwrap_or_default(),
         Target::Nearest | Target::AllPlayers => selector(
@@ -243,8 +485,18 @@ pub(crate) fn resolve_target(
                 } else {
                     SelectorKind::AllPlayers
                 },
-                entity_type: None,
-                name: None,
+                entity_types: Vec::new(),
+                names: Vec::new(),
+                scores: Vec::new(),
+                tags: Vec::new(),
+                team: None,
+                level: None,
+                gamemode: None,
+                pitch: None,
+                yaw: None,
+                nbt: None,
+                advancements: Vec::new(),
+                predicates: Vec::new(),
                 distance: None,
                 position: [None; 3],
                 extent: [None; 3],
@@ -261,23 +513,60 @@ pub(crate) fn resolve_target(
                 .filter_map(|slot| {
                     let body = state.entities.body(slot);
                     let row = state.entities.row(slot);
+                    let is_player = matches!(body.kind, EntityKind::Player { .. });
                     let actual = state
                         .connections
                         .name_of(body.id)
                         .or(row.appearance.custom_name.as_deref())
                         .unwrap_or_else(|| entity_type_name(state, body.id).unwrap_or(""));
-                    (body.alive && (actual == name || uuid == Some(row.uuid))).then_some(body.id)
+                    ((body.alive || is_player) && (actual == name || uuid == Some(row.uuid)))
+                        .then_some(body.id)
                 })
                 .collect()
         }
     }
 }
 
+/// Whether a selector's declared shape admits at most one entity: an
+/// explicit limit, or a single-type variable without options that widen it.
+/// Used before resolution so `/tp @s @a` rejects on declared maximum rather
+/// than on the resolved count.
+fn single_target(target: &Target) -> bool {
+    match target {
+        Target::Entity(_) | Target::Executor | Target::Nearest => true,
+        Target::Selector(selector) => {
+            if selector.limit.is_some_and(|limit| limit <= 1) {
+                return true;
+            }
+            matches!(
+                selector.kind,
+                SelectorKind::Nearest | SelectorKind::Executor | SelectorKind::Random
+            ) && selector.limit.is_none()
+        }
+        _ => false,
+    }
+}
+
+/// Players addressed by a player-only command. Java rejects a non-player
+/// selector shape (`@e`, entity tags) at admission — before state mutation —
+/// instead of filtering to the player subset afterwards. `/give @e stone`
+/// errors rather than granting to online players.
 pub(crate) fn player_targets(
     state: &TickState,
     executor: EntityId,
     target: &Target,
 ) -> Vec<EntityId> {
+    if let Target::Selector(selector) = target
+        && !matches!(
+            selector.kind,
+            SelectorKind::Nearest
+                | SelectorKind::AllPlayers
+                | SelectorKind::Random
+                | SelectorKind::Executor
+        )
+    {
+        return Vec::new();
+    }
     let mut targets = resolve_target(state, executor, target);
     targets.retain(|id| state.players.contains_key(id));
     targets
@@ -686,6 +975,15 @@ pub(crate) fn execute(
                 .unwrap_or_default();
             crate::tick::apply_player_effects(state, connection, executor, effects, changes);
         }
+        Command::DebugStart => {
+            return crate::command_debug::start(state, connection, executor, command);
+        }
+        Command::DebugStop => {
+            return crate::command_debug::stop(state, connection, executor, command);
+        }
+        Command::DebugFunction { name } => {
+            return crate::command_debug::trace_function(state, connection, executor, name, command);
+        }
         Command::Teleport {
             target,
             destination,
@@ -710,6 +1008,13 @@ pub(crate) fn execute(
                     None,
                 ),
                 Destination::Entity(target) => {
+                    // Java rejects a destination selector whose declared
+                    // maximum exceeds one even when only one entity happens
+                    // to match; `/tp @s @a` errors rather than teleporting.
+                    if !single_target(target) {
+                        feedback(state, connection, "argument.entity.toomany", Vec::new());
+                        return Failed;
+                    }
                     let ids = resolve_target(state, executor, target);
                     if ids.len() != 1 {
                         feedback(
@@ -1906,13 +2211,32 @@ fn actor_identity(state: &TickState, connection: ConnectionId) -> Option<String>
 }
 
 /// Online players a player command addresses; reports "no player found"
-/// and yields `None` when there are none.
+/// and yields `None` when there are none. A non-player selector shape is a
+/// parse-time admission error, reported before state changes and before the
+/// no-match feedback.
 fn command_players(
     state: &mut TickState,
     connection: ConnectionId,
     executor: EntityId,
     target: &Target,
 ) -> Option<Vec<EntityId>> {
+    if let Target::Selector(selector) = target
+        && !matches!(
+            selector.kind,
+            SelectorKind::Nearest
+                | SelectorKind::AllPlayers
+                | SelectorKind::Random
+                | SelectorKind::Executor
+        )
+    {
+        feedback(
+            state,
+            connection,
+            "argument.entity.selector.not_player",
+            Vec::new(),
+        );
+        return None;
+    }
     let targets = player_targets(state, executor, target);
     if targets.is_empty() {
         feedback(
