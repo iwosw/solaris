@@ -362,6 +362,7 @@ impl EdgeServer {
             block_entity_types: mc_data::block_entity_types::solaris_required_block_entity_types(),
         };
         let recipes = crate::recipes::RecipePackets::new(hub.registry())?;
+        let admin = crate::admin::Admin::open(&cfg.server_dir)?;
         anyhow::ensure!(
             hub.submit(PlayerInput::SpawnProtectionOperators { operators: admin.operator_ids() }),
             "spawn protection operator snapshot queue is full"
@@ -923,6 +924,7 @@ impl EdgeServer {
                 };
                 match root {
                     "op" | "deop" => {
+                        let result = self.admin.set_op(uuid, &name, root == "op");
                         if result.is_ok() {
                             let snapshot = PlayerInput::SpawnProtectionOperators { operators: self.admin.operator_ids() };
                             let mut sheds = 0;
@@ -2897,6 +2899,7 @@ pub fn core_config(cfg: &EdgeConfig) -> mc_core::config::CoreConfig {
     core.max_airtime_ticks = cfg.anti_cheat.max_airtime_ticks;
     core.pause_when_empty_seconds =
         u32::try_from(cfg.server.pause_when_empty_seconds.max(0)).unwrap_or(0);
+    core.enable_command_block = cfg.server.enable_command_block;
     core.spawn_protection = cfg.server.spawn_protection;
     core.input_log = cfg.server.input_log;
     core.mob_griefing = mc_core::config::MobGriefingRules {
