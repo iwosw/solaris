@@ -90,6 +90,7 @@ fn radius_is_in_chunks_and_world_border_is_authoritative() {
         center_x: 0.0,
         center_z: 0.0,
         size: 128.0,
+        lerp_target: 128.0,
         ..Default::default()
     };
     assert!(within_bounds(leaf(0, 0), [0.0, 0.0], 128, small));
@@ -162,6 +163,7 @@ fn invalidation_area_is_bounded_while_a_warm_player_moves() {
         center_x: 0.0,
         center_z: 0.0,
         size: 128.0,
+        lerp_target: 128.0,
         ..Default::default()
     };
     invalidate_area(&mut dirty, [0.0, 0.0], 128, small, ([-33, -33], [33, 33]));
