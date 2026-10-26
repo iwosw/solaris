@@ -82,7 +82,7 @@ pub(crate) fn decode_chunk(
             Some((_, Tag::Compound(fields))) => {
                 mc_data::item_nbt::stack_from_fields(&registry.items, fields)
                     .map_err(|e| fail(&e))?
-                    .ok_or_else(|| fail(&"Book: missing item id"))?
+                    .unwrap_or(ItemStack::EMPTY)
             }
             Some(_) => return Err(fail(&"Book: expected item compound")),
         };

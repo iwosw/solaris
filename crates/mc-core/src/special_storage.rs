@@ -36,7 +36,7 @@ fn decode(
         None => ItemStack::EMPTY,
         Some(Tag::Compound(item)) => stack_from_fields(items, item)
             .map_err(|e| format!("item: {e}"))?
-            .ok_or("item: missing item id")?,
+            .unwrap_or(ItemStack::EMPTY),
         Some(_) => return Err("item: expected item compound".into()),
     };
     Ok(vec![stack])
