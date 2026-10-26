@@ -1331,6 +1331,32 @@ impl TickState {
                     self.entities.row_mut(target).entity_life.taming.love_cause =
                         Some(self.entities.row(actor).uuid);
                 }
+                // Stacked tropical-fish buckets fed to an adult axolotl: the
+                // water-bucket remainder goes to the inventory (overflow drops
+                // at the player), mirroring bucket fills.
+                if let Some(claim) = intent.footprint.inv.first()
+                    && claim.take > 0
+                    && claim.expect_count > 1
+                    && let Some(slot) = self.entities.slot_of(*target)
+                    && crate::entity_life::adult(self.entities.row(slot))
+                    && let crate::entities::EntityKind::Mob { type_id } =
+                        self.entities.body(slot).kind
+                    && self
+                        .registry
+                        .blueprint(type_id)
+                        .is_some_and(|blueprint| blueprint.name == "minecraft:axolotl")
+                    && self
+                        .registry
+                        .items
+                        .name_of(claim.expect_item)
+                        .is_some_and(|name| name.as_str() == "minecraft:tropical_fish_bucket")
+                    && let Some(water) = self.registry.items.id_of(
+                        &mc_data::Identifier::parse("minecraft:water_bucket")
+                            .expect("vanilla item"),
+                    )
+                {
+                    self.merge_gives.push((intent.actor, water));
+                }
             }
             IntentKind::DolphinFeed { plan } => {
                 crate::dolphin::feed(self, plan);
@@ -3627,7 +3653,8 @@ fn plan_placement_click(
         water_source: state.registry.states.water,
     };
     let cells = crate::placement::place(&state.registry.blocks, item_block, &click, &reads)?;
-    if !crate::farming::can_stand(state, cells[0].1, cells[0].0)
+    if !crate::farming::can_plant(state, cells[0].1, cells[0].0)
+        || !crate::farming::can_stand(state, cells[0].1, cells[0].0)
         || !crate::placement::supported(
             &state.registry.blocks,
             &state.registry.tags,

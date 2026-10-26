@@ -1,8 +1,34 @@
 //! Pair compatibility is blueprint data; merge rechecks the same rule as AI.
+//! Egg-laying species stage a block or item birth instead of a live child.
 use crate::boundary::EntityId;
 use crate::entities::EntityKind;
 use crate::registry::CoreRegistry;
 use crate::tick::TickState;
+
+/// Vanilla egg-laying birth staged instead of an immediate live child.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum EggBirth {
+    /// A sniffer egg item drops at the parents' midpoint.
+    SnifferEgg,
+    /// Turtle egg blocks accumulate on the sand below the midpoint.
+    TurtleEgg,
+    /// Frogspawn places on the water surface nearest the midpoint.
+    Frogspawn,
+}
+
+/// Egg-laying birth for a same-species pair, if vanilla lays eggs.
+pub(crate) fn egg_birth(registry: &CoreRegistry, first: u32, second: u32) -> Option<EggBirth> {
+    if first != second {
+        return None;
+    }
+    let blueprint = registry.blueprint(first)?;
+    match blueprint.name.as_str() {
+        "minecraft:sniffer" => Some(EggBirth::SnifferEgg),
+        "minecraft:turtle" => Some(EggBirth::TurtleEgg),
+        "minecraft:frog" => Some(EggBirth::Frogspawn),
+        _ => None,
+    }
+}
 
 pub(crate) fn offspring(registry: &CoreRegistry, first: u32, second: u32) -> Option<u32> {
     let a = registry.blueprint(first)?;
@@ -44,6 +70,23 @@ pub(crate) fn valid(state: &TickState, actor: EntityId, partner: EntityId, child
     else {
         return false;
     };
+    // Egg-laying pairs never commit a live child: their Breed intent stages
+    // the egg birth instead (see `entity_life::breed`).
+    if egg_birth(&state.registry, first, second).is_some() {
+        return false;
+    }
+    // Vanilla refuses only a both-sitting cat/wolf pair; mobile + sitting breeds.
+    if state.registry.blueprint(first).is_some_and(|blueprint| {
+        matches!(
+            blueprint.capabilities.breeding,
+            crate::blueprint::BreedingRule::TamedStanding
+                | crate::blueprint::BreedingRule::TamedOneStanding
+        )
+    }) && state.entities.row(a).entity_life.sitting
+        && state.entities.row(b).entity_life.sitting
+    {
+        return false;
+    }
     offspring(&state.registry, first, second) == Some(child)
         && crate::target_grid::distance(state.entities.pos(a), state.entities.pos(b)) < 3.0
 }

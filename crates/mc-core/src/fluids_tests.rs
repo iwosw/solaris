@@ -385,3 +385,80 @@ mod bottles;
 mod parity;
 #[path = "pov_ray_tests.rs"]
 mod pov_ray;
+
+fn use_block(state: &mut TickState, pos: BlockPos, face: u8, sequence: i32) {
+    let _ = run_tick(
+        state,
+        &[PlayerInput::UseItemOn {
+            connection: ConnectionId(1),
+            hand: Hand::Main,
+            position: pos,
+            face,
+            cursor: [0.5, 0.5, 0.5],
+            sequence,
+        }],
+    );
+}
+
+fn hold(state: &mut TickState, player: EntityId, item: &str, count: i32) {
+    let id = mc_data::Identifier::parse(format!("minecraft:{item}"))
+        .ok()
+        .and_then(|name| state.registry.items.id_of(&name))
+        .expect("item");
+    state
+        .players
+        .get_mut(&player)
+        .expect("player")
+        .inventory
+        .slots[0] = mc_data::ItemStack::new(id, count);
+}
+
+fn held_item(state: &TickState, player: EntityId) -> mc_data::ItemStack {
+    state.players[&player].inventory.slots[0].clone()
+}
+
+#[test]
+fn empty_bucket_collects_full_powder_snow_cauldron_and_refills_it() {
+    let (mut state, player, centre) = setup();
+    let snow_cauldron = block(&state, "powder_snow_cauldron", &[("level", "3")]);
+    let cauldron = block(&state, "cauldron", &[]);
+    let at = BlockPos { y: Y + 1, ..centre };
+    place(&mut state, at, snow_cauldron);
+    let slot = state.entities.slot_of(player).expect("slot");
+    state.entities.set_pos(
+        slot,
+        [
+            f64::from(at.x) + 0.5,
+            f64::from(at.y) + 1.0,
+            f64::from(at.z) + 0.5,
+        ],
+    );
+    hold(&mut state, player, "bucket", 1);
+    use_block(&mut state, at, 1, 1);
+    assert_eq!(state.world.block_at(at.x, at.y, at.z), Some(cauldron));
+    assert_eq!(
+        held_item(&state, player).item_id,
+        state
+            .registry
+            .items
+            .id_of(&mc_data::Identifier::parse("minecraft:powder_snow_bucket").unwrap())
+            .unwrap()
+    );
+    // Pour it back into the empty cauldron.
+    use_block(&mut state, at, 1, 2);
+    assert_eq!(state.world.block_at(at.x, at.y, at.z), Some(snow_cauldron));
+    assert_eq!(
+        held_item(&state, player).item_id,
+        state
+            .registry
+            .items
+            .id_of(&mc_data::Identifier::parse("minecraft:bucket").unwrap())
+            .unwrap()
+    );
+    // Partial snow refuses collection.
+    let partial = block(&state, "powder_snow_cauldron", &[("level", "1")]);
+    place(&mut state, at, partial);
+    hold(&mut state, player, "bucket", 1);
+    use_block(&mut state, at, 1, 3);
+    assert_eq!(state.world.block_at(at.x, at.y, at.z), Some(partial));
+}

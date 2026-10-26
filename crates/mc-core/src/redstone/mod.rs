@@ -290,6 +290,7 @@ pub(crate) fn neighbours(state: &mut TickState, writes: &[(BlockPos, u32)]) {
                 continue;
             };
             crate::fire::changed(state, cell);
+            crate::eggs::changed(state, cell);
             crate::tnt::changed(state, cell);
             crate::command_blocks::changed(state, cell);
             crate::enchantment_locations::changed(state, cell);
@@ -690,6 +691,9 @@ fn tick_cell(
         }
         "fire" | "soul_fire" => {
             crate::fire::scheduled_tick(state, pos, writes, spawned);
+        }
+        "turtle_egg" | "sniffer_egg" | "frogspawn" => {
+            crate::eggs::scheduled_tick(state, pos, writes, spawned);
         }
         "frosted_ice" => {
             crate::enchantment_locations::scheduled(state, pos, writes);

@@ -146,16 +146,65 @@ fn stationary_overlay_hazard_still_burns_through_the_gate() {
 }
 
 #[test]
-fn lit_campfires_need_posture_and_unlit_ones_stay_cold() {
+fn lit_campfires_hurt_even_while_sneaking_and_unlit_ones_stay_cold() {
     let (mut state, entity, pos) = flat_player_fixture();
     place(&mut state, pos, "campfire", &[("lit", "true")]);
     assert!(sample(&mut state, entity, DamageKind::Campfire));
+    // Vanilla has no sneaking exclusion for campfire contact.
     let slot = state.entities.slot_of(entity).unwrap();
     std::sync::Arc::make_mut(&mut state.entities.row_mut(slot).appearance).shared_flags |= 2;
-    assert!(!sample(&mut state, entity, DamageKind::Campfire));
+    assert!(sample(&mut state, entity, DamageKind::Campfire));
     place(&mut state, pos, "campfire", &[("lit", "false")]);
     std::sync::Arc::make_mut(&mut state.entities.row_mut(slot).appearance).shared_flags &= !2;
     assert!(!sample(&mut state, entity, DamageKind::Campfire));
+}
+
+#[test]
+fn frost_walker_boots_prevent_campfire_damage() {
+    let (mut state, entity, pos) = flat_player_fixture();
+    place(&mut state, pos, "campfire", &[("lit", "true")]);
+    assert!(sample(&mut state, entity, DamageKind::Campfire));
+    let player = state.players.get_mut(&entity).unwrap();
+    player.inventory.slots[36] = mc_data::ItemStack {
+        count: 1,
+        item_id: player.inventory.slots[36].item_id,
+        damage: None,
+        enchantments: vec![mc_data::ItemEnchantment {
+            id: mc_data::Identifier::parse("minecraft:frost_walker").unwrap(),
+            level: 1,
+        }],
+        custom_name: None,
+        item_model: None,
+        stew_effects: Vec::new(),
+        components: None,
+    };
+    assert!(!sample(&mut state, entity, DamageKind::Campfire));
+}
+
+#[test]
+fn soul_campfires_deal_two_damage_per_hit() {
+    let (mut state, entity, pos) = flat_player_fixture();
+    place(&mut state, pos, "soul_campfire", &[("lit", "true")]);
+    let before = state
+        .entities
+        .row(state.entities.slot_of(entity).unwrap())
+        .health;
+    let mut intents = Vec::<Intent>::new();
+    crate::contact_hazards::run(&mut state, &mut intents);
+    let hit = intents
+        .iter()
+        .find_map(|intent| match &intent.kind {
+            IntentKind::DamageEntity {
+                target,
+                kind,
+                amount,
+                ..
+            } if *target == entity && *kind == DamageKind::Campfire => Some(*amount),
+            _ => None,
+        })
+        .expect("soul campfire hits");
+    assert_eq!(hit, 2.0);
+    assert!(before > 0.0);
 }
 
 #[test]
@@ -875,4 +924,70 @@ fn parity_lava_ignites_fifteen_seconds_then_retains_afterburn() {
     place(&mut state, pos, "air", &[]);
     sample(&mut state, entity, DamageKind::OnFire);
     assert_eq!(state.entities.body(slot).burn_ticks, 298);
+}
+
+#[test]
+fn burning_player_inside_water_cauldron_is_extinguished_for_one_level() {
+    let (mut state, entity, pos) = flat_player_fixture();
+    place(&mut state, pos, "water_cauldron", &[("level", "3")]);
+    let slot = state.entities.slot_of(entity).unwrap();
+    state.entities.body_mut(slot).burn_ticks = 100;
+    let mut intents = Vec::<Intent>::new();
+    crate::contact_hazards::run(&mut state, &mut intents);
+    assert_eq!(state.entities.body(slot).burn_ticks, 0);
+    let current = state
+        .world
+        .block_at(
+            pos[0].floor() as i32,
+            pos[1].floor() as i32,
+            pos[2].floor() as i32,
+        )
+        .unwrap();
+    let block = state
+        .registry
+        .blocks
+        .by_id(mc_world::BlockStateId(current))
+        .unwrap();
+    assert_eq!(block.block.id.path(), "water_cauldron");
+    assert!(
+        block
+            .properties
+            .iter()
+            .any(|(k, v)| k == "level" && v == "2")
+    );
+}
+
+#[test]
+fn lava_cauldron_burns_the_entity_standing_inside() {
+    let (mut state, entity, pos) = flat_player_fixture();
+    place(&mut state, pos, "lava_cauldron", &[]);
+    assert!(sample(&mut state, entity, DamageKind::Lava));
+}
+
+#[test]
+fn touching_a_cauldron_wall_from_outside_does_nothing() {
+    let (mut state, entity, pos) = flat_player_fixture();
+    // Cauldron in the neighboring cell: feet outside its interior box.
+    place(
+        &mut state,
+        [pos[0] + 1.0, pos[1], pos[2]],
+        "lava_cauldron",
+        &[],
+    );
+    assert!(!sample(&mut state, entity, DamageKind::Lava));
+    place(
+        &mut state,
+        [pos[0] + 1.0, pos[1], pos[2]],
+        "water_cauldron",
+        &[("level", "3")],
+    );
+    let slot = state.entities.slot_of(entity).unwrap();
+    state.entities.body_mut(slot).burn_ticks = 100;
+    let mut intents = Vec::<Intent>::new();
+    crate::contact_hazards::run(&mut state, &mut intents);
+    assert_eq!(
+        state.entities.body(slot).burn_ticks,
+        100 - 1,
+        "burn decays normally, no cauldron contact"
+    );
 }

@@ -36,6 +36,10 @@ mod campfire;
 pub(crate) mod carrier_blocks;
 #[cfg(test)]
 mod carrier_blocks_tests;
+mod cauldron_wash;
+#[cfg(test)]
+#[path = "cauldron_wash_tests.rs"]
+mod cauldron_wash_tests;
 mod chests;
 mod chorus;
 mod chunk_loader;
@@ -81,6 +85,7 @@ pub mod dimensions;
 pub(crate) mod dolphin;
 pub mod effects;
 pub(crate) mod effects_trigger;
+pub(crate) mod eggs;
 pub(crate) mod enchantment_locations;
 pub(crate) mod enchantment_thorns;
 pub(crate) mod enchantments;

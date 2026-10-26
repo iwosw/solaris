@@ -7,7 +7,7 @@ use crate::boundary::EntityId;
 use crate::intent::{Footprint, Intent, IntentKind};
 use crate::registry::{
     HAZARD_BERRY, HAZARD_CACTUS, HAZARD_CAMPFIRE, HAZARD_FIRE, HAZARD_LAVA, HAZARD_MAGMA,
-    HAZARD_WATER,
+    HAZARD_SOUL_CAMPFIRE, HAZARD_WATER,
 };
 use crate::survival::DamageKind;
 use crate::tick::TickState;
@@ -347,6 +347,147 @@ pub(crate) fn run_with(state: &mut TickState, intents: &mut Vec<Intent>, min_par
         }
     }
     state.contact_hazards_scratch = scratch;
+    cauldron_contact(state, intents);
+}
+
+/// Vanilla cauldron contents contact: a burning living entity inside a
+/// water cauldron is extinguished (one level debited); powder snow melts one
+/// level into water; a living entity inside lava is burned and ignited.
+/// Only the interior counts, not touching the exterior wall.
+pub(crate) fn cauldron_contact(state: &mut TickState, intents: &mut Vec<Intent>) {
+    let count = state.entities.len();
+    for index in 0..count {
+        let slot = crate::entities::EntitySlot(index as u32);
+        let body = state.entities.body(slot);
+        let pos = state.entities.pos(slot);
+        if !body.alive {
+            continue;
+        }
+        let living = matches!(
+            body.kind,
+            crate::entities::EntityKind::Mob { .. } | crate::entities::EntityKind::Player { .. }
+        );
+        if !living {
+            continue;
+        }
+        // Interior: feet inside the cell's inset box, not on the rim or wall.
+        let fx = pos[0] - pos[0].floor();
+        let fz = pos[2] - pos[2].floor();
+        if fx < 0.125 || fx > 0.875 || fz < 0.125 || fz > 0.875 {
+            continue;
+        }
+        let cell = (
+            pos[0].floor() as i32,
+            pos[1].floor() as i32,
+            pos[2].floor() as i32,
+        );
+        // Feet must be within the cauldron's height, not standing on top.
+        if pos[1] - (cell.1 as f64) >= 1.0 || pos[1] - (cell.1 as f64) < 0.0 {
+            continue;
+        }
+        let Some(current) = state.world.block_at(cell.0, cell.1, cell.2) else {
+            continue;
+        };
+        let Some(block) = state.registry.blocks.by_id(mc_world::BlockStateId(current)) else {
+            continue;
+        };
+        let name = block.block.id.path().to_owned();
+        let level = block
+            .properties
+            .iter()
+            .find(|(key, _)| key == "level")
+            .and_then(|(_, value)| value.parse::<u8>().ok())
+            .unwrap_or(0);
+        let id = body.id;
+        match name.as_str() {
+            "water_cauldron" if level > 0 && body.burn_ticks > 0 => {
+                let (body, row) = state.entities.parts_mut(slot);
+                body.burn_ticks = 0;
+                Arc::make_mut(&mut row.appearance).shared_flags &= !1;
+                state.appearance_changed.push(id);
+                lower_cauldron(state, (cell.0, cell.1, cell.2), current, level, false);
+            }
+            "powder_snow_cauldron" if level > 0 && body.burn_ticks > 0 => {
+                let (body, row) = state.entities.parts_mut(slot);
+                body.burn_ticks = 0;
+                Arc::make_mut(&mut row.appearance).shared_flags &= !1;
+                state.appearance_changed.push(id);
+                lower_cauldron(state, (cell.0, cell.1, cell.2), current, level, true);
+            }
+            "lava_cauldron" => {
+                damage(state, id, DamageKind::Lava, 4.0, intents);
+                ignite(state, id, 300);
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Debit one cauldron level serially: water drops one level (1 empties);
+/// powder snow melts into water one level lower.
+fn lower_cauldron(
+    state: &mut TickState,
+    cell: (i32, i32, i32),
+    current: u32,
+    level: u8,
+    snow: bool,
+) {
+    use mc_data::Identifier;
+    let next = if snow {
+        if level <= 1 {
+            state
+                .registry
+                .blocks
+                .block(&Identifier::parse("minecraft:cauldron").expect("vanilla block"))
+                .expect("cauldron")
+                .default
+                .0
+        } else {
+            state
+                .registry
+                .blocks
+                .by_name_and_props(
+                    &Identifier::parse("minecraft:water_cauldron").expect("vanilla block"),
+                    &[("level".into(), (level - 1).to_string())],
+                )
+                .expect("water cauldron level")
+                .0
+        }
+    } else if level <= 1 {
+        state
+            .registry
+            .blocks
+            .block(&Identifier::parse("minecraft:cauldron").expect("vanilla block"))
+            .expect("cauldron")
+            .default
+            .0
+    } else {
+        state
+            .registry
+            .blocks
+            .by_name_and_props(
+                &Identifier::parse("minecraft:water_cauldron").expect("vanilla block"),
+                &[("level".into(), (level - 1).to_string())],
+            )
+            .expect("water cauldron level")
+            .0
+    };
+    let at = crate::boundary::BlockPos {
+        x: cell.0,
+        y: cell.1,
+        z: cell.2,
+    };
+    let _ = current;
+    state.world.set_block(at.x, at.y, at.z, next);
+    if let Some((_, value)) = state
+        .merge_block_writes
+        .iter_mut()
+        .find(|(written, _)| *written == at)
+    {
+        *value = next;
+    } else {
+        state.merge_block_writes.push((at, next));
+    }
 }
 
 /// The pre-split behaviour: the exact serial scan over every row. Differential
@@ -363,6 +504,7 @@ pub(crate) fn run_all_serial(state: &mut TickState, intents: &mut Vec<Intent>) {
         scan_row(state, &mut scratch, intents, index);
     }
     state.contact_hazards_scratch = scratch;
+    cauldron_contact(state, intents);
 }
 
 fn scan_row(state: &mut TickState, scratch: &mut Scratch, intents: &mut Vec<Intent>, index: usize) {
@@ -511,8 +653,8 @@ fn scan_row(state: &mut TickState, scratch: &mut Scratch, intents: &mut Vec<Inte
     let raw_magma_support =
         gated && flag_at(support[0], support[1], support[2]) & HAZARD_MAGMA != 0;
     let hot = gated && !sneaking && !frost_walker && raw_magma_support;
-    let (mut water, mut lava, mut fire, mut cactus, mut berry, mut campfire) =
-        (false, false, false, false, false, false);
+    let (mut water, mut lava, mut fire, mut cactus, mut berry, mut campfire, mut soul_campfire) =
+        (false, false, false, false, false, false, false);
     if gated {
         for x in body_min.0..=body_max.0 {
             for y in body_min.1..=body_max.1 {
@@ -535,7 +677,9 @@ fn scan_row(state: &mut TickState, scratch: &mut Scratch, intents: &mut Vec<Inte
                     } else if flags & HAZARD_BERRY != 0 {
                         berry |= moving;
                     } else if flags & HAZARD_CAMPFIRE != 0 {
-                        campfire |= !sneaking;
+                        campfire = true;
+                    } else if flags & HAZARD_SOUL_CAMPFIRE != 0 {
+                        soul_campfire = true;
                     }
                 }
             }
@@ -574,8 +718,16 @@ fn scan_row(state: &mut TickState, scratch: &mut Scratch, intents: &mut Vec<Inte
     if hot {
         damage(state, entity, DamageKind::HotFloor, 1.0, intents)
     }
-    if campfire {
-        damage(state, entity, DamageKind::Campfire, 1.0, intents)
+    // Vanilla campfires hurt sneaking players; Frost Walker boots (which
+    // freeze the fire's footing) prevent it. Soul fires deal 2 HP per hit.
+    if (campfire || soul_campfire) && !frost_walker {
+        damage(
+            state,
+            entity,
+            DamageKind::Campfire,
+            if soul_campfire { 2.0 } else { 1.0 },
+            intents,
+        )
     }
     if lava {
         damage(state, entity, DamageKind::Lava, 4.0, intents)

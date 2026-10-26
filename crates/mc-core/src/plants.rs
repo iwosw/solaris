@@ -18,6 +18,19 @@ pub(crate) struct Plan {
     pub(crate) expects: Vec<(BlockPos, u32)>,
 }
 
+/// One live birth staged by an egg hatch: mob type, position, health.
+pub struct EggSpawn {
+    pub type_id: u32,
+    pub pos: [f64; 3],
+    pub health: f32,
+}
+
+/// A hatched egg: block rewrites plus live births.
+pub(crate) struct Hatch {
+    pub(crate) cells: Vec<(BlockPos, u32)>,
+    pub(crate) spawn: Vec<EggSpawn>,
+}
+
 struct Read<'a> {
     state: &'a TickState,
     reads: RefCell<FxHashMap<BlockPos, u32>>,
@@ -96,6 +109,8 @@ pub(crate) fn random_growth(state: &TickState, at: BlockPos, id: u32, seed: u64)
         match path {
             "kelp" | "cave_vines" | "weeping_vines" | "twisting_vines" | "vine"
             | "brown_mushroom" | "red_mushroom" => growth::random(read, at, id, seed),
+            "pointed_dripstone" => growth::dripstone(read, at, id, seed),
+            "budding_amethyst" => growth::amethyst(read, at, seed),
             "chorus_flower" => crate::chorus::growth(blocks, read, pos, BlockStateId(id), seed),
             "bamboo_sapling" => rules::bamboo_sapling_growth_edits(blocks, read, pos, seed),
             "cactus" | "sugar_cane" | "bamboo" => {
@@ -118,6 +133,37 @@ pub(crate) fn random_growth(state: &TickState, at: BlockPos, id: u32, seed: u64)
                 }
             }
         }
+    })
+}
+
+/// Vanilla turtle-egg random tick: crack staging at night on sand
+/// (hatch 0→1→2, then break into babies). Sniffer eggs and frogspawn use
+/// the scheduled clock (crate::eggs).
+pub(crate) fn egg_hatch(state: &TickState, at: BlockPos, id: u32, seed: u64) -> Option<Hatch> {
+    let read = Read {
+        state,
+        reads: RefCell::new(FxHashMap::default()),
+    };
+    read.get_cached_block(old(at))?;
+    let (cells, spawn) = growth::hatch(&read, at, id, seed)?;
+    let mut births = Vec::new();
+    for (name, pos) in spawn {
+        let type_id = state
+            .registry
+            .entity_types
+            .id_of(&mc_data::Identifier::parse(format!("minecraft:{name}")).ok()?)?;
+        let health = state
+            .registry
+            .blueprint(type_id)
+            .map_or(10.0, |blueprint| blueprint.params.max_health);
+        births.push(EggSpawn { type_id, pos, health });
+    }
+    Some(Hatch {
+        cells: cells
+            .into_iter()
+            .map(|edit| (native(edit.pos), edit.new_state.0))
+            .collect(),
+        spawn: births,
     })
 }
 

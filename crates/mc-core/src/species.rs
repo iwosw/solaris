@@ -345,7 +345,7 @@ pub(crate) fn breeding_food(name: &str) -> &'static [&'static str] {
             "minecraft:golden_apple",
             "minecraft:enchanted_golden_apple",
         ],
-        "minecraft:llama" => &["minecraft:hay_block"],
+        "minecraft:llama" | "minecraft:trader_llama" => &["minecraft:hay_block"],
         "minecraft:camel" => &["minecraft:cactus"],
         "minecraft:strider" => &["minecraft:warped_fungus"],
         "minecraft:wolf" => &[

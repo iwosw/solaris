@@ -177,6 +177,9 @@ fn describe(changes: &[super::Change]) -> Vec<String> {
                 super::Outcome::LeafDecay => "decay".to_owned(),
                 super::Outcome::LeafRefresh => "refresh".to_owned(),
                 super::Outcome::Pop => "pop".to_owned(),
+                super::Outcome::Hatch { cells, spawn } => {
+                    format!("hatch {} cells, {} spawn", cells.len(), spawn.len())
+                }
             };
             format!("{:?} {} {outcome}", change.at, change.was)
         })

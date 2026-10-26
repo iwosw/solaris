@@ -77,9 +77,27 @@ fn extend(
     };
     let target = BlockPos { y: at.y + dy, ..at };
     if name == "kelp" {
-        if path(read, target)? != "water" || prop(blocks, get(read, target)?, "level") != Some("0")
-        {
+        // Vanilla kelp grows into a source or downward-flowing water cell
+        // (falling column with water above), turning flow into a source.
+        // A lone surface-flow cell with air above is still downward water
+        // when the column below is water, so it grows too.
+        if path(read, target)? != "water" {
             return None;
+        }
+        if prop(blocks, get(read, target)?, "level") != Some("0") {
+            let roof = BlockPos {
+                y: target.y + 1,
+                ..target
+            };
+            let column = BlockPos {
+                y: target.y - 1,
+                ..target
+            };
+            let roof_water = path(read, roof)? == "water";
+            let column_water = path(read, column)? == "water";
+            if !roof_water && !(column_water && air(read, roof)) {
+                return None;
+            }
         }
     } else if !air(read, target) {
         return None;
@@ -202,9 +220,9 @@ pub(super) fn bonemeal(
             let dy = if name.starts_with("weeping") { -1 } else { 1 };
             let family = name.trim_end_matches("_plant");
             let mut tip = at;
-            // Natural vines have at most 26 age stages. Cap the walk even for
-            // command-built columns; missing/unreachable tips refuse whole.
-            for _ in 0..26 {
+            // Walk the whole cultivated column: bone meal acts on the tip
+            // however far it stands above the clicked segment.
+            for _ in 0..512 {
                 if path(read, tip)? == family {
                     return extend(read, tip, get(read, tip)?, true, &mut Roll::new(seed));
                 }
@@ -240,6 +258,61 @@ pub(super) fn bonemeal(
                 .then(|| named(read, "hanging_roots").map(|id| vec![edit(below, id)]))?
         }
         "brown_mushroom" | "red_mushroom" => huge_mushroom(read, at, name, seed),
+        "azalea" | "flowering_azalea" => {
+            // Vanilla `AzaleaBlock`: one 45% roll per meal; success grows the
+            // tree only when the canopy fits (two-stage saplings differ).
+            if Roll::new(seed).below(20) >= 9 {
+                return None;
+            }
+            azalea_tree(read, at, name, seed)
+        }
+        "mangrove_propagule" => {
+            // Vanilla `MangrovePropaguleBlock`: a planted propagule follows
+            // the sapling two-stage chances; a hanging one just ages.
+            if prop(blocks, id, "hanging") == Some("true") {
+                let age = prop(blocks, id, "age")?.parse::<u8>().ok()?;
+                if age >= 4 {
+                    return None;
+                }
+                let next = with_prop(blocks, id, "age", &(age + 1).to_string())?;
+                return Some(vec![edit(at, next)]);
+            }
+            if Roll::new(seed).below(20) >= 9 {
+                return None;
+            }
+            mangrove_tree(read, at, seed)
+        }
+        "crimson_fungus" | "warped_fungus" => {
+            // Vanilla huge-fungus meal: 40% grows on matching nylium.
+            if Roll::new(seed).below(5) >= 2 {
+                return None;
+            }
+            huge_fungus(read, at, name, seed)
+        }
+        "moss_block" => moss_spread(read, at, seed),
+        "crimson_nylium" | "warped_nylium" => nylium_foliage(read, at, name, seed),
+        "netherrack" => nylium_conversion(read, at, seed),
+        "sea_pickle" => sea_pickle_growth(read, at, id, seed),
+        // Vanilla duplicates double flowers (except pitcher plants): the
+        // plant is retained and one flower item drops. The drop spawns at
+        // merge (`farming::accepted_use`); the plan itself edits nothing.
+        "sunflower" | "lilac" | "rose_bush" | "peony" => {
+            let lower = BlockPos { y: at.y - 1, ..at };
+            let upper = BlockPos { y: at.y + 1, ..at };
+            // Accept a click on either half of an intact plant.
+            let half = prop(blocks, id, "half")?;
+            let (root, other) = if half == "lower" {
+                (at, upper)
+            } else if half == "upper" {
+                (lower, at)
+            } else {
+                return None;
+            };
+            if path(read, root)? != name || path(read, other)? != name {
+                return None;
+            }
+            Some(Vec::new())
+        }
         _ => None,
     }
 }
@@ -307,4 +380,719 @@ fn huge_mushroom(
         }
     }
     Some(edits)
+}
+
+/// Vanilla azalea fertilizer (`AzaleaTreeFeature`): a bending trunk
+/// 4-6 high with a further 1-2 sideways bend, foliage radius 3 height 2
+/// scattered around the upper trunk, dirt below turned to rooted dirt.
+/// Wiki-level shape, not bit-exact placement.
+fn azalea_tree(
+    read: &Read<'_>,
+    at: BlockPos,
+    name: &str,
+    seed: u64,
+) -> Option<Vec<PlantBlockEdit>> {
+    let blocks = &read.state.registry.blocks;
+    let mut roll = Roll::new(seed);
+    let height = 4 + roll.below(3) as i32;
+    let bend = 1 + roll.below(2) as i32;
+    let bend_dx = roll.below(4) as i32 - 1;
+    let bend_dz = roll.below(4) as i32 - 1;
+    let (bend_dx, bend_dz) = if bend_dx == 0 && bend_dz == 0 {
+        (1, 0)
+    } else {
+        (bend_dx.clamp(-1, 1), bend_dz.clamp(-1, 1))
+    };
+    for dy in 1..=height + bend + 3 {
+        if !air(read, BlockPos { y: at.y + dy, ..at }) {
+            return None;
+        }
+    }
+    let log = with_prop(blocks, named(read, "oak_log")?, "axis", "y")?;
+    let leaves = if name == "flowering_azalea" {
+        named(read, "flowering_azalea_leaves")?
+    } else {
+        named(read, "azalea_leaves")?
+    };
+    let rooted = named(read, "rooted_dirt")?;
+    let mut edits = Vec::new();
+    // Dirt directly below the trunk becomes rooted dirt.
+    edits.push(edit(BlockPos { y: at.y - 1, ..at }, rooted));
+    edits.push(edit(at, log));
+    for dy in 1..height {
+        edits.push(edit(BlockPos { y: at.y + dy, ..at }, log));
+    }
+    // The bend leans sideways near the top.
+    let mut top = BlockPos { y: at.y + height, ..at };
+    for _ in 1..=bend {
+        top = BlockPos {
+            x: top.x + bend_dx,
+            y: top.y + 1,
+            z: top.z + bend_dz,
+        };
+        edits.push(edit(top, log));
+    }
+    // Foliage radius 3, height 2, scattered around the upper trunk.
+    for dy in -1i32..=1 {
+        let radius: i32 = if dy == 1 { 2 } else { 3 };
+        for dx in -radius..=radius {
+            for dz in -radius..=radius {
+                if dx == 0 && dz == 0 && dy <= 0 {
+                    continue;
+                }
+                if dx.abs() + dz.abs() + dy.abs() > 4 && roll.below(2) == 0 {
+                    continue;
+                }
+                if dx.abs() == radius && dz.abs() == radius && roll.below(2) == 0 {
+                    continue;
+                }
+                let cell = BlockPos {
+                    x: top.x + dx,
+                    y: top.y + dy,
+                    z: top.z + dz,
+                };
+                if air(read, cell) {
+                    edits.push(edit(cell, leaves));
+                }
+            }
+        }
+    }
+    Some(edits)
+}
+
+/// Vanilla mangrove propagule fertilizer: a small mangrove tree. Requires a
+/// planted (non-hanging) propagule on soil with open air above.
+fn mangrove_tree(read: &Read<'_>, at: BlockPos, seed: u64) -> Option<Vec<PlantBlockEdit>> {
+    let blocks = &read.state.registry.blocks;
+    if prop(blocks, get(read, at)?, "hanging") == Some("true") {
+        return None;
+    }
+    let below = BlockPos { y: at.y - 1, ..at };
+    if !matches!(
+        path(read, below)?,
+        "dirt"
+            | "coarse_dirt"
+            | "rooted_dirt"
+            | "mud"
+            | "muddy_mangrove_roots"
+            | "moss_block"
+            | "grass_block"
+            | "podzol"
+            | "mycelium"
+            | "sand"
+            | "clay"
+    ) {
+        return None;
+    }
+    let mut roll = Roll::new(seed);
+    // Vanilla checks up to ~15 high with horizontal room around the roots;
+    // height grows with the space the roots can spread into.
+    let height = 4 + roll.below(3) as i32;
+    for dy in 1..=height + 2 {
+        if !air(read, BlockPos { y: at.y + dy, ..at }) {
+            return None;
+        }
+    }
+    for dx in -3i32..=3 {
+        for dz in -3i32..=3 {
+            if !air(read, BlockPos { x: at.x + dx, y: at.y + height, z: at.z + dz }) {
+                return None;
+            }
+        }
+    }
+    let log = with_prop(blocks, named(read, "mangrove_log")?, "axis", "y")?;
+    let leaves = named(read, "mangrove_leaves")?;
+    let roots = named(read, "mangrove_roots")?;
+    let mut edits = Vec::new();
+    // Prop roots spread sideways at the base before the trunk rises.
+    for (dx, dz) in [(-1, 0), (1, 0), (0, -1), (0, 1)] {
+        let foot = BlockPos {
+            x: at.x + dx,
+            y: at.y,
+            z: at.z + dz,
+        };
+        if air(read, foot) && roll.below(2) == 0 {
+            edits.push(edit(foot, roots));
+        }
+    }
+    for dy in 0..=height {
+        edits.push(edit(BlockPos { y: at.y + dy, ..at }, log));
+    }
+    for dy in (height - 2)..=height {
+        for dx in -2i32..=2 {
+            for dz in -2i32..=2 {
+                if dx == 0 && dz == 0 {
+                    continue;
+                }
+                if dx.abs() == 2 && dz.abs() == 2 {
+                    continue;
+                }
+                let cell = BlockPos {
+                    x: at.x + dx,
+                    y: at.y + dy,
+                    z: at.z + dz,
+                };
+                if air(read, cell) {
+                    edits.push(edit(cell, leaves));
+                }
+            }
+        }
+    }
+    Some(edits)
+}
+
+/// Vanilla huge fungi (`HugeFungusFeature`): crimson/warped fungus on
+/// its own nylium grows a stem 4-13 high (1-in-12 doubles) with a wart hat
+/// reaching up to 3 out, radius varying by layer. Wiki-level shape.
+fn huge_fungus(read: &Read<'_>, at: BlockPos, name: &str, seed: u64) -> Option<Vec<PlantBlockEdit>> {
+    let blocks = &read.state.registry.blocks;
+    let (stem, cap, soil) = if name == "crimson_fungus" {
+        ("crimson_stem", "nether_wart_block", "crimson_nylium")
+    } else {
+        ("warped_stem", "warped_wart_block", "warped_nylium")
+    };
+    let below = BlockPos { y: at.y - 1, ..at };
+    if path(read, below)? != soil {
+        return None;
+    }
+    let mut roll = Roll::new(seed);
+    let mut height = 4 + roll.below(10) as i32;
+    if roll.below(12) == 0 {
+        height *= 2;
+    }
+    for dy in 1..=height + 1 {
+        if !air(read, BlockPos { y: at.y + dy, ..at }) {
+            return None;
+        }
+    }
+    let stem_id = with_prop(blocks, named(read, stem)?, "axis", "y")?;
+    let cap_id = named(read, cap)?;
+    let mut edits = Vec::new();
+    for dy in 0..height {
+        edits.push(edit(BlockPos { y: at.y + dy, ..at }, stem_id));
+    }
+    // Wart hat: wide flat brim low, narrowing peak above the stem top.
+    for (layer, radius) in [(0, 3i32), (1, 3), (2, 2), (3, 1)] {
+        for dx in -radius..=radius {
+            for dz in -radius..=radius {
+                if dx.abs() == radius && dz.abs() == radius {
+                    continue;
+                }
+                if layer > 0 && dx.abs() + dz.abs() > radius + 1 && roll.below(2) == 0 {
+                    continue;
+                }
+                if dx == 0 && dz == 0 && layer < 3 {
+                    continue;
+                }
+                let cell = BlockPos {
+                    x: at.x + dx,
+                    y: at.y + height - 1 + layer,
+                    z: at.z + dz,
+                };
+                if air(read, cell) {
+                    edits.push(edit(cell, cap_id));
+                }
+            }
+        }
+    }
+    Some(edits)
+}
+
+/// Vanilla moss fertilizer: neighboring stone/dirt-family converts to moss,
+/// with moss carpet above where air allows.
+fn moss_spread(read: &Read<'_>, at: BlockPos, seed: u64) -> Option<Vec<PlantBlockEdit>> {
+    let mut roll = Roll::new(seed);
+    let moss = named(read, "moss_block")?;
+    let carpet = named(read, "moss_carpet")?;
+    let mut edits = Vec::new();
+    for dx in -2..=2 {
+        for dz in -2..=2 {
+            for dy in -1..=1 {
+                if dx == 0 && dy == 0 && dz == 0 {
+                    continue;
+                }
+                if roll.below(3) == 0 {
+                    continue;
+                }
+                let cell = BlockPos {
+                    x: at.x + dx,
+                    y: at.y + dy,
+                    z: at.z + dz,
+                };
+                if !matches!(
+                    path(read, cell)?,
+                    "stone"
+                        | "dirt"
+                        | "coarse_dirt"
+                        | "rooted_dirt"
+                        | "grass_block"
+                        | "podzol"
+                        | "gravel"
+                        | "sand"
+                        | "andesite"
+                        | "diorite"
+                        | "granite"
+                        | "tuff"
+                ) {
+                    continue;
+                }
+                edits.push(edit(cell, moss));
+                let above = BlockPos {
+                    y: cell.y + 1,
+                    ..cell
+                };
+                if air(read, above) && roll.below(4) == 0 {
+                    edits.push(edit(above, carpet));
+                }
+                if edits.len() >= 12 {
+                    return Some(edits);
+                }
+            }
+        }
+    }
+    (!edits.is_empty()).then_some(edits)
+}
+
+/// Vanilla nylium fertilizer: roots, sprouts and fungi sprout on nearby
+/// nylium with free air above.
+fn nylium_foliage(
+    read: &Read<'_>,
+    at: BlockPos,
+    name: &str,
+    seed: u64,
+) -> Option<Vec<PlantBlockEdit>> {
+    let mut roll = Roll::new(seed);
+    let (roots, fungus) = if name == "crimson_nylium" {
+        ("crimson_roots", "crimson_fungus")
+    } else {
+        ("warped_roots", "warped_fungus")
+    };
+    let mut edits = Vec::new();
+    for _ in 0..8 {
+        let cell = BlockPos {
+            x: at.x + roll.below(7) as i32 - 3,
+            y: at.y + 1,
+            z: at.z + roll.below(7) as i32 - 3,
+        };
+        let soil = BlockPos {
+            y: cell.y - 1,
+            ..cell
+        };
+        if path(read, soil)? != name || !air(read, cell) {
+            continue;
+        }
+        let pick = roll.below(10);
+        let plant = if pick == 0 {
+            fungus
+        } else if pick <= 3 {
+            "nether_sprouts"
+        } else {
+            roots
+        };
+        if let Some(id) = named(read, plant) {
+            edits.push(edit(cell, id));
+        }
+        if edits.len() >= 4 {
+            break;
+        }
+    }
+    // Netherrack directly adjacent to nylium converts to that nylium.
+    for dx in -1..=1 {
+        for dz in -1..=1 {
+            for dy in -1..=1 {
+                if dx == 0 && dy == 0 && dz == 0 {
+                    continue;
+                }
+                let cell = BlockPos {
+                    x: at.x + dx,
+                    y: at.y + dy,
+                    z: at.z + dz,
+                };
+                if path(read, cell)? == "netherrack"
+                    && let Some(id) = named(read, name)
+                {
+                    edits.push(edit(cell, id));
+                    return Some(edits);
+                }
+            }
+        }
+    }
+    (!edits.is_empty()).then_some(edits)
+}
+
+/// Bone meal on netherrack beside nylium converts it to that nylium.
+fn nylium_conversion(read: &Read<'_>, at: BlockPos, seed: u64) -> Option<Vec<PlantBlockEdit>> {
+    let _ = seed;
+    for dx in -1..=1 {
+        for dz in -1..=1 {
+            for dy in -1..=1 {
+                if dx == 0 && dy == 0 && dz == 0 {
+                    continue;
+                }
+                let cell = BlockPos {
+                    x: at.x + dx,
+                    y: at.y + dy,
+                    z: at.z + dz,
+                };
+                let found = path(read, cell)?;
+                if (found == "crimson_nylium" || found == "warped_nylium")
+                    && let Some(id) = named(read, found)
+                {
+                    return Some(vec![edit(at, id)]);
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Vanilla sea-pickle fertilizer: a waterlogged colony gains pickles up to
+/// four, and spreads new pickles onto adjacent live coral.
+fn sea_pickle_growth(
+    read: &Read<'_>,
+    at: BlockPos,
+    id: u32,
+    seed: u64,
+) -> Option<Vec<PlantBlockEdit>> {
+    let blocks = &read.state.registry.blocks;
+    if prop(blocks, id, "waterlogged") != Some("true") {
+        return None;
+    }
+    let mut roll = Roll::new(seed);
+    let pickles = prop(blocks, id, "pickles")
+        .and_then(|value| value.parse::<u8>().ok())
+        .unwrap_or(1);
+    if pickles < 4 && roll.below(3) != 0 {
+        let next = with_prop(blocks, id, "pickles", &(pickles + 1).to_string())?;
+        return Some(vec![edit(at, next)]);
+    }
+    // Spread onto adjacent live coral blocks with water above.
+    let mut offsets = Vec::new();
+    for dx in -2..=2 {
+        for dz in -2..=2 {
+            if dx == 0 && dz == 0 {
+                continue;
+            }
+            offsets.push((dx, dz));
+        }
+    }
+    // Deterministic rotation of the search order by seed.
+    let len = offsets.len() as u64;
+    offsets.rotate_left((seed % len) as usize);
+    for (dx, dz) in offsets {
+        let soil = BlockPos {
+            x: at.x + dx,
+            y: at.y - 1,
+            z: at.z + dz,
+        };
+        let found = path(read, soil)?;
+        if !matches!(
+            found,
+            "tube_coral_block"
+                | "brain_coral_block"
+                | "bubble_coral_block"
+                | "fire_coral_block"
+                | "horn_coral_block"
+        ) {
+            continue;
+        }
+        let cell = BlockPos { y: at.y, ..soil };
+        let water = path(read, cell)?;
+        if water != "water" {
+            continue;
+        }
+        let mut single = with_prop(blocks, id, "pickles", "1")?;
+        single = with_prop(blocks, single, "waterlogged", "true")?;
+        return Some(vec![edit(cell, single)]);
+    }
+    // Colony already full with nowhere to spread: still a valid target.
+    (pickles < 4).then(|| {
+        with_prop(blocks, id, "pickles", &(pickles + 1).to_string())
+            .map(|next| vec![edit(at, next)])
+    })?
+}
+
+/// Pointed dripstone renewal: a down-tipped stalactite with a fluid source
+/// above fills the cauldron below, and water-fed columns keep growing.
+pub(super) fn dripstone(
+    read: &Read<'_>,
+    at: BlockPos,
+    id: u32,
+    seed: u64,
+) -> Option<Vec<PlantBlockEdit>> {
+    let blocks = &read.state.registry.blocks;
+    if prop(blocks, id, "vertical_direction") != Some("down")
+        || !matches!(
+            prop(blocks, id, "thickness"),
+            Some("tip") | Some("tip_merge")
+        )
+    {
+        return None;
+    }
+    // Pinned PointedDripstoneBlock.randomTick: growth requires
+    // isStalactiteStartPos — the tip must have NO pointed dripstone above
+    // (mid-column tips never grow); only the column top is eligible.
+    if path(read, BlockPos { y: at.y + 1, ..at })? == "pointed_dripstone" {
+        return None;
+    }
+    let mut roll = Roll::new(seed);
+    // Climb the stalactite column to the fluid held above it.
+    let mut top = at.y;
+    for _ in 0..16 {
+        let above = BlockPos { y: top + 1, ..at };
+        if path(read, above)? != "pointed_dripstone" {
+            break;
+        }
+        top += 1;
+    }
+    let cap = BlockPos { y: top + 1, ..at };
+    let fluid = match path(read, cap)? {
+        "dripstone_block" => {
+            let source = BlockPos { y: cap.y + 1, ..at };
+            match path(read, source)? {
+                "water" => Some(false),
+                "lava" => Some(true),
+                _ => None,
+            }
+        }
+        "water" => Some(false),
+        "lava" => Some(true),
+        _ => None,
+    }?;
+    // The cauldron below the tip, across a clear gap.
+    let mut cell = BlockPos { y: at.y - 1, ..at };
+    loop {
+        match path(read, cell)? {
+            "air" | "water" => {
+                cell.y -= 1;
+                if at.y - cell.y > 8 {
+                    return None;
+                }
+            }
+            "cauldron" | "water_cauldron" | "lava_cauldron" => break,
+            _ => return None,
+        }
+    }
+    if fluid {
+        // Vanilla lava drip: 15/256 per tick fills an empty cauldron full.
+        if roll.below(256) >= 15 {
+            return grow_dripstone(read, at, id, false, &mut roll);
+        }
+        return fill_cauldron(read, cell, "lava", &mut roll);
+    }
+    // Vanilla water drip: 45/256 per tick raises one level.
+    if roll.below(256) < 45 {
+        return fill_cauldron(read, cell, "water", &mut roll);
+    }
+    grow_dripstone(read, at, id, true, &mut roll)
+}
+
+/// Raise the cauldron at `cell` one level toward `fluid`.
+fn fill_cauldron(
+    read: &Read<'_>,
+    cell: BlockPos,
+    fluid: &str,
+    roll: &mut Roll,
+) -> Option<Vec<PlantBlockEdit>> {
+    let _ = roll;
+    let blocks = &read.state.registry.blocks;
+    let current = get(read, cell)?;
+    let entry = blocks.by_id(BlockStateId(current))?;
+    let name = entry.block.id.path().to_owned();
+    let level = entry
+        .properties
+        .iter()
+        .find(|(key, _)| key == "level")
+        .and_then(|(_, value)| value.parse::<u8>().ok())
+        .unwrap_or(0);
+    let target = if fluid == "lava" {
+        "lava_cauldron"
+    } else {
+        "water_cauldron"
+    };
+    if name == "cauldron" {
+        // Vanilla lava drips fill an empty cauldron completely; water drips
+        // add one level per success.
+        let fill = if fluid == "lava" { "3" } else { "1" };
+        let id = mc_data::Identifier::parse(format!("minecraft:{target}")).ok()?;
+        let one = blocks.by_name_and_props(&id, &[("level".into(), fill.into())])?;
+        return Some(vec![edit(cell, one.0)]);
+    }
+    if name != target || level >= 3 {
+        return None;
+    }
+    let id = mc_data::Identifier::parse(format!("minecraft:{target}")).ok()?;
+    let next = blocks.by_name_and_props(&id, &[("level".into(), (level + 1).to_string())])?;
+    Some(vec![edit(cell, next.0)])
+}
+
+/// Water-fed stalactite/stalagmite growth: extend the down tip into air, or
+/// raise a tip-up stalagmite standing a few cells below.
+fn grow_dripstone(
+    read: &Read<'_>,
+    at: BlockPos,
+    id: u32,
+    water: bool,
+    roll: &mut Roll,
+) -> Option<Vec<PlantBlockEdit>> {
+    // Pinned 26.1.2 PointedDripstoneBlock.randomTick: nextFloat < 0.011377778f.
+    // nextFloat is 24 random bits over 2^24; 0.011377778f * 2^24 =
+    // 190887.4375, so the float compare is exactly top-24-bits < 190888.
+    if !water || roll.below(1 << 24) >= 190888 {
+        return None;
+    }
+    let blocks = &read.state.registry.blocks;
+    let below = BlockPos { y: at.y - 1, ..at };
+    if air(read, below) {
+        let middle = with_prop(blocks, id, "thickness", "middle")?;
+        let tip = with_prop(blocks, id, "thickness", "tip")?;
+        return Some(vec![edit(at, middle), edit(below, tip)]);
+    }
+    // A stalagmite tip-up below a short gap grows upward toward the tip.
+    for gap in 1..=4 {
+        let cell = BlockPos {
+            y: at.y - gap,
+            ..at
+        };
+        let found = path(read, cell)?;
+        if found != "pointed_dripstone" {
+            return None;
+        }
+        let state = get(read, cell)?;
+        if prop(blocks, state, "vertical_direction") == Some("up")
+            && matches!(
+                prop(blocks, state, "thickness"),
+                Some("tip") | Some("tip_merge")
+            )
+        {
+            let middle = with_prop(blocks, state, "thickness", "middle")?;
+            let tip = with_prop(blocks, state, "thickness", "tip")?;
+            let above = BlockPos {
+                y: cell.y + 1,
+                ..cell
+            };
+            if !air(read, above) {
+                return None;
+            }
+            return Some(vec![edit(cell, middle), edit(above, tip)]);
+        }
+    }
+    None
+}
+
+/// Budding amethyst renewal: exposed air/source-water faces grow small buds,
+/// and existing buds advance toward harvestable clusters.
+pub(super) fn amethyst(read: &Read<'_>, at: BlockPos, seed: u64) -> Option<Vec<PlantBlockEdit>> {
+    let blocks = &read.state.registry.blocks;
+    let mut roll = Roll::new(seed);
+    let faces: [(&str, BlockPos); 6] = [
+        ("down", BlockPos { y: at.y - 1, ..at }),
+        ("up", BlockPos { y: at.y + 1, ..at }),
+        ("north", BlockPos { z: at.z - 1, ..at }),
+        ("south", BlockPos { z: at.z + 1, ..at }),
+        ("west", BlockPos { x: at.x - 1, ..at }),
+        ("east", BlockPos { x: at.x + 1, ..at }),
+    ];
+    // Advance one existing bud first (vanilla picks a random direction).
+    let start = roll.below(6) as usize;
+    for step in 0..6 {
+        let (facing, cell) = faces[(start + step) % 6];
+        let found = path(read, cell)?;
+        let next = match found {
+            "small_amethyst_bud" => Some("medium_amethyst_bud"),
+            "medium_amethyst_bud" => Some("large_amethyst_bud"),
+            "large_amethyst_bud" => Some("amethyst_cluster"),
+            _ => None,
+        };
+        if let Some(stage) = next {
+            if roll.below(5) != 0 {
+                continue;
+            }
+            let current = get(read, cell)?;
+            if prop(blocks, current, "facing") != Some(facing) {
+                continue;
+            }
+            let mut grown = named(read, stage)?;
+            grown = with_prop(blocks, grown, "facing", facing)?;
+            let wet = prop(blocks, current, "waterlogged").unwrap_or("false");
+            grown = with_prop(blocks, grown, "waterlogged", wet)?;
+            return Some(vec![edit(cell, grown)]);
+        }
+        // An exposed air or source-water face can sprout a new small bud.
+        if found != "air" && found != "water" {
+            continue;
+        }
+        if found == "water" && prop(blocks, get(read, cell)?, "level") != Some("0") {
+            continue;
+        }
+        if roll.below(5) != 0 {
+            continue;
+        }
+        let mut bud = named(read, "small_amethyst_bud")?;
+        bud = with_prop(blocks, bud, "facing", facing)?;
+        bud = with_prop(
+            blocks,
+            bud,
+            "waterlogged",
+            if found == "water" { "true" } else { "false" },
+        )?;
+        return Some(vec![edit(cell, bud)]);
+    }
+    None
+}
+
+/// Vanilla turtle-egg random tick: crack staging at night on sand.
+/// Sniffer eggs and frogspawn use the scheduled clock (crate::eggs).
+/// One hatched egg birth: species plus spawn position.
+pub(super) type HatchBirth = (&'static str, [f64; 3]);
+
+pub(super) fn hatch(
+    read: &Read<'_>,
+    at: BlockPos,
+    id: u32,
+    seed: u64,
+) -> Option<(Vec<PlantBlockEdit>, Vec<HatchBirth>)> {
+    let blocks = &read.state.registry.blocks;
+    let name = path(read, at)?;
+    let mut roll = Roll::new(seed);
+    match name {
+        "turtle_egg" => {
+            if !crate::natural_spawn::is_night(read.state.day_time) {
+                return None;
+            }
+            let below = BlockPos { y: at.y - 1, ..at };
+            if !matches!(
+                path(read, below)?,
+                "sand" | "red_sand" | "suspicious_sand"
+            ) {
+                return None;
+            }
+            if roll.below(200) != 0 {
+                return None;
+            }
+            let hatch = prop(blocks, id, "hatch")?.parse::<u8>().ok()?;
+            let eggs = prop(blocks, id, "eggs")?.parse::<u8>().ok()?;
+            if hatch < 2 {
+                let next = with_prop(blocks, id, "hatch", &(hatch + 1).to_string())?;
+                return Some((vec![edit(at, next)], Vec::new()));
+            }
+            let air = read.state.registry.states.air;
+            let mut births = Vec::new();
+            for index in 0..eggs.max(1) {
+                births.push((
+                    "turtle",
+                    [
+                        f64::from(at.x) + 0.5 + f64::from(index % 2) * 0.3 - 0.15,
+                        f64::from(at.y) + 1.0,
+                        f64::from(at.z) + 0.5 + f64::from(index / 2) * 0.3 - 0.15,
+                    ],
+                ));
+            }
+            Some((vec![edit(at, air)], births))
+        }
+        // Sniffer eggs and frogspawn run on the scheduled block-tick
+        // clock (SnifferEggBlock thirds, FrogspawnBlock hatch delay), not
+        // the random tick; see crate::eggs.
+        _ => None,
+    }
 }

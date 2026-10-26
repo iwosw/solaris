@@ -227,15 +227,27 @@ fn untamed_or_sitting_pets_and_unhealthy_or_mounted_horses_cannot_breed() {
             entity_life::can_breed(&state, body(&state, id), row(&state, id)),
             "tamed {species}"
         );
-        if matches!(species, "wolf" | "cat") {
+        if species == "wolf" {
             state.entities.row_mut(slot).entity_life.sitting = true;
+            assert!(
+                !entity_life::can_breed(&state, body(&state, id), row(&state, id)),
+                "unavailable {species}"
+            );
+        } else if species == "cat" {
+            // Vanilla feeds a sitting cat into love; only a both-sitting
+            // pair refuses the birth (see breeding::valid).
+            state.entities.row_mut(slot).entity_life.sitting = true;
+            assert!(
+                entity_life::can_breed(&state, body(&state, id), row(&state, id)),
+                "sitting cat still feeds {species}"
+            );
         } else {
             state.entities.row_mut(slot).entity_life.mounted = true;
+            assert!(
+                !entity_life::can_breed(&state, body(&state, id), row(&state, id)),
+                "unavailable {species}"
+            );
         }
-        assert!(
-            !entity_life::can_breed(&state, body(&state, id), row(&state, id)),
-            "unavailable {species}"
-        );
     }
 }
 
@@ -697,4 +709,293 @@ fn passive_gap_temptation_respects_sitting_no_ai_and_spectator() {
         }
         assert!(state.entities.pos(slot)[0] > pos[0] + 4.5, "mode={mode}");
     }
+}
+
+#[test]
+fn sniffer_breeding_stages_an_egg_item_instead_of_a_live_child() {
+    let (mut state, _, pos) = fixture();
+    let a = spawn(&mut state, "sniffer", pos);
+    let b = spawn(&mut state, "sniffer", pos);
+    for id in [a, b] {
+        let slot = state.entities.slot_of(id).unwrap();
+        state.entities.row_mut(slot).love = 540;
+    }
+    let type_id = match body(&state, a).kind {
+        EntityKind::Mob { type_id } => type_id,
+        _ => unreachable!(),
+    };
+    entity_life::breed(&mut state, a, b, pos, type_id);
+    assert_eq!(row(&state, a).breed_cooldown, 6000);
+    assert_eq!(row(&state, b).breed_cooldown, 6000);
+    assert!(
+        state
+            .entities
+            .slots()
+            .filter(|slot| state.entities.row(*slot).entity_life.child_ticks > 0)
+            .count()
+            == 0,
+        "sniffer birth lays an egg, not a live child"
+    );
+    let egg = item(&state, "sniffer_egg");
+    let dropped: i32 = state
+        .entities
+        .slots()
+        .filter_map(|slot| state.entities.row(slot).item.as_ref())
+        .filter(|stack| stack.item_id == egg)
+        .map(|stack| stack.count)
+        .sum();
+    assert_eq!(
+        dropped
+            + state
+                .merge_life_drops
+                .iter()
+                .filter(|(_, stack)| stack.item_id == egg)
+                .map(|(_, stack)| stack.count)
+                .sum::<i32>(),
+        1
+    );
+}
+
+#[test]
+fn turtle_breeding_lays_egg_blocks_on_home_sand() {
+    let (mut state, _, pos) = fixture();
+    let cell = [
+        pos[0].floor() as i32,
+        pos[1].floor() as i32 - 1,
+        pos[2].floor() as i32,
+    ];
+    let sand = state
+        .registry
+        .blocks
+        .block(&mc_data::Identifier::parse("minecraft:sand").unwrap())
+        .unwrap()
+        .default
+        .0;
+    state.world.set_block(cell[0], cell[1], cell[2], sand);
+    state.world.fold_overlay();
+    let a = spawn(&mut state, "turtle", pos);
+    let b = spawn(&mut state, "turtle", pos);
+    for id in [a, b] {
+        let slot = state.entities.slot_of(id).unwrap();
+        state.entities.row_mut(slot).love = 540;
+    }
+    let type_id = match body(&state, a).kind {
+        EntityKind::Mob { type_id } => type_id,
+        _ => unreachable!(),
+    };
+    entity_life::breed(&mut state, a, b, pos, type_id);
+    assert!(
+        state
+            .merge_block_writes
+            .iter()
+            .any(|(at, id)| at.x == cell[0]
+                && at.y == cell[1] + 1
+                && at.z == cell[2]
+                && state
+                    .registry
+                    .blocks
+                    .by_id(mc_world::BlockStateId(*id))
+                    .is_some_and(|block| block.block.id.path() == "turtle_egg")),
+        "turtle birth places egg blocks on sand"
+    );
+    assert_eq!(
+        state
+            .entities
+            .slots()
+            .filter(|slot| state.entities.row(*slot).entity_life.child_ticks > 0)
+            .count(),
+        0
+    );
+}
+
+#[test]
+fn frog_breeding_places_frogspawn_on_nearby_water() {
+    let (mut state, _, pos) = fixture();
+    let water = state.registry.states.water_levels[0];
+    let cell = [
+        pos[0].floor() as i32,
+        pos[1].floor() as i32 - 1,
+        pos[2].floor() as i32,
+    ];
+    state.world.set_block(cell[0], cell[1], cell[2], water);
+    state.world.fold_overlay();
+    let a = spawn(&mut state, "frog", pos);
+    let b = spawn(&mut state, "frog", pos);
+    for id in [a, b] {
+        let slot = state.entities.slot_of(id).unwrap();
+        state.entities.row_mut(slot).love = 540;
+    }
+    let type_id = match body(&state, a).kind {
+        EntityKind::Mob { type_id } => type_id,
+        _ => unreachable!(),
+    };
+    entity_life::breed(&mut state, a, b, pos, type_id);
+    assert!(
+        state.merge_block_writes.iter().any(|(_, id)| state
+            .registry
+            .blocks
+            .by_id(mc_world::BlockStateId(*id))
+            .is_some_and(|block| block.block.id.path() == "frogspawn")),
+        "frog birth places frogspawn"
+    );
+    assert_eq!(
+        state
+            .entities
+            .slots()
+            .filter(|slot| state.entities.row(*slot).entity_life.child_ticks > 0)
+            .count(),
+        0
+    );
+}
+
+#[test]
+fn axolotl_tropical_fish_bucket_returns_a_water_bucket() {
+    let (mut state, actor, pos) = fixture();
+    let id = spawn(&mut state, "axolotl", [pos[0], pos[1], pos[2] + 1.0]);
+    hold(&mut state, actor, "tropical_fish_bucket", 1);
+    run_tick(&mut state, &[use_animal(id)]);
+    assert!(row(&state, id).love > 0, "fed axolotl is in love");
+    assert_eq!(
+        state.players[&actor].inventory.slots[0].item_id,
+        item(&state, "water_bucket")
+    );
+}
+
+#[test]
+fn axolotl_stacked_fish_buckets_keep_a_water_bucket_remainder() {
+    let (mut state, actor, pos) = fixture();
+    let id = spawn(&mut state, "axolotl", [pos[0], pos[1], pos[2] + 1.0]);
+    hold(&mut state, actor, "tropical_fish_bucket", 2);
+    run_tick(&mut state, &[use_animal(id)]);
+    let fish = item(&state, "tropical_fish_bucket");
+    let water = item(&state, "water_bucket");
+    let (fish_total, water_total): (i32, i32) =
+        state.players[&actor]
+            .inventory
+            .slots
+            .iter()
+            .fold((0, 0), |(f, w), stack| {
+                (
+                    f + (stack.item_id == fish) as i32 * stack.count,
+                    w + (stack.item_id == water) as i32 * stack.count,
+                )
+            });
+    assert_eq!((fish_total, water_total), (1, 1));
+}
+
+#[test]
+fn pandas_without_nearby_bamboo_cannot_breed() {
+    let (mut state, _, pos) = fixture();
+    let a = spawn(&mut state, "panda", pos);
+    let b = spawn(&mut state, "panda", [pos[0] + 1.0, pos[1], pos[2]]);
+    for id in [a, b] {
+        let slot = state.entities.slot_of(id).unwrap();
+        let row = state.entities.row_mut(slot);
+        row.love = 540;
+    }
+    assert!(!entity_life::can_breed(
+        &state,
+        body(&state, a),
+        row(&state, a)
+    ));
+    // A planted bamboo nearby restores birth eligibility (love still applies either way).
+    let bamboo = state
+        .registry
+        .blocks
+        .block(&mc_data::Identifier::parse("minecraft:bamboo").unwrap())
+        .unwrap()
+        .default
+        .0;
+    let cell = [
+        pos[0].floor() as i32,
+        pos[1].floor() as i32 - 1,
+        pos[2].floor() as i32 + 2,
+    ];
+    state.world.set_block(cell[0], cell[1], cell[2], bamboo);
+    state.world.fold_overlay();
+    assert!(entity_life::can_breed(
+        &state,
+        body(&state, a),
+        row(&state, a)
+    ));
+    let type_id = match body(&state, a).kind {
+        EntityKind::Mob { type_id } => type_id,
+        _ => unreachable!(),
+    };
+    assert!(entity_life::breeding::valid(&state, a, b, type_id));
+}
+
+#[test]
+fn trader_llamas_breed_hay_with_llamas_into_llamas() {
+    let (mut state, actor, pos) = fixture();
+    let trader = spawn(&mut state, "trader_llama", pos);
+    let llama = spawn(&mut state, "llama", [pos[0] + 1.0, pos[1], pos[2]]);
+    for id in [trader, llama] {
+        let max = state
+            .registry
+            .blueprint(match body(&state, id).kind {
+                EntityKind::Mob { type_id } => type_id,
+                _ => unreachable!(),
+            })
+            .unwrap()
+            .params
+            .max_health;
+        let slot = state.entities.slot_of(id).unwrap();
+        let row = state.entities.row_mut(slot);
+        row.entity_life.tamed = true;
+        row.health = max;
+    }
+    hold(&mut state, actor, "hay_block", 2);
+    run_tick(&mut state, &[use_animal(trader)]);
+    run_tick(&mut state, &[use_animal(llama)]);
+    assert!(row(&state, trader).love > 0, "fed trader llama is in love");
+    assert!(row(&state, llama).love > 0, "fed llama is in love");
+    let trader_type = match body(&state, trader).kind {
+        EntityKind::Mob { type_id } => type_id,
+        _ => unreachable!(),
+    };
+    let llama_type = match body(&state, llama).kind {
+        EntityKind::Mob { type_id } => type_id,
+        _ => unreachable!(),
+    };
+    let child = entity_life::breeding::offspring(&state.registry, trader_type, llama_type);
+    assert_eq!(child, Some(llama_type));
+    assert!(entity_life::breeding::offspring(&state.registry, trader_type, trader_type).is_some());
+}
+
+#[test]
+fn sitting_cat_breeds_with_a_standing_partner_but_not_two_sitting() {
+    let (mut state, actor, pos) = fixture();
+    let a = spawn(&mut state, "cat", pos);
+    let b = spawn(&mut state, "cat", [pos[0] + 1.0, pos[1], pos[2]]);
+    let owner = state
+        .entities
+        .row(state.entities.slot_of(actor).unwrap())
+        .uuid;
+    for id in [a, b] {
+        let slot = state.entities.slot_of(id).unwrap();
+        let row = state.entities.row_mut(slot);
+        row.entity_life.tamed = true;
+        row.entity_life.taming.owner = Some(owner);
+    }
+    let slot = state.entities.slot_of(a).unwrap();
+    state.entities.row_mut(slot).entity_life.sitting = true;
+    // A sitting cat still accepts breeding fish into love.
+    hold(&mut state, actor, "cod", 2);
+    run_tick(&mut state, &[use_animal(a)]);
+    run_tick(&mut state, &[use_animal(b)]);
+    assert!(row(&state, a).love > 0, "sitting cat enters love");
+    assert!(row(&state, b).love > 0, "standing cat enters love");
+    let type_id = match body(&state, a).kind {
+        EntityKind::Mob { type_id } => type_id,
+        _ => unreachable!(),
+    };
+    // Courtship: pairs commit only once love matures past the cooldown gate.
+    for _ in 0..65 {
+        run_tick(&mut state, &[]);
+    }
+    assert!(entity_life::breeding::valid(&state, a, b, type_id));
+    let slot = state.entities.slot_of(b).unwrap();
+    state.entities.row_mut(slot).entity_life.sitting = true;
+    assert!(!entity_life::breeding::valid(&state, a, b, type_id));
 }

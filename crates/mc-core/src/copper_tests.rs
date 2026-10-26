@@ -1,5 +1,5 @@
 use super::*;
-use crate::boundary::{ChunkPos, ConnectionId, PlayerInput};
+use crate::boundary::{ChunkPos, ConnectionId, Hand, PlayerInput};
 use crate::core::{checkpoint_data_for, restore_entity};
 use crate::journal::{
     EntityStateImage, JournalEntry, JournalWriter, Replay, ReplayEntity,
@@ -307,7 +307,7 @@ fn copper_paired_weathering_wax_and_offhand_scrape_keep_inventory() {
         vec![stack("iron_ingot", 11)],
     );
     let before = state.block_entities.clone();
-    let writes = random_tick(&state, A, at(&state, A).id.0, 0).unwrap();
+    let writes = random_tick(&state, A, at(&state, A).id.0, 0, 0).unwrap();
     assert_eq!(writes.len(), 2);
     for (pos, id) in writes {
         state.world.set_block(pos.x, pos.y, pos.z, id);
@@ -316,7 +316,7 @@ fn copper_paired_weathering_wax_and_offhand_scrape_keep_inventory() {
     assert!(use_on(&mut state, player, Hand::Main, A));
     assert!(at(&state, A).block.id.path().starts_with("waxed_"));
     assert!(at(&state, B).block.id.path().starts_with("waxed_"));
-    assert!(random_tick(&state, A, at(&state, A).id.0, 0).is_none());
+    assert!(random_tick(&state, A, at(&state, A).id.0, 0, 0).is_none());
     state.players.get_mut(&player).unwrap().inventory.slots[crate::inventory::OFF_HAND] =
         stack("iron_axe", 1);
     assert!(use_on(&mut state, player, Hand::Off, A));
@@ -1149,4 +1149,107 @@ fn creative_copper_waxing_has_no_debit_and_can_use_reserved_honeycomb() {
         state.players[&actor].inventory.slots[0],
         stack("honeycomb", 1)
     );
+}
+
+#[test]
+fn all_weathering_families_oxidize_wax_and_scrape() {
+    // COPPER-WEATHERING group: every full 8-variant family weathers one age
+    // on its random tick, waxes with honeycomb, and scrapes back with an axe.
+    let mut state = fixture(None);
+    let player = join(&mut state);
+    let families = [
+        "chiseled_copper",
+        "copper_bars",
+        "copper_bulb",
+        "copper_chain",
+        "copper_door",
+        "copper_grate",
+        "copper_lantern",
+        "copper_trapdoor",
+        "cut_copper",
+        "cut_copper_slab",
+        "cut_copper_stairs",
+        "lightning_rod",
+    ];
+    for (i, fam) in families.iter().enumerate() {
+        let pos = BlockPos { x: 20 + i as i32, y: 201, z: 1 };
+        // Stateless families plant bare; stateful ones need explicit
+        // props (registry defaults are attached/active states).
+        let bare: &[(&str, &str)] = &[];
+        let id = block(
+            &state,
+            fam,
+            match *fam {
+                "copper_bars" => &[("east", "false"), ("north", "false"), ("south", "false"), ("waterlogged", "false"), ("west", "false")][..],
+                "copper_bulb" => &[("lit", "false"), ("powered", "false")][..],
+                "copper_chain" => &[("axis", "y"), ("waterlogged", "false")][..],
+                "copper_door" => &[("facing", "north"), ("half", "lower"), ("hinge", "left"), ("open", "false"), ("powered", "false")][..],
+                "copper_grate" => &[("waterlogged", "false")][..],
+                "copper_lantern" => &[("hanging", "false"), ("waterlogged", "false")][..],
+                "copper_trapdoor" => &[("facing", "north"), ("half", "bottom"), ("open", "false"), ("powered", "false"), ("waterlogged", "false")][..],
+                "cut_copper_slab" => &[("type", "bottom"), ("waterlogged", "false")][..],
+                "cut_copper_stairs" => &[("facing", "north"), ("half", "bottom"), ("shape", "straight"), ("waterlogged", "false")][..],
+                "lightning_rod" => &[("facing", "up"), ("powered", "false"), ("waterlogged", "false")][..],
+                _ => bare,
+            },
+        );
+        state.world.set_block(pos.x, pos.y, pos.z, id);
+        state.world.fold_overlay();
+        // Weather one age via the random-tick path (both rolls 0 always pass:
+        // gate first, then scan chance 1 with no older neighbours).
+        let writes = random_tick(&state, pos, at(&state, pos).id.0, 0, 0)
+            .unwrap_or_else(|| panic!("{fam} never weathered"));
+        assert_eq!(family(at(&state, pos).block.id.path()).unwrap().1, 0);
+        for (wpos, wid) in writes {
+            state.world.set_block(wpos.x, wpos.y, wpos.z, wid);
+        }
+        assert_eq!(family(at(&state, pos).block.id.path()).unwrap().1, 1);
+        // Wax with honeycomb, then scrape back with an axe.
+        state.players.get_mut(&player).unwrap().inventory.slots[0] = stack("honeycomb", 2);
+        assert!(use_on(&mut state, player, Hand::Main, pos));
+        assert!(family(at(&state, pos).block.id.path()).unwrap().2);
+        state.players.get_mut(&player).unwrap().inventory.slots[0] = stack("iron_axe", 1);
+        assert!(use_on(&mut state, player, Hand::Main, pos));
+        let (name, age, waxed) = family(at(&state, pos).block.id.path()).unwrap();
+        assert!(!waxed && age == 1, "{fam} scraped to unwaxed age 1, got {name}");
+    }
+}
+
+#[test]
+fn copper_scan_uses_independent_draw_from_gate() {
+    // ChangeOverTimeBlock.changeOverTime draws nextFloat for the 0.05688889
+    // gate, then getNextState draws a SECOND nextFloat for the scan chance
+    // ((older+1)/(older+same+1))^2. A shared draw corrupts clustered cadence.
+    let mut state = fixture(None);
+    // Isolated age-0 cut copper: no neighbours -> scan chance 1, gate decides.
+    let lone = BlockPos { x: 1, y: 201, z: 1 };
+    state.world.set_block(lone.x, lone.y, lone.z, block(&state, "cut_copper", &[]));
+    assert!(random_tick(&state, lone, at(&state, lone).id.0, 0, u32::MAX).is_some());
+    assert!(random_tick(&state, lone, at(&state, lone).id.0, 954438, 0).is_none());
+    // Clustered same-age: 10 same-age neighbours around an age-0 centre
+    // (older=0, same=10) -> chance (1/11)^2 = 1/121 ~= 0.008264; scan roll
+    // 138496 (0.008256*2^24) passes, 167772 (0.01*2^24) fails.
+    let centre = BlockPos { x: 30, y: 201, z: 30 };
+    state.world.set_block(centre.x, centre.y, centre.z, block(&state, "cut_copper", &[]));
+    for (dx, dz) in [(1, 0), (-1, 0), (0, 1), (0, -1), (2, 0), (-2, 0), (0, 2), (0, -2), (3, 0), (-3, 0)] {
+        let p = BlockPos { x: centre.x + dx, y: centre.y, z: centre.z + dz };
+        state.world.set_block(p.x, p.y, p.z, block(&state, "cut_copper", &[]));
+    }
+    state.world.fold_overlay();
+    // Independent scan draw (138496 pass roll) weathers despite gate roll 0.
+    assert!(random_tick(&state, centre, at(&state, centre).id.0, 0, 138_496).is_some());
+    // Same value as the SCAN draw must fail: with one shared draw it would
+    // have passed (min(gate, scan) vs vanilla gate*scan); two draws keep
+    // them independent.
+    assert!(random_tick(&state, centre, at(&state, centre).id.0, 0, 167_772).is_none());
+    // Waxed neighbours don't count: surround with waxed same-age instead.
+    let waxed_centre = BlockPos { x: 50, y: 201, z: 30 };
+    state.world.set_block(waxed_centre.x, waxed_centre.y, waxed_centre.z, block(&state, "cut_copper", &[]));
+    for (dx, dz) in [(1, 0), (-1, 0), (0, 1), (0, -1), (2, 0), (-2, 0), (0, 2), (0, -2), (3, 0), (-3, 0)] {
+        let p = BlockPos { x: waxed_centre.x + dx, y: waxed_centre.y, z: waxed_centre.z + dz };
+        state.world.set_block(p.x, p.y, p.z, block(&state, "waxed_cut_copper", &[]));
+    }
+    state.world.fold_overlay();
+    // All neighbours waxed -> skipped -> chance 1 -> gate roll 0 weathers.
+    assert!(random_tick(&state, waxed_centre, at(&state, waxed_centre).id.0, 0, u32::MAX).is_some());
 }

@@ -133,6 +133,14 @@ fn use_on(state: &mut TickState, x: i32, y: i32, z: i32, face: u8) {
     );
 }
 
+fn near(state: &mut TickState, player: EntityId, x: i32, y: i32, z: i32) {
+    let slot = state.entities.slot_of(player).expect("player slot");
+    state.entities.set_pos(
+        slot,
+        [f64::from(x) + 0.5, f64::from(y) + 1.0, f64::from(z) + 0.5],
+    );
+}
+
 fn dig(state: &mut TickState, x: i32, y: i32, z: i32) {
     crate::tick::mining_tests::ready_to_finish(state, ConnectionId(1), BlockPos { x, y, z });
     let _ = run_tick(
@@ -499,3 +507,670 @@ mod leaves_tests;
 mod plants_tests;
 #[path = "signs_tests.rs"]
 mod signs_tests;
+
+#[test]
+fn bone_meal_reaches_column_tips_beyond_twenty_five_blocks() {
+    let (mut state, player) = setup();
+    // A 30-tall twisting vine column grown tip-up from the platform.
+    let body = block(&state, "twisting_vines_plant", &[("age", "0")]);
+    for y in 1..=29 {
+        put(&mut state, 3, Y + y, 1, body);
+    }
+    let tip = block(&state, "twisting_vines", &[("age", "0")]);
+    put(&mut state, 3, Y + 30, 1, tip);
+    near(&mut state, player, 3, Y + 1, 1);
+    give(&mut state, player, "bone_meal", 2);
+    use_on(&mut state, 3, Y + 1, 1, 1);
+    assert_eq!(
+        at(&state, 3, Y + 31, 1),
+        block(&state, "twisting_vines", &[("age", "1")]),
+        "bone meal at the base grows a 30-block column tip"
+    );
+    assert_eq!(held(&state, player).count, 1);
+}
+
+#[test]
+fn kelp_grows_into_falling_water_and_turns_it_into_a_source() {
+    let (mut state, player) = setup();
+    // A top-poured column: source over falling water over a kelp tip.
+    let source = state.registry.states.water_levels[0];
+    let falling = block(&state, "water", &[("level", "1")]);
+    put(&mut state, -3, Y + 3, 1, source);
+    put(&mut state, -3, Y + 2, 1, falling);
+    let tip = block(&state, "kelp", &[("age", "0")]);
+    put(&mut state, -3, Y + 1, 1, tip);
+    near(&mut state, player, -3, Y + 1, 1);
+    give(&mut state, player, "bone_meal", 2);
+    use_on(&mut state, -3, Y + 1, 1, 1);
+    assert_eq!(at(&state, -3, Y + 1, 1), block(&state, "kelp_plant", &[]));
+    assert_eq!(
+        at(&state, -3, Y + 2, 1),
+        block(&state, "kelp", &[("age", "1")])
+    );
+    assert_eq!(held(&state, player).count, 1);
+    // A single downward-flow cell over the kelp column with air above
+    // still grows: the flow becomes a source and the tip extends into it.
+    let air = state.registry.states.air;
+    put(&mut state, -3, Y + 3, 1, air);
+    give(&mut state, player, "bone_meal", 1);
+    use_on(&mut state, -3, Y + 2, 1, 1);
+    assert_eq!(at(&state, -3, Y + 1, 1), block(&state, "kelp_plant", &[]));
+    assert_eq!(
+        at(&state, -3, Y + 2, 1),
+        block(&state, "kelp", &[("age", "1")])
+    );
+    // Sideways flow (horizontal current, no water column) still refuses.
+    let kelp0 = block(&state, "kelp", &[("age", "0")]);
+    let flow1 = block(&state, "water", &[("level", "1")]);
+    let air0 = state.registry.states.air;
+    put(&mut state, 6, Y + 1, 6, kelp0);
+    put(&mut state, 6, Y + 2, 6, flow1);
+    put(&mut state, 7, Y + 2, 6, air0);
+    give(&mut state, player, "bone_meal", 1);
+    use_on(&mut state, 6, Y + 1, 6, 1);
+    assert_eq!(at(&state, 6, Y + 2, 6), block(&state, "water", &[("level", "1")]));
+}
+
+#[test]
+fn wheat_seeds_refuse_planting_in_darkness_but_accept_light() {
+    let (mut state, player) = setup();
+    let wet = block(&state, "farmland", &[("moisture", "7")]);
+    put(&mut state, 6, Y, 3, wet);
+    near(&mut state, player, 6, Y + 1, 3);
+    // A sealed room: floor under the plot, single wall ring at crop
+    // height, and a double-thick lid (single thickness leaks to 8).
+    let stone = state.registry.states.stone;
+    put(&mut state, 6, Y - 1, 3, stone);
+    for dx in -2i32..=2 {
+        for dz in -2i32..=2 {
+            if dx.abs() <= 1 && dz.abs() <= 1 && (dx != 0 || dz != 0) {
+                put(&mut state, 6 + dx, Y + 1, 3 + dz, stone);
+            }
+            put(&mut state, 6 + dx, Y + 2, 3 + dz, stone);
+            put(&mut state, 6 + dx, Y + 3, 3 + dz, stone);
+        }
+    }
+    run(&mut state, 5);
+    assert!(state.raw_brightness(6, Y + 1, 3) < 8, "roofed room is dark");
+    give(&mut state, player, "wheat_seeds", 2);
+    use_on(&mut state, 6, Y, 3, 1);
+    let air = state.registry.states.air;
+    assert_eq!(at(&state, 6, Y + 1, 3), air);
+    assert_eq!(held(&state, player).count, 2, "dark planting refused");
+    // Daylight restores planting.
+    put(&mut state, 6, Y + 2, 3, air);
+    put(&mut state, 6, Y + 3, 3, air);
+    put(&mut state, 6, Y + 1, 2, air);
+    run(&mut state, 5);
+    assert!(state.raw_brightness(6, Y + 1, 3) >= 8);
+    use_on(&mut state, 6, Y, 3, 1);
+    assert_eq!(
+        at(&state, 6, Y + 1, 3),
+        block(&state, "wheat", &[("age", "0")])
+    );
+    assert_eq!(held(&state, player).count, 1);
+}
+
+#[test]
+fn flowers_plant_on_soil_but_not_on_bare_stone() {
+    let (mut state, player) = setup();
+    let stone = state.registry.states.stone;
+    near(&mut state, player, 7, Y + 1, 5);
+    put(&mut state, 7, Y, 5, stone);
+    give(&mut state, player, "poppy", 2);
+    use_on(&mut state, 7, Y, 5, 1);
+    assert_eq!(at(&state, 7, Y + 1, 5), state.registry.states.air);
+    assert_eq!(held(&state, player).count, 2, "stone refuses flowers");
+    let dirt = state.registry.states.dirt;
+    put(&mut state, 8, Y, 5, dirt);
+    use_on(&mut state, 8, Y, 5, 1);
+    assert_eq!(at(&state, 8, Y + 1, 5), block(&state, "poppy", &[]));
+    assert_eq!(held(&state, player).count, 1);
+}
+
+#[test]
+fn bone_meal_duplicates_tall_flowers_without_removing_them() {
+    let (mut state, player) = setup();
+    let dirt = state.registry.states.dirt;
+    put(&mut state, -5, Y, 0, dirt);
+    let lower = block(&state, "sunflower", &[("half", "lower")]);
+    let upper = block(&state, "sunflower", &[("half", "upper")]);
+    put(&mut state, -5, Y + 1, 0, lower);
+    put(&mut state, -5, Y + 2, 0, upper);
+    near(&mut state, player, -5, Y + 1, 0);
+    give(&mut state, player, "bone_meal", 1);
+    use_on(&mut state, -5, Y + 1, 0, 1);
+    assert_eq!(at(&state, -5, Y + 1, 0), lower, "plant retained");
+    assert_eq!(at(&state, -5, Y + 2, 0), upper);
+    assert!(
+        dropped(&state)
+            .iter()
+            .any(|(name, count)| name == "sunflower" && *count == 1),
+        "one sunflower drops: {:?}",
+        dropped(&state)
+    );
+    assert!(held(&state, player).is_empty(), "one bone meal spent");
+}
+
+#[test]
+fn sniffer_seeds_plant_their_crops_on_farmland() {
+    let (mut state, player) = setup();
+    let wet = block(&state, "farmland", &[("moisture", "7")]);
+    put(&mut state, 0, Y, 6, wet);
+    put(&mut state, 1, Y, 6, wet);
+    near(&mut state, player, 0, Y + 1, 6);
+    give(&mut state, player, "torchflower_seeds", 1);
+    use_on(&mut state, 0, Y, 6, 1);
+    assert_eq!(
+        at(&state, 0, Y + 1, 6),
+        block(&state, "torchflower_crop", &[("age", "0")])
+    );
+    assert!(held(&state, player).is_empty());
+    give(&mut state, player, "pitcher_pod", 1);
+    use_on(&mut state, 1, Y, 6, 1);
+    assert_eq!(
+        at(&state, 1, Y + 1, 6),
+        block(&state, "pitcher_crop", &[("age", "0"), ("half", "lower")])
+    );
+    assert!(held(&state, player).is_empty());
+}
+
+#[test]
+fn placed_vines_attach_to_the_clicked_wall_and_can_spread() {
+    let (mut state, player) = setup();
+    let wall = state.registry.states.stone;
+    put(&mut state, 4, Y + 1, 7, wall);
+    near(&mut state, player, 3, Y + 1, 7);
+    give(&mut state, player, "vine", 2);
+    // Click the west face of the stone so the vine lands against it.
+    use_on(&mut state, 4, Y + 1, 7, 4);
+    assert_eq!(
+        at(&state, 3, Y + 1, 7),
+        block(
+            &state,
+            "vine",
+            &[
+                ("east", "true"),
+                ("north", "false"),
+                ("south", "false"),
+                ("up", "false"),
+                ("west", "false"),
+            ]
+        ),
+        "player-planted vine attaches east to the wall"
+    );
+    assert_eq!(held(&state, player).count, 1);
+    // Click the ceiling above an empty cell: the vine hangs overhead.
+    put(&mut state, 3, Y + 2, 6, wall);
+    give(&mut state, player, "vine", 1);
+    use_on(&mut state, 3, Y + 2, 6, 0);
+    assert_eq!(
+        at(&state, 3, Y + 1, 6),
+        block(
+            &state,
+            "vine",
+            &[
+                ("east", "false"),
+                ("north", "false"),
+                ("south", "false"),
+                ("up", "true"),
+                ("west", "false"),
+            ]
+        ),
+        "ceiling click hangs the vine overhead"
+    );
+}
+
+#[test]
+fn bone_meal_grows_azalea_and_fungi_but_rejects_wrong_soil() {
+    let (mut state, player) = setup();
+    let dirt = state.registry.states.dirt;
+    put(&mut state, -6, Y, 2, dirt);
+    plant(&mut state, -6, Y + 1, 2, "azalea", &[]);
+    near(&mut state, player, -6, Y + 1, 2);
+    // One 45% roll per meal: repeat until the tree lands.
+    give(&mut state, player, "bone_meal", 20);
+    let trunk = block(&state, "oak_log", &[("axis", "y")]);
+    for _ in 0..20 {
+        if at(&state, -6, Y + 2, 2) == trunk {
+            break;
+        }
+        use_on(&mut state, -6, Y + 1, 2, 1);
+        give(&mut state, player, "bone_meal", 20);
+    }
+    assert_eq!(
+        at(&state, -6, Y + 2, 2),
+        trunk,
+        "azalea grows a trunk"
+    );
+    // Crimson fungus on dirt refuses; on crimson nylium it grows huge.
+    put(&mut state, -7, Y, 2, dirt);
+    plant(&mut state, -7, Y + 1, 2, "crimson_fungus", &[]);
+    give(&mut state, player, "bone_meal", 3);
+    use_on(&mut state, -7, Y + 1, 2, 1);
+    assert_eq!(held(&state, player).count, 3, "wrong soil refuses");
+    // Far from the azalea canopy above (its leaves reach x=-8).
+    let nylium = block(&state, "crimson_nylium", &[]);
+    put(&mut state, 8, Y, 2, nylium);
+    plant(&mut state, 8, Y + 1, 2, "crimson_fungus", &[]);
+    near(&mut state, player, 8, Y + 1, 2);
+    // One 40% roll per meal: repeat until the fungus lands.
+    give(&mut state, player, "bone_meal", 20);
+    let stem = block(&state, "crimson_stem", &[("axis", "y")]);
+    for _ in 0..20 {
+        if at(&state, 8, Y + 2, 2) == stem {
+            break;
+        }
+        use_on(&mut state, 8, Y + 1, 2, 1);
+        give(&mut state, player, "bone_meal", 20);
+    }
+    assert_eq!(
+        at(&state, 8, Y + 2, 2),
+        stem,
+        "crimson fungus grows huge on its nylium"
+    );
+}
+
+#[test]
+fn bone_meal_spreads_moss_and_nylium_and_converts_netherrack() {
+    let (mut state, player) = setup();
+    let moss = block(&state, "moss_block", &[]);
+    let stone = state.registry.states.stone;
+    put(&mut state, 5, Y, 8, moss);
+    near(&mut state, player, 5, Y + 1, 8);
+    for dx in -2..=2 {
+        for dz in -2..=2 {
+            if dx == 0 && dz == 0 {
+                continue;
+            }
+            put(&mut state, 5 + dx, Y, 8 + dz, stone);
+        }
+    }
+    give(&mut state, player, "bone_meal", 8);
+    for sequence in 0..8 {
+        let _ = sequence;
+        use_on(&mut state, 5, Y, 8, 1);
+        let converted = (-2..=2)
+            .flat_map(|dx| (-2..=2).map(move |dz| (dx, dz)))
+            .filter(|(dx, dz)| (*dx != 0 || *dz != 0) && at(&state, 5 + dx, Y, 8 + dz) == moss)
+            .count();
+        if converted > 0 {
+            break;
+        }
+    }
+    let converted = (-2..=2)
+        .flat_map(|dx| (-2..=2).map(move |dz| (dx, dz)))
+        .filter(|(dx, dz)| (*dx != 0 || *dz != 0) && at(&state, 5 + dx, Y, 8 + dz) == moss)
+        .count();
+    assert!(converted > 0, "moss spreads to neighboring stone");
+    // Netherrack beside nylium converts.
+    let nylium = block(&state, "warped_nylium", &[]);
+    let netherrack = state
+        .registry
+        .blocks
+        .by_name_and_props(
+            &mc_data::Identifier::parse("minecraft:netherrack").unwrap(),
+            &[],
+        )
+        .unwrap()
+        .0;
+    put(&mut state, -5, Y, 8, netherrack);
+    near(&mut state, player, -5, Y + 1, 8);
+    put(&mut state, -4, Y, 8, nylium);
+    give(&mut state, player, "bone_meal", 2);
+    use_on(&mut state, -5, Y, 8, 1);
+    assert_eq!(
+        at(&state, -5, Y, 8),
+        nylium,
+        "netherrack converts to nylium"
+    );
+}
+
+#[test]
+fn bone_meal_grows_waterlogged_sea_pickle_colonies() {
+    let (mut state, player) = setup();
+    // A shallow tank: live coral floor, water above, glass walls.
+    let coral = block(&state, "tube_coral_block", &[]);
+    for dx in -1..=1 {
+        for dz in -1..=1 {
+            put(&mut state, dx, Y, -6 + dz, coral);
+        }
+    }
+    let water = state.registry.states.water_levels[0];
+    for dx in -1..=1 {
+        for dz in -1..=1 {
+            put(&mut state, dx, Y + 1, -6 + dz, water);
+            put(&mut state, dx, Y + 2, -6 + dz, water);
+        }
+    }
+    let pickle = block(
+        &state,
+        "sea_pickle",
+        &[("pickles", "1"), ("waterlogged", "true")],
+    );
+    put(&mut state, 0, Y + 1, -6, pickle);
+    near(&mut state, player, 0, Y + 1, -6);
+    give(&mut state, player, "bone_meal", 8);
+    for _ in 0..8 {
+        use_on(&mut state, 0, Y + 1, -6, 1);
+        let grown = at(&state, 0, Y + 1, -6);
+        let spread = (-1..=1)
+            .flat_map(|dx| (-1..=1).map(move |dz| (dx, dz)))
+            .filter(|(dx, dz)| *dx != 0 || *dz != 0)
+            .any(|(dx, dz)| {
+                state
+                    .registry
+                    .blocks
+                    .by_id(mc_world::BlockStateId(at(&state, dx, Y + 1, -6 + dz)))
+                    .is_some_and(|block| block.block.id.path() == "sea_pickle")
+            });
+        if grown != pickle || spread {
+            break;
+        }
+    }
+    let grown = at(&state, 0, Y + 1, -6);
+    let spread = (-1..=1)
+        .flat_map(|dx| (-1..=1).map(move |dz| (dx, dz)))
+        .filter(|(dx, dz)| *dx != 0 || *dz != 0)
+        .any(|(dx, dz)| {
+            state
+                .registry
+                .blocks
+                .by_id(mc_world::BlockStateId(at(&state, dx, Y + 1, -6 + dz)))
+                .is_some_and(|block| block.block.id.path() == "sea_pickle")
+        });
+    assert!(grown != pickle || spread, "colony grows or spreads");
+}
+
+#[test]
+fn dripstone_with_lava_source_fills_the_cauldron_below() {
+    let (mut state, _) = setup();
+    state
+        .gamerules
+        .insert("random_tick_speed".into(), FAST.into());
+    // Lava source over a dripstone block, down tip, empty cauldron below.
+    let lava = state.registry.states.lava_levels[0];
+    let dripstone_block = block(&state, "dripstone_block", &[]);
+    let tip = block(
+        &state,
+        "pointed_dripstone",
+        &[
+            ("thickness", "tip"),
+            ("vertical_direction", "down"),
+            ("waterlogged", "false"),
+        ],
+    );
+    let cauldron = block(&state, "cauldron", &[]);
+    put(&mut state, 0, Y + 6, -8, lava);
+    put(&mut state, 0, Y + 5, -8, dripstone_block);
+    put(&mut state, 0, Y + 4, -8, tip);
+    put(&mut state, 0, Y + 1, -8, cauldron);
+    let lava_cauldron = block(&state, "lava_cauldron", &[]);
+    for _ in 0..400 {
+        run(&mut state, 1);
+        if at(&state, 0, Y + 1, -8) == lava_cauldron {
+            return;
+        }
+    }
+    panic!("dripstone never filled the lava cauldron");
+}
+#[test]
+fn dripstone_mid_column_tip_does_not_grow_but_top_tip_fills() {
+    // Pinned PointedDripstoneBlock.isStalactiteStartPos: a down tip with
+    // pointed dripstone above is never the growth tip, even though the
+    // column top sees the same fluid. Lava fill is the control path.
+    let (mut state, _) = setup();
+    state
+        .gamerules
+        .insert("random_tick_speed".into(), FAST.into());
+    let lava = state.registry.states.lava_levels[0];
+    let dripstone_block = block(&state, "dripstone_block", &[]);
+    let tip = block(
+        &state,
+        "pointed_dripstone",
+        &[
+            ("thickness", "tip"),
+            ("vertical_direction", "down"),
+            ("waterlogged", "false"),
+        ],
+    );
+    let mid = block(
+        &state,
+        "pointed_dripstone",
+        &[
+            ("thickness", "tip"),
+            ("vertical_direction", "down"),
+            ("waterlogged", "false"),
+        ],
+    );
+    let cauldron = block(&state, "cauldron", &[]);
+    put(&mut state, 0, Y + 7, -10, lava);
+    put(&mut state, 0, Y + 6, -10, dripstone_block);
+    put(&mut state, 0, Y + 5, -10, tip);
+    put(&mut state, 0, Y + 4, -10, mid);
+    put(&mut state, 0, Y + 1, -10, cauldron);
+    let lava_cauldron = block(&state, "lava_cauldron", &[]);
+    for _ in 0..400 {
+        run(&mut state, 1);
+        if at(&state, 0, Y + 1, -10) == lava_cauldron {
+            // Mid-column tip must still be a tip (never grew into middle).
+            assert_eq!(at(&state, 0, Y + 4, -10), mid);
+            return;
+        }
+    }
+    panic!("dripstone never filled the lava cauldron");
+}
+
+#[test]
+fn budding_amethyst_sprouts_buds_that_advance_to_clusters() {
+    let (mut state, _) = setup();
+    state
+        .gamerules
+        .insert("random_tick_speed".into(), FAST.into());
+    let budding = block(&state, "budding_amethyst", &[]);
+    put(&mut state, 0, Y + 1, -9, budding);
+    for _ in 0..600 {
+        run(&mut state, 1);
+        let grown = [(-1, 0), (1, 0), (0, -1), (0, 1)].iter().any(|(dx, dz)| {
+            let (dx, dz) = (*dx, *dz);
+            state
+                .registry
+                .blocks
+                .by_id(mc_world::BlockStateId(at(&state, dx, Y + 1, -9 + dz)))
+                .is_some_and(|block| {
+                    matches!(
+                        block.block.id.path(),
+                        "small_amethyst_bud"
+                            | "medium_amethyst_bud"
+                            | "large_amethyst_bud"
+                            | "amethyst_cluster"
+                    )
+                })
+        }) || [0, 1, 2].iter().any(|dy| {
+            state
+                .registry
+                .blocks
+                .by_id(mc_world::BlockStateId(at(&state, 0, Y + dy, -9)))
+                .is_some_and(|block| {
+                    matches!(
+                        block.block.id.path(),
+                        "small_amethyst_bud"
+                            | "medium_amethyst_bud"
+                            | "large_amethyst_bud"
+                            | "amethyst_cluster"
+                    )
+                })
+        });
+        if grown {
+            return;
+        }
+    }
+    panic!("budding amethyst never sprouted");
+}
+
+#[test]
+fn turtle_eggs_crack_at_night_into_baby_turtles() {
+    let (mut state, _) = setup();
+    state.gamerules.insert("random_tick_speed".into(), FAST.into());
+    state.day_time = 15_000;
+    let sand = state
+        .registry
+        .blocks
+        .block(&mc_data::Identifier::parse("minecraft:sand").unwrap())
+        .unwrap()
+        .default
+        .0;
+    // Sand is a falling block: bed it on stone like a real beach, or it
+    // drops away and the egg (correctly) never hatches on the bare air.
+    let stone = state.registry.states.stone;
+    put(&mut state, 2, Y - 1, -2, stone);
+    put(&mut state, 2, Y, -2, sand);
+    let eggs = block(&state, "turtle_egg", &[("eggs", "2"), ("hatch", "0")]);
+    put(&mut state, 2, Y + 1, -2, eggs);
+    for _ in 0..3000 {
+        run(&mut state, 1);
+        let slots: Vec<_> = state.entities.slots().collect();
+        let babies = slots
+            .iter()
+            .filter(|slot| {
+                let row = state.entities.row(**slot);
+                let body = state.entities.body(**slot);
+                row.entity_life.child_ticks > 0
+                    && matches!(body.kind, crate::entities::EntityKind::Mob { .. })
+            })
+            .count();
+        if babies >= 2 {
+            return;
+        }
+    }
+    panic!("turtle eggs never hatched");
+}
+
+#[test]
+fn sniffer_eggs_hatch_into_baby_sniffers() {
+    // Vanilla SnifferEggBlock: scheduled thirds of 24000 ticks (12000 on
+    // moss); each third cracks hatch+1, the third hatches a snifferlet.
+    let (mut state, _) = setup();
+    let egg = block(&state, "sniffer_egg", &[("hatch", "0")]);
+    put(&mut state, 3, Y + 1, -2, egg);
+    crate::eggs::changed(&mut state, crate::boundary::BlockPos { x: 3, y: Y + 1, z: -2 });
+    for _ in 0..30_000 {
+        run(&mut state, 1);
+        let babies = state
+            .entities
+            .slots()
+            .filter(|slot| state.entities.row(*slot).entity_life.child_ticks > 0)
+            .count();
+        if babies >= 1 {
+            return;
+        }
+    }
+    panic!("sniffer egg never hatched");
+}
+
+#[test]
+fn frogspawn_hatches_tadpoles_in_water() {
+    // Vanilla FrogspawnBlock: one scheduled tick 3600..12000 hatches 2-5
+    // tadpoles; no random-tick clock.
+    let (mut state, _) = setup();
+    let water = state.registry.states.water_levels[0];
+    put(&mut state, 4, Y, -2, water);
+    let spawn = block(&state, "frogspawn", &[]);
+    put(&mut state, 4, Y + 1, -2, spawn);
+    crate::eggs::changed(&mut state, crate::boundary::BlockPos { x: 4, y: Y + 1, z: -2 });
+    for _ in 0..15_000 {
+        run(&mut state, 1);
+        let kinds: Vec<_> = state
+            .entities
+            .slots()
+            .map(|slot| state.entities.body(slot).kind)
+            .collect();
+        let tadpoles = kinds
+            .iter()
+            .filter(|kind| match kind {
+                crate::entities::EntityKind::Mob { type_id } => state
+                    .registry
+                    .blueprint(*type_id)
+                    .is_some_and(|blueprint| blueprint.name == "minecraft:tadpole"),
+                _ => false,
+            })
+            .count();
+        if tadpoles >= 2 {
+            return;
+        }
+    }
+    panic!("frogspawn never hatched");
+}
+
+
+
+#[test]
+fn bone_meal_cadence_gates_azalea_fungus_and_mangrove() {
+    // Azalea: one 45% roll per meal; success grows, failure consumes.
+    let (mut state, player) = setup();
+    let dirt = state.registry.states.dirt;
+    put(&mut state, -6, Y, 2, dirt);
+    plant(&mut state, -6, Y + 1, 2, "azalea", &[]);
+    near(&mut state, player, -6, Y + 1, 2);
+    give(&mut state, player, "bone_meal", 20);
+    for _ in 0..20 {
+        if at(&state, -6, Y + 2, 2) == block(&state, "oak_log", &[("axis", "y")]) {
+            break;
+        }
+        use_on(&mut state, -6, Y + 1, 2, 1);
+    }
+    assert_eq!(
+        at(&state, -6, Y + 2, 2),
+        block(&state, "oak_log", &[("axis", "y")]),
+        "repeated meals grow the azalea (45% each)"
+    );
+    // A single meal must be able to fail while still consuming the item.
+    let (mut state, player) = setup();
+    let dirt0 = state.registry.states.dirt;
+    put(&mut state, -6, Y, 2, dirt0);
+    plant(&mut state, -6, Y + 1, 2, "azalea", &[]);
+    near(&mut state, player, -6, Y + 1, 2);
+    give(&mut state, player, "bone_meal", 1);
+    use_on(&mut state, -6, Y + 1, 2, 1);
+    assert_eq!(held(&state, player).count, 0, "meal is spent even on a miss");
+    // Huge fungus: 40% per meal on matching nylium.
+    let (mut state, player) = setup();
+    let nylium = block(&state, "crimson_nylium", &[]);
+    put(&mut state, 8, Y, 2, nylium);
+    plant(&mut state, 8, Y + 1, 2, "crimson_fungus", &[]);
+    near(&mut state, player, 8, Y + 1, 2);
+    give(&mut state, player, "bone_meal", 20);
+    for _ in 0..20 {
+        if at(&state, 8, Y + 2, 2) == block(&state, "crimson_stem", &[("axis", "y")]) {
+            break;
+        }
+        use_on(&mut state, 8, Y + 1, 2, 1);
+    }
+    assert_eq!(
+        at(&state, 8, Y + 2, 2),
+        block(&state, "crimson_stem", &[("axis", "y")]),
+        "repeated meals grow the fungus (40% each)"
+    );
+    // Hanging propagule ages instead of growing a tree.
+    let (mut state, player) = setup();
+    plant(
+        &mut state,
+        2,
+        Y + 1,
+        4,
+        "mangrove_propagule",
+        &[("hanging", "true"), ("age", "0"), ("stage", "0"), ("waterlogged", "false")],
+    );
+    near(&mut state, player, 2, Y + 1, 4);
+    give(&mut state, player, "bone_meal", 2);
+    use_on(&mut state, 2, Y + 1, 4, 1);
+    assert_eq!(
+        at(&state, 2, Y + 1, 4),
+        block(
+            &state,
+            "mangrove_propagule",
+            &[("hanging", "true"), ("age", "1"), ("stage", "0"), ("waterlogged", "false")]
+        ),
+        "hanging propagule ages one stage"
+    );
+}

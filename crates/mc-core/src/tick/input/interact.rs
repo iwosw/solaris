@@ -367,6 +367,9 @@ pub(in crate::tick) fn use_item_on(
     if crate::bottles::use_on(state, entity, *hand, *position, changes) {
         return;
     }
+    if crate::cauldron_wash::use_on(state, entity, *hand, *position, changes) {
+        return;
+    }
     if crate::campfire::use_food(state, entity, *hand, *position, &held) {
         return;
     }

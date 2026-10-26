@@ -470,6 +470,24 @@ pub fn place(
         set(&mut props, "part", "foot");
         set(&mut props, "occupied", "false");
     }
+    if path == "vine" {
+        // Player-planted vines attach to the clicked face; without a face
+        // the vine-growth routine can never spread them. Clicking a wall's
+        // west side hangs the vine on its east; clicking a ceiling (face
+        // down) hangs it overhead (`up`), and clicking the ground (face up)
+        // roots it at its feet (all faces false, spread comes from above).
+        let face = match click.face {
+            Face::West => "east",
+            Face::East => "west",
+            Face::North => "south",
+            Face::South => "north",
+            Face::Down => "up",
+            Face::Up => "",
+        };
+        if !face.is_empty() {
+            set(&mut props, face, "true");
+        }
+    }
     let mut state = blocks.by_name_and_props(&block.id, &props)?.0;
     if let Some((pos, partner_state)) = partner
         && let Some((joined, other)) = crate::copper::joined(blocks, state, partner_state)

@@ -172,13 +172,26 @@ fn raw_chicken_cooks_at_recipe_time_and_syncs_items() {
 }
 
 #[test]
-fn unlit_and_full_campfires_refuse_without_debit() {
+fn unlit_campfires_preload_without_cooking_until_relit() {
     let mut state = state(None);
     let entity = joined(&mut state, 6);
     fire(&mut state, "minecraft:campfire", false);
     let _ = run_tick(&mut state, &[use_input()]);
-    assert_eq!(state.players[&entity].inventory.slots[0].count, 6);
-    assert!(state.campfires.is_empty());
+    // Vanilla preloads one raw food while unlit; nothing cooks.
+    assert_eq!(state.players[&entity].inventory.slots[0].count, 5);
+    assert!(!state.campfires[&key(POS)].slots[0].is_empty());
+    run(&mut state, &mut Vec::new());
+    assert_eq!(state.campfires[&key(POS)].progress[0], 0);
+    fire(&mut state, "minecraft:campfire", true);
+    run(&mut state, &mut Vec::new());
+    assert_eq!(state.campfires[&key(POS)].progress[0], 1);
+}
+
+#[test]
+fn full_campfires_refuse_without_debit() {
+    let mut state = state(None);
+    let entity = joined(&mut state, 6);
+    fire(&mut state, "minecraft:campfire", true);
     let stone = ItemStack::new(
         state
             .registry
