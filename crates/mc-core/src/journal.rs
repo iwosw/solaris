@@ -23,7 +23,7 @@ use serde::{Deserialize, Serialize};
 use crate::boundary::{BlockPos, ChunkPos, EntityId};
 use crate::config::CoreError;
 mod player_nbt;
-use player_nbt::*;
+pub(crate) use player_nbt::*;
 mod replay;
 pub use replay::*;
 
