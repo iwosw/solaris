@@ -1,4 +1,4 @@
-//! Ordinary monster spawners. Chunk-indexed activation and event-only delay WAL.
+//! Ordinary mob spawners. Chunk-indexed activation and event-only delay WAL.
 use crate::boundary::{BlockPos, ChangeSet};
 use crate::entities::EntityKind;
 use crate::tick::TickState;
@@ -7,6 +7,9 @@ use mc_data::trial_nbt::{self as nbt, Fields};
 use mc_nbt::Tag;
 use mc_world::ChunkPos;
 use std::collections::BTreeMap;
+
+#[path = "monster_spawner_data.rs"]
+mod data;
 
 type Key = (i32, i32, i32);
 #[derive(Debug, Default)]
@@ -19,6 +22,8 @@ pub(crate) struct Spawners {
 pub(crate) struct Spawner {
     fields: Fields,
     type_id: u32,
+    light_rules: Option<[[u8; 2]; 2]>,
+    potentials: Vec<(u64, data::SpawnData)>,
     delay: u64,
     deadline: Option<u64>,
     min_delay: u64,
@@ -46,33 +51,8 @@ impl Spawner {
     ) -> Result<Self, String> {
         let fields = nbt::decode(bytes)?;
         let spawn = nbt::compound(&fields, "SpawnData")?.ok_or("SpawnData missing")?;
-        let entity = nbt::compound(spawn, "entity")?.ok_or("SpawnData.entity missing")?;
-        if entity.iter().any(|(key, _)| key != "id") || spawn.iter().any(|(key, _)| key != "entity")
-        {
-            return Err("custom spawner entity/rules are unsupported".into());
-        }
-        if let Some(value) = field(&fields, "SpawnPotentials")
-            && !matches!(value, Tag::List(list) if list.elements.is_empty())
-        {
-            return Err("weighted SpawnPotentials are unsupported".into());
-        }
-        let Some(Tag::String(name)) = field(entity, "id") else {
-            return Err("SpawnData.entity.id missing".into());
-        };
-        let name = mc_data::Identifier::parse(name).map_err(|error| error.to_string())?;
-        let type_id = registry
-            .entity_types
-            .id_of(&name)
-            .ok_or("unknown spawner entity")?;
-        let bp = registry
-            .blueprint(type_id)
-            .ok_or("spawner entity lacks blueprint")?;
-        if bp.category != crate::blueprint::MobCategory::Monster
-            || bp.half_width > 2.0
-            || bp.height > 6.0
-        {
-            return Err("unsupported spawner body/category".into());
-        }
+        let spawn = data::SpawnData::decode(spawn, registry)?;
+        let potentials = data::potentials(&fields, registry)?;
         let min_delay = short(&fields, "MinSpawnDelay", 200, 1, i16::MAX)? as u64;
         let max_delay = short(&fields, "MaxSpawnDelay", 800, min_delay as i16, i16::MAX)? as u64;
         let deadline = match field(&fields, "solaris:spawn_deadline") {
@@ -81,7 +61,9 @@ impl Spawner {
             _ => return Err("solaris:spawn_deadline: expected nonnegative Long".into()),
         };
         Ok(Self {
-            type_id,
+            type_id: spawn.type_id,
+            light_rules: spawn.light,
+            potentials,
             delay: short(&fields, "Delay", 20, -1, i16::MAX)?.max(0) as u64,
             deadline,
             min_delay,
@@ -119,6 +101,27 @@ impl Spawner {
     fn reset(&mut self, tick: u64, rng: &mut crate::natural_spawn::Rng) {
         self.delay = self.min_delay + rng.below((self.max_delay - self.min_delay).max(1));
         self.deadline = Some(tick + self.delay);
+        let total: u64 = self.potentials.iter().map(|(weight, _)| weight).sum();
+        if total > 0 {
+            let mut pick = rng.below(total);
+            for (index, (weight, spawn)) in self.potentials.iter().enumerate() {
+                if pick >= *weight {
+                    pick -= weight;
+                    continue;
+                }
+                self.type_id = spawn.type_id;
+                self.light_rules = spawn.light;
+                let Some(Tag::List(list)) = field(&self.fields, "SpawnPotentials") else {
+                    unreachable!("admitted potentials");
+                };
+                let Tag::Compound(potential) = &list.elements[index] else {
+                    unreachable!("admitted potential");
+                };
+                let selected = field(potential, "data").expect("admitted spawn data").clone();
+                nbt::set(&mut self.fields, "SpawnData", selected);
+                break;
+            }
+        }
     }
 }
 
@@ -191,8 +194,11 @@ pub(crate) fn after_blocks(state: &mut TickState, writes: &[(BlockPos, u32)]) {
         {
             // Generated/imported NBT is admitted at chunk hydration. A new block
             // without SpawnData is intentionally inert until a valid entity is set.
-            let spawner = Spawner::decode(bytes, &state.registry)
-                .unwrap_or_else(|error| panic!("monster spawner {pos:?}: {error}"));
+            // Corrupt entries stay inert too: hydration already rejected them
+            // without an executable prefix, and the tick must not panic.
+            let Ok(spawner) = Spawner::decode(bytes, &state.registry) else {
+                continue;
+            };
             state
                 .monster_spawners
                 .chunks
@@ -204,12 +210,70 @@ pub(crate) fn after_blocks(state: &mut TickState, writes: &[(BlockPos, u32)]) {
     }
 }
 
+/// Spawn eggs change the current spawn data, retaining the clock and potentials.
+/// Returns false when the egg's entity cannot be admitted (no blueprint):
+/// the caller keeps the normal adjacent-spawn path instead of configuring.
+pub(crate) fn set_entity(state: &mut TickState, pos: BlockPos, type_id: u32) -> bool {
+    let cell = (pos.x.div_euclid(16), pos.z.div_euclid(16));
+    let key = (pos.x, pos.y, pos.z);
+    if state.registry.blueprint(type_id).is_none() {
+        return false;
+    }
+    let existing = state.monster_spawners.chunks.get_mut(&cell).and_then(|entries| entries.remove(&key));
+    let mut fields = if let Some(entry) = existing {
+        entry.fields
+    } else if let Some(bytes) = state.world.chunk(ChunkPos { x: cell.0, z: cell.1 })
+        .and_then(|chunk| chunk.block_entities.get(&pos))
+    {
+        let Ok(decoded) = nbt::decode(bytes) else {
+            return false;
+        };
+        decoded
+    } else {
+        // A plain placed spawner has no SpawnData until an egg configures it:
+        // start from empty fields so the egg becomes the first configuration.
+        Vec::new()
+    };
+    let spawn = nbt::compound(&fields, "SpawnData")
+        .ok()
+        .flatten()
+        .cloned()
+        .unwrap_or_default();
+    let entity = nbt::compound(&spawn, "entity")
+        .ok()
+        .flatten()
+        .cloned()
+        .unwrap_or_default();
+    let name = state.registry.entity_types.name_of(type_id).expect("spawn egg entity").as_str();
+    let mut entity = entity;
+    nbt::set(&mut entity, "id", Tag::String(name.into()));
+    let mut spawn = spawn;
+    nbt::set(&mut spawn, "entity", Tag::Compound(entity));
+    nbt::set(&mut fields, "SpawnData", Tag::Compound(spawn));
+    let bytes = nbt::encode(fields, "minecraft:mob_spawner", [pos.x, pos.y, pos.z]);
+    let Ok(mut entry) = Spawner::decode(&bytes, &state.registry) else {
+        return false;
+    };
+    entry.persist(state, key);
+    let kind = mc_data::block_entity_kinds::BlockEntityKind::MobSpawner;
+    state.world.mark_block_entity_visible(pos);
+    let wire = Tag::Compound(entry.fields.clone());
+    let viewers: Vec<_> = state.players.values().map(|player| player.connection).collect();
+    for connection in viewers {
+        state.push_player(connection, crate::boundary::PlayerChange::BlockEntityData {
+            position: pos, block_entity_type: kind.protocol_id(), nbt: wire.clone(),
+        });
+    }
+    state.monster_spawners.chunks.entry(cell).or_default().insert(key, entry);
+    true
+
+}
+
 fn nearby(state: &TickState, key: Key, type_id: u32, range: i32, cap: usize) -> usize {
     let mut count = 0;
-    // Include bodies straddling the range boundary. Admission caps the
-    // spawned blueprint's half-width at two blocks.
-    for x in (key.0 - range - 2).div_euclid(16)..=(key.0 + range + 2).div_euclid(16) {
-        for z in (key.2 - range - 2).div_euclid(16)..=(key.2 + range + 2).div_euclid(16) {
+    let width = state.registry.blueprint(type_id).expect("admitted blueprint").half_width.ceil() as i32;
+    for x in (key.0 - range - width).div_euclid(16)..=(key.0 + range + width).div_euclid(16) {
+        for z in (key.2 - range - width).div_euclid(16)..=(key.2 + range + width).div_euclid(16) {
             state
                 .entities
                 .for_each_slot_in_chunk(ChunkPos { x, z }, |slot| {
@@ -240,26 +304,57 @@ fn can_spawn(
     type_id: u32,
     at: [f64; 3],
     rng: &mut crate::natural_spawn::Rng,
+    light_rules: Option<[[u8; 2]; 2]>,
 ) -> bool {
-    if state.difficulty == crate::survival::Difficulty::Peaceful {
-        return false;
-    }
     let bp = state
         .registry
         .blueprint(type_id)
         .expect("admitted blueprint");
+    if state.difficulty == crate::survival::Difficulty::Peaceful
+        && bp.category == crate::blueprint::MobCategory::Monster
+    {
+        return false;
+    }
     let [x, y, z] = at.map(|v| v.floor() as i32);
     let Some((sky, block)) = state.world.light_at(x, y, z) else {
         return false;
     };
-    let light_ok = match bp.name.as_str() {
-        "minecraft:blaze" => state.brightness(x, y, z) <= 11,
-        "minecraft:silverfish" => true,
-        _ if state.dimension == crate::dimensions::Dimension::Nether => block <= 11,
-        _ => {
-            block == 0
-                && u64::from(sky) <= rng.below(32)
-                && u64::from(state.brightness(x, y, z)) <= rng.below(8)
+    let light_ok = if let Some([block_range, sky_range]) = light_rules {
+        let sky = if state.dimension.has_weather() {
+            sky.saturating_sub(crate::light::sky_darken(state.day_time, state.rain_level, state.thunder_level))
+        } else {
+            0
+        };
+        (block_range[0]..=block_range[1]).contains(&block)
+            && (sky_range[0]..=sky_range[1]).contains(&sky)
+    } else {
+        use crate::blueprint::MobCategory;
+        match bp.category {
+            MobCategory::Monster => match bp.name.as_str() {
+                "minecraft:blaze" => state.brightness(x, y, z) <= 11,
+                "minecraft:silverfish" => true,
+                _ if state.dimension == crate::dimensions::Dimension::Nether => block <= 11,
+                _ => block == 0
+                    && u64::from(sky) <= rng.below(32)
+                    && u64::from(state.brightness(x, y, z)) <= rng.below(8),
+            },
+            MobCategory::Creature if bp.name == "minecraft:turtle" => {
+                let sand = state.world.block_at(x, y - 1, z)
+                    .and_then(|id| state.registry.blocks.by_id(mc_world::BlockStateId(id)))
+                    .is_some_and(|floor| floor.block.id.path() == "sand" || floor.block.id.path() == "red_sand");
+                sand && y < state.dimension.sea_level() + 4 && sky.max(block) > 8
+            }
+            MobCategory::Creature => {
+                let support = state.world.block_at(x, y - 1, z);
+                let grass = support == Some(state.registry.states.grass_block);
+                let tagged = support
+                    .and_then(|id| state.registry.blocks.by_id(mc_world::BlockStateId(id)))
+                    .is_some_and(|floor| state.registry.tags.raw_ids("minecraft:block", "minecraft:animals_spawnable_on")
+                        .is_some_and(|ids| ids.contains(&floor.block.raw_id)));
+                (grass || tagged) && sky.max(block) > 8
+            }
+            MobCategory::Ambient => state.brightness(x, y, z) <= rng.below(4) as u8,
+            _ => true,
         }
     };
     if !light_ok {
@@ -272,7 +367,12 @@ fn can_spawn(
         {
             for by in y..=(at[1] + bp.height - 1e-7).floor() as i32 {
                 if !state.world.block_at(bx, by, bz).is_some_and(|id| {
-                    state.registry.materials.classify(id) == mc_physics::BlockMaterial::Air
+                    let material = state.registry.materials.classify(id);
+                    if matches!(bp.movement, crate::blueprint::MovementClass::Swimmer) {
+                        material == mc_physics::BlockMaterial::Water
+                    } else {
+                        material == mc_physics::BlockMaterial::Air
+                    }
                 }) {
                     return false;
                 }
@@ -280,9 +380,10 @@ fn can_spawn(
         }
     }
     let mut overlap = false;
-    // Blueprint body limits plus the native maximum living half-width bound.
-    for cx in (x - 5).div_euclid(16)..=(x + 5).div_euclid(16) {
-        for cz in (z - 5).div_euclid(16)..=(z + 5).div_euclid(16) {
+    // The native maximum living half-width is three blocks; include the candidate body.
+    let extent = (bp.half_width + 3.0).ceil() as i32;
+    for cx in (x - extent).div_euclid(16)..=(x + extent).div_euclid(16) {
+        for cz in (z - extent).div_euclid(16)..=(z + extent).div_euclid(16) {
             state
                 .entities
                 .for_each_slot_in_chunk(ChunkPos { x: cx, z: cz }, |slot| {
@@ -407,7 +508,7 @@ pub(crate) fn run(state: &mut TickState, changes: &mut ChangeSet) {
                 key.1 as f64 + rng.below(3) as f64 - 1.0,
                 key.2 as f64 + 0.5 + dz,
             ];
-            if can_spawn(state, entry.type_id, at, &mut rng) {
+            if can_spawn(state, entry.type_id, at, &mut rng, entry.light_rules) {
                 let health = state
                     .registry
                     .blueprint(entry.type_id)

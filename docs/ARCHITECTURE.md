@@ -62,12 +62,16 @@ ordered scratch outputs retain the existing preparation/writeback barriers;
 the scheduler selects serial or data-parallel execution. Other tick stages
 remain owner-ordered, not a migrated general system graph.
 
-Ordinary monster spawners are native tick work indexed by chunk. Only spawners
+Ordinary mob spawners are native tick work indexed by chunk. Only spawners
 near live non-spectator players in active chunks advance; spawn attempts run on
 due deadlines and query local entity buckets. Activation, pause and delay reset
 write the existing opaque block-entity WAL, not a second persistence store or a
-per-tick countdown record. Unsupported custom spawn rules/weighted potentials
-fail chunk admission rather than silently changing their meaning.
+per-tick countdown record. Spawn eggs configure the current entity without
+creating an adjacent mob; clocks and weighted potentials survive configuration.
+Passive categories are admitted, and custom inclusive block/sky-light rules
+replace ordinary placement rules without bypassing collision or Peaceful's
+hostile restriction. Weighted potentials select the next spawn data at reset.
+Unsupported entity NBT still fails admission rather than being silently ignored.
 
 Lethal player damage checks held death-protection components in main-hand/offhand
 order before death, drops, XP and plugin death notifications. Native merge consumes
