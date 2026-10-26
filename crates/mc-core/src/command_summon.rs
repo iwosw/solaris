@@ -206,8 +206,14 @@ pub(crate) fn prepare(
             "Temper" => horse,
             "CollarColor" => matches!(name, "minecraft:wolf" | "minecraft:cat"),
             "equipment" => living || name == "minecraft:armor_stand",
-            "Age" => ageable || matches!(name, "minecraft:villager" | "minecraft:tadpole"),
-            "IsBaby" => name == "minecraft:zombie_villager",
+            "Age" => {
+                ageable
+                    || matches!(
+                        name,
+                        "minecraft:villager" | "minecraft:wandering_trader" | "minecraft:tadpole"
+                    )
+            }
+            "IsBaby" => crate::entity_life::uses_is_baby(name),
             "VillagerData" => matches!(name, "minecraft:villager" | "minecraft:zombie_villager"),
             "InLove" | "LoveCause" => ageable,
             "Color" | "Sheared" => name == "minecraft:sheep",
@@ -511,6 +517,15 @@ pub(crate) fn prepare(
 pub(crate) fn apply(state: &mut TickState, id: EntityId, mut image: Image) {
     let slot = state.entities.slot_of(id).expect("new summon");
     let native = image.native;
+    let baby =
+        native.extra_fields.iter().any(
+            |(key, value)| matches!((key.as_str(), value), ("IsBaby", Tag::Byte(v)) if *v != 0),
+        ) || (image.state.entity_life.child_ticks != 0
+            && crate::entity_life::age_has_baby_model(&native.id))
+        || image
+            .villager
+            .as_ref()
+            .is_some_and(|villager| villager.age < 0);
     if image.uuid_authored {
         state.entities.set_uuid(slot, native.uuid);
     }
@@ -577,7 +592,7 @@ pub(crate) fn apply(state: &mut TickState, id: EntityId, mut image: Image) {
     if native.id == "minecraft:armor_stand" {
         row.opaque_entity_fields = image.state.opaque_entity_fields;
     }
-    if row.entity_life.child_ticks != 0 {
+    if baby {
         body.height *= 0.5;
     }
     let appearance = Arc::make_mut(&mut row.appearance);
@@ -585,7 +600,7 @@ pub(crate) fn apply(state: &mut TickState, id: EntityId, mut image: Image) {
         appearance.equipment = equipment;
     }
     appearance.health = native.health;
-    appearance.baby = row.entity_life.child_ticks != 0;
+    appearance.baby = baby;
     if body.burn_ticks > 0 {
         appearance.shared_flags |= 1;
     }
@@ -609,7 +624,7 @@ pub(crate) fn apply(state: &mut TickState, id: EntityId, mut image: Image) {
         |(key, value)| matches!((key.as_str(), value), ("CustomNameVisible", Tag::Byte(v)) if *v != 0),
     );
     crate::entity_life::restore_appearance(body, row);
-    if row.entity_life.child_ticks != 0 {
+    if baby {
         let half_width = body.half_width * 0.5;
         state.entities.set_half_width(slot, half_width);
     }
@@ -623,3 +638,7 @@ pub(crate) fn apply(state: &mut TickState, id: EntityId, mut image: Image) {
 #[cfg(test)]
 #[path = "command_summon_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "command_summon_age_tests.rs"]
+mod age_tests;
