@@ -862,7 +862,9 @@ fn tick_cell(
         Kind::Grass | Kind::Mycelium => grass(state, at, roll),
         Kind::Sapling => sapling(state, at, id, roll),
         Kind::Copper => {
-            crate::copper::random_tick(state, at, id, roll.below(u32::MAX)).map(Outcome::Set)
+            let gate = roll.below(u32::MAX);
+            let scan = roll.below(u32::MAX);
+            crate::copper::random_tick(state, at, id, gate, scan).map(Outcome::Set)
         }
         Kind::Mineral => {
             let seed = hash(&[roll.below(u32::MAX) as u64, state.tick]);

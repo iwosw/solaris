@@ -829,6 +829,12 @@ pub(super) fn dripstone(
     {
         return None;
     }
+    // Pinned PointedDripstoneBlock.randomTick: growth requires
+    // isStalactiteStartPos — the tip must have NO pointed dripstone above
+    // (mid-column tips never grow); only the column top is eligible.
+    if path(read, BlockPos { y: at.y + 1, ..at })? == "pointed_dripstone" {
+        return None;
+    }
     let mut roll = Roll::new(seed);
     // Climb the stalactite column to the fluid held above it.
     let mut top = at.y;

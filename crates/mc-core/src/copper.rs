@@ -12,10 +12,11 @@ pub(crate) const POSES: [&str; 4] = ["standing", "sitting", "running", "star"];
 
 /// Every weathering family: the bare (age-0, unwaxed) block path, derived
 /// from the vanilla registry (each has all 8 wax/age variants).
-/// `copper`/`copper_block` are bare-copper aliases (age 0 only).
-const FAMILIES: [&str; 16] = [
+/// `copper_block` (WeatheringCopperFullBlock age-0 alias of exposed_copper)
+/// participates in weathering at age 0 only; aged cut-family blocks use
+/// their own `cut_copper`-rooted names.
+const FAMILIES: [&str; 15] = [
     "chiseled_copper",
-    "copper",
     "copper_bars",
     "copper_block",
     "copper_bulb",
@@ -48,8 +49,8 @@ pub(crate) fn family(path: &str) -> Option<(&str, u8, bool)> {
     } else {
         (path, 0)
     };
-    // Bare-copper aliases exist only unwaxed at age 0.
-    if (path == "copper" || path == "copper_block") && (waxed || age > 0) {
+    // copper_block is the age-0 full-block alias; it never takes aged forms.
+    if path == "copper_block" && (waxed || age > 0) {
         return None;
     }
     FAMILIES.contains(&path).then_some((path, age, waxed))
@@ -104,24 +105,29 @@ pub(crate) fn joined(blocks: &BlockRegistry, a: u32, b: u32) -> Option<(u32, u32
 }
 
 /// Called only for a cell selected by the existing native random-tick sampler.
+/// Takes two independent draws, matching ChangeOverTimeBlock.changeOverTime
+/// (nextFloat gates 0.05688889) + getNextState (second nextFloat gates the
+/// scan chance): sharing one roll corrupts the scan cadence ~17x on
+/// clustered same-age builds.
 pub(crate) fn random_tick(
     state: &TickState,
     pos: BlockPos,
     id: u32,
-    roll: u32,
+    gate_roll: u32,
+    scan_roll: u32,
 ) -> Option<Vec<(BlockPos, u32)>> {
     let block = state.registry.blocks.by_id(BlockStateId(id))?;
     let (_, age, waxed) = family(block.block.id.path())?;
     // Pinned ChangeOverTimeBlock.changeOverTime: nextFloat < 0.05688889f
-    // gates the Manhattan-4 same-class scan; the scan chance is
-    // ((older+1)/(older+same+1))^2 * chanceModifier (1.0 for copper).
+    // gates the Manhattan-4 same-class scan; getNextState draws a SECOND
+    // nextFloat for the scan chance ((older+1)/(older+same+1))^2.
     // nextFloat is 24 random bits over 2^24: 0.05688889f * 2^24 =
     // 954437.1875 -> top-24-bits < 954438 (bits <= 954437). With no older
     // chance is 1, so the gate alone decides.
-    if waxed || age == 3 || roll % (1 << 24) >= 954438 {
+    if waxed || age == 3 || gate_roll % (1 << 24) >= 954438 {
         return None;
     }
-    if !oxidation_scan_passes(state, pos, roll) {
+    if !oxidation_scan_passes(state, pos, scan_roll) {
         return None;
     }
     let next = transform(&state.registry.blocks, id, age + 1, false)?;
@@ -145,6 +151,8 @@ pub(crate) fn random_tick(
 
 /// Manhattan-4 same-class oxidation scan: counts older (higher-age) and same-age
 /// weathering neighbours; passes with ((older+1)/(older+same+1))^2.
+/// Waxed neighbours are skipped: vanilla getNextState only counts
+/// instanceof ChangeOverTimeBlock, and waxed blocks are plain Blocks.
 fn oxidation_scan_passes(state: &TickState, pos: BlockPos, roll: u32) -> bool {
     let Some(here) = state.world.block_at(pos.x, pos.y, pos.z) else {
         return false;
@@ -164,9 +172,12 @@ fn oxidation_scan_passes(state: &TickState, pos: BlockPos, roll: u32) -> bool {
                 let Some(id) = state.world.block_at(cell.x, cell.y, cell.z) else {
                     continue;
                 };
-                let Some((_, nage, _)) = family_of_state(state, id) else {
+                let Some((_, nage, nwaxed)) = family_of_state(state, id) else {
                     continue;
                 };
+                if nwaxed {
+                    continue;
+                }
                 if nage > age {
                     older += 1;
                 } else if nage == age {

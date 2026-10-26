@@ -914,6 +914,52 @@ fn dripstone_with_lava_source_fills_the_cauldron_below() {
     }
     panic!("dripstone never filled the lava cauldron");
 }
+#[test]
+fn dripstone_mid_column_tip_does_not_grow_but_top_tip_fills() {
+    // Pinned PointedDripstoneBlock.isStalactiteStartPos: a down tip with
+    // pointed dripstone above is never the growth tip, even though the
+    // column top sees the same fluid. Lava fill is the control path.
+    let (mut state, _) = setup();
+    state
+        .gamerules
+        .insert("random_tick_speed".into(), FAST.into());
+    let lava = state.registry.states.lava_levels[0];
+    let dripstone_block = block(&state, "dripstone_block", &[]);
+    let tip = block(
+        &state,
+        "pointed_dripstone",
+        &[
+            ("thickness", "tip"),
+            ("vertical_direction", "down"),
+            ("waterlogged", "false"),
+        ],
+    );
+    let mid = block(
+        &state,
+        "pointed_dripstone",
+        &[
+            ("thickness", "tip"),
+            ("vertical_direction", "down"),
+            ("waterlogged", "false"),
+        ],
+    );
+    let cauldron = block(&state, "cauldron", &[]);
+    put(&mut state, 0, Y + 7, -10, lava);
+    put(&mut state, 0, Y + 6, -10, dripstone_block);
+    put(&mut state, 0, Y + 5, -10, tip);
+    put(&mut state, 0, Y + 4, -10, mid);
+    put(&mut state, 0, Y + 1, -10, cauldron);
+    let lava_cauldron = block(&state, "lava_cauldron", &[]);
+    for _ in 0..400 {
+        run(&mut state, 1);
+        if at(&state, 0, Y + 1, -10) == lava_cauldron {
+            // Mid-column tip must still be a tip (never grew into middle).
+            assert_eq!(at(&state, 0, Y + 4, -10), mid);
+            return;
+        }
+    }
+    panic!("dripstone never filled the lava cauldron");
+}
 
 #[test]
 fn budding_amethyst_sprouts_buds_that_advance_to_clusters() {
