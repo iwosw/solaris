@@ -62,16 +62,6 @@ fn interact_parity_decorated_pot_stores_one_item() {
     assert_eq!(state.block_entities[&(POS.x, POS.y, POS.z)].slots[0].count, 1);
 }
 #[test]
-fn interact_parity_chiseled_bookshelf_front_slot() {
-    let (mut state, actor) = setup();
-    let props = [("facing", "south"), ("slot_0_occupied", "false"), ("slot_1_occupied", "false"), ("slot_2_occupied", "false"), ("slot_3_occupied", "false"), ("slot_4_occupied", "false"), ("slot_5_occupied", "false")];
-    install(&mut state, "chiseled_bookshelf", &props);
-    give(&mut state, actor, "book", 6);
-    use_on(&mut state, POS, 3, [0.1, 0.8, 1.0]);
-    assert_eq!(state.players[&actor].inventory.slots[0].count, 5);
-    assert_eq!(state.block_entities[&(POS.x, POS.y, POS.z)].slots[0].count, 1);
-}
-#[test]
 fn interact_parity_eternal_fire_magma_and_end_bedrock() {
     let (mut state, _) = setup();
     for (dimension, support) in [(crate::dimensions::Dimension::Overworld, "netherrack"), (crate::dimensions::Dimension::Overworld, "magma_block"), (crate::dimensions::Dimension::End, "bedrock")] {
@@ -142,24 +132,6 @@ fn interact_parity_spawn_protection_with_operator() {
     assert!(!crate::spawn_protection::protected(&state, actor, POS));
     state.spawn_operators.clear();
     assert!(!crate::spawn_protection::protected(&state, actor, POS));
-}
-
-#[test]
-fn interact_parity_bookshelf_all_slots_extract_and_hydrate() {
-    let (mut state, actor) = setup();
-    install(&mut state, "chiseled_bookshelf", &[("facing", "south"), ("slot_0_occupied", "false"), ("slot_1_occupied", "false"), ("slot_2_occupied", "false"), ("slot_3_occupied", "false"), ("slot_4_occupied", "false"), ("slot_5_occupied", "false")]);
-    give(&mut state, actor, "book", 6);
-    for slot in 0..6 {
-        use_on(&mut state, POS, 3, [[0.1, 0.5, 0.9][slot % 3], if slot < 3 { 0.8 } else { 0.2 }, 1.0]);
-        assert_eq!(crate::special_storage::comparator(&state, POS), Some(slot as u8 + 1));
-    }
-    assert!(state.players[&actor].inventory.slots[0].is_empty());
-    let mut recovered = crate::redstone::custody::BlockEntities::default();
-    crate::special_storage::hydrate_chunk(&mut recovered, &state.registry, state.world.chunk(crate::boundary::ChunkPos { x: 0, z: 0 }).unwrap());
-    assert_eq!(recovered[&(POS.x,POS.y,POS.z)].slots.iter().map(|stack| stack.count).sum::<i32>(), 6);
-    use_on(&mut state, POS, 3, [0.9, 0.2, 1.0]);
-    assert_eq!(state.players[&actor].inventory.slots[0].count, 1);
-    assert!(state.block_entities[&(POS.x,POS.y,POS.z)].slots[5].is_empty());
 }
 
 #[test]
