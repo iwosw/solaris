@@ -75,7 +75,16 @@ impl ClimateImage {
         state.weather = (kind, self.remaining_ticks);
         state.thunder_remaining_ticks = self.thunder_remaining_ticks;
         state.clear_remaining_ticks = self.clear_remaining_ticks;
-        state.thundering = self.thundering;
+        // Worlds saved before the independent thunder clock carry zero clocks
+        // with a stale thunder target. A zero thunder clock would redraw a
+        // fresh natural duration on the next tick and flip `thundering` off
+        // immediately, so seed it from the restored rain clock instead: the
+        // storm keeps its remaining duration instead of drifting one tick.
+        state.thundering = self.thundering
+            || (kind == Weather::Thunder && self.thunder_remaining_ticks == 0);
+        if kind == Weather::Thunder && self.thunder_remaining_ticks == 0 {
+            state.thunder_remaining_ticks = self.remaining_ticks.max(1);
+        }
         state.rain_level = rain_level;
         state.thunder_level = thunder_level;
         state

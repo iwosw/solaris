@@ -727,7 +727,8 @@ fn weather_gap_microbench_precipitation_and_rod_search() {
 }
 
 /// Climate images saved before the independent thunder clock carry only the
-/// old fields; they still load and the new clocks start unset.
+/// old fields; they still load, and a stored thunder target keeps thundering
+/// on its remaining duration instead of redrawing a fresh clock next tick.
 #[test]
 fn pre_thunder_clock_climate_image_still_loads() {
     let old = r#"{"day_time":5,"weather_kind":2,"remaining_ticks":99,
@@ -746,4 +747,12 @@ fn pre_thunder_clock_climate_image_still_loads() {
     image.restore(&mut state).expect("restore");
     assert_eq!(state.weather, (Weather::Thunder, 99));
     assert_eq!(state.day_time, 5);
+    assert!(state.thundering, "stored thunder target keeps thundering");
+    assert_eq!(
+        state.thunder_remaining_ticks, 99,
+        "thunder clock inherits the storm duration, not a fresh draw"
+    );
+    advance_cycle(&mut state);
+    assert!(state.thundering, "one natural tick must not flip the storm off");
+    assert_eq!(state.weather, (Weather::Thunder, 98));
 }
