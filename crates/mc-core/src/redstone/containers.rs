@@ -171,15 +171,18 @@ pub(crate) fn register(state: &mut TickState, pos: BlockPos) {
     }
 }
 
-/// Map-style hydration allows borrowing the resident chunk and native storage
-/// independently. Replayed inventory images are never replaced by Anvil data.
-pub(crate) fn hydrate_chunk(
-    inventories: &mut super::custody::BlockEntities,
-    containers: &mut ContainerState,
+/// Opaque automated-container images of one chunk: (cell, is_hopper, slots,
+/// cooldown). Replayed inventory images are never replaced by Anvil data.
+pub(crate) type Decoded = Vec<((i32, i32, i32), bool, Vec<ItemStack>, u64)>;
+
+pub(crate) fn decode_chunk(
+    inventories: &super::custody::BlockEntities,
+    containers: &ContainerState,
     registry: &CoreRegistry,
     chunk: &mc_world::Chunk,
     tick: u64,
-) {
+) -> Result<Decoded, String> {
+    let mut decoded = Vec::new();
     for (pos, bytes) in &chunk.block_entities {
         let Some(block) = chunk
             .get_block(
@@ -194,30 +197,56 @@ pub(crate) fn hydrate_chunk(
         let name = block.block.id.path();
         // Native chest/furnace hydration owns those typed inventories and
         // furnace progress; never preempt it with an opaque slots-only image.
-        if !automated(name) {
-            continue;
-        }
-        if inventories.contains_key(&key(*pos))
-            && (name != "hopper" || containers.cooldowns.contains_key(&key(*pos)))
+        if !automated(name)
+            || (inventories.contains_key(&key(*pos))
+                && (name != "hopper" || containers.cooldowns.contains_key(&key(*pos))))
         {
-            if name == "hopper" {
-                containers.hoppers.insert(key(*pos));
-                containers.sleeping.remove(&key(*pos));
-            }
             continue;
         }
         let Some(count) = size(name) else { continue };
-        let Some((slots, cooldown)) = decode(bytes, &registry.items, count, tick) else {
-            continue;
-        };
-        inventories.hydrate(key(*pos), || BlockEntityState {
+        let (slots, cooldown) = decode(bytes, &registry.items, count, tick)
+            .ok_or_else(|| format!("{name} {pos:?}: undecodable block entity"))?;
+        decoded.push((key(*pos), name == "hopper", slots, cooldown));
+    }
+    Ok(decoded)
+}
+
+/// Map-style hydration allows borrowing the resident chunk and native storage
+/// independently.
+pub(crate) fn hydrate_chunk(
+    inventories: &mut super::custody::BlockEntities,
+    containers: &mut ContainerState,
+    registry: &CoreRegistry,
+    chunk: &mc_world::Chunk,
+    tick: u64,
+    decoded: Decoded,
+) {
+    for pos in chunk.block_entities.keys() {
+        let is_hopper = chunk
+            .get_block(
+                pos.x.rem_euclid(16) as u8,
+                pos.y,
+                pos.z.rem_euclid(16) as u8,
+            )
+            .and_then(|id| registry.blocks.by_id(id))
+            .is_some_and(|block| block.block.id.path() == "hopper");
+        if is_hopper
+            && inventories.contains_key(&key(*pos))
+            && containers.cooldowns.contains_key(&key(*pos))
+        {
+            containers.hoppers.insert(key(*pos));
+            containers.sleeping.remove(&key(*pos));
+        }
+    }
+    for (cell, hopper, slots, cooldown) in decoded {
+        inventories.hydrate(cell, || BlockEntityState {
             slots,
             furnace: None,
         });
-        if name == "hopper" {
-            containers.hoppers.insert(key(*pos));
-            containers.sleeping.remove(&key(*pos));
-            containers.cooldowns.entry(key(*pos)).or_insert(cooldown);
+        if hopper {
+            containers.hoppers.insert(cell);
+            containers.sleeping.remove(&cell);
+            containers.cooldowns.entry(cell).or_insert(cooldown);
         }
     }
     for (pos, hopper) in &chunk.hoppers {

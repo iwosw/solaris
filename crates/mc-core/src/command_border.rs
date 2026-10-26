@@ -182,11 +182,19 @@ pub fn parse(args: &[&str]) -> Result<BorderCommand, CommandError> {
             Ok(BorderCommand::DamageAmount(value))
         }
         ["warning", "distance", value] => {
-            let value = value.parse::<i32>().ok().filter(|v| *v >= 0).ok_or_else(invalid)?;
+            let value = value
+                .parse::<i32>()
+                .ok()
+                .filter(|v| *v >= 0)
+                .ok_or_else(invalid)?;
             Ok(BorderCommand::WarningDistance(value))
         }
         ["warning", "time", value] => {
-            let value = value.parse::<i32>().ok().filter(|v| *v >= 0).ok_or_else(invalid)?;
+            let value = value
+                .parse::<i32>()
+                .ok()
+                .filter(|v| *v >= 0)
+                .ok_or_else(invalid)?;
             Ok(BorderCommand::WarningTime(value))
         }
         [mode @ ("set" | "add"), size] => {
@@ -197,7 +205,10 @@ pub fn parse(args: &[&str]) -> Result<BorderCommand, CommandError> {
                 }
                 Ok(BorderCommand::Set { size, time: 0 })
             } else {
-                Ok(BorderCommand::Add { delta: size, time: 0 })
+                Ok(BorderCommand::Add {
+                    delta: size,
+                    time: 0,
+                })
             }
         }
         [mode @ ("set" | "add"), size, time] => {

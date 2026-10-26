@@ -219,10 +219,26 @@ fn fix_mobs_ordinary_egg_use_on_configures_spawner_through_tick() {
     // the ordinary spawner through the UseItemOn tick path, not spawn adjacent.
     // Vanilla: `SpawnEggItem.useOn` configures any `Spawner` block entity.
     let (mut state, actor, centre) = crate::hostile_tests::setup(2.0);
-    let clicked = BlockPos { x: centre[0] as i32, y: 200, z: centre[2] as i32 };
-    let spawner = state.registry.blocks.block(&Identifier::parse("minecraft:spawner").unwrap()).unwrap().default.0;
-    state.world.set_block(clicked.x, clicked.y, clicked.z, spawner);
-    let egg = state.registry.items.id_of(&Identifier::parse("minecraft:skeleton_spawn_egg").unwrap()).unwrap();
+    let clicked = BlockPos {
+        x: centre[0] as i32,
+        y: 200,
+        z: centre[2] as i32,
+    };
+    let spawner = state
+        .registry
+        .blocks
+        .block(&Identifier::parse("minecraft:spawner").unwrap())
+        .unwrap()
+        .default
+        .0;
+    state
+        .world
+        .set_block(clicked.x, clicked.y, clicked.z, spawner);
+    let egg = state
+        .registry
+        .items
+        .id_of(&Identifier::parse("minecraft:skeleton_spawn_egg").unwrap())
+        .unwrap();
     state.players.get_mut(&actor).unwrap().inventory.slots[0] = ItemStack::new(egg, 2);
     let before = state.entities.len();
     let (output, _, _) = crate::tick::run_tick(
@@ -236,12 +252,25 @@ fn fix_mobs_ordinary_egg_use_on_configures_spawner_through_tick() {
             sequence: 1,
         }],
     );
-    assert_eq!(state.entities.len(), before, "spawner click must not spawn an adjacent mob");
+    assert_eq!(
+        state.entities.len(),
+        before,
+        "spawner click must not spawn an adjacent mob"
+    );
     assert!(output.changes.entities_spawned.is_empty());
     assert_eq!(state.players[&actor].inventory.slots[0].count, 1);
-    let (_, Some(bytes)) = state.opaque_changes.last().expect("spawner post-image") else { panic!("missing post-image") };
+    let (_, Some(bytes)) = state.opaque_changes.last().expect("spawner post-image") else {
+        panic!("missing post-image")
+    };
     let fields = mc_data::trial_nbt::decode(bytes).unwrap();
-    let spawn = mc_data::trial_nbt::compound(&fields, "SpawnData").unwrap().unwrap();
-    let entity = mc_data::trial_nbt::compound(spawn, "entity").unwrap().unwrap();
-    assert_eq!(mc_data::item_nbt::field(entity, "id"), Some(&Tag::String("minecraft:skeleton".into())));
+    let spawn = mc_data::trial_nbt::compound(&fields, "SpawnData")
+        .unwrap()
+        .unwrap();
+    let entity = mc_data::trial_nbt::compound(spawn, "entity")
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        mc_data::item_nbt::field(entity, "id"),
+        Some(&Tag::String("minecraft:skeleton".into()))
+    );
 }

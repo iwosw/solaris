@@ -241,8 +241,7 @@ pub(crate) fn use_on(
     if !exchange(state, actor, hand, bottle, true, changes) {
         return true;
     }
-    state.world.set_block(pos.x, pos.y, pos.z, new);
-    state.merge_block_writes.push((pos, new));
+    state.write_block(pos, new);
     crate::vibration::emit(
         state,
         [

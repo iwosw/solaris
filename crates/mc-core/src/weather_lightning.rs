@@ -39,8 +39,7 @@ pub(crate) fn strike_blocks(state: &mut TickState, position: [f64; 3]) {
                 .then_some(id.0)
         });
         if let Some(next) = next {
-            state.world.set_block(pos.x, pos.y, pos.z, next);
-            state.merge_block_writes.push((pos, next));
+            state.write_block(pos, next);
             crate::redstone::schedule_cell(state, pos, 8, 4);
         }
         return;

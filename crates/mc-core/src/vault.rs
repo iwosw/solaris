@@ -26,11 +26,12 @@ fn persist(state: &mut TickState, pos: BlockPos, vault: &VaultData) {
         kind.protocol_id(),
     );
 }
-pub(crate) fn hydrate_chunk(
-    vaults: &mut Vaults,
+pub(crate) fn decode_chunk(
+    vaults: &Vaults,
     registry: &crate::registry::CoreRegistry,
     chunk: &mc_world::Chunk,
-) -> Result<(), String> {
+) -> Result<Vec<((i32, i32, i32), VaultData)>, String> {
+    let mut decoded = Vec::new();
     for (pos, bytes) in &chunk.block_entities {
         if vaults.contains_key(&key(*pos)) {
             continue;
@@ -47,10 +48,10 @@ pub(crate) fn hydrate_chunk(
             let vault = nbt::decode(bytes)
                 .and_then(|fields| VaultData::from_fields(fields, &registry.items))
                 .map_err(|error| format!("vault at ({},{},{}): {error}", pos.x, pos.y, pos.z))?;
-            vaults.insert(key(*pos), vault);
+            decoded.push((key(*pos), vault));
         }
     }
-    Ok(())
+    Ok(decoded)
 }
 pub(crate) fn after_blocks(state: &mut TickState, writes: &[(BlockPos, u32)]) {
     for &(pos, _) in writes {

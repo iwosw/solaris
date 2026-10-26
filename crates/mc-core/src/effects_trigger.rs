@@ -169,8 +169,7 @@ fn cobwebs(state: &mut TickState, pos: [f64; 3], random: &mut u64) {
             y: cell[1],
             z: cell[2],
         };
-        state.world.set_block(pos.x, pos.y, pos.z, web);
-        state.merge_block_writes.push((pos, web));
+        state.write_block(pos, web);
         placed += 1;
         if placed >= count {
             break;

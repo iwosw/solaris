@@ -127,12 +127,12 @@ impl Spawner {
     }
 }
 
-pub(crate) fn hydrate_chunk(
-    spawners: &mut Spawners,
+pub(crate) type Decoded = BTreeMap<Key, Spawner>;
+
+pub(crate) fn decode_chunk(
     registry: &crate::registry::CoreRegistry,
     chunk: &mc_world::Chunk,
-) -> Result<(), String> {
-    // Decode transactionally: malformed state must never leave an executable prefix.
+) -> Result<Decoded, String> {
     let mut decoded = BTreeMap::new();
     for (pos, bytes) in &chunk.block_entities {
         if chunk
@@ -149,11 +149,14 @@ pub(crate) fn hydrate_chunk(
             decoded.insert((pos.x, pos.y, pos.z), entry);
         }
     }
+    Ok(decoded)
+}
+
+pub(crate) fn apply_chunk(spawners: &mut Spawners, chunk: ChunkPos, decoded: Decoded) {
     if decoded.is_empty() {
-        return Ok(());
+        return;
     }
-    let cell = (chunk.pos.x, chunk.pos.z);
-    let current = spawners.chunks.entry(cell).or_default();
+    let current = spawners.chunks.entry((chunk.x, chunk.z)).or_default();
     for (key, value) in decoded {
         if let std::collections::btree_map::Entry::Vacant(slot) = current.entry(key) {
             if value.deadline.is_some() {
@@ -164,7 +167,6 @@ pub(crate) fn hydrate_chunk(
             slot.insert(value);
         }
     }
-    Ok(())
 }
 
 pub(crate) fn forget(spawners: &mut Spawners, pos: BlockPos) {

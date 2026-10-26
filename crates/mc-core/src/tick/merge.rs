@@ -498,8 +498,7 @@ impl TickState {
             }
             IntentKind::EnvironmentalExplosion { center, power } => {
                 for (pos, block) in &intent.footprint.block_write {
-                    self.world.set_block(pos.x, pos.y, pos.z, *block);
-                    self.merge_block_writes.push((*pos, *block));
+                    self.write_block(*pos, *block);
                 }
                 crate::explosion::apply(self, None, *center, *power, None, None);
             }

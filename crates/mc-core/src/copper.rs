@@ -307,8 +307,7 @@ pub(crate) fn use_on(state: &mut TickState, actor: EntityId, hand: Hand, pos: Bl
     };
     let before = (honeycomb || axe).then(|| state.players[&actor].inventory.slots[index].clone());
     for (pos, next) in cells {
-        state.world.set_block(pos.x, pos.y, pos.z, next);
-        state.merge_block_writes.push((pos, next));
+        state.write_block(pos, next);
     }
     if honeycomb {
         let player = state.players.get_mut(&actor).expect("player");

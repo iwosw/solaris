@@ -100,8 +100,7 @@ pub fn prime_block(state: &mut TickState, pos: BlockPos, fuse: u32) -> Option<En
     )?;
     let air = state.registry.states.air;
     crate::plugin_inventories::invalidate_block(state, pos);
-    state.world.set_block(pos.x, pos.y, pos.z, air);
-    state.merge_block_writes.push((pos, air));
+    state.write_block(pos, air);
     Some(id)
 }
 

@@ -31,8 +31,14 @@ impl SpawnData {
     /// (beyond the id) and spawner-level `equipment` tables stay rejected:
     /// vanilla applies them at spawn time and there is no spawn-time NBT path
     /// yet, so admitting them would silently drop them.
-    pub fn decode(fields: &Fields, registry: &crate::registry::CoreRegistry) -> Result<Self, String> {
-        if fields.iter().any(|(key, _)| key != "entity" && key != "custom_spawn_rules") {
+    pub fn decode(
+        fields: &Fields,
+        registry: &crate::registry::CoreRegistry,
+    ) -> Result<Self, String> {
+        if fields
+            .iter()
+            .any(|(key, _)| key != "entity" && key != "custom_spawn_rules")
+        {
             return Err("unsupported spawner spawn data field".into());
         }
         let entity = nbt::compound(fields, "entity")?.ok_or("SpawnData.entity missing")?;
@@ -43,13 +49,20 @@ impl SpawnData {
             return Err("SpawnData.entity.id missing".into());
         };
         let name = mc_data::Identifier::parse(name).map_err(|error| error.to_string())?;
-        let type_id = registry.entity_types.id_of(&name).ok_or("unknown spawner entity")?;
-        registry.blueprint(type_id).ok_or("spawner entity lacks blueprint")?;
+        let type_id = registry
+            .entity_types
+            .id_of(&name)
+            .ok_or("unknown spawner entity")?;
+        registry
+            .blueprint(type_id)
+            .ok_or("spawner entity lacks blueprint")?;
         let light = nbt::compound(fields, "custom_spawn_rules")?
-            .map(|rules| Ok::<_, String>([
-                light_range(rules, "block_light_limit")?,
-                light_range(rules, "sky_light_limit")?,
-            ]))
+            .map(|rules| {
+                Ok::<_, String>([
+                    light_range(rules, "block_light_limit")?,
+                    light_range(rules, "sky_light_limit")?,
+                ])
+            })
             .transpose()?;
         Ok(Self { type_id, light })
     }
@@ -59,11 +72,17 @@ pub(super) fn potentials(
     fields: &Fields,
     registry: &crate::registry::CoreRegistry,
 ) -> Result<Vec<(u64, SpawnData)>, String> {
-    let Some(value) = field(fields, "SpawnPotentials") else { return Ok(Vec::new()); };
-    let Tag::List(list) = value else { return Err("SpawnPotentials: expected List".into()); };
+    let Some(value) = field(fields, "SpawnPotentials") else {
+        return Ok(Vec::new());
+    };
+    let Tag::List(list) = value else {
+        return Err("SpawnPotentials: expected List".into());
+    };
     let mut result = Vec::with_capacity(list.elements.len());
     for element in &list.elements {
-        let Tag::Compound(entry) = element else { return Err("SpawnPotentials entry: expected Compound".into()); };
+        let Tag::Compound(entry) = element else {
+            return Err("SpawnPotentials entry: expected Compound".into());
+        };
         let weight = nbt::int(entry, "weight", 1)?;
         let data = nbt::compound(entry, "data")?.ok_or("SpawnPotentials data missing")?;
         result.push((weight as u64, SpawnData::decode(data, registry)?));

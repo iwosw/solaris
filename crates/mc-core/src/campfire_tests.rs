@@ -244,7 +244,8 @@ fn cooking_slots_and_progress_survive_checkpoint() {
     drop(original);
     let mut restored = state(Some(dir.clone()));
     let chunk = restored.world.chunk(ChunkPos { x: 0, z: 0 }).unwrap();
-    hydrate_chunk(&mut restored.campfires, &restored.registry, chunk);
+    let decoded = decode_chunk(&restored.campfires, &restored.registry, chunk).unwrap();
+    restored.campfires.extend(decoded);
     assert_eq!(restored.campfires[&key(POS)], before);
     assert_eq!(lit(&restored, POS), Some(true));
     for _ in 137..599 {

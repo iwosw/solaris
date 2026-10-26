@@ -89,7 +89,13 @@ pub(crate) fn set_entity(state: &mut TickState, pos: BlockPos, type_id: u32) -> 
     if state.registry.blueprint(type_id).is_none() {
         return false;
     }
-    let name = state.registry.entity_types.name_of(type_id).expect("spawn egg entity").as_str().to_owned();
+    let name = state
+        .registry
+        .entity_types
+        .name_of(type_id)
+        .expect("spawn egg entity")
+        .as_str()
+        .to_owned();
     let key = key(pos);
     let Some(spawner) = state.trial_spawners.get_mut(&key) else {
         return false;
@@ -252,11 +258,12 @@ impl Spawner {
         );
     }
 }
-pub(crate) fn hydrate_chunk(
-    spawners: &mut Spawners,
+pub(crate) fn decode_chunk(
+    spawners: &Spawners,
     registry: &crate::registry::CoreRegistry,
     chunk: &mc_world::Chunk,
-) -> Result<(), String> {
+) -> Result<Vec<((i32, i32, i32), Spawner)>, String> {
+    let mut decoded = Vec::new();
     for (pos, bytes) in &chunk.block_entities {
         if spawners.contains_key(&key(*pos)) {
             continue;
@@ -273,10 +280,10 @@ pub(crate) fn hydrate_chunk(
             let spawner = Spawner::decode(bytes, &registry.items).map_err(|error| {
                 format!("trial_spawner at ({},{},{}): {error}", pos.x, pos.y, pos.z)
             })?;
-            spawners.insert(key(*pos), spawner);
+            decoded.push((key(*pos), spawner));
         }
     }
-    Ok(())
+    Ok(decoded)
 }
 pub(crate) fn after_blocks(state: &mut TickState, writes: &[(BlockPos, u32)]) {
     for &(pos, _) in writes {

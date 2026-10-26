@@ -188,12 +188,7 @@ fn hive_checkpoint_preserves_occupation_and_single_release() {
         .unwrap();
     drop(original);
     let mut restored = state(Some(dir.clone()));
-    hydrate_chunk(
-        &mut restored.hives,
-        &restored.registry,
-        restored.world.chunk(ChunkPos { x: 0, z: 0 }).unwrap(),
-    )
-    .unwrap();
+    crate::tick::sync_chunk_block_entities(&mut restored);
     assert_eq!(restored.hives[&key(POS)], expected);
     let mut changes = ChangeSet::default();
     let mut writes = Vec::new();
@@ -368,12 +363,9 @@ fn wal_hive_entry_tombstones_source_and_replays_one_full_bee() {
     restored
         .world
         .set_opaque_block_entity(POS, Some(bytes.clone()));
-    hydrate_chunk(
-        &mut restored.hives,
-        &restored.registry,
-        restored.world.chunk(ChunkPos { x: 0, z: 0 }).unwrap(),
-    )
-    .unwrap();
+    let chunk = restored.world.chunk(ChunkPos { x: 0, z: 0 }).unwrap();
+    let decoded = decode_chunk(&restored.hives, &restored.registry, chunk).unwrap();
+    restored.hives.extend(decoded);
     assert_eq!(restored.hives[&key(POS)].bees.len(), 1);
     restored.hives.get_mut(&key(POS)).unwrap().bees[0].ticks = 2400;
     let mut changes = ChangeSet::default();
@@ -472,12 +464,7 @@ fn idle_occupied_hive_skips_wal_and_checkpoint_restores_elapsed_ticks() {
         .unwrap();
     drop(original);
     let mut restored = state(Some(dir.clone()));
-    hydrate_chunk(
-        &mut restored.hives,
-        &restored.registry,
-        restored.world.chunk(ChunkPos { x: 0, z: 0 }).unwrap(),
-    )
-    .unwrap();
+    crate::tick::sync_chunk_block_entities(&mut restored);
     assert_eq!(restored.hives[&key(POS)].bees[0].ticks, 237);
     run(&mut restored, &mut Vec::new(), &mut ChangeSet::default());
     assert_eq!(restored.hives[&key(POS)].bees[0].ticks, 238);
@@ -723,12 +710,9 @@ fn silk_touch_break_pickup_place_disk_wal_and_checkpoint_have_one_bee_owner() {
             .world
             .set_opaque_block_entity(BlockPos { x, y, z }, bytes.clone());
     }
-    hydrate_chunk(
-        &mut restored.hives,
-        &restored.registry,
-        restored.world.chunk(ChunkPos { x: 0, z: 0 }).unwrap(),
-    )
-    .unwrap();
+    let chunk = restored.world.chunk(ChunkPos { x: 0, z: 0 }).unwrap();
+    let decoded = decode_chunk(&restored.hives, &restored.registry, chunk).unwrap();
+    restored.hives.extend(decoded);
     checkpoint(&mut restored);
     let checkpoint_hive = restored.hives[&key(POS)].clone();
     restored
@@ -738,12 +722,7 @@ fn silk_touch_break_pickup_place_disk_wal_and_checkpoint_have_one_bee_owner() {
         .unwrap();
     drop(restored);
     let mut restarted = state(Some(dir.clone()));
-    hydrate_chunk(
-        &mut restarted.hives,
-        &restarted.registry,
-        restarted.world.chunk(ChunkPos { x: 0, z: 0 }).unwrap(),
-    )
-    .unwrap();
+    crate::tick::sync_chunk_block_entities(&mut restarted);
     assert_eq!(restarted.hives[&key(POS)], checkpoint_hive);
     assert_eq!(honey(&restarted, POS), Some(4));
     assert!(
@@ -1120,12 +1099,7 @@ fn pending_item_placement_checkpoint_before_run_restarts_with_one_owner() {
         .unwrap();
     drop(original);
     let mut restarted = state(Some(dir.clone()));
-    hydrate_chunk(
-        &mut restarted.hives,
-        &restarted.registry,
-        restarted.world.chunk(ChunkPos { x: 0, z: 0 }).unwrap(),
-    )
-    .unwrap();
+    crate::tick::sync_chunk_block_entities(&mut restarted);
     assert_eq!(restarted.hives[&key(POS)].bees, vec![occupant]);
     assert!(!restarted.hives[&key(POS)].pending_placement);
     assert_eq!(honey(&restarted, POS), Some(4));

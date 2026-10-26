@@ -44,11 +44,12 @@ fn decode(bytes: &[u8], items: &ItemRegistry) -> Result<Vec<ItemStack>, crate::C
     }
     mc_data::storage_blocks::decode_slots(&fields, items, 27).map_err(failure)
 }
-pub(crate) fn hydrate_chunk(
-    inventories: &mut crate::redstone::custody::BlockEntities,
+pub(crate) fn decode_chunk(
+    inventories: &crate::redstone::custody::BlockEntities,
     registry: &crate::registry::CoreRegistry,
     chunk: &mc_world::Chunk,
-) -> Result<(), crate::CoreError> {
+) -> Result<Vec<((i32, i32, i32), Vec<ItemStack>)>, crate::CoreError> {
+    let mut decoded = Vec::new();
     for (pos, bytes) in &chunk.block_entities {
         if inventories.contains_key(&key(*pos)) {
             continue;
@@ -64,13 +65,9 @@ pub(crate) fn hydrate_chunk(
         {
             continue;
         }
-        let slots = decode(bytes, &registry.items)?;
-        inventories.hydrate(key(*pos), || BlockEntityState {
-            slots,
-            furnace: None,
-        });
+        decoded.push((key(*pos), decode(bytes, &registry.items)?));
     }
-    Ok(())
+    Ok(decoded)
 }
 
 pub(crate) struct Placement {

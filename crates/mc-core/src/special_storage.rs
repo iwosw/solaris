@@ -37,11 +37,12 @@ fn decode(fields: &[(String, Tag)], items: &mc_data::items::ItemRegistry) -> Vec
     }
     slots
 }
-pub(crate) fn hydrate_chunk(
-    inventories: &mut crate::redstone::custody::BlockEntities,
+pub(crate) fn decode_chunk(
+    inventories: &crate::redstone::custody::BlockEntities,
     registry: &crate::registry::CoreRegistry,
     chunk: &mc_world::Chunk,
-) {
+) -> Result<Vec<((i32, i32, i32), Vec<ItemStack>)>, String> {
+    let mut decoded = Vec::new();
     for (pos, bytes) in &chunk.block_entities {
         let Some(block) = chunk
             .get_block(
@@ -53,16 +54,18 @@ pub(crate) fn hydrate_chunk(
         else {
             continue;
         };
-        if !owns(block.block.id.path()) {
+        let key = (pos.x, pos.y, pos.z);
+        if !owns(block.block.id.path()) || inventories.contains_key(&key) {
             continue;
         }
-        if let Ok(Tag::Compound(fields)) = mc_nbt::read_network(&mut bytes.as_slice()) {
-            inventories.hydrate((pos.x, pos.y, pos.z), || BlockEntityState {
-                slots: decode(&fields, &registry.items),
-                furnace: None,
-            });
-        }
+        let fields = match mc_nbt::read_network(&mut bytes.as_slice()) {
+            Ok(Tag::Compound(fields)) => fields,
+            Ok(_) => return Err(format!("{} {pos:?}: expected compound", block.block.id)),
+            Err(error) => return Err(format!("{} {pos:?}: {error}", block.block.id)),
+        };
+        decoded.push((key, decode(&fields, &registry.items)));
     }
+    Ok(decoded)
 }
 pub(crate) fn comparator(state: &TickState, pos: BlockPos) -> Option<u8> {
     let block = state.registry.blocks.by_id(mc_world::BlockStateId(

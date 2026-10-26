@@ -34,14 +34,12 @@ fn fixture(name: &str) -> (TickState, EntityId, Key) {
     let bytes = nbt::encode(fields, "minecraft:mob_spawner", [key.0, key.1, key.2]);
     state.world.set_opaque_block_entity(pos, Some(bytes));
     state.world.fold_overlay();
-    let chunk = state
-        .world
-        .chunk(ChunkPos {
-            x: key.0.div_euclid(16),
-            z: key.2.div_euclid(16),
-        })
-        .unwrap();
-    hydrate_chunk(&mut state.monster_spawners, &state.registry, chunk).unwrap();
+    let chunk_pos = ChunkPos {
+        x: key.0.div_euclid(16),
+        z: key.2.div_euclid(16),
+    };
+    let decoded = decode_chunk(&state.registry, state.world.chunk(chunk_pos).unwrap()).unwrap();
+    apply_chunk(&mut state.monster_spawners, chunk_pos, decoded);
     (state, player, key)
 }
 fn entry(state: &TickState, key: Key) -> &Spawner {
