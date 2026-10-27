@@ -33,33 +33,6 @@ pub(super) fn accept_failure(error: &std::io::Error, open_sessions: usize) -> Ac
 
 /// Per-connection pipeline. Status connections return after the ping;
 /// Play connections run until disconnect or overflow.
-/// The guard begins before admission. A submitted Join always has a retirement
-/// owner, including cancellation while waiting for Joined.
-pub(super) struct JoinedConnectionCleanup {
-    pub(super) server: Arc<EdgeServer>,
-    pub(super) id: ConnectionId,
-    pub(super) join_submitted: bool,
-}
-
-impl Drop for JoinedConnectionCleanup {
-    fn drop(&mut self) {
-        self.server.admin.remove(self.id);
-        self.server.connections.retire(self.id);
-        if self.join_submitted {
-            let server = Arc::clone(&self.server);
-            let id = self.id;
-            // Keep capacity reserved while backpressured; disconnected sessions
-            // cannot create an unbounded detached cleanup backlog.
-            tokio::spawn(async move {
-                server.hub.leave(id).await;
-                server.connections.remove(id);
-            });
-        } else {
-            self.server.connections.remove(self.id);
-        }
-    }
-}
-
 pub(super) async fn handle_connection(
     stream: TcpStream,
     server: Arc<EdgeServer>,
@@ -69,11 +42,27 @@ pub(super) async fn handle_connection(
         .map(|a| a.to_string())
         .unwrap_or_else(|_| "<unknown>".to_owned());
     let id = server.connections.alloc_id();
-    let mut joined_cleanup = JoinedConnectionCleanup {
-        server: Arc::clone(&server),
-        id,
-        join_submitted: false,
+    let mut lifecycle = ConnectionLifecycle::new(&server.connections, &server.admin, id);
+    let cancelled = lifecycle.cancelled.take().expect("one connection owner");
+    let result = tokio::select! {
+        biased;
+        _ = cancelled => {
+            warn!(%peer, connection = id.0, "connection closed by delivery policy");
+            Err(anyhow::anyhow!("connection delivery stopped"))
+        }
+        result = run_connection(stream, Arc::clone(&server), id, peer.clone(), &mut lifecycle) => result,
     };
+    lifecycle.stop_writer().await;
+    result
+}
+
+async fn run_connection(
+    stream: TcpStream,
+    server: Arc<EdgeServer>,
+    id: ConnectionId,
+    peer: String,
+    lifecycle: &mut ConnectionLifecycle<'_>,
+) -> anyhow::Result<()> {
     let mut conn = crate::connection::Connection::new(stream);
     let pre_play = async {
         // --- Handshake: route to status or login. Every `?` below logs the
@@ -185,36 +174,18 @@ pub(super) async fn handle_connection(
         config_outcome.client_view_distance,
         server.cfg.server.view_distance,
     );
-    for input in [
-        PlayerInput::SetViewDistance {
-            connection: id,
-            view_distance: view_distance as u8,
-        },
-        PlayerInput::SetLocale {
-            connection: id,
-            locale: config_outcome.client_language.clone(),
-        },
-        PlayerInput::Join {
-            connection: id,
-            uuid: outcome.uuid,
-            name: outcome.name.clone(),
-            permission_level: server.admin.level(outcome.uuid),
-        },
-    ] {
-        let mut sheds = 0u32;
-        loop {
-            if server.hub.submit(input.clone()) {
-                joined_cleanup.join_submitted = true;
-                break;
-            }
-            sheds += 1;
-            if sheds >= MAX_SUBMIT_SHEDS {
-                warn!(%peer, connection = id.0, stage = "join-submit", name = %outcome.name, "hub queue full; connection closed");
-                return Ok(());
-            }
-            tokio::task::yield_now().await;
-        }
-    }
+    lifecycle.native = Some(
+        server.hub.join_session(
+            id,
+            outcome.uuid,
+            outcome.name.clone(),
+            server.admin.level(outcome.uuid),
+            view_distance as u8,
+            config_outcome.client_language.clone(),
+        ).inspect_err(|error| {
+            warn!(%peer, connection = id.0, stage = "join-submit", name = %outcome.name, %error, "native session refused; connection closed");
+        })?
+    );
 
     // --- Wait for our Joined (bounded): the tick loop answers with the
     // --- entity id + spawn the burst needs.
@@ -245,15 +216,10 @@ pub(super) async fn handle_connection(
         // The input follows Join on the same reliable authority queue. It is
         // never inferred from declared bundles or a client-provided brand.
         let ready = PlayerInput::PluginClientReady { connection: id };
-        let mut ready_sheds = 0;
-        while !server.hub.submit(ready.clone()) {
-            ready_sheds += 1;
-            if ready_sheds >= MAX_SUBMIT_SHEDS {
-                warn!(%peer, connection = id.0, stage = "loader-ready-submit", name = %outcome.name, "hub queue full; connection closed");
-                anyhow::bail!("authoritative Loader session admission queue is full");
-            }
-            tokio::task::yield_now().await;
-        }
+        anyhow::ensure!(
+            server.hub.submit(ready),
+            "authoritative Loader session admission queue is full or stopped"
+        );
     }
 
     // --- Join burst (compressed from here on). ---
@@ -298,12 +264,8 @@ pub(super) async fn handle_connection(
             reliable_tx,
             world_tx,
         },
-    );
+    )?;
     if !stashed.is_empty() {
-        let handles = server
-            .connections
-            .get(id)
-            .expect("queues inserted above for this connection");
         // Adopt the Joined entity id if stashed (matches the pump path).
         let joined_entity = stashed.iter().find_map(|change| match change {
             mc_core::boundary::PlayerChange::Joined { entity, .. } => Some(*entity),
@@ -316,21 +278,9 @@ pub(super) async fn handle_connection(
             spawn,
             dimension,
         );
-        // Skip the stale `Joined` sync itself: the join burst already sent
-        // teleport id 1 + empty inventory/health at this position, and the
-        // `Joined` arm would re-emit all four (a second teleport + a reset
-        // to empty). Replay only the authoritative tail after it.
-        let tail: Vec<mc_core::boundary::PlayerChange> = stashed
-            .into_iter()
-            .skip_while(|change| !matches!(change, mc_core::boundary::PlayerChange::Joined { .. }))
-            .skip(1)
-            .collect();
-        for planned in crate::plan::plan_player_changes(&tail, &mut replay_viewer) {
-            // case disconnect loudly instead of sending a partial burst.
-            if handles.reliable_tx.try_send(planned.data).is_err() {
-                warn!(%peer, connection = id.0, stage = "join-replay", name = %outcome.name, "stashed join burst overflows outbound queue; connection closed");
-                return Ok(());
-            }
+        if let Err(error) = replay_join_tail(&server.connections, id, stashed, &mut replay_viewer) {
+            warn!(%peer, connection = id.0, stage = "join-replay", name = %outcome.name, %error, "stashed join burst failed; connection closed");
+            return Ok(());
         }
     }
     server.connections.set_name(id, outcome.name.clone());
@@ -414,7 +364,7 @@ pub(super) async fn handle_connection(
     let mut packet_limiter = PacketLimiter::new(&server.cfg.anti_cheat);
     let (mut reader, writer) = conn.into_play_halves();
     let (keepalive_tx, keepalive_rx) = mpsc::channel(1);
-    let mut writer_task = tokio::spawn(play_writer(
+    lifecycle.writer = Some(tokio::spawn(play_writer(
         writer,
         Arc::clone(&server.net_counters),
         Arc::clone(&server.connections),
@@ -425,11 +375,12 @@ pub(super) async fn handle_connection(
             dh: dh_rx,
             keepalive: keepalive_rx,
         },
-    ));
+    )));
+    let writer_task = lifecycle.writer.as_mut().expect("one writer owner");
     let mut writer_finished = false;
     let exit_stage: &'static str = 'play_loop: loop {
         tokio::select! {
-            ended = &mut writer_task => {
+            ended = &mut *writer_task => {
                 writer_finished = true;
                 match ended {
                     Ok((stage, Some(reason))) => {
@@ -668,9 +619,9 @@ pub(super) async fn handle_connection(
         writer_task.abort();
         let _ = writer_task.await;
     }
+    lifecycle.writer.take();
     warn!(%peer, connection = id.0, stage = "play", exit = exit_stage, name = %outcome.name, "connection closed");
 
-    drop(joined_cleanup);
     Ok(())
 }
 
@@ -796,4 +747,30 @@ pub(super) async fn play_writer(
             return ("core-disconnect", Some(reason));
         }
     }
+}
+
+/// Replay the authoritative join tail after outbound registration.
+pub(super) fn replay_join_tail(
+    registry: &ConnectionRegistry,
+    id: ConnectionId,
+    stashed: Vec<mc_core::boundary::PlayerChange>,
+    viewer: &mut crate::plan::ViewerState,
+) -> anyhow::Result<()> {
+    let handles = registry
+        .get(id)
+        .ok_or_else(|| anyhow::anyhow!("connection closed before join replay"))?;
+    // The join burst already sent teleport id 1 and initial presentation.
+    // Replay only the authoritative tail, not another Joined/reset.
+    let tail: Vec<_> = stashed
+        .into_iter()
+        .skip_while(|change| !matches!(change, mc_core::boundary::PlayerChange::Joined { .. }))
+        .skip(1)
+        .collect();
+    for planned in crate::plan::plan_player_changes(&tail, viewer) {
+        anyhow::ensure!(
+            handles.reliable_tx.try_send(planned.data).is_ok(),
+            "stashed join burst overflows outbound queue"
+        );
+    }
+    Ok(())
 }

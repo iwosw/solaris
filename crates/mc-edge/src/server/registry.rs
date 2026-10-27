@@ -10,10 +10,11 @@ pub struct ConnectionRegistry {
 
 #[derive(Default)]
 pub(super) struct RegistryInner {
+    // A Closing connection retains its slot until native/admin cleanup runs.
+    pub(super) admitted: HashSet<ConnectionId>,
+    pub(super) joining: HashSet<ConnectionId>,
+    pub(super) closers: HashMap<ConnectionId, tokio::sync::oneshot::Sender<()>>,
     pub(super) handles: HashMap<ConnectionId, ConnectionHandles>,
-    /// Admitted Login sessions, including Configuration and queued retirement.
-    pub(super) admitted: std::collections::HashSet<ConnectionId>,
-    pub(super) active: std::collections::HashSet<ConnectionId>,
     pub(super) names: HashMap<ConnectionId, String>,
     pub(super) view_distances: HashMap<ConnectionId, i32>,
     /// Client locale last admitted to the core (`ClientInformation.language`);
@@ -47,23 +48,31 @@ impl ConnectionRegistry {
 
     /// Allocate the next connection id.
     pub fn alloc_id(&self) -> ConnectionId {
-        let id = ConnectionId(self.next_id.fetch_add(1, Ordering::Relaxed));
-        self.inner.lock().active.insert(id);
-        id
+        ConnectionId(self.next_id.fetch_add(1, Ordering::Relaxed))
     }
 
+    /// Reserve a player slot atomically with the actual admission policy.
+    /// Joining connections count too; the policy retains operator bypass.
     pub(super) fn admit(
         &self,
         id: ConnectionId,
-        max: usize,
-        policy: impl FnOnce(bool) -> Option<serde_json::Value>,
+        maximum: usize,
+        check: impl FnOnce(bool) -> Option<serde_json::Value>,
     ) -> Option<serde_json::Value> {
         let mut inner = self.inner.lock();
-        if let Some(reason) = policy(inner.admitted.len() >= max) {
-            return Some(reason);
+        let refusal = check(inner.admitted.len() >= maximum);
+        if refusal.is_none() {
+            inner.admitted.insert(id);
+            inner.joining.insert(id);
         }
-        inner.admitted.insert(id);
-        None
+        refusal
+    }
+
+    #[cfg(test)]
+    pub(super) fn joining_id(&self) -> ConnectionId {
+        let id = self.alloc_id();
+        assert!(self.admit(id, usize::MAX, |_| None).is_none());
+        id
     }
 
     /// Register a connection's queue handles and take the reliable changes the
@@ -75,10 +84,14 @@ impl ConnectionRegistry {
         &self,
         id: ConnectionId,
         handles: ConnectionHandles,
-    ) -> Vec<mc_core::boundary::PlayerChange> {
+    ) -> anyhow::Result<Vec<mc_core::boundary::PlayerChange>> {
         let mut inner = self.inner.lock();
+        anyhow::ensure!(
+            inner.joining.remove(&id),
+            "connection admission already closed"
+        );
         inner.handles.insert(id, handles);
-        inner.pending_reliable.remove(&id).unwrap_or_default()
+        Ok(inner.pending_reliable.remove(&id).unwrap_or_default())
     }
 
     /// Read actual mpsc occupied-or-reserved slots only on telemetry requests.
@@ -122,7 +135,7 @@ impl ConnectionRegistry {
     pub(super) fn stash_join(&self, id: ConnectionId, joined: JoinedSpawn) {
         let senders = {
             let mut inner = self.inner.lock();
-            if !inner.active.contains(&id) {
+            if !inner.joining.contains(&id) && !inner.handles.contains_key(&id) {
                 return;
             }
             inner.pending_joins.insert(id, joined);
@@ -166,7 +179,7 @@ impl ConnectionRegistry {
             if let Some(handles) = inner.handles.get(&id) {
                 return Some(handles.clone());
             }
-            if !inner.active.contains(&id) {
+            if !inner.joining.contains(&id) {
                 changes.clear();
                 return None;
             }
@@ -186,7 +199,7 @@ impl ConnectionRegistry {
     /// loop takes it after flushing the kick packet and logs peer+reason.
     pub fn stash_disconnect_reason(&self, id: ConnectionId, reason: String) {
         let mut inner = self.inner.lock();
-        if inner.active.contains(&id) {
+        if inner.joining.contains(&id) || inner.handles.contains_key(&id) {
             inner.disconnect_reasons.insert(id, reason);
         }
     }
@@ -205,35 +218,42 @@ impl ConnectionRegistry {
         let mut inner = self.inner.lock();
         if let Some(joined) = inner.pending_joins.get(&id) {
             let _ = sender.send(*joined);
-        } else {
+        } else if inner.joining.contains(&id) {
             inner.join_waiters.entry(id).or_default().push(sender);
         }
         receiver
     }
 
-    /// Remove a connection (on disconnect); drops queue senders, the
-    /// stashed join, stashed pre-registration reliable changes, any join
-    /// waiters (their receivers fail closed), and the stashed disconnect
-    /// reason.
+    /// Stop delivery and wake the connection owner, including a blocked writer.
+    /// Admission is released only by the lifecycle owner's final cleanup.
+    /// Drops queue senders, the stashed join, stashed pre-registration
+    /// reliable changes, any join waiters (their receivers fail closed), and
+    /// the stashed disconnect reason.
     pub fn remove(&self, id: ConnectionId) {
-        self.retire(id);
-        self.inner.lock().admitted.remove(&id);
+        crate::vanilla_items::unmark(id);
+        let closer = {
+            let mut inner = self.inner.lock();
+            inner.joining.remove(&id);
+            inner.handles.remove(&id);
+            if inner.names.remove(&id).is_some() {
+                inner.roster_dirty = true;
+            }
+            inner.pending_joins.remove(&id);
+            inner.pending_reliable.remove(&id);
+            inner.join_waiters.remove(&id);
+            inner.disconnect_reasons.remove(&id);
+            inner.view_distances.remove(&id);
+            inner.locales.remove(&id);
+            inner.closers.remove(&id)
+        };
+        if let Some(closer) = closer {
+            let _ = closer.send(());
+        }
     }
 
-    pub(crate) fn retire(&self, id: ConnectionId) {
-        crate::vanilla_items::unmark(id);
-        let mut inner = self.inner.lock();
-        inner.handles.remove(&id);
-        inner.active.remove(&id);
-        if inner.names.remove(&id).is_some() {
-            inner.roster_dirty = true;
-        }
-        inner.pending_joins.remove(&id);
-        inner.pending_reliable.remove(&id);
-        inner.join_waiters.remove(&id);
-        inner.disconnect_reasons.remove(&id);
-        inner.view_distances.remove(&id);
-        inner.locales.remove(&id);
+    pub(super) fn finish(&self, id: ConnectionId) {
+        self.remove(id);
+        self.inner.lock().admitted.remove(&id);
     }
 
     /// Look up one connection's handles.

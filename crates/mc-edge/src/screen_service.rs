@@ -224,7 +224,7 @@ fn deliver(server: &EdgeServer, relay: &mut Relay, effects: Vec<Effect>) {
                     connection = effect.to.0,
                     "screen control queue full; connection retired"
                 );
-                server.connections.retire(effect.to);
+                server.connections.remove(effect.to);
             } else if let Some(screen) = effect.video_screen() {
                 queue.extend(relay.frame_dropped(effect.to, screen));
             }

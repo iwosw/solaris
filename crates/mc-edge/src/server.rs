@@ -47,7 +47,7 @@ use mc_core::Core;
 use mc_core::boundary::{ChangeSet, ConnectionId, PlayerInput, TickOutput};
 use mc_data::VanillaData;
 use sha2::{Digest, Sha256};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::{Cursor, Write};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, LazyLock};
@@ -320,6 +320,10 @@ pub(crate) fn loader_manifest(
     Ok(Some(manifest))
 }
 
+#[path = "server_lifecycle.rs"]
+mod lifecycle;
+use lifecycle::ConnectionLifecycle;
+
 impl EdgeServer {
     /// Build a server from its owned pieces plus fresh live state.
     /// Fails when the biome registry, block table, or light table cannot
@@ -481,7 +485,7 @@ impl EdgeServer {
         if let Some(sender) = sender
             && sender.try_send(frame.freeze()).is_err()
         {
-            self.connections.retire(id);
+            self.connections.remove(id);
             anyhow::bail!("reliable command queue full");
         }
         Ok(())
@@ -1392,6 +1396,11 @@ pub fn core_config(cfg: &EdgeConfig) -> mc_core::config::CoreConfig {
     let mut core = mc_core::config::CoreConfig::new(cfg.data.world_dir.clone(), cfg.data.seed);
     core.view_distance = cfg.server.view_distance;
     core.simulation_distance = cfg.server.simulation_distance;
+    // Each admitted session reserves one cleanup slot without consuming the
+    // ordinary-input budget at the configured player limit.
+    core.input_queue_cap = core
+        .input_queue_cap
+        .saturating_add(cfg.server.max_players as usize);
     // Full item facts/tags/recipes/loot/mining come from the content cache;
     // without this the core keeps embedded subsets with no tool rules and
     // drops ignore the correct-tool gate.
@@ -1503,6 +1512,10 @@ mod tests;
 #[cfg(test)]
 #[path = "admin_tests.rs"]
 mod admin_tests;
+
+#[cfg(test)]
+#[path = "server_lifecycle_tests.rs"]
+mod lifecycle_tests;
 
 #[cfg(test)]
 #[path = "server_lock_tests.rs"]

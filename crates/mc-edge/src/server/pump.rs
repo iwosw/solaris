@@ -252,7 +252,7 @@ pub(super) fn route_outbox(
         }
         for planned in crate::plan::plan_player_changes(&changes, viewer) {
             if handles.reliable_tx.try_send(planned.data).is_err() {
-                server.connections.retire(connection);
+                server.connections.remove(connection);
                 connections.remove(&connection);
                 server
                     .net_counters
@@ -308,7 +308,7 @@ pub(super) async fn publish_and_route(
     });
     // Reliable overflow takes precedence: disconnect victims first.
     for victim in crate::fanout::reliable_overflow(&packets) {
-        server.connections.retire(victim);
+        server.connections.remove(victim);
         connections.remove(&victim);
         server
             .net_counters
@@ -325,7 +325,7 @@ pub(super) async fn publish_and_route(
                 // In-order, never dropped: a full reliable queue
                 // disconnects the connection.
                 if handles.reliable_tx.try_send(packet.data).is_err() {
-                    server.connections.retire(packet.connection);
+                    server.connections.remove(packet.connection);
                     connections.remove(&packet.connection);
                     server
                         .net_counters

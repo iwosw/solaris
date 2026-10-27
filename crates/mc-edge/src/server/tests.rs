@@ -3,31 +3,37 @@ use super::*;
 #[test]
 fn load_queues_aggregate_real_slots_and_expose_unavailable_metrics() {
     let registry = ConnectionRegistry::new();
+    assert!(registry.admit(ConnectionId(1), 2, |_| None).is_none());
+    assert!(registry.admit(ConnectionId(2), 2, |_| None).is_none());
     let (reliable_tx, mut reliable_rx) = mpsc::channel(4);
     let (world_tx, _world_rx) = mpsc::channel(4);
     reliable_tx
         .try_send(bytes::Bytes::from_static(b"abc"))
         .unwrap();
     let reserved = world_tx.try_reserve().unwrap();
-    registry.register(
-        ConnectionId(1),
-        ConnectionHandles {
-            reliable_tx: reliable_tx.clone(),
-            world_tx: world_tx.clone(),
-        },
-    );
+    registry
+        .register(
+            ConnectionId(1),
+            ConnectionHandles {
+                reliable_tx: reliable_tx.clone(),
+                world_tx: world_tx.clone(),
+            },
+        )
+        .unwrap();
     let (reliable_tx2, _reliable_rx2) = mpsc::channel(2);
     let (world_tx2, _world_rx2) = mpsc::channel(2);
     world_tx2
         .try_send(bytes::Bytes::from_static(b"longer payload"))
         .unwrap();
-    registry.register(
-        ConnectionId(2),
-        ConnectionHandles {
-            reliable_tx: reliable_tx2,
-            world_tx: world_tx2,
-        },
-    );
+    registry
+        .register(
+            ConnectionId(2),
+            ConnectionHandles {
+                reliable_tx: reliable_tx2,
+                world_tx: world_tx2,
+            },
+        )
+        .unwrap();
     let snapshot = registry.load_queues().unwrap();
     assert_eq!(snapshot.viewers, 2);
     assert_eq!(snapshot.reliable.capacity_slots, 6);
@@ -54,16 +60,18 @@ fn load_queues_aggregate_real_slots_and_expose_unavailable_metrics() {
 #[test]
 fn registry_insert_remove_roster() {
     let registry = ConnectionRegistry::new();
-    let id = registry.alloc_id();
+    let id = registry.joining_id();
     let (reliable_tx, _) = mpsc::channel(2);
     let (world_tx, _) = mpsc::channel(2);
-    registry.register(
-        id,
-        ConnectionHandles {
-            reliable_tx,
-            world_tx,
-        },
-    );
+    registry
+        .register(
+            id,
+            ConnectionHandles {
+                reliable_tx,
+                world_tx,
+            },
+        )
+        .unwrap();
     assert_eq!(registry.len(), 1);
     registry.set_name(id, "Alex".to_owned());
     assert_eq!(registry.roster(), vec!["Alex".to_owned()]);
@@ -115,8 +123,8 @@ fn core_config_carries_pause_and_mob_griefing_switches() {
 #[tokio::test]
 async fn simultaneous_joins_both_resolve() {
     let registry = ConnectionRegistry::new();
-    let a = registry.alloc_id();
-    let b = registry.alloc_id();
+    let a = registry.joining_id();
+    let b = registry.joining_id();
     // Both register interest BEFORE either Joined arrives (simultaneous).
     let rx_a = registry.wait_join(a);
     let rx_b = registry.wait_join(b);
@@ -150,7 +158,7 @@ async fn simultaneous_joins_both_resolve() {
 #[tokio::test]
 async fn late_waiter_sees_stash() {
     let registry = ConnectionRegistry::new();
-    let id = registry.alloc_id();
+    let id = registry.joining_id();
     let joined = (
         mc_core::boundary::EntityId(7),
         [8.0, 80.0, 8.0],
@@ -168,7 +176,7 @@ async fn late_waiter_sees_stash() {
 fn pending_reliable_keeps_burst_order() {
     use mc_core::boundary::PlayerChange;
     let registry = ConnectionRegistry::new();
-    let id = registry.alloc_id();
+    let id = registry.joining_id();
     let burst = vec![
         PlayerChange::Joined {
             entity: mc_core::boundary::EntityId(41),
@@ -212,7 +220,7 @@ fn pending_reliable_keeps_burst_order() {
         reliable_tx,
         world_tx,
     };
-    assert_eq!(registry.register(id, handles.clone()), expected);
+    assert_eq!(registry.register(id, handles.clone()).unwrap(), expected);
     // Once registered the pump routes instead of stashing.
     let mut routed = vec![expected[1].clone()];
     assert!(registry.handles_or_stash(id, &mut routed).is_some());
@@ -221,7 +229,7 @@ fn pending_reliable_keeps_burst_order() {
     registry.remove(id);
     assert!(registry.handles_or_stash(id, &mut routed).is_none());
     registry.remove(id);
-    assert!(registry.register(id, handles).is_empty());
+    assert!(registry.register(id, handles).is_err());
 }
 
 /// P1: the stashed Joined is the viewer entity source, so repeated
@@ -229,7 +237,7 @@ fn pending_reliable_keeps_burst_order() {
 #[test]
 fn stashed_join_survives_repeated_takes() {
     let registry = ConnectionRegistry::new();
-    let id = registry.alloc_id();
+    let id = registry.joining_id();
     let joined = (
         mc_core::boundary::EntityId(99),
         [1.0, 2.0, 3.0],
