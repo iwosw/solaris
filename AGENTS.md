@@ -123,6 +123,9 @@ python3 -m tools.harness run correctness                  # L2: major phase/code
   Measured narrow optimization hacks must document bottleneck, boundary, correctness fence, effect and fallback/removal path.
   Never restore operator worker-thread percentages; derive capacity once and let measured autoscaling move bounded budgets.
 
+  Real-client gates run the server from a release build (owner, 2026-10-27): build
+  `cargo build --release -p mc-edge --bin solaris-v2` and pass it as `SOLARIS_SERVER_BINARY`;
+  a debug server drops to ~10 TPS while a joining player's chunks generate.
 ## Git, local state and sibling repositories
 
 - Never commit/push/publish/merge to main/tag without explicit authorization; preserve hooks/signing.

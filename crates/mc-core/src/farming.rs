@@ -659,7 +659,11 @@ pub fn run(state: &mut TickState, writes: &mut Vec<(BlockPos, u32)>, spawned: &m
 }
 
 /// Below this many ticking chunks the rayon hand-off costs more than the loop.
-const PARALLEL_MIN_CHUNKS: usize = 64;
+/// Serial sampling costs ~0.5 us per ordinary chunk (~6 us when every section
+/// ticks; 625 such chunks: 3.7 ms serial, 1.2 ms on the pool). A release
+/// real-client run with 81 chunks spent ~42 ms waiting for woken pool workers
+/// on ~10% of ticks while sampling itself took ~40 us per tick.
+const PARALLEL_MIN_CHUNKS: usize = 256;
 
 /// A sampled cell whose block can random tick, with the roll stream after the
 /// three coordinate draws.
