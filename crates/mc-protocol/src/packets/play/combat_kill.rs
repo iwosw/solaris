@@ -12,8 +12,9 @@ pub struct ClientboundPlayerCombatKill {
 }
 
 impl Packet for ClientboundPlayerCombatKill {
-    // Local wire-probe GameProtocols registration 69, bundle delimiter included.
-    const ID: i32 = 0x45;
+    // 26.1.2 reports/packets.json: minecraft:player_combat_kill = 0x44
+    // (0x45 is player_info_remove; bundle_delimiter is 0x00).
+    const ID: i32 = 0x44;
 
     fn encode<B: BufMut>(&self, buf: &mut B) -> Result<(), CodecError> {
         buf.write_varint(self.player_id);
@@ -51,7 +52,7 @@ mod tests {
         };
         let mut bytes = Vec::new();
         packet.encode(&mut bytes).unwrap();
-        assert_eq!(ClientboundPlayerCombatKill::ID, 0x45);
+        assert_eq!(ClientboundPlayerCombatKill::ID, 0x44);
         assert_eq!(&bytes[..2], &[0xac, 0x02]);
         assert_eq!(
             ClientboundPlayerCombatKill::decode(&mut bytes.as_slice()).unwrap(),
