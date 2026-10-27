@@ -69,7 +69,6 @@ opt-level = 3
 
 [profile.test]
 debug = 1
-incremental = false
 
 [profile.test.package."*"]
 debug = 0
