@@ -960,4 +960,7 @@ fn recipe_book_shape_size(width: i32, height: i32) -> Result<usize, CodecError> 
 // -----------------------------------------------------------------------
 
 #[cfg(test)]
+#[path = "play/report_ids_tests.rs"]
+mod report_ids_tests;
+#[cfg(test)]
 mod tests;
