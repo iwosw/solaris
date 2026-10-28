@@ -70,6 +70,7 @@ async fn run_connection(
         let Some(handshake) = (match crate::handshake::read_handshake(
             &mut conn,
             server.cfg.server.accepts_transfers,
+            server.legacy.as_ref(),
         )
         .await
         {
@@ -87,7 +88,9 @@ async fn run_connection(
             let motd = server.cfg.server.motd.clone();
             let max = server.cfg.server.max_players;
             let online = server.connections.len();
-            if let Err(error) = crate::status::handle_status(&mut conn, &motd, max, online).await {
+            if let Err(error) =
+                crate::status::handle_status(&mut conn, &motd, max, online, handshake.legacy).await
+            {
                 warn!(%peer, connection = id.0, stage = "status", %error, "connection closed");
                 return Err(error);
             }
@@ -131,11 +134,17 @@ async fn run_connection(
             return Ok(None);
         };
 
-        // --- Configuration (registries, tags, finish). ---
+        // --- Configuration (registries, tags, finish). A 26.1.2 session
+        // --- announces its own release's registries and tags.
+        let legacy = conn.legacy().cloned();
+        let (data, tags) = match &legacy {
+            Some(profile) => (&profile.data, &profile.tags),
+            None => (&*server.data, &*server.tags),
+        };
         let config_outcome = match crate::configuration::handle_configuration(
             &mut conn,
-            &server.data,
-            &server.tags,
+            data,
+            tags,
             server.loader_manifest.as_ref(),
             server.loader_required,
             &server.cfg.resource_pack,

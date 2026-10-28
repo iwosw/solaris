@@ -18,8 +18,10 @@
 # Local oracle, benchmark and scratch output at any crate depth.
 .analysis/
 
-# Local Mojang extraction target; Mojang bytes never enter Git.
+# Local Mojang extraction targets (the canonical cache and the 26.1.2 cache
+# for legacy clients); Mojang bytes never enter Git.
 /data/vanilla
+/data/vanilla-*
 
 # Runtime output, including server subprocesses launched from crate directories.
 # Local-only runtime state must never enter source control.

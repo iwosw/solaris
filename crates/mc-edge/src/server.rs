@@ -244,6 +244,8 @@ pub struct EdgeServer {
     pub data: Arc<VanillaData>,
     /// Resolved vanilla tag set for the Configuration tag packet.
     pub tags: Arc<mc_data::tags::TagsData>,
+    /// 26.1.2 (protocol 775) client profile, when its content cache exists.
+    pub legacy: Option<Arc<crate::legacy::Profile>>,
     /// Chunk-encoding registries (built once at startup; the tick pump
     /// must encode against the real biome/block/item tables, never the
     /// single-biome fallback inside `fanout::publish`).
@@ -429,6 +431,7 @@ impl EdgeServer {
                 crate::dh::Service::new(&hub, &cfg, workers).map(Arc::new)
             })
             .transpose()?;
+        let legacy = crate::legacy::Profile::discover(&data);
         Ok(Self {
             admin,
             console_state: Default::default(),
@@ -449,6 +452,7 @@ impl EdgeServer {
             hub,
             data,
             tags,
+            legacy,
             wire,
             cfg,
             connections,

@@ -97,8 +97,12 @@ pub async fn handle_configuration(
         crate::plugin_loader::send_probe(conn).await?;
     }
 
-    // Step 1: advertise our known data packs.
-    let our_pack = server_known_pack();
+    // Step 1: advertise our known data packs (a 26.1.2 session's own release).
+    let our_pack = server_known_pack(if conn.legacy().is_some() {
+        crate::legacy::RELEASE
+    } else {
+        TARGET_RELEASE
+    });
     conn.send_packet(&ClientboundKnownPacks {
         packs: vec![our_pack.clone()],
     })
@@ -259,14 +263,13 @@ pub async fn configuration_disconnect(
     anyhow::bail!("configuration disconnect: {reason}")
 }
 
-/// The Known Packs entry we advertise as the data pack the running game
-/// version corresponds to. Built from [`TARGET_RELEASE`] so a version bump
-/// only touches one place.
-fn server_known_pack() -> KnownPackEntry {
+/// The Known Packs entry we advertise as the data pack the session's game
+/// version corresponds to ([`TARGET_RELEASE`], or 26.1.2 for a legacy session).
+fn server_known_pack(release: &str) -> KnownPackEntry {
     KnownPackEntry {
         namespace: "minecraft".to_owned(),
         id: "core".to_owned(),
-        version: TARGET_RELEASE.to_owned(),
+        version: release.to_owned(),
     }
 }
 

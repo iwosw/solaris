@@ -208,6 +208,8 @@ pub struct Connection {
     budget: PrePlayBudget,
     /// Encode item stacks for a client that cannot resolve plugin item models.
     vanilla_item_models: bool,
+    /// 26.1.2 translator when the handshake declared protocol 775.
+    legacy: Option<crate::legacy::Session>,
 }
 
 impl Connection {
@@ -227,7 +229,19 @@ impl Connection {
             compression: Compression::Disabled,
             budget: PrePlayBudget::with_defaults(),
             vanilla_item_models: false,
+            legacy: None,
         }
+    }
+
+    /// Translate every later packet for a 26.1.2 (protocol 775) client.
+    pub fn set_legacy(&mut self, session: crate::legacy::Session) {
+        self.legacy = Some(session);
+    }
+
+    /// The 26.1.2 profile when this is a legacy session.
+    #[must_use]
+    pub fn legacy(&self) -> Option<&std::sync::Arc<crate::legacy::Profile>> {
+        self.legacy.as_ref().map(crate::legacy::Session::profile)
     }
 
     /// Encode later item stacks for a client that cannot resolve plugin item
@@ -248,14 +262,23 @@ impl Connection {
     /// [`Connection::read_frame_play`] (no read deadline; client silence is
     /// governed by keepalive, not by a read timeout).
     pub async fn read_frame_in(&mut self, state: State) -> anyhow::Result<RawFrame> {
-        let frame = tokio::time::timeout(
-            PRE_PLAY_READ_TIMEOUT,
-            read_frame_inner(&mut self.reader, &mut self.buf, self.compression),
-        )
-        .await
-        .map_err(|_| anyhow::anyhow!("read timed out in {state:?}"))??;
-        self.budget.record(&frame)?;
-        Ok(frame)
+        loop {
+            let frame = tokio::time::timeout(
+                PRE_PLAY_READ_TIMEOUT,
+                read_frame_inner(&mut self.reader, &mut self.buf, self.compression),
+            )
+            .await
+            .map_err(|_| anyhow::anyhow!("read timed out in {state:?}"))??;
+            self.budget.record(&frame)?;
+            match &mut self.legacy {
+                None => return Ok(frame),
+                Some(legacy) => {
+                    if let Some(frame) = legacy.serverbound(frame)? {
+                        return Ok(frame);
+                    }
+                }
+            }
+        }
     }
 
     /// Reads one Play frame with NO read deadline and NO pre-play budget.
@@ -263,7 +286,13 @@ impl Connection {
     /// governs liveness); dropping for read silence breaks survival joins
     /// where the client thinks before its next packet (~13 s observed).
     pub async fn read_frame_play(&mut self) -> anyhow::Result<RawFrame> {
-        read_frame_inner(&mut self.reader, &mut self.buf, self.compression).await
+        read_translated(
+            &mut self.reader,
+            &mut self.buf,
+            self.compression,
+            self.legacy.as_mut(),
+        )
+        .await
     }
 
     /// Reads and decodes one typed packet, rejecting trailing bytes.
@@ -293,7 +322,13 @@ impl Connection {
         mc_protocol::packets::play::with_vanilla_item_models(self.vanilla_item_models, || {
             p.encode(&mut body)
         })?;
-        let framed = encode_frame(P::ID, &body, self.compression)?;
+        let framed = match &mut self.legacy {
+            None => encode_frame(P::ID, &body, self.compression)?,
+            Some(legacy) => match legacy.clientbound(P::ID, &body)? {
+                Some((id, body)) => encode_frame(id, &body, self.compression)?,
+                None => return Ok(()),
+            },
+        };
         write_with_stall_timeout(self.writer.write_all(&framed), OUTBOUND_WRITE_STALL_TIMEOUT)
             .await?;
         Ok(())
@@ -334,15 +369,18 @@ impl Connection {
     /// inputs and acks, and reading never delays writes.
     #[must_use]
     pub fn into_play_halves(self) -> (PlayReader, PlayWriter) {
+        let reader_legacy = self.legacy.as_ref().map(crate::legacy::Session::split);
         (
             PlayReader {
                 reader: self.reader,
                 buf: self.buf,
                 compression: self.compression,
+                legacy: reader_legacy,
             },
             PlayWriter {
                 writer: self.writer,
                 compression: self.compression,
+                legacy: self.legacy,
             },
         )
     }
@@ -353,13 +391,20 @@ pub struct PlayReader {
     reader: EncryptedReadHalf,
     buf: BytesMut,
     compression: Compression,
+    legacy: Option<crate::legacy::Session>,
 }
 
 impl PlayReader {
     /// Reads one Play frame with no read deadline (as
     /// [`Connection::read_frame_play`]).
     pub async fn read_frame(&mut self) -> anyhow::Result<RawFrame> {
-        read_frame_inner(&mut self.reader, &mut self.buf, self.compression).await
+        read_translated(
+            &mut self.reader,
+            &mut self.buf,
+            self.compression,
+            self.legacy.as_mut(),
+        )
+        .await
     }
 }
 
@@ -367,6 +412,7 @@ impl PlayReader {
 pub struct PlayWriter {
     writer: EncryptedWriteHalf,
     compression: Compression,
+    legacy: Option<crate::legacy::Session>,
 }
 
 impl PlayWriter {
@@ -380,11 +426,43 @@ impl PlayWriter {
 
     /// Writes pre-framed bytes (whole frames, one or more) with the same stall
     /// fence as [`send_packet`](Self::send_packet): the routed packets are
-    /// already encoded.
+    /// already encoded. A legacy session re-frames them in its own protocol.
     pub async fn write_bytes(&mut self, framed: &[u8]) -> anyhow::Result<()> {
+        let translated;
+        let framed = match &mut self.legacy {
+            None => framed,
+            Some(legacy) => {
+                translated = legacy.clientbound_frames(framed, self.compression)?;
+                &translated[..]
+            }
+        };
         write_with_stall_timeout(self.writer.write_all(framed), OUTBOUND_WRITE_STALL_TIMEOUT)
             .await?;
         Ok(())
+    }
+}
+
+/// Reads Play frames until one survives legacy translation (all do for a
+/// canonical session).
+async fn read_translated<R>(
+    reader: &mut R,
+    buf: &mut BytesMut,
+    compression: Compression,
+    mut legacy: Option<&mut crate::legacy::Session>,
+) -> anyhow::Result<RawFrame>
+where
+    R: AsyncReadExt + Unpin,
+{
+    loop {
+        let frame = read_frame_inner(reader, buf, compression).await?;
+        match legacy.as_deref_mut() {
+            None => return Ok(frame),
+            Some(legacy) => {
+                if let Some(frame) = legacy.serverbound(frame)? {
+                    return Ok(frame);
+                }
+            }
+        }
     }
 }
 
