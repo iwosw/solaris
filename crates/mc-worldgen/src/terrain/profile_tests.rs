@@ -52,13 +52,23 @@ fn generator(seed: i64) -> TerrainGenerator {
 }
 
 #[test]
-#[ignore = "release stage profile; serialized perf lane only"]
+#[ignore = "release stage profile; approved measurement window only"]
 fn vanilla_stages() {
+    stage_profile(&[712816, 5617830, 42], 3);
+}
+
+#[test]
+#[ignore = "release single-threaded parity-seed profile; approved measurement window only"]
+fn parity_stages() {
+    stage_profile(&[0, 81, 497625], 1);
+}
+
+fn stage_profile(seeds: &[i64], runs: usize) {
     let report = mc_data::blocks::solaris_required_blocks_report();
     let light_table =
         mc_data::block_light::BlockLightTable::conservative_from_blocks_report(&report);
-    for seed in [712816, 5617830, 42] {
-        for run in 0..3 {
+    for &seed in seeds {
+        for run in 0..runs {
             let generator = generator(seed);
             TOTALS.with_borrow_mut(|totals| *totals = [Duration::ZERO; 6]);
             let start = Instant::now();
