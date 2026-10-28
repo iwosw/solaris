@@ -361,6 +361,10 @@ fn vanilla_supports(tag: &str, item: &str) -> bool {
 }
 
 #[cfg(test)]
+#[path = "command_enchant_execution_tests.rs"]
+mod execution_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use mc_data::item_components::ItemFactsTable;
