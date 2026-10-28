@@ -44,6 +44,11 @@
     "minecraft:triangles_bottom",
     "minecraft:triangles_top"
   ],
+  "block_transformer": [
+    "minecraft:axe",
+    "minecraft:hoe",
+    "minecraft:shovel"
+  ],
   "cat_sound_variant": [
     "minecraft:classic",
     "minecraft:royal"
@@ -140,6 +145,31 @@
     "minecraft:wind_charge",
     "minecraft:wither",
     "minecraft:wither_skull"
+  ],
+  "decorated_pot_pattern": [
+    "minecraft:angler",
+    "minecraft:archer",
+    "minecraft:arms_up",
+    "minecraft:blade",
+    "minecraft:brewer",
+    "minecraft:burn",
+    "minecraft:danger",
+    "minecraft:explorer",
+    "minecraft:flow",
+    "minecraft:friend",
+    "minecraft:guster",
+    "minecraft:heart",
+    "minecraft:heartbreak",
+    "minecraft:howl",
+    "minecraft:miner",
+    "minecraft:mourner",
+    "minecraft:plenty",
+    "minecraft:prize",
+    "minecraft:scrape",
+    "minecraft:sheaf",
+    "minecraft:shelter",
+    "minecraft:skull",
+    "minecraft:snort"
   ],
   "dialog": [
     "minecraft:custom_options",
@@ -307,6 +337,20 @@
     "minecraft:cold",
     "minecraft:temperate",
     "minecraft:warm"
+  ],
+  "sulfur_cube_archetype": [
+    "minecraft:bouncy",
+    "minecraft:explosive",
+    "minecraft:fast_flat",
+    "minecraft:fast_sliding",
+    "minecraft:high_resistance",
+    "minecraft:hot",
+    "minecraft:light",
+    "minecraft:regular",
+    "minecraft:slow_bouncy",
+    "minecraft:slow_flat",
+    "minecraft:slow_sliding",
+    "minecraft:sticky"
   ],
   "test_environment": [
     "minecraft:default"
@@ -904,6 +948,16 @@
     "minecraft:windswept_hills",
     "minecraft:windswept_savanna",
     "minecraft:wooded_badlands"
+  ],
+  "worldgen/block_state_provider": [
+    "minecraft:cave_vines_body",
+    "minecraft:cave_vines_head",
+    "minecraft:flower_flower_forest",
+    "minecraft:flower_meadow",
+    "minecraft:flower_plain",
+    "minecraft:mangrove_propagule",
+    "minecraft:podzol_beneath_tree",
+    "minecraft:soil_beneath_tree"
   ],
   "zombie_nautilus_variant": [
     "minecraft:temperate",

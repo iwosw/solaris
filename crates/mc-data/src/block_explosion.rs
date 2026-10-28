@@ -1,4 +1,4 @@
-//! Per-block-state explosion resistance extracted from vanilla 26.1.2.
+//! Per-block-state explosion resistance extracted from vanilla 26.3.
 
 use std::path::{Path, PathBuf};
 
@@ -8,7 +8,7 @@ use thiserror::Error;
 use crate::read_json_file;
 
 const EXPECTED_VERSION: &str = "26.3";
-const EXPECTED_MAX_STATE_ID: u32 = 29_872;
+const EXPECTED_MAX_STATE_ID: u32 = 35_722;
 const EXPECTED_STATE_COUNT: usize = 35_723;
 
 #[derive(Debug, Error)]
@@ -29,7 +29,7 @@ pub enum BlockExplosionError {
     },
     #[error("unsupported block explosion report version {version}; expected 26.3")]
     UnsupportedVersion { version: String },
-    #[error("block explosion report max_state_id {actual} does not match 26.1.2 value {expected}")]
+    #[error("block explosion report max_state_id {actual} does not match 26.3 value {expected}")]
     UnexpectedMaxStateId { actual: u32, expected: u32 },
     #[error(
         "entries length {entries} does not match max_state_id {max_state_id} (expected {expected})"

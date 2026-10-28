@@ -246,7 +246,9 @@ impl VanillaServerProcess {
             let _ = stdin.write_all(b"stop\n");
             let _ = stdin.flush();
         }
-        let deadline = Instant::now() + Duration::from_secs(10);
+        // A fresh 26.3 server spends ~10 s saving overworld chunks on `stop`
+        // (11.1 s measured), so the old 10 s deadline killed a healthy stop.
+        let deadline = Instant::now() + Duration::from_secs(60);
         loop {
             let remaining = deadline.saturating_duration_since(Instant::now());
             if remaining.is_zero() {
