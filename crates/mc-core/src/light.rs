@@ -26,6 +26,8 @@ pub(crate) struct LightEngine {
     #[cfg(test)]
     admission_seed_cells: usize,
     #[cfg(test)]
+    admission_seed_face_checks: usize,
+    #[cfg(test)]
     pub(crate) full_recomputes: usize,
 }
 
@@ -41,6 +43,8 @@ impl LightEngine {
             dirty_seams: FxHashSet::default(),
             #[cfg(test)]
             admission_seed_cells: 0,
+            #[cfg(test)]
+            admission_seed_face_checks: 0,
             #[cfg(test)]
             full_recomputes: 0,
         }
@@ -179,6 +183,7 @@ impl LightEngine {
         #[cfg(test)]
         {
             self.admission_seed_cells = self.admission_queue.len();
+            self.admission_seed_face_checks = 0;
         }
         self.admission_removal.clear();
         // Classify the original seam residuals before draining either wave.
@@ -194,10 +199,19 @@ impl LightEngine {
             let mut strongest = (0_u8, 0_u8);
             for (direction, peer) in peers.iter().enumerate() {
                 if let Some(peer) = peer {
+                    let light = admission_light(&slots, *peer, volume);
+                    // A dominated peer cannot change either maximum, whatever
+                    // its material. Avoid its block and face-occlusion reads.
+                    if light.0 <= strongest.0 && light.1 <= strongest.1 {
+                        continue;
+                    }
+                    #[cfg(test)]
+                    {
+                        self.admission_seed_face_checks += 1;
+                    }
                     if admission_face_blocked(&slots, cell, *peer, volume, direction, &self.table) {
                         continue;
                     }
-                    let light = admission_light(&slots, *peer, volume);
                     strongest.0 = strongest.0.max(light.0);
                     strongest.1 = strongest.1.max(light.1);
                 } else if direction < 4 {

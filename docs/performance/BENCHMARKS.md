@@ -187,7 +187,52 @@ Not covered: the remote SMT topology is not probed (every vCPU counts as its own
 
 `--smoke` shrinks windows to 5 s warmup + 25 s, uses the cheap defaults (`idle,explore-20`,
 `scaling` on `explore-20` at 1,2 CPUs, a 64-block worldgen square) and marks the result not
-publishable. Run it under the memory-capped shared lane:
+publishable.
+
+For `explore-20`, **ready is not merely logged in**. Three bot preparations run concurrently.
+Each bot completes Login/Configuration, teleports to its own 256-block-spaced target, receives
+the complete 17×17 chunk window (view distance 8), chooses a walkable runway, receives the
+window at its landing position, and observes its own input-ordered preparation echo. The
+world is not pregenerated at these exploration targets. Consequently the 300 s smoke deadline
+also bounds thousands of cold chunk loads/generations, not just twenty protocol handshakes.
+Keep this readiness fence: starting the offered-load clock before the views are usable would
+change the workload. A longer readiness override is diagnostic, never evidence that the
+300 s smoke bound passed; the canonical non-smoke readiness deadline is 1800 s.
+
+When diagnosing admission on a busy shared host, enable `MC_CORE_PHASE_LOG` and compare
+admission thread CPU microseconds per admitted chunk (`chunk admission cpu`, Linux) and
+the batch's admitted count (`chunk admission ms`) on the same fixture and CPU allocation.
+Thread CPU excludes descheduling; phase wall time and end-to-end ready time do not.
+Use deterministic operation-count regressions to explain a solver-work reduction.
+These diagnostics do not replace the quiet integrated readiness/TPS acceptance window.
+
+**2026-10-28 admission diagnostic.** A matched 100 s cold `explore-20` run
+(seed 42, server CPUs `8,9`, bot CPUs `10,11`, preparation concurrency 3)
+compared the original policy/solver with dominance pruning plus real-tick slack:
+
+| Diagnostic metric | Baseline | Candidate |
+|---|---:|---:|
+| Admission thread CPU per chunk, aggregate mean | 5,213 µs | 4,195 µs (-19.5%) |
+| Admitted chunks / observed global tick | 0.996 | 1.602 (+60.7%) |
+| Ticks admitting more than one chunk | 21 / 1,998 | 1,145 / 1,996 |
+| Total chunks admitted | 1,991 | 3,199 |
+| Seed face checks, one-chunk oracle regression | 4,742 | 1,272 (-73.2%) |
+
+The deterministic 16-block-high emitter/sky fixture has the same 791 seed
+cells before and after pruning and checks the full light oracle. The two live
+runs hit the same fixture cache key
+`9e874f55587142f5ddc9c78e13e42729cafc71bce4c7237022cb2be1749fd4a6`
+and use the same immutable bot binary. Their different progress changes the
+admitted-chunk distribution, so aggregate CPU is not an identical-chunk
+comparison. Both hit the deliberately shortened 100 s all-client readiness
+deadline; neither is a readiness pass or a quiet 2-/6-CPU acceptance result.
+Receipts in the `pauline/weakhw-login` worktree:
+`.analysis/admission-cpu-comparison.json`,
+`.analysis/login-cpu-{baseline,candidate}/admission-cost-summary.json`,
+`.analysis/test-admission-{before,final}.log`, and
+`.analysis/validation-final.json`.
+
+Run it under the memory-capped shared lane:
 
 ```sh
 M=/home/kaiserroman/solaris/.analysis/tools/mem-run.sh

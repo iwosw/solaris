@@ -10,13 +10,50 @@ impl ChunkWorld {
     /// positions that went stale long ago. Never
     /// blocks; returns positions that became resident.
     pub fn ensure(&mut self, want: &HashMap<ChunkPos, i32>) -> Vec<ChunkPos> {
-        let admission_start = std::time::Instant::now();
+        self.ensure_with_clock(want, std::time::Instant::now)
+    }
+
+    pub(super) fn ensure_with_clock(
+        &mut self,
+        want: &HashMap<ChunkPos, i32>,
+        mut now: impl FnMut() -> std::time::Instant,
+    ) -> Vec<ChunkPos> {
+        let admission_start = now();
         let phase_start = std::env::var_os("MC_CORE_PHASE_LOG")
             .is_some()
             .then(std::time::Instant::now);
-        let loaded = self.admit_ready_limit(want, self.admission_limit(), false);
-        self.relight_admitted(&loaded, false);
-        self.record_admission_cost(admission_start.elapsed().as_micros(), loaded.len());
+        #[cfg(target_os = "linux")]
+        let cpu_start = phase_start.map(|_| admission_thread_cpu_us());
+        let missing = self.admission_candidates(want);
+        let mut loaded = Vec::new();
+        let mut limit = self.admission_limit();
+        let mut batch_start = admission_start;
+        let admission_end = loop {
+            let previous = loaded.len();
+            self.admit_ready_into(want, &missing, limit, false, &mut loaded);
+            self.relight_admitted(&loaded[previous..], false);
+            let batch_end = now();
+            let admitted = loaded.len() - previous;
+            self.record_admission_cost(
+                batch_end.saturating_duration_since(batch_start).as_micros(),
+                admitted,
+            );
+            // Keep the original progress batch, then spend real shared tick
+            // slack one whole light fence at a time. An underestimated chunk
+            // may overrun, but it cannot authorize another extra chunk.
+            if admitted == 0
+                || loaded.len() >= crate::chunk_loader::READY_LOADS_MAX
+                || !self.admission_deadline.is_some_and(|deadline| {
+                    deadline.saturating_duration_since(batch_end).as_micros()
+                        >= self.admission_us_per_chunk
+                })
+            {
+                break batch_end;
+            }
+            limit = 1;
+            batch_start = batch_end;
+        };
+        self.admission_tick_elapsed += admission_end.saturating_duration_since(admission_start);
         if let Some(start) = phase_start
             && !loaded.is_empty()
         {
@@ -27,8 +64,24 @@ impl ChunkWorld {
                 self.loader.pending(),
                 start.elapsed().as_secs_f64() * 1000.0,
             );
+            #[cfg(target_os = "linux")]
+            eprintln!(
+                "chunk admission cpu: loaded={} total_us={}",
+                loaded.len(),
+                admission_thread_cpu_us() - cpu_start.unwrap(),
+            );
         }
         loaded
+    }
+
+    /// Called once by the global tick owner, with the same deadline in all worlds.
+    pub(crate) fn begin_admission_tick(&mut self, deadline: std::time::Instant) {
+        self.admission_deadline = Some(deadline);
+        self.admission_tick_elapsed = std::time::Duration::ZERO;
+    }
+
+    pub(crate) fn admission_elapsed(&self) -> std::time::Duration {
+        self.admission_tick_elapsed
     }
 
     pub(super) fn admission_limit(&self) -> usize {
@@ -48,15 +101,13 @@ impl ChunkWorld {
     /// the first wanted chunk whose load has not finished, so the admission
     /// (and revision stamp) order never depends on worker completion order.
     pub(super) fn admit_ready(&mut self, want: &HashMap<ChunkPos, i32>) -> Vec<ChunkPos> {
-        self.admit_ready_limit(want, usize::MAX, true)
+        let missing = self.admission_candidates(want);
+        let mut loaded = Vec::new();
+        self.admit_ready_into(want, &missing, usize::MAX, true, &mut loaded);
+        loaded
     }
 
-    pub(super) fn admit_ready_limit(
-        &mut self,
-        want: &HashMap<ChunkPos, i32>,
-        limit: usize,
-        ordered: bool,
-    ) -> Vec<ChunkPos> {
+    fn admission_candidates(&mut self, want: &HashMap<ChunkPos, i32>) -> Vec<(i32, ChunkPos)> {
         self.ready.extend(self.loader.drain());
         // Discard stale results without consuming the admission budget. Do not
         // clear a newer ticket when an older completion finally arrives.
@@ -79,10 +130,24 @@ impl ChunkWorld {
             .map(|(pos, priority)| (*priority, *pos))
             .collect();
         missing.sort_unstable_by_key(|(priority, pos)| (*priority, pos.x, pos.z));
-        let mut loaded = Vec::new();
-        for (_, pos) in &missing {
-            if loaded.len() == limit {
+        missing
+    }
+
+    fn admit_ready_into(
+        &mut self,
+        want: &HashMap<ChunkPos, i32>,
+        missing: &[(i32, ChunkPos)],
+        limit: usize,
+        ordered: bool,
+        loaded: &mut Vec<ChunkPos>,
+    ) {
+        let previous = loaded.len();
+        for (_, pos) in missing {
+            if loaded.len() - previous == limit {
                 break;
+            }
+            if self.chunks.contains_key(pos) || self.failed.contains_key(pos) {
+                continue;
             }
             if let Some(index) = self.ready.iter().position(|entry| entry.0 == *pos) {
                 let (pos, ticket, result) = self.ready.swap_remove(index);
@@ -103,7 +168,7 @@ impl ChunkWorld {
         }
         // Ready, running and queued jobs share one bound. Recent hits wait in
         // their existing bounded cache and never dispatch another load.
-        for (_, pos) in missing {
+        for &(_, pos) in missing {
             if self.chunks.contains_key(&pos)
                 || self.in_flight.contains_key(&pos)
                 || self.failed.contains_key(&pos)
@@ -118,7 +183,6 @@ impl ChunkWorld {
             self.next_ticket = ticket;
             self.in_flight.insert(pos, ticket);
         }
-        loaded
     }
 
     /// [`Self::ensure`], then block until wanted chunks are resident or have
@@ -347,4 +411,11 @@ impl ChunkWorld {
         self.relight_admitted(&[pos], false);
         true
     }
+}
+
+/// Opt-in phase diagnostics exclude descheduling on a busy shared host.
+#[cfg(target_os = "linux")]
+fn admission_thread_cpu_us() -> u128 {
+    let time = rustix::time::clock_gettime(rustix::time::ClockId::ThreadCPUTime);
+    time.tv_sec as u128 * 1_000_000 + time.tv_nsec as u128 / 1_000
 }

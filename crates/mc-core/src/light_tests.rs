@@ -388,6 +388,7 @@ fn admission_engine() -> super::LightEngine {
         admission_queued: Vec::new(),
         dirty_seams: Default::default(),
         admission_seed_cells: 0,
+        admission_seed_face_checks: 0,
         full_recomputes: 0,
     }
 }
@@ -459,6 +460,31 @@ fn assert_admission_matches_oracle(
     assert_eq!(
         engine.full_recomputes, 0,
         "complete worker arrays must not be rebaked on tick"
+    );
+}
+
+#[test]
+fn admission_bounds_skip_faces_for_intrinsic_sky_without_block_support() {
+    let geometry = mc_world::ChunkGeometry::new(0, 16).unwrap();
+    let mut engine = admission_engine();
+    let mut chunk = admission_air(CENTRE, geometry, 0);
+    chunk.set_block(8, 8, 8, BlockStateId(3));
+    let mut chunks = FxHashMap::default();
+    chunks.insert(CENTRE, admission_chunk(&mut engine, chunk));
+    assert_admission_matches_oracle(&mut engine, &mut chunks, &[CENTRE]);
+    eprintln!(
+        "admission seed operations: face_checks={} seeds={}",
+        engine.admission_seed_face_checks, engine.admission_seed_cells,
+    );
+    assert!(
+        engine.admission_seed_cells > 0,
+        "emitter seams must reconcile"
+    );
+    assert!(
+        engine.admission_seed_face_checks < engine.admission_seed_cells * 3,
+        "{} face checks for {} seeds: inert direct-sky cells need no material reads",
+        engine.admission_seed_face_checks,
+        engine.admission_seed_cells,
     );
 }
 

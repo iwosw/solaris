@@ -2843,14 +2843,37 @@ The full-recompute oracle remains the correctness contract, including roofed
 neighbour decreases, missing diagonal air, removed emitters and stale resident
 light after eviction followed by a different neighbour's admission.
 
-**Tick budget.** One nearest-first batch runs per tick. Its limit is
+Residual classification reads each neighbour's light before its material.
+If neither channel exceeds the strongest already-unoccluded support, that
+neighbour cannot change either maximum, so its face/material lookup is skipped.
+This preserves the same residuals, wave order and prepublication light fence;
+the direct-sky/emitter admission regression checks the full oracle and bounds
+the number of seed face checks.
+
+**Tick budget.** The nearest-first progress batch retains its limit:
 `clamp(floor(8000 / estimated_microseconds_per_chunk), 1, 32)`.
 The estimate starts at 8,000 µs/chunk and uses an EWMA with weight 1/4 for
 the latest measured admission cost per chunk, rounded up; timing includes the
 synchronous light install/revision fence. Empty batches do not train it.
+After settling that batch, admission may use actual remaining tick slack,
+one whole chunk at a time, provided its estimated cost fits before the deadline.
+All dimensions share the same absolute deadline, set once at global tick entry.
+It reserves the previous tick's non-admission work, increasing immediately on a
+larger sample and decaying with a 1/4 EWMA otherwise. New dimensions fall back to
+the progress batch until the next global tick. The total per `ensure` remains
+bounded by 32 chunks; previews and repeated calls never renew the deadline.
 There is no operator knob, percentage budget or deferred publication.
-One chunk remains the progress floor even if it exceeds 8 ms, so measurement,
-not the estimator alone, decides whether this implementation meets acceptance.
+A whole light solve cannot be preempted: an underestimated extra chunk may
+overrun the deadline, but no further extra chunk starts without estimated room.
+The original progress batch still runs on an expired deadline. This is a soft
+admission bound, not a guarantee about the cost of later simulation/journal work.
+`MC_CORE_PHASE_LOG` additionally reports admission thread CPU microseconds on
+Linux, so descheduling does not masquerade as additional light-solving work.
+The 2026-10-28 matched weak-host diagnostic and its operation-count regression
+are recorded in [Benchmarks](../performance/BENCHMARKS.md#smoke-checks-pipeline-proof-not-numbers):
+aggregate admission CPU fell 19.5%, seed face checks fell 73.2%, and admitted
+chunks per observed global tick rose 60.7%. These partial cold-admission runs
+are not readiness acceptance.
 
 **Focused after measurement.** The same counter-instrumented release bench
 completed all 2,819 pairs with the new solver:

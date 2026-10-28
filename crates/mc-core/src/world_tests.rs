@@ -1001,6 +1001,86 @@ fn tick_admission_shares_one_nearest_first_budget_with_recent_hits() {
 }
 
 #[test]
+fn tick_admission_spends_actual_slack_and_stops_after_an_overrun() {
+    use std::time::{Duration, Instant};
+
+    for (case, clock_ms, expected) in [
+        ("headroom", [0, 1, 2, 3, 4], 3),
+        ("expired deadline", [0, 25, 25, 25, 25], 1),
+        ("one extra chunk overruns", [0, 1, 25, 25, 25], 2),
+    ] {
+        let mut world = test_world(None);
+        let positions =
+            std::array::from_fn::<_, 3, _>(|x| mc_world::ChunkPos { x: x as i32, z: 0 });
+        let want = positions
+            .iter()
+            .enumerate()
+            .map(|(priority, pos)| (*pos, priority as i32))
+            .collect();
+        for (index, pos) in positions.iter().enumerate() {
+            let ticket = index as u64 + 1;
+            let result = world.source.load_or_generate(*pos).unwrap();
+            world.in_flight.insert(*pos, ticket);
+            world.ready.push((*pos, ticket, Ok(result)));
+        }
+        let start = Instant::now();
+        world.begin_admission_tick(start + Duration::from_millis(20));
+        let mut clock_ms = clock_ms.into_iter();
+        let mut last_ms = 0;
+        let loaded = world.ensure_with_clock(&want, || {
+            last_ms = clock_ms.next().expect("bounded clock reads");
+            start + Duration::from_millis(last_ms)
+        });
+        assert_eq!(loaded, positions[..expected], "{case}");
+        assert_eq!(world.admission_elapsed(), Duration::from_millis(last_ms));
+        world.begin_admission_tick(start + Duration::from_millis(40));
+        assert_eq!(world.admission_elapsed(), Duration::ZERO);
+        assert!(world.ready.len() + world.loader.pending() <= crate::chunk_loader::READY_LOADS_MAX);
+        let mut workspace = mc_world::light::LightWorkspace::new();
+        for pos in loaded {
+            let neighbours = std::array::from_fn(|z| {
+                std::array::from_fn(|x| {
+                    world.chunk(mc_world::ChunkPos {
+                        x: pos.x + x as i32 - 1,
+                        z: pos.z + z as i32 - 1,
+                    })
+                })
+            });
+            let expected = mc_world::light::compute_chunk_light_in(
+                &mut workspace,
+                neighbours,
+                world.light.table(),
+            );
+            assert_eq!(
+                mc_world::light::ChunkLight::from_chunk(world.chunk(pos).unwrap()),
+                Some(expected),
+                "{case}: extra chunks must settle before publication",
+            );
+        }
+    }
+}
+
+#[test]
+fn tick_admission_slack_keeps_the_whole_chunk_queue_bound() {
+    let mut world = test_world(None);
+    let mut want = HashMap::default();
+    for x in 0..=crate::chunk_loader::READY_LOADS_MAX as i32 {
+        let pos = mc_world::ChunkPos { x, z: 0 };
+        let (chunk, _) = world.source.load_or_generate(pos).unwrap();
+        world.recent.insert(pos, Arc::new(chunk));
+        want.insert(pos, x);
+    }
+    let start = std::time::Instant::now();
+    world.begin_admission_tick(start + std::time::Duration::from_secs(1));
+    assert_eq!(
+        world.ensure_with_clock(&want, || start).len(),
+        crate::chunk_loader::READY_LOADS_MAX,
+        "spare time must not turn one tick into an unbounded admission loop",
+    );
+    assert_eq!(world.recent.chunks.len(), 1);
+}
+
+#[test]
 fn tick_admission_drops_unwanted_superseded_and_duplicate_ready_entries() {
     let mut world = test_world(None);
     let pos = mc_world::ChunkPos { x: 0, z: 0 };
