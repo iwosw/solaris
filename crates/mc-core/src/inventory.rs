@@ -7,6 +7,9 @@
 //! prediction of a click matches the server result.
 
 pub mod anvil;
+mod bundle;
+#[cfg(test)]
+mod bundle_tests;
 mod click;
 #[cfg(test)]
 mod click_tests;
