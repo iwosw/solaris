@@ -702,12 +702,14 @@ fn copy_data_subset(inner_jar: &Path, staging: &Path) -> Result<()> {
     copy_data_entries(inner_jar, staging, wanted_data_entry, false)
 }
 
-/// Merge the target release's block tags and the structural block-as-item
-/// item tags into the 26.1.2 ones. A tag both releases define keeps its 26.1.2
-/// values and gains the 26.3 values it lacks, so gameplay membership over
-/// shared blocks never shrinks (26.3 drops tuff from
-/// `deepslate_ore_replaceables`) while the client sees the new 26.3 blocks; a
-/// tag new in 26.3 is copied whole. All other item tags remain 26.1.2.
+/// Publish the target release's tags over the 26.1.2 gameplay tags. A tag only
+/// 26.3 defines is copied whole, in every tag registry: a 26.3 client binds
+/// the tags its registries name (e.g. `#minecraft:sulfur_cube_archetype/regular`
+/// items) and disconnects in Configuration on a missing one. A tag both
+/// releases define keeps its 26.1.2 values; block tags and the structural
+/// block-as-item item tags also gain the 26.3 values they lack, so the client
+/// sees the new blocks while gameplay membership over shared entries never
+/// shrinks (26.3 drops tuff from `deepslate_ore_replaceables`).
 fn copy_client_tag_subset(inner_jar: &Path, staging: &Path) -> Result<()> {
     copy_data_entries(inner_jar, staging, wanted_client_tag_entry, true)
 }
@@ -742,6 +744,9 @@ fn copy_data_entries(
             fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
         }
         if merge_tags && dest.is_file() {
+            if !merges_shared_tag(&name) {
+                continue;
+            }
             let mut newer = Vec::new();
             entry
                 .read_to_end(&mut newer)
@@ -802,9 +807,7 @@ fn wanted_data_entry(name: &str) -> Option<PathBuf> {
     keep.then(|| PathBuf::from(relative))
 }
 
-/// Target-release block tags and structural block-as-item classifications.
-/// Other item tags remain with the 26.1.2 gameplay data pack so fuel, recipes,
-/// loot, and worldgen retain the pinned gameplay semantics.
+/// Every target-release tag file under `data/minecraft/tags`, in any registry.
 fn wanted_client_tag_entry(name: &str) -> Option<PathBuf> {
     let relative = name.strip_prefix("data/minecraft/")?;
     let path = Path::new(relative);
@@ -814,27 +817,30 @@ fn wanted_client_tag_entry(name: &str) -> Option<PathBuf> {
     {
         return None;
     }
-    let mut components = path.components();
-    if components.next()?.as_os_str() != "tags" {
-        return None;
-    }
-    match components.next()?.as_os_str().to_str()? {
-        "block" => Some(PathBuf::from(relative)),
-        "item" => matches!(
-            components.next()?.as_os_str().to_str()?,
-            "slabs.json"
-                | "stairs.json"
-                | "walls.json"
-                | "wool.json"
-                | "concrete.json"
-                | "wool_slabs.json"
-                | "concrete_slabs.json"
-                | "wool_stairs.json"
-                | "concrete_stairs.json"
+    (path.starts_with("tags") && path.extension().is_some_and(|ext| ext == "json"))
+        .then(|| PathBuf::from(relative))
+}
+
+/// Shared tags whose 26.3 members are merged into the 26.1.2 ones: block tags
+/// and the structural block-as-item item tags. Every other shared tag keeps
+/// its 26.1.2 gameplay membership (fuel, recipes, loot, worldgen).
+fn merges_shared_tag(name: &str) -> bool {
+    let Some(path) = name.strip_prefix("data/minecraft/tags/") else {
+        return false;
+    };
+    path.starts_with("block/")
+        || matches!(
+            path,
+            "item/slabs.json"
+                | "item/stairs.json"
+                | "item/walls.json"
+                | "item/wool.json"
+                | "item/concrete.json"
+                | "item/wool_slabs.json"
+                | "item/concrete_slabs.json"
+                | "item/wool_stairs.json"
+                | "item/concrete_stairs.json"
         )
-        .then(|| PathBuf::from(relative)),
-        _ => None,
-    }
 }
 
 fn run_datagen(java: &OsStr, jar: &Path, work: &Path, staging: &Path) -> Result<()> {

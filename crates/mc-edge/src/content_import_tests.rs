@@ -271,7 +271,7 @@ fn extraction_selects_consumed_content_and_rejects_path_traversal() {
 }
 
 #[test]
-fn identity_tags_merge_only_into_client_block_and_item_tags() {
+fn identity_tags_publish_new_tags_and_merge_only_client_block_and_item_tags() {
     let source = tempfile::tempdir().unwrap();
     let jar = source.path().join("identity.jar");
     let file = std::fs::File::create(&jar).unwrap();
@@ -290,6 +290,14 @@ fn identity_tags_merge_only_into_client_block_and_item_tags() {
             &br#"{"values":[]}"#[..],
         ),
         (
+            "data/minecraft/tags/item/sulfur_cube_archetype/regular.json",
+            &br#"{"values":["minecraft:slime_ball"]}"#[..],
+        ),
+        (
+            "data/minecraft/tags/item/logs_that_burn.json",
+            &br#"{"values":["minecraft:oak_log","minecraft:poplar_log"]}"#[..],
+        ),
+        (
             "data/minecraft/tags/worldgen/biome/is_overworld.json",
             &br#"{"values":[]}"#[..],
         ),
@@ -304,11 +312,14 @@ fn identity_tags_merge_only_into_client_block_and_item_tags() {
     let staging = tempfile::tempdir().unwrap();
     let tags = staging.path().join("data/minecraft/tags");
     std::fs::create_dir_all(tags.join("block")).unwrap();
+    std::fs::create_dir_all(tags.join("item")).unwrap();
     std::fs::write(
         tags.join("block/deepslate_ore_replaceables.json"),
         br#"{"values":["minecraft:deepslate","minecraft:tuff"]}"#,
     )
     .unwrap();
+    let gameplay_logs = br#"{"values":["minecraft:oak_log"]}"#;
+    std::fs::write(tags.join("item/logs_that_burn.json"), gameplay_logs).unwrap();
     copy_client_tag_subset(&jar, staging.path()).unwrap();
 
     let merged: serde_json::Value = serde_json::from_slice(
@@ -326,7 +337,17 @@ fn identity_tags_merge_only_into_client_block_and_item_tags() {
     );
     assert!(tags.join("block/mineable/pickaxe.json").is_file());
     assert!(tags.join("item/slabs.json").is_file());
-    assert!(!tags.join("worldgen/biome/is_overworld.json").exists());
+    // Tags only 26.3 defines are published in every registry; a shared
+    // gameplay item tag keeps its 26.1.2 bytes.
+    assert!(
+        tags.join("item/sulfur_cube_archetype/regular.json")
+            .is_file()
+    );
+    assert!(tags.join("worldgen/biome/is_overworld.json").is_file());
+    assert_eq!(
+        std::fs::read(tags.join("item/logs_that_burn.json")).unwrap(),
+        gameplay_logs
+    );
 }
 
 #[test]

@@ -76,7 +76,65 @@ pub fn load_effective_tags(
             tags.fuel_values().fuel_count(),
         );
     }
+    validate_payload_tag_references(vanilla_data_dir, data, &tags)?;
     Ok(tags)
+}
+
+/// Every `#namespace:path` tag a captured registry payload names must exist in
+/// the published tag set. A client binds those references while loading its
+/// registries (even from its own known pack) and disconnects in Configuration
+/// on a missing tag, so a cache that lacks one is rejected here.
+fn validate_payload_tag_references(
+    vanilla_data_dir: &Path,
+    data: &mc_data::VanillaData,
+    tags: &mc_data::tags::TagsData,
+) -> Result<()> {
+    fn visit(tag: &mc_nbt::Tag, out: &mut Vec<mc_data::Identifier>) {
+        match tag {
+            mc_nbt::Tag::String(text) => {
+                if let Some(reference) = text.strip_prefix('#')
+                    && reference.contains(':')
+                    && let Ok(id) = mc_data::Identifier::parse(reference)
+                {
+                    out.push(id);
+                }
+            }
+            mc_nbt::Tag::List(list) => list.elements.iter().for_each(|tag| visit(tag, out)),
+            mc_nbt::Tag::Compound(fields) => fields.iter().for_each(|(_, tag)| visit(tag, out)),
+            _ => {}
+        }
+    }
+    let mut missing = std::collections::BTreeSet::new();
+    for registry in data.registries() {
+        for entry in &registry.entries {
+            let Some(payload) = data.registry_entry_payload(&registry.id, entry) else {
+                continue;
+            };
+            let root = mc_nbt::read_network_value(&mut payload.as_ref())
+                .with_context(|| format!("decoding the {} payload of {entry}", registry.id))?;
+            let mut references = Vec::new();
+            visit(&root, &mut references);
+            for reference in references {
+                if !tags
+                    .registries
+                    .values()
+                    .any(|tags| tags.contains_key(&reference))
+                {
+                    missing.insert(format!("#{reference} (in {} {entry})", registry.id));
+                }
+            }
+        }
+    }
+    if !missing.is_empty() {
+        bail!(
+            "vanilla tags from {} lack {} tag(s) the captured registry payloads reference; a client \
+             disconnects in Configuration: {}",
+            vanilla_data_dir.display(),
+            missing.len(),
+            missing.into_iter().collect::<Vec<_>>().join(", ")
+        );
+    }
+    Ok(())
 }
 
 pub fn load_effective_loot(vanilla_data_dir: &Path) -> Result<mc_data::loot::LootTables> {
