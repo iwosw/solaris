@@ -43,6 +43,8 @@ fn older_revision_world_is_refused_then_upgraded_and_opens() {
         .to_string();
     assert!(refusal.starts_with("storage: invalid native record: identity mismatch"));
     assert!(refusal.contains("world upgrade-worldgen"), "{refusal}");
+    // The rejected open leaves the older header identity in place.
+    assert_eq!(stored_identity(&dir), old_identity);
 
     let before = NativeStore::inspect_read_only(&path, old_identity, CACHE).unwrap();
     let report = upgrade_worldgen_revision(&config).unwrap();
