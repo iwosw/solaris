@@ -1,6 +1,16 @@
 use super::*;
 use mc_protocol::Packet;
 
+#[test]
+fn nested_tick_root_keeps_current_level_two_edge_admission() {
+    // Characterize the known gap together with the native interpreter test:
+    // the edge checks the outer root, not the nested `tick` permission.
+    assert!(!permitted("tick freeze", 2, &[]));
+    assert!(permitted("execute run tick freeze", 2, &[]));
+    assert!(permitted("tick freeze", 3, &[]));
+    assert!(!permitted("execute run tick freeze", 1, &[]));
+}
+
 fn advertised<'a>(packet: &'a ClientboundCommands, path: &[&str]) -> &'a CommandNode {
     let mut node = &packet.nodes[packet.root_index as usize];
     for name in path {

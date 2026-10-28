@@ -51,6 +51,8 @@ mod command_block_entity;
 mod command_blocks;
 pub mod command_border;
 pub mod command_bossbar;
+#[cfg(test)]
+mod command_characterization_tests;
 pub mod command_console;
 mod command_context;
 pub mod command_damage;
