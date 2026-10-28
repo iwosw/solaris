@@ -242,12 +242,15 @@ pub struct ItemEnchantment {
     pub level: i32,
 }
 
+/// Captured `RegistryData` payload bytes of one registry, by entry id.
+type EntryPayloads = BTreeMap<String, Arc<[u8]>>;
+
 /// The whole vanilla-data sidecar, indexed.
 #[derive(Debug, Clone)]
 pub struct VanillaData {
     root: PathBuf,
     registries: BTreeMap<String, Registry>,
-    registry_payloads: BTreeMap<String, BTreeMap<String, Arc<[u8]>>>,
+    registry_payloads: BTreeMap<String, EntryPayloads>,
     sidecar_root: bool,
 }
 
@@ -558,7 +561,7 @@ fn index_registry(
     mut entries: Vec<String>,
     has_network_payloads: bool,
     dir: &Path,
-) -> Result<(Registry, BTreeMap<String, Arc<[u8]>>), DataError> {
+) -> Result<(Registry, EntryPayloads), DataError> {
     entries.sort();
     let registry_id = Identifier::parse(format!("minecraft:{registry_path}"))
         .expect("registry paths are well-formed");

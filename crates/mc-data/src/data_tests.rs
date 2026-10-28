@@ -176,11 +176,17 @@ fn captured_registry_payload_rejects_symlink_escape() {
     fs::write(&outside_path, payload).unwrap();
     symlink(&outside_path, &path).unwrap();
 
+    // The hybrid loader walks the payload tree to index the wire registry, and
+    // that walk rejects the symlinked file before any payload is opened.
     let error = load(dir.path()).expect_err("payload symlink must stay below data root");
-    assert!(matches!(
-        error,
-        DataError::ResourcePath(ResourcePathError::EscapesRoot { .. })
-    ));
+    assert!(
+        matches!(
+            &error,
+            DataError::Io { path: rejected, source }
+                if *rejected == path && source.kind() == std::io::ErrorKind::InvalidData
+        ),
+        "{error:?}"
+    );
 }
 
 #[test]
