@@ -41,6 +41,7 @@ rustix = { version = "1.1", features = ["fs"] }
 [dev-dependencies]
 tracing-subscriber.workspace = true
 tempfile = "3"
+redb = "=3.1.0"
 wit-component = "0.259"
 
 [[bin]]

@@ -70,6 +70,10 @@ pub enum NativeError {
     Invalid(&'static str),
     #[error("native source: {0}")]
     Source(String),
+    /// The stored global domains are not the set this build reads (a world written by
+    /// another Solaris storage format); callers turn this into operator guidance.
+    #[error("native global: unknown or missing required domain")]
+    GlobalDomains,
     #[error("unsupported native schema {0}; explicit offline conversion required")]
     UnsupportedSchema(u32),
 }

@@ -1486,6 +1486,7 @@ dependencies = [
  "mc-worldgen",
  "parking_lot",
  "rayon",
+ "redb",
  "rustc-hash",
  "rustix",
  "serde",

@@ -67,6 +67,19 @@ pub fn upgrade_worldgen_revision(config: &CoreConfig) -> Result<WorldgenUpgrade,
              refusing to downgrade"
         )));
     }
+    // A revision rewrite cannot fix other stored state this build cannot read (a world
+    // from an older storage format): refuse before writing anything.
+    if let Err(unreadable) = crate::native_checkpoint::stored_state_readable(config, &path, stored)
+    {
+        return Err(match unreadable {
+            mc_world::native::NativeError::GlobalDomains => {
+                crate::native_checkpoint::older_format_refusal(config)
+            }
+            other => CoreError::Storage(format!(
+                "world state is not readable by this build ({other}); refusing to upgrade"
+            )),
+        });
+    }
     NativeStore::replace_generation_contract(
         &path,
         &contract(config, stored)?,

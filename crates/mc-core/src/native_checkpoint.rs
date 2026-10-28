@@ -334,6 +334,10 @@ pub(crate) fn open_refusal(
         && let Some(stored) = revision_only_difference(config, identity)
         && stored < current
     {
+        // Only offer the revision upgrade when it would lead to a world that opens.
+        if let Err(unreadable) = stored_state_readable(config, path, stored) {
+            return read_refusal(config, unreadable);
+        }
         return CoreError::Storage(format!(
             "{error}: world was generated with worldgen revision {stored}, this build is \
              revision {current}; to keep it, stop the server and run `solaris-v2 world \
@@ -342,6 +346,46 @@ pub(crate) fn open_refusal(
         ));
     }
     CoreError::Storage(error.to_string())
+}
+
+/// Whether the stored checkpoint of the world at `path`, recorded at worldgen
+/// `revision`, is otherwise readable by this build. The offline worldgen upgrade and its
+/// startup hint only make sense for such worlds; a revision rewrite cannot fix the rest.
+pub(crate) fn stored_state_readable(
+    config: &CoreConfig,
+    path: &std::path::Path,
+    revision: u32,
+) -> Result<(), mc_world::native::NativeError> {
+    NativeReadOnlyStore::open_with_cache(
+        path,
+        native_identity_at(config, revision),
+        16 * 1024 * 1024,
+    )?
+    .checkpoint_reader()?
+    .read_checkpoint_metadata()
+    .map(drop)
+}
+
+/// Operator guidance for a world whose stored globals this build does not read: written
+/// by an older Solaris storage format, so the supported route is an Anvil round trip.
+pub(crate) fn older_format_refusal(config: &CoreConfig) -> CoreError {
+    let world = config.world_dir.display();
+    CoreError::Storage(format!(
+        "world {world} was written by an older Solaris storage format that this build cannot \
+         read (its native checkpoint lacks a domain this build requires); to keep it, with the \
+         Solaris binary that created it run `solaris world export-anvil --config <server.toml> \
+         --source {world} --destination <ANVIL_DIR> --receipt export.json`, then with this \
+         binary run `solaris-v2 world import-anvil --config <server.toml> --source <ANVIL_DIR> \
+         --destination <NEW_WORLD_DIR> --receipt import.json`"
+    ))
+}
+
+/// Storage error for a failed checkpoint read, with operator guidance where known.
+pub(crate) fn read_refusal(config: &CoreConfig, error: mc_world::native::NativeError) -> CoreError {
+    match error {
+        mc_world::native::NativeError::GlobalDomains => older_format_refusal(config),
+        error => CoreError::Storage(error.to_string()),
+    }
 }
 
 /// Validate and hydrate one stored native entity exactly as recovery does,
@@ -423,7 +467,7 @@ pub(crate) fn recover_with_reader(
 ) -> Result<RecoveredWorld, CoreError> {
     let checkpoint = reader
         .read_checkpoint_metadata()
-        .map_err(|e| CoreError::Storage(e.to_string()))?;
+        .map_err(|e| read_refusal(config, e))?;
     let manifest: CheckpointManifest =
         serde_json::from_slice(&checkpoint.globals["checkpoint"].payload)
             .map_err(|e| CoreError::Storage(format!("native checkpoint: {e}")))?;
