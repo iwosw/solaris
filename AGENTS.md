@@ -1,6 +1,6 @@
 # Agent Guide — Solaris
 
-Solaris is a draft Rust Minecraft Java 26.1.2 server; v0.0.8 is a prerelease.
+Solaris is a Rust Minecraft Java 26.1.2 server; 1.0.0-rc.1 "Pauline" is the 1.0 release candidate.
 The current binary is `mc-edge`'s `solaris-v2` over native `mc-core`; v1 is retired.
 `CLAUDE.md` is a symlink to this guide. Owner identity is
 `kaiserproger <kaisergrobe@gmail.com>`; never change Git configuration.

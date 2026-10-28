@@ -17,9 +17,9 @@ things the vanilla server is bad at:
   a player and a chest. Only the last few ticks that had not reached the disk
   yet may roll back.
 
-> **Status: early preview (v0.0.8, prerelease).** Good for testing, benchmarking
-> and plugin development. Not yet a drop-in replacement for a production server.
-> Expect breaking changes between versions.
+> **Status: Solaris 1.0 "Pauline", release candidate 1.** Ready for real
+> servers that need vanilla-client survival, settlements and Wasm plugins. Not
+> bit-identical to vanilla, and Java mods do not run (see below).
 
 ## Performance
 
@@ -70,8 +70,43 @@ unconditional command blocks. See [the limits and setup](docs/OPERATING.md#datap
 General `/data`, `/clone`, conditional command blocks and other map-making
 commands are not there yet.
 
-For native settlements and villager professions, see the short
-[player guide (English / Русский)](docs/SETTLEMENTS_GUIDE.md), or `/settlement guide` and `/help settlement` in game.
+## Settlements
+
+Villages are settlements that run themselves. A planner lays out and builds
+houses, workshops, storage, mines and camps from real materials; villagers take
+building, mining and lumber jobs, keep their work across nights, raise an army
+and trade through a settlement economy. Players claim and manage a settlement
+through server-driven dialogs, with no client mod. See the short
+[player guide (English / Русский)](docs/SETTLEMENTS_GUIDE.md), or
+`/settlement guide` and `/help settlement` in game.
+
+## Native client
+
+[Solaris client](https://github.com/kaiserproger/solaris-client) is an
+optional native Rust client (wgpu: Vulkan, Metal, DX12) with its own launcher.
+It has Low/Medium/High graphics presets (HDR, bloom, shadows, god rays,
+reflections), GPU-generated far terrain from the server's `[lod]` channel,
+proximity voice chat (`[voice]`, the server only relays Opus packets) and
+screen sharing to in-world monitors. Vanilla clients do not need it.
+
+## For server owners
+
+- `content import`, `backup` / `restore`, live console `backup`,
+  `world import-anvil` / `export-anvil`, `world census`.
+- Bans, whitelist, operators, a block and container history (`/co`), RCON,
+  Query, Velocity forwarding and anti-xray.
+- An optional read-only web dashboard with live TPS and tick timing.
+- Distant Horizons support (`[distant_horizons]`).
+
+Details: the [operating guide](docs/OPERATING.md).
+
+## Mods
+
+Forge, Fabric and NeoForge mods do not run on Solaris: in All the Mods 11,
+215 of 289 mods ship server-side Java and 152 rewrite Minecraft internals with
+Mixins. A limited set of datapack content (recipes, loot overrides) loads
+today; full datapack support and worldgen datapacks are next. Server-side
+features are written as [Wasm plugins](#plugins).
 
 ## How it works
 
@@ -125,10 +160,10 @@ Linux x86-64 and AArch64 binaries are published on
 `curl`, `tar`, a SHA-256 utility and **JDK 25** (used once to extract game data):
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/kaiserproger/solaris/v0.0.8/install.sh \
-  | SOLARIS_VERSION=v0.0.8 bash
+curl -fsSL https://raw.githubusercontent.com/kaiserproger/solaris/v1.0.0-rc.1/install.sh \
+  | SOLARIS_VERSION=v1.0.0-rc.1 bash
 curl -fsSLo example.toml \
-  https://raw.githubusercontent.com/kaiserproger/solaris/v0.0.8/example.toml
+  https://raw.githubusercontent.com/kaiserproger/solaris/v1.0.0-rc.1/example.toml
 ```
 
 Solaris does not ship any Mojang files. Before the first start, download the
@@ -181,7 +216,8 @@ python3 -m tools.harness run correctness
 
 More: the [documentation index](docs/README.md), the
 [architecture overview](docs/ARCHITECTURE.md) and the
-[v0.0.8 release notes](docs/releases/v0.0.8.md).
+[1.0 release notes](docs/releases/v1.0.0-rc.1.md) (upgrading from v0.0.8 is
+covered there).
 
 ## License
 
