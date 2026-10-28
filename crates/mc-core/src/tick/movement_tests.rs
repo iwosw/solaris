@@ -20,6 +20,118 @@ fn kicked(changes: &[(ConnectionId, Vec<PlayerChange>)]) -> bool {
 }
 
 #[test]
+fn scaffolding_entry_climb_and_sneak_descent_are_accepted() {
+    let (mut state, player, pos) = flat_player_fixture();
+    let scaffold = state
+        .registry
+        .blocks
+        .block(&Identifier::parse("minecraft:scaffolding").unwrap())
+        .unwrap()
+        .default
+        .0;
+    let [x, y, z] = pos.map(|v| v.floor() as i32);
+    for dy in 0..7 {
+        state.world.set_block(x + 1, y + dy, z, scaffold);
+    }
+    let slot = state.entities.slot_of(player).unwrap();
+    for at in [
+        [pos[0] + 0.4, pos[1], pos[2]],
+        [pos[0] + 1.0, pos[1], pos[2]],
+        [pos[0] + 1.0, pos[1] + 0.2, pos[2]],
+        [pos[0] + 1.0, pos[1] + 1.0, pos[2]],
+        [pos[0] + 1.0, pos[1] + 2.0, pos[2]],
+    ] {
+        let (_, changes, _) = run_tick(&mut state, &[movement(at)]);
+        assert_eq!(state.entities.pos(slot), at, "scaffolding entry/ascent");
+        assert!(
+            !changes
+                .iter()
+                .flat_map(|(_, changes)| changes)
+                .any(|change| matches!(change, PlayerChange::PositionCorrected { .. }))
+        );
+    }
+    run_tick(
+        &mut state,
+        &[PlayerInput::Sneak {
+            connection: ConnectionId(1),
+            sneaking: true,
+        }],
+    );
+    let at = [pos[0] + 1.0, pos[1] + 0.5, pos[2]];
+    run_tick(&mut state, &[movement(at)]);
+    assert_eq!(
+        state.entities.pos(slot),
+        at,
+        "sneaking descends through platforms"
+    );
+}
+
+#[test]
+fn scaffolding_top_support_stops_falls_but_not_sneaking() {
+    let (mut state, player, pos) = flat_player_fixture();
+    let scaffold = state
+        .registry
+        .blocks
+        .block(&Identifier::parse("minecraft:scaffolding").unwrap())
+        .unwrap()
+        .default
+        .0;
+    let [x, y, z] = pos.map(|v| v.floor() as i32);
+    state.world.set_block(x, y, z, scaffold);
+    let slot = state.entities.slot_of(player).unwrap();
+    state.entities.set_pos(slot, [pos[0], pos[1] + 1.2, pos[2]]);
+    run_tick(&mut state, &[movement(pos)]);
+    assert_eq!(state.entities.pos(slot), [pos[0], pos[1] + 1.0, pos[2]]);
+    assert!(state.entities.ground(slot));
+    let teleport_id = state.players[&player]
+        .awaiting_teleport
+        .expect("clipped fall correction");
+    run_tick(
+        &mut state,
+        &[PlayerInput::ConfirmTeleport {
+            connection: ConnectionId(1),
+            teleport_id,
+        }],
+    );
+    run_tick(
+        &mut state,
+        &[PlayerInput::Sneak {
+            connection: ConnectionId(1),
+            sneaking: true,
+        }],
+    );
+    run_tick(&mut state, &[movement(pos)]);
+    assert_eq!(state.entities.pos(slot), pos);
+}
+
+#[test]
+fn bubble_column_upward_moves_do_not_trip_airtime() {
+    let (mut state, player, pos) = flat_player_fixture();
+    state.max_airtime_ticks = 3;
+    let column = state
+        .registry
+        .blocks
+        .block(&Identifier::parse("minecraft:bubble_column").unwrap())
+        .unwrap()
+        .default
+        .0;
+    let [x, y, z] = pos.map(|v| v.floor() as i32);
+    for dy in 0..6 {
+        state.world.set_block(x, y + dy, z, column);
+    }
+    let slot = state.entities.slot_of(player).unwrap();
+    for dy in [0.2, 0.4, 0.6, 0.8] {
+        let target = [pos[0], pos[1] + dy, pos[2]];
+        let (_, changes, _) = run_tick(&mut state, &[movement(target)]);
+        assert_eq!(state.entities.pos(slot), target);
+        assert!(
+            !kicked(&changes),
+            "bubble column is water, not unsupported flight"
+        );
+    }
+}
+
+#[test]
 fn physics_landing_blocks_reduce_damage_without_trusting_ground_claims() {
     for (name, expected) in [("hay_block", 4.0), ("slime_block", 0.0), ("stone", 20.0)] {
         let (mut state, player, pos) = flat_player_fixture();

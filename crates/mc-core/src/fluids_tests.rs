@@ -381,6 +381,8 @@ fn full_bucket_targets_a_washable_block_instead_of_the_cell_before_it() {
 
 #[path = "bottles_tests.rs"]
 mod bottles;
+#[path = "bubble_columns_tests.rs"]
+mod bubble_columns;
 #[path = "fluid_parity_tests.rs"]
 mod parity;
 #[path = "pov_ray_tests.rs"]

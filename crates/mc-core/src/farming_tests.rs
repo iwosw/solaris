@@ -679,6 +679,29 @@ fn sniffer_seeds_plant_their_crops_on_farmland() {
 }
 
 #[test]
+fn pitcher_pod_planting_preserves_moist_farmland() {
+    let (mut state, player) = setup();
+    let wet = block(&state, "farmland", &[("moisture", "7")]);
+    put(&mut state, 1, Y, 6, wet);
+    near(&mut state, player, 1, Y + 1, 6);
+    give(&mut state, player, "pitcher_pod", 1);
+
+    use_on(&mut state, 1, Y, 6, 1);
+    assert_eq!(
+        at(&state, 1, Y + 1, 6),
+        block(&state, "pitcher_crop", &[("age", "0"), ("half", "lower")])
+    );
+    assert!(held(&state, player).is_empty(), "pod was planted");
+    assert_eq!(at(&state, 1, Y, 6), wet, "planting must not cover farmland");
+
+    state
+        .gamerules
+        .insert("random_tick_speed".into(), FAST.into());
+    run(&mut state, 10);
+    assert_eq!(at(&state, 1, Y, 6), wet, "water keeps the soil moist");
+}
+
+#[test]
 fn placed_vines_attach_to_the_clicked_wall_and_can_spread() {
     let (mut state, player) = setup();
     let wall = state.registry.states.stone;

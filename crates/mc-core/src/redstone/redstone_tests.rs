@@ -1,3 +1,6 @@
+#[path = "copper_bulb_tests.rs"]
+mod copper_bulb_tests;
+
 #[path = "gap_tests.rs"]
 mod gap_tests;
 
