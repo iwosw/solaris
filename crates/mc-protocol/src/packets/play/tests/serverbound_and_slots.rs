@@ -36,9 +36,9 @@ fn serverbound_player_action_round_trip() {
 
 #[test]
 fn serverbound_player_action_rejects_out_of_range_action() {
-    // VarInt(8) — one past the last variant.
+    // VarInt(9) — one past the last 26.3 variant (STAB = 8).
     let mut buf = Vec::new();
-    buf.write_varint(8);
+    buf.write_varint(9);
     buf.write_i64(0);
     buf.write_varint(0);
     buf.write_varint(0);
@@ -315,7 +315,7 @@ fn block_update_round_trip() {
 
 #[test]
 fn level_event_id_and_wire_layout_match_local_vanilla() {
-    assert_eq!(LevelEvent::ID, 0x2E);
+    assert_eq!(LevelEvent::ID, 0x2F);
     let position = pack_block_pos(-2, 70, 3);
     let packet = LevelEvent {
         event_id: 2001,
@@ -340,7 +340,7 @@ fn level_event_id_and_wire_layout_match_local_vanilla() {
 
 #[test]
 fn section_blocks_update_id_matches_javap() {
-    assert_eq!(SectionBlocksUpdate::ID, 0x54);
+    assert_eq!(SectionBlocksUpdate::ID, 0x56);
 }
 
 #[test]
@@ -709,7 +709,7 @@ fn clientbound_container_close_and_data_layout_match_local_vanilla() {
 
 #[test]
 fn clientbound_open_screen_layout_matches_local_vanilla() {
-    assert_eq!(ClientboundOpenScreen::ID, 0x3B);
+    assert_eq!(ClientboundOpenScreen::ID, 0x3C);
     // Minimal network NBT component: Compound { text: "Furnace" }.
     let title_nbt = vec![
         0x0A, 0x08, 0x00, 0x04, b't', b'e', b'x', b't', 0x00, 0x07, b'F', b'u', b'r', b'n', b'a',
@@ -729,7 +729,7 @@ fn clientbound_open_screen_layout_matches_local_vanilla() {
 
 #[test]
 fn clientbound_mount_screen_matches_local_vanilla() {
-    assert_eq!(ClientboundMountScreenOpen::ID, 0x29);
+    assert_eq!(ClientboundMountScreenOpen::ID, 0x2A);
     let packet = ClientboundMountScreenOpen {
         container_id: 4,
         columns: 5,
@@ -1502,7 +1502,7 @@ fn serverbound_container_close_layout_matches_local_vanilla() {
 
 #[test]
 fn serverbound_recipe_book_packets_match_local_vanilla() {
-    assert_eq!(ServerboundRecipeBookChangeSettings::ID, 0x2E);
+    assert_eq!(ServerboundRecipeBookChangeSettings::ID, 0x2F);
     let settings = ServerboundRecipeBookChangeSettings {
         book_type: RecipeBookType::Furnace,
         is_open: true,
@@ -1518,7 +1518,7 @@ fn serverbound_recipe_book_packets_match_local_vanilla() {
     );
     assert!(cursor.is_empty());
 
-    assert_eq!(ServerboundRecipeBookSeenRecipe::ID, 0x2F);
+    assert_eq!(ServerboundRecipeBookSeenRecipe::ID, 0x30);
     let seen = ServerboundRecipeBookSeenRecipe {
         recipe_display_id: 300,
     };
@@ -1535,7 +1535,7 @@ fn serverbound_recipe_book_packets_match_local_vanilla() {
 
 #[test]
 fn clientbound_recipe_book_packets_match_local_vanilla_2612() {
-    assert_eq!(ClientboundRecipeBookSettings::ID, 0x4C);
+    assert_eq!(ClientboundRecipeBookSettings::ID, 0x4D);
     let settings = ClientboundRecipeBookSettings::default();
     let mut settings_bytes = Vec::new();
     settings.encode(&mut settings_bytes).unwrap();
@@ -1547,7 +1547,7 @@ fn clientbound_recipe_book_packets_match_local_vanilla_2612() {
     );
     assert!(cursor.is_empty());
 
-    assert_eq!(ClientboundRecipeBookAdd::ID, 0x4A);
+    assert_eq!(ClientboundRecipeBookAdd::ID, 0x4B);
     let birch_logs = sample_identifier("minecraft:birch_logs");
     let packet = ClientboundRecipeBookAdd {
         entries: vec![RecipeBookEntry {
@@ -1684,7 +1684,7 @@ fn serverbound_set_creative_mode_slot_id_and_layout_match_local_vanilla() {
     // game-SB index 56 per `javap` of vanilla 26.1.2's GameProtocols
     // serverbound builder, cross-checked against the pinned
     // PLAYER_ACTION (41 = 0x29) and SET_CARRIED_ITEM (53 = 0x35) ids.
-    assert_eq!(ServerboundSetCreativeModeSlot::ID, 0x38);
+    assert_eq!(ServerboundSetCreativeModeSlot::ID, 0x39);
     let packet = ServerboundSetCreativeModeSlot {
         slot: 36,
         item_stack: ItemStack::new(1, 64),

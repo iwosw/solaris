@@ -1,10 +1,11 @@
 use super::*;
+use mc_data::data_component_types_26_1_2 as ids;
 
 #[test]
 fn charged_projectile_decode_rejects_depth_before_its_payload() {
     let mut buf = Vec::new();
     for depth in 0..=copied_components::MAX_ITEM_COMPONENT_DEPTH {
-        for value in [1, 1, 1, 0, 49] {
+        for value in [1, 1, 1, 0, ids::CHARGED_PROJECTILES] {
             buf.write_varint(value);
         }
         if depth < copied_components::MAX_ITEM_COMPONENT_DEPTH {
@@ -13,7 +14,7 @@ fn charged_projectile_decode_rejects_depth_before_its_payload() {
     }
     let nested_payload_offset = buf.len();
     for _ in 0..10_000 {
-        for value in [1, 1, 1, 1, 0, 49] {
+        for value in [1, 1, 1, 1, 0, ids::CHARGED_PROJECTILES] {
             buf.write_varint(value);
         }
     }
@@ -42,7 +43,7 @@ fn charged_projectile_decode_accepts_leaf_components_and_bounds_collection() {
     assert!(cursor.is_empty());
 
     let mut oversized = Vec::new();
-    for value in [1, 1, 1, 0, 49, 4, 0, 0, 0, 0] {
+    for value in [1, 1, 1, 0, ids::CHARGED_PROJECTILES, 4, 0, 0, 0, 0] {
         oversized.write_varint(value);
     }
     assert!(matches!(
@@ -161,15 +162,44 @@ fn potion_custom_effects_color_name_and_hidden_details_match_vanilla_wire() {
     assert_eq!(
         bytes,
         [
-            1, 1, 1, 0, 51, // stack and one added potion_contents
-            0,  // no base potion
-            1, 0, 0x12, 0x34, 0x56, // optional i32 color
-            1, 0, // one custom effect, speed registry id 0
-            0xff, 1, // amplifier 255 VarInt
-            0xff, 0xff, 0xff, 0xff, 0x0f, // infinite duration
-            1, 0, 1, 1, // ambient, particles, icon, hidden present
-            0, 20, 0, 1, 1, 0, // hidden details (no repeated effect id)
-            1, 6, b'c', b'u', b's', b't', b'o', b'm', // optional name
+            1,
+            1,
+            1,
+            0,
+            ids::POTION_CONTENTS as u8, // stack and one added potion_contents
+            0,                          // no base potion
+            1,
+            0,
+            0x12,
+            0x34,
+            0x56, // optional i32 color
+            1,
+            0, // one custom effect, speed registry id 0
+            0xff,
+            1, // amplifier 255 VarInt
+            0xff,
+            0xff,
+            0xff,
+            0xff,
+            0x0f, // infinite duration
+            1,
+            0,
+            1,
+            1, // ambient, particles, icon, hidden present
+            0,
+            20,
+            0,
+            1,
+            1,
+            0, // hidden details (no repeated effect id)
+            1,
+            6,
+            b'c',
+            b'u',
+            b's',
+            b't',
+            b'o',
+            b'm', // optional name
         ]
     );
     let mut cursor = bytes.as_slice();
@@ -183,7 +213,7 @@ fn potion_custom_effects_color_name_and_hidden_details_match_vanilla_wire() {
 #[test]
 fn potion_effect_wire_rejects_unknown_ids_excessive_counts_and_hidden_depth() {
     use mc_data::item_stack::{MAX_POTION_CUSTOM_EFFECTS, MAX_POTION_HIDDEN_DEPTH};
-    let header = [1, 1, 1, 0, 51, 0, 0];
+    let header = [1, 1, 1, 0, ids::POTION_CONTENTS as u8, 0, 0];
     let mut bytes = header.to_vec();
     bytes.write_varint(MAX_POTION_CUSTOM_EFFECTS as i32 + 1);
     assert_eq!(

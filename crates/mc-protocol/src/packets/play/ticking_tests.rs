@@ -2,7 +2,7 @@ use super::*;
 
 #[test]
 fn ticking_state_wire_id_layout_and_round_trip() {
-    assert_eq!(ClientboundTickingState::ID, 0x7F);
+    assert_eq!(ClientboundTickingState::ID, 0x82);
     for (tick_rate, frozen) in [(20.0_f32, false), (4.0_f32, true)] {
         let packet = ClientboundTickingState { tick_rate, frozen };
         let mut bytes = Vec::new();
@@ -18,7 +18,7 @@ fn ticking_state_wire_id_layout_and_round_trip() {
 
 #[test]
 fn ticking_step_wire_id_uses_varint() {
-    assert_eq!(ClientboundTickingStep::ID, 0x80);
+    assert_eq!(ClientboundTickingStep::ID, 0x83);
     for tick_steps in [0, 1, 100, 300] {
         let packet = ClientboundTickingStep { tick_steps };
         let mut bytes = Vec::new();

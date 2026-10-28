@@ -21,8 +21,8 @@ fn merchant_offer_fixture() -> MerchantOffer {
 
 #[test]
 fn merchant_packet_ids_match_the_local_26_1_2_registration_order() {
-    assert_eq!(ClientboundMerchantOffers::ID, 0x34);
-    assert_eq!(ServerboundSelectTrade::ID, 0x33);
+    assert_eq!(ClientboundMerchantOffers::ID, 0x35);
+    assert_eq!(ServerboundSelectTrade::ID, 0x34);
 }
 
 #[test]

@@ -110,7 +110,7 @@ impl VanillaServerProcess {
         std::fs::write(
             work_dir.join("server.properties"),
             format!(
-                "online-mode=false\nserver-ip=127.0.0.1\nserver-port={port}\nlevel-name=world\nview-distance=2\nsimulation-distance=2\nspawn-protection=0\nallow-flight=true\n"
+                "online-mode=false\nwhite-list=false\nserver-ip=127.0.0.1\nserver-port={port}\nlevel-name=world\nview-distance=2\nsimulation-distance=2\nspawn-protection=0\nallow-flight=true\n"
             ),
         )
         .map_err(|error| work_dir_error(&error))?;

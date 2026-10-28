@@ -1,4 +1,5 @@
 use super::*;
+use mc_data::data_component_types_26_1_2 as ids;
 use mc_nbt::{ListTag, tag_type};
 
 fn item(name: &str, count: i32) -> Tag {
@@ -19,10 +20,16 @@ fn list(values: Vec<Tag>) -> Tag {
     })
 }
 
+fn arrow() -> i32 {
+    copied_components::items()
+        .id_of(&Identifier::parse("minecraft:arrow").unwrap())
+        .unwrap() as i32
+}
+
 fn template_bytes(count: i32) -> Vec<u8> {
-    // 26.1.2 arrow registry id 896: unlike the outer stack, the item comes first.
+    // Unlike the outer stack, the template's item comes first.
     let mut bytes = Vec::new();
-    for value in [896, count, 1, 0, 3, 7] {
+    for value in [arrow(), count, 1, 0, ids::DAMAGE, 7] {
         bytes.write_varint(value);
     }
     bytes
@@ -30,10 +37,6 @@ fn template_bytes(count: i32) -> Vec<u8> {
 
 fn fixture(name: &str, id: i32, value: Tag, payload: Vec<u8>) {
     let items = copied_components::items();
-    assert_eq!(
-        items.id_of(&Identifier::parse("minecraft:arrow").unwrap()),
-        Some(896)
-    );
     let original = mc_data::item_nbt::stack_from_component_patch(
         items,
         &Identifier::parse("minecraft:stone").unwrap(),
@@ -72,7 +75,7 @@ fn template_wire_charged_projectiles_is_list_of_item_count_patch() {
     payload.extend(template_bytes(1));
     fixture(
         "minecraft:charged_projectiles",
-        49,
+        ids::CHARGED_PROJECTILES,
         list(vec![item("minecraft:arrow", 1)]),
         payload,
     );
@@ -85,7 +88,7 @@ fn template_wire_bundle_contents_is_list_of_item_count_patch() {
     payload.extend(template_bytes(2));
     fixture(
         "minecraft:bundle_contents",
-        50,
+        ids::BUNDLE_CONTENTS,
         list(vec![item("minecraft:arrow", 3), item("minecraft:arrow", 2)]),
         payload,
     );
@@ -95,7 +98,7 @@ fn template_wire_bundle_contents_is_list_of_item_count_patch() {
 fn template_wire_use_remainder_is_one_item_count_patch() {
     fixture(
         "minecraft:use_remainder",
-        25,
+        ids::USE_REMAINDER,
         item("minecraft:arrow", 1),
         template_bytes(1),
     );
@@ -107,7 +110,7 @@ fn template_wire_container_is_list_of_boolean_optional_templates() {
     payload.extend(template_bytes(2));
     fixture(
         "minecraft:container",
-        75,
+        ids::CONTAINER,
         list(vec![Tag::Compound(vec![
             ("slot".into(), Tag::Int(2)),
             ("item".into(), item("minecraft:arrow", 2)),
@@ -119,12 +122,12 @@ fn template_wire_container_is_list_of_boolean_optional_templates() {
 #[test]
 fn template_wire_remainder_and_bundle_accept_item_name_shorthand() {
     let mut bare = Vec::new();
-    for value in [896, 1, 0, 0] {
+    for value in [arrow(), 1, 0, 0] {
         bare.write_varint(value);
     }
     fixture(
         "minecraft:use_remainder",
-        25,
+        ids::USE_REMAINDER,
         Tag::String("minecraft:arrow".into()),
         bare.clone(),
     );
@@ -132,7 +135,7 @@ fn template_wire_remainder_and_bundle_accept_item_name_shorthand() {
     payload.extend(bare);
     fixture(
         "minecraft:bundle_contents",
-        50,
+        ids::BUNDLE_CONTENTS,
         list(vec![Tag::String("minecraft:arrow".into())]),
         payload,
     );
@@ -143,8 +146,8 @@ fn template_wire_rejects_empty_air_and_invalid_counts_without_clamping() {
     for stack in [
         ItemStack::EMPTY,
         ItemStack::new(0, 1),
-        ItemStack::new(896, -1),
-        ItemStack::new(896, 100),
+        ItemStack::new(arrow() as u32, -1),
+        ItemStack::new(arrow() as u32, 100),
     ] {
         assert!(item_stack_template::encode(&mut Vec::new(), &stack, 0).is_err());
         let mut bytes = Vec::new();
@@ -157,10 +160,10 @@ fn template_wire_rejects_empty_air_and_invalid_counts_without_clamping() {
 
 #[test]
 fn template_wire_preserves_depth_refusal_before_child_payload() {
-    for id in [25, 50, 75] {
-        let mut bytes = if id == 75 {
+    for id in [ids::USE_REMAINDER, ids::BUNDLE_CONTENTS, ids::CONTAINER] {
+        let mut bytes = if id == ids::CONTAINER {
             vec![1, 1]
-        } else if id == 50 {
+        } else if id == ids::BUNDLE_CONTENTS {
             vec![1]
         } else {
             Vec::new()

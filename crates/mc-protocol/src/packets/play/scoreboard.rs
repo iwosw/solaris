@@ -296,11 +296,11 @@ mod tests {
 
     #[test]
     fn vanilla_registration_ids() {
-        assert_eq!(ClientboundSetPlayerTeam::ID, 109);
-        assert_eq!(ClientboundSetObjective::ID, 106);
-        assert_eq!(ClientboundSetScore::ID, 110);
-        assert_eq!(ClientboundResetScore::ID, 79);
-        assert_eq!(ClientboundSetDisplayObjective::ID, 98);
+        assert_eq!(ClientboundSetPlayerTeam::ID, 111);
+        assert_eq!(ClientboundSetObjective::ID, 108);
+        assert_eq!(ClientboundSetScore::ID, 112);
+        assert_eq!(ClientboundResetScore::ID, 80);
+        assert_eq!(ClientboundSetDisplayObjective::ID, 100);
     }
 
     #[test]

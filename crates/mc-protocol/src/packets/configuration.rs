@@ -529,7 +529,7 @@ mod tests {
         let packet = UpdateEnabledFeatures {
             features: vec![Identifier::parse("minecraft:vanilla").unwrap()],
         };
-        assert_eq!(UpdateEnabledFeatures::ID, 0x0C);
+        assert_eq!(UpdateEnabledFeatures::ID, 0x0D);
         round_trip(packet.clone());
 
         let mut encoded = Vec::new();
@@ -913,7 +913,7 @@ mod tests {
 
     #[test]
     fn update_tags_id_matches_javap() {
-        assert_eq!(UpdateTags::ID, 0x0D);
+        assert_eq!(UpdateTags::ID, 0x0E);
     }
 
     #[test]

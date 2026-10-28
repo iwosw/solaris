@@ -839,7 +839,7 @@ mod positional_sound_tests {
             expected.extend_from_slice(&1.0_f32.to_be_bytes());
             expected.extend_from_slice(&42_i64.to_be_bytes());
             assert_eq!(bytes, expected);
-            assert_eq!(ClientboundSound::ID, 0x75);
+            assert_eq!(ClientboundSound::ID, 0x77);
             assert_eq!(ClientboundSound::decode(&mut &bytes[..]).unwrap(), packet);
         }
     }

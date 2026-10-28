@@ -52,7 +52,7 @@ mod tests {
         };
         let mut bytes = Vec::new();
         packet.encode(&mut bytes).unwrap();
-        assert_eq!(ClientboundPlayerCombatKill::ID, 0x44);
+        assert_eq!(ClientboundPlayerCombatKill::ID, 0x45);
         assert_eq!(&bytes[..2], &[0xac, 0x02]);
         assert_eq!(
             ClientboundPlayerCombatKill::decode(&mut bytes.as_slice()).unwrap(),

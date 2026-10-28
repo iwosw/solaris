@@ -126,7 +126,6 @@ fn malformed_sign_line_length_is_rejected_in_every_field() {
     for line_index in 0..SIGN_LINE_COUNT {
         let mut encoded = Vec::new();
         encoded.write_i64(17);
-        encoded.write_bool(true);
         for _ in 0..line_index {
             encoded.write_string("", MAX_SIGN_LINE_LEN).unwrap();
         }

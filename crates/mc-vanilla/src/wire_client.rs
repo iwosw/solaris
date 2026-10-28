@@ -22,7 +22,9 @@ use mc_protocol::packets::configuration::{
     FinishConfiguration, RegistryData, ServerboundKnownPacks, UpdateTags,
 };
 use mc_protocol::packets::handshake::{Handshake, NextState};
-use mc_protocol::packets::login::{LoginAcknowledged, LoginStart, LoginSuccess, SetCompression};
+use mc_protocol::packets::login::{
+    LoginAcknowledged, LoginDisconnect, LoginStart, LoginSuccess, SetCompression,
+};
 use mc_protocol::packets::play::{
     ClientboundChangeDifficulty, ClientboundCommands, ClientboundInitializeBorder,
     ClientboundPlayerAbilities, ClientboundSetHeldSlot, ClientboundSetTime, ConfirmTeleportation,
@@ -271,6 +273,11 @@ impl Client {
                 let success = LoginSuccess::decode(&mut body)?;
                 self.write_packet(&LoginAcknowledged).await?;
                 return Ok(success);
+            }
+            if frame.id == LoginDisconnect::ID {
+                let mut body = frame.body.clone();
+                let disconnect = LoginDisconnect::decode(&mut body)?;
+                bail!("login refused: {}", disconnect.reason_json);
             }
             bail!("unexpected login frame id=0x{:02X}", frame.id);
         }

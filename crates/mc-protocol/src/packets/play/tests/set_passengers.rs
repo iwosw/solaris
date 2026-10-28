@@ -1,6 +1,6 @@
 #[test]
 fn clientbound_set_passengers_id_matches_protocol_dump() {
-    assert_eq!(ClientboundSetPassengers::ID, 0x6B);
+    assert_eq!(ClientboundSetPassengers::ID, 0x6D);
 }
 
 #[test]
