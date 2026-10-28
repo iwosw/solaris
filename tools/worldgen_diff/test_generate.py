@@ -9,6 +9,23 @@ from tools.worldgen_diff import generate
 
 
 class OracleCacheTests(unittest.TestCase):
+    def test_comparison_rectangle_contains_and_is_centered_on_actual_spawn(self):
+        low, high = generate.spawn_bounds({'spawn': {'pos': [-576, 68, 432]}}, 32)
+        self.assertEqual(low, (-52, 11))
+        self.assertEqual(high, (-21, 42))
+        low, high = generate.spawn_bounds({'spawn': {'pos': [-1, 70, -17]}}, 3)
+        self.assertEqual(low, (-2, -3))
+        self.assertEqual(high, (0, -1))
+
+    def test_load_function_freezes_before_world_ticks_not_an_early_console_command(self):
+        with tempfile.TemporaryDirectory() as temp:
+            world = Path(temp)
+            generate._datapack(world, (-1, -1), (0, 0))
+            pack = world / 'datapacks/wgd/data'
+            load = json.loads((pack / 'minecraft/tags/function/load.json').read_text())
+            self.assertEqual(load['values'], ['wgd:freeze'])
+            self.assertEqual((pack / 'wgd/function/freeze.mcfunction').read_text(), 'tick freeze\n')
+
     def test_bundles_get_separate_extracted_classpaths(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

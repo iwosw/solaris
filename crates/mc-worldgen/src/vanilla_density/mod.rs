@@ -15,6 +15,7 @@ pub mod program;
 
 use blended::BlendedNoise;
 pub(crate) use evaluate::DensitySampler;
+pub(crate) use evaluate::column::{RawColumnSampler, raw_y_free};
 
 type Id = usize;
 

@@ -1551,24 +1551,40 @@ impl TerrainGenerator {
     }
 
     fn assign_biomes(&self, chunk: &mut Chunk, columns: &[ColumnPlan; 256]) {
+        let mut sampler = self.vanilla().map(|(climate, _)| climate.column_sampler());
         for (section_idx, section) in chunk.biomes.iter_mut().enumerate() {
             let mut palette: Vec<Identifier> = Vec::with_capacity(4);
             let mut indices = PackedBitArray::zeroed(6, BIOME_VOLUME);
-            for cy in 0..BIOME_DIM {
+            let ys: [Option<i32>; BIOME_DIM] = std::array::from_fn(|cy| {
+                i32::try_from(
+                    i64::from(self.geometry.min_y()) + section_idx as i64 * 16 + cy as i64 * 4 + 2,
+                )
+                .ok()
+            });
+            // Sample four consecutive heights per X/Z column, then consume
+            // in the original Y/Z/X order to retain palette and packed bytes.
+            let sampled = sampler.as_mut().map(|sampler| {
+                std::array::from_fn::<_, BIOME_VOLUME, _>(|index| {
+                    let (cz, cx, cy) = (index / 16, (index / 4) % 4, index % 4);
+                    let column = &columns[(cz * 4 + 2) * 16 + cx * 4 + 2];
+                    ys[cy].map(|y| sampler.sample(column.wx, y, column.wz).biome)
+                })
+            });
+            for (cy, y) in ys.into_iter().enumerate() {
+                let Some(y) = y else {
+                    continue;
+                };
                 for cz in 0..BIOME_DIM {
                     for cx in 0..BIOME_DIM {
                         let lx = cx * 4 + 2;
                         let lz = cz * 4 + 2;
                         let column = &columns[lz * 16 + lx];
-                        let y = i64::from(self.geometry.min_y())
-                            + section_idx as i64 * 16
-                            + cy as i64 * 4
-                            + 2;
-                        let Ok(y) = i32::try_from(y) else {
-                            continue;
-                        };
-                        let biome = if self.vanilla().is_some() {
-                            self.noise_biome(column.wx, y, column.wz)
+                        let biome = if let Some(sampled) = &sampled {
+                            Identifier::parse(
+                                sampled[(cz * BIOME_DIM + cx) * BIOME_DIM + cy]
+                                    .expect("same checked biome Y"),
+                            )
+                            .expect("validated vanilla biome identifier")
                         } else if i64::from(y) < i64::from(column.height) - 24 && y < 32 {
                             self.biomes.pick(
                                 &self.biomes.cave,

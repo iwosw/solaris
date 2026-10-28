@@ -1,8 +1,10 @@
 //! Local-data overworld climate and multi-noise biome selection.
+#[cfg(test)]
+mod column_tests;
 pub(crate) mod noise;
 #[cfg(test)]
 mod numeric_bench;
-use crate::vanilla_density::DensityRuntime;
+use crate::vanilla_density::{DensityRuntime, RawColumnSampler, raw_y_free};
 use serde_json::Value;
 use std::{path::Path, sync::Arc};
 
@@ -15,6 +17,7 @@ pub struct ClimateSample<'a> {
 }
 pub struct VanillaClimate {
     runtime: Arc<DensityRuntime>,
+    y_free: Vec<bool>,
     fields: [usize; 6],
     biomes: Vec<String>,
     parameters: Vec<[[i64; 2]; 7]>,
@@ -203,8 +206,10 @@ impl VanillaClimate {
         if leaves.is_empty() {
             return Err("empty overworld biome parameter list".into());
         }
+        let y_free = raw_y_free(&runtime);
         Ok(Self {
             runtime,
+            y_free,
             fields,
             biomes,
             parameters,
@@ -223,6 +228,14 @@ impl VanillaClimate {
             z.wrapping_mul(4),
         );
         self.select(climate, None).0
+    }
+    /// Reuses only proven Y-independent raw density nodes. Selection remains
+    /// stateless, including first-leaf ties, like [`Self::sample`].
+    pub(crate) fn column_sampler(&self) -> ClimateColumnSampler<'_> {
+        ClimateColumnSampler {
+            climate: self,
+            density: RawColumnSampler::new(&self.runtime, &self.y_free),
+        }
     }
     fn select(&self, climate: [f32; 6], last: Option<usize>) -> (ClimateSample<'_>, usize) {
         let quantized = climate.map(|value| (value * 10000.0) as i64);
@@ -300,5 +313,21 @@ impl<'a> ClimateSampler<'a> {
         let (sample, id) = self.climate.select(climate, self.last);
         self.last = Some(id);
         sample
+    }
+}
+
+pub(crate) struct ClimateColumnSampler<'a> {
+    climate: &'a VanillaClimate,
+    density: RawColumnSampler<'a>,
+}
+impl<'a> ClimateColumnSampler<'a> {
+    pub(crate) fn sample(&mut self, x: i32, y: i32, z: i32) -> ClimateSample<'a> {
+        let climate = self.density.sample_fields(
+            self.climate.fields,
+            x.div_euclid(4).wrapping_mul(4),
+            y.div_euclid(4).wrapping_mul(4),
+            z.div_euclid(4).wrapping_mul(4),
+        );
+        self.climate.select(climate, None).0
     }
 }

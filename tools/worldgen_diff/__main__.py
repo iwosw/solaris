@@ -3,9 +3,9 @@
     python3 -m tools.worldgen_diff --server-bin target/release/solaris-v2 \
         --vanilla-jar .analysis/server.jar --out .analysis/worldgen-diff/run
 
-Generates the same seeds and chunk rectangle with stock vanilla 26.1.2 (cached
-per seed+rectangle under --vanilla-cache) and with Solaris (`world pregenerate`
-+ `world export-anvil`, always fresh), compares them cell by cell and writes
+Generates the same seeds and spawn-centered chunk rectangles with stock vanilla
+26.1.2 (cached under --vanilla-cache) and Solaris (`world pregenerate` +
+`world export-anvil`, always fresh), compares them cell by cell and writes
 `report.json`, `report.md` and per-seed `map-<seed>.png` / `height-<seed>.png`.
 """
 from __future__ import annotations
@@ -129,11 +129,9 @@ def _markdown(report: dict) -> str:
         f"- Solaris HEAD `{report['solaris_head']}`, server binary sha256 "
         f"`{report['server_bin_sha256'][:16]}…`; vanilla bundle sha256 "
         f"`{report['vanilla_bundle_sha256'][:16]}…`.",
-        f"- Chunks [{report['chunk_min'][0]},{report['chunk_min'][1]}].."
-        f"[{report['chunk_max'][0]},{report['chunk_max'][1]}] "
-        f"({report['chunks']} chunks, {report['chunks'] * 98304:,} cells per seed, "
-        'Y -64..319), overworld only.',
-        '- Vanilla: stock server, `tick freeze` before startup completes, `forceload` + FULL '
+        f"- {report['chunks']} chunks per seed ({report['chunks'] * 98304:,} cells, "
+        'Y -64..319), overworld only; each rectangle is centered on vanilla spawn.',
+        '- Vanilla: stock server, `tick freeze` in the datapack load function, `forceload` + FULL '
         'halo, `save-all flush`. Solaris: `world pregenerate` + `world export-anvil`.',
         '', '## Summary', '',
         'Percentages are of all cells unless marked *non-air* (cells where either side is not '
@@ -161,7 +159,10 @@ def _markdown(report: dict) -> str:
                      f"{s['chunks_per_s']} |")
     for seed, entry in report['seeds'].items():
         d = entry['diff']
-        lines += ['', f'## Seed {seed}', '']
+        low, high = entry['chunk_min'], entry['chunk_max']
+        lines += ['', f'## Seed {seed}', '',
+                  f"Vanilla spawn: `{entry['vanilla']['spawn']['pos']}`. "
+                  f'Compared chunks `{low}`..`{high}`.', '']
         if entry.get('images'):
             lines += [f'![top-down map seed {seed}: vanilla left, Solaris right]'
                       f"({entry['images'][0]})", '',
@@ -195,7 +196,7 @@ def main(argv=None) -> int:
                                      description=__doc__.split('\n\n')[0])
     parser.add_argument('--seeds', type=int, nargs='+', default=[0, 81, 497625])
     parser.add_argument('--chunks', type=int, default=32,
-                        help='square side in chunks, centred on chunk 0,0 (default 32)')
+                        help='square side in chunks, centered on vanilla spawn (default 32)')
     parser.add_argument('--server-bin', type=Path, default=ROOT / 'target/release/solaris-v2')
     parser.add_argument('--vanilla-jar', type=Path, default=ROOT / '.analysis/server.jar')
     parser.add_argument('--data-dir', type=Path, default=ROOT / 'data/vanilla')
@@ -206,8 +207,6 @@ def main(argv=None) -> int:
     parser.add_argument('--out', type=Path, required=True)
     parser.add_argument('--no-images', action='store_true')
     args = parser.parse_args(argv)
-    half = args.chunks // 2
-    chunk_min, chunk_max = (-half, -half), (args.chunks - half - 1, args.chunks - half - 1)
     out = args.out.resolve()
     out.mkdir(parents=True, exist_ok=False)
     server_bin = args.server_bin.resolve()
@@ -219,10 +218,12 @@ def main(argv=None) -> int:
         'solaris_head': _head(), 'server_bin': str(server_bin),
         'server_bin_sha256': _sha256(server_bin),
         'vanilla_bundle': str(args.vanilla_jar), 'vanilla_bundle_sha256': _sha256(args.vanilla_jar),
-        'chunk_min': list(chunk_min), 'chunk_max': list(chunk_max),
         'chunks': args.chunks * args.chunks, 'seeds': {},
     }
     for seed in args.seeds:
+        spawn = generate.vanilla_world(seed, (0, 0), (0, 0), args.vanilla_jar.resolve(),
+                                       args.java, args.vanilla_cache.resolve(), args.heap)
+        chunk_min, chunk_max = generate.spawn_bounds(spawn, args.chunks)
         vanilla = generate.vanilla_world(seed, chunk_min, chunk_max, args.vanilla_jar.resolve(),
                                          args.java, args.vanilla_cache.resolve(), args.heap)
         print(f'vanilla seed {seed}: {vanilla["world"]}', flush=True)
@@ -231,7 +232,8 @@ def main(argv=None) -> int:
         print(f'solaris seed {seed}: {solaris["pregenerate_summary"]}', flush=True)
         result, maps = diff.compare(Path(vanilla['world']), Path(solaris['world']),
                                     chunk_min, chunk_max)
-        entry = {'vanilla': vanilla, 'solaris': solaris, 'diff': result}
+        entry = {'chunk_min': list(chunk_min), 'chunk_max': list(chunk_max),
+                 'vanilla': vanilla, 'solaris': solaris, 'diff': result}
         if not args.no_images:
             entry['images'] = _write_images(maps, seed, out)
         report['seeds'][str(seed)] = entry

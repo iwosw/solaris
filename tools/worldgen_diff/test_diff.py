@@ -83,6 +83,8 @@ class DecodeTests(unittest.TestCase):
         solaris = _chunk([('minecraft:air', None),
                           ('minecraft:air', None)], indices)
         vanilla['Status'] = solaris['Status'] = 'minecraft:full'
+        vanilla['sections'][0]['biomes'] = {'palette': ['minecraft:plains']}
+        solaris['sections'][0]['biomes'] = {'palette': ['minecraft:forest']}
         with patch.object(diff, 'load_chunks',
                           side_effect=[{(0, 0): vanilla}, {(0, 0): solaris}]):
             result, _ = diff.compare(Path('vanilla'), Path('solaris'), (0, 0), (0, 0))
@@ -90,6 +92,9 @@ class DecodeTests(unittest.TestCase):
         self.assertEqual(result['metrics']['no_decor']['match_pct'], 100)
         self.assertEqual(result['name_mismatch_cells'], 1)
         self.assertEqual(result['metrics']['no_decor_state']['match_pct'], 100)
+        self.assertEqual(result['exact_state_mismatch_cells'], 1)
+        self.assertEqual(result['biome_cells'], 64)
+        self.assertEqual(result['biome_mismatch_cells'], 64)
 
         vanilla = _chunk([('minecraft:water', {'level': '0'})], [0] * 4096)
         solaris = _chunk([('minecraft:water', {'level': '1'})], [0] * 4096)

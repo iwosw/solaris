@@ -20,9 +20,10 @@ TEST = 'terrain::profile_tests::parity_stages'
 def samples(stdout: str) -> list[dict]:
     rows = []
     for line in stdout.splitlines():
-        if line.startswith('STAGES '):
+        _, marker, payload = line.partition('STAGES ')
+        if marker:
             row = {}
-            for pair in line.split()[1:]:
+            for pair in payload.split():
                 key, value = pair.split('=', 1)
                 row[key] = int(value) if key in ('seed', 'run', 'chunks') else float(value)
             rows.append(row)

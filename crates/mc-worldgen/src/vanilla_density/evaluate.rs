@@ -3,6 +3,8 @@ use std::collections::HashMap;
 
 #[path = "batch.rs"]
 mod batch;
+#[path = "column_sampler.rs"]
+pub(super) mod column;
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 enum Mode {

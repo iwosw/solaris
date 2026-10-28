@@ -338,6 +338,7 @@ def compare(vanilla: Path, solaris: Path, chunk_min, chunk_max, top: int = 25):
         'chunks_missing': {k: [list(p) for p in v] for k, v in missing.items()},
         'vanilla_not_full': [list(p) for p in not_full],
         'cells': totals['cells'],
+        'exact_state_mismatch_cells': totals['cells'] - totals['exact'],
         'exact_state_match_pct': _percent(totals['exact'], totals['cells']),
         'exact_state_match_nonair_pct': _percent(totals['exact_nonair'],
                                                  totals['nonair_either']),
@@ -364,6 +365,8 @@ def compare(vanilla: Path, solaris: Path, chunk_min, chunk_max, top: int = 25):
               'solaris': counts_right.get(k, 0)}
              for k in set(counts_left) | set(counts_right) if k != 0),
             key=lambda row: -abs(row['vanilla'] - row['solaris']))[:top],
+        'biome_cells': biome_cells,
+        'biome_mismatch_cells': biome_cells - biome_match,
         'biome_match_pct': _percent(biome_match, biome_cells),
         'biome_confusion_top': [{'vanilla': registry.biomes[a], 'solaris': registry.biomes[b],
                                  'cells': n} for (a, b), n in biome_pairs.most_common(10)],

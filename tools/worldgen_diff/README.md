@@ -18,13 +18,14 @@ content cache, or saved worlds. Run from the repository root:
   --out .analysis/worldgen-diff/run
 ```
 
-The single command generates seeds **0, 81, 497625**, **32×32 chunks per seed**
-(chunks −16..15 in both axes, blocks −256..255), and writes `report.json`,
-`report.md`, and six PNGs. This footprint is centered on the origin, **not a
-claim that vanilla and Solaris choose the same spawn**. The oracle receipt
-records vanilla's actual spawn. Compare those coordinates with the footprint
-when describing it as a spawn-region sample. `--seeds` and `--chunks` select a
-smaller diagnostic run; the committed results identify their exact scope.
+The single command generates seeds **0, 81, 497625**, **32×32 chunks per seed**,
+and writes `report.json`, `report.md`, and six PNGs. Each rectangle is centered
+on the **vanilla spawn chunk**, not the origin: seed 81, for example, spawns at
+X −576, Z 432. A cached one-chunk bootstrap obtains each world's spawn before
+the full rectangle is generated. Both implementations compare the same
+absolute coordinates; this does not claim Solaris selects the same spawn.
+Each seed's receipt records the actual spawn and chunk bounds. `--seeds` and
+`--chunks` select a smaller diagnostic run; committed results state their scope.
 
 `--out` must not already exist. Oracle worlds are cached by seed and rectangle
 under `--vanilla-cache` (default `.analysis/worldgen-diff/vanilla-cache`); their
@@ -57,7 +58,7 @@ quietly increasing agreement by reducing the sample. Anvil packing is decoded
 with padded longs (indices never straddle a 64-bit word), including signed NBT
 longs and negative region coordinates.
 
-Vanilla is tick-frozen before startup completes, confirmed by `tick query`,
+Vanilla is tick-frozen by a datapack load function before world ticks, confirmed by `tick query`,
 then force-loads the requested rectangle. An event-driven console/datapack
 probe waits for all requested chunks to reach FULL before `save-all flush` and
 `stop`. Vanilla also generates a FULL halo outside the rectangle; its requested
@@ -97,11 +98,21 @@ improvement exceeds the larger variant's run-to-run range. Do not claim a
 speedup when that flag is false. These are **contended, shared-lane** numbers,
 not whole-server throughput or quiet-window release claims.
 
+The climate-column optimization removes repeated evaluation of Y-independent
+noise subgraphs when filling the 3D biome palette. Independence is proven once
+from the router DAG; unknown/Y-dependent nodes still evaluate normally. Raw
+marker semantics and stateless first-leaf biome ties remain unchanged. Four
+consecutive heights share one column cache; original palette insertion order
+is retained. Removing this optimization means restoring stateless samples in
+`assign_biomes` and deleting the dedicated raw-column sampler, not maintaining
+a second generation mode.
+
 Collect a sampling profile from the same frozen executable separately:
 
 ```sh
 /home/kaiserroman/solaris/.analysis/tools/mem-run.sh -m 6G \
-  perf record -e cycles:u -g --call-graph dwarf -o .analysis/worldgen-diff/before.perf -- \
+  perf record -F 199 -e cycles:u -g --call-graph dwarf,32768 \
+  -o .analysis/worldgen-diff/before.perf -- \
   /absolute/path/to/before-test --ignored --exact \
   terrain::profile_tests::parity_stages --nocapture --test-threads=1
 perf report --stdio --no-children -i .analysis/worldgen-diff/before.perf
@@ -109,5 +120,7 @@ perf report --stdio --no-children -i .analysis/worldgen-diff/before.perf
 
 Re-run the full block diff with the candidate and compare each seed's `diff`
 object against the baseline. For a stronger fence, use `diff.compare` directly
-on the retained baseline/candidate exported worlds: exact block-state and biome
-agreement must be 100%. Timing improvements never justify relaxed parity.
+on the retained baseline/candidate exported worlds: `exact_state_mismatch_cells`
+and `biome_mismatch_cells` must be zero, and `biome_cells` must cover every quart.
+Rounded percentages are insufficient as an exact fence.
+Timing improvements never justify relaxed parity.

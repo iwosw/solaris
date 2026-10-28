@@ -1,7 +1,7 @@
 """Generate one chunk rectangle with stock vanilla 26.1.2 and with Solaris.
 
-Vanilla: the local server bundle runs headless with `tick freeze` sent before
-startup completes, so block/fluid/random ticks and entities never change the
+Vanilla: the local server bundle runs headless with `tick freeze` in a datapack
+load function before world ticks, so block/fluid/random ticks and entities never change the
 generated terrain. `forceload add` requests the rectangle (vanilla loads a FULL
 halo around forced chunks, so every compared chunk carries its neighbours'
 features). Readiness is a datapack function run from the console once per server
@@ -104,8 +104,11 @@ def _runtime(bundle: Path, cache: Path) -> list[Path]:
 def _datapack(world: Path, chunk_min, chunk_max) -> None:
     base = world / 'datapacks/wgd'
     _put(base / 'pack.mcmeta', json.dumps({'pack': {
-        'description': 'worldgen-diff readiness probe only',
+        'description': 'worldgen-diff freeze and readiness probe',
         'min_format': [101, 1], 'max_format': [101, 1]}}))
+    _put(base / 'data/minecraft/tags/function/load.json',
+         json.dumps({'values': ['wgd:freeze']}))
+    _put(base / 'data/wgd/function/freeze.mcfunction', 'tick freeze\n')
     lines = ['scoreboard players set #ready wgd 1']
     lines += [f'execute unless loaded {x * 16 + 8} 0 {z * 16 + 8} run '
               f'scoreboard players set #ready wgd 0'
@@ -124,6 +127,14 @@ def _forceload_commands(chunk_min, chunk_max) -> list[str]:
             x1, z1 = min(x0 + 15, chunk_max[0]), min(z0 + 15, chunk_max[1])
             out.append(f'forceload add {x0 * 16} {z0 * 16} {x1 * 16 + 15} {z1 * 16 + 15}')
     return out
+
+
+def spawn_bounds(receipt: dict, side: int):
+    """Inclusive square centered on the oracle's spawn chunk (negative-safe)."""
+    x, _, z = receipt['spawn']['pos']
+    half = side // 2
+    low = (x // 16 - half, z // 16 - half)
+    return low, (low[0] + side - 1, low[1] + side - 1)
 
 
 def vanilla_world(seed: int, chunk_min, chunk_max, bundle: Path, java: str, cache: Path,
@@ -151,7 +162,7 @@ def vanilla_world(seed: int, chunk_min, chunk_max, bundle: Path, java: str, cach
         'generate-structures': 'true', 'view-distance': '2', 'simulation-distance': '2',
         'pause-when-empty-seconds': '-1', 'max-tick-time': '-1', 'max-players': '1',
         'sync-chunk-writes': 'true', 'enable-rcon': 'false', 'enable-query': 'false',
-        'spawn-protection': '0',
+        'spawn-protection': '0', 'function-permission-level': '4',
     }
     _put(directory / 'server.properties', ''.join(f'{k}={v}\n' for k, v in props.items()))
     _datapack(directory / 'world', chunk_min, chunk_max)
@@ -159,10 +170,9 @@ def vanilla_world(seed: int, chunk_min, chunk_max, bundle: Path, java: str, cach
             'net.minecraft.server.Main', 'nogui']
     server = Console(argv, directory, directory / 'server.log')
     try:
-        # Queued before startup finishes, so it applies on the first tick. Its
-        # feedback can fail (the console source predates the overworld), so the
-        # state is confirmed with `tick query` once the server is up.
-        server.send('tick freeze')
+        # The datapack load function runs at the start of the first server
+        # tick. An early console source can predate the overworld and throw
+        # before applying `tick freeze`; it is not a valid startup barrier.
         started = time.monotonic()
         server.expect('Done (')
         ready_at = time.monotonic()
