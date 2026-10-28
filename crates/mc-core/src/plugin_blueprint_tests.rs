@@ -190,7 +190,10 @@ fn deploying_an_auth_capable_package_locks_new_sessions_without_the_flag() {
     config.view_distance = 2;
     config.simulation_distance = 2;
     config.checkpoint_every_ticks = u64::MAX;
-    assert!(!config.require_plugin_login, "the flag stays at its default");
+    assert!(
+        !config.require_plugin_login,
+        "the flag stays at its default"
+    );
     let core = Core::open(config).unwrap();
     let mut rx = core.subscribe();
     core.submit(PlayerInput::Join {

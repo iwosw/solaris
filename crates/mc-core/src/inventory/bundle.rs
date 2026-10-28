@@ -147,9 +147,45 @@ fn total(rules: &ItemRules<'_>, contents: &[ItemStack]) -> Option<Weight> {
     })
 }
 
-/// How many of `stack` still fit (vanilla `BundleContents.Mutable.getMaxAmountToAdd`).
+/// Most nested non-empty bundle levels the item wire codec can send
+/// (`MAX_ITEM_COMPONENT_DEPTH`): a deeper tree fails to encode and the packet is dropped.
+const MAX_NESTING: u32 = 8;
+/// Most entries one bundle's contents list can carry on the wire.
+const MAX_ENTRIES: usize = 64;
+
+/// Levels of non-empty bundles in `stack`'s tree; unreadable contents count as too deep.
+fn nesting(rules: &ItemRules<'_>, stack: &ItemStack) -> u32 {
+    if !is_bundle(rules, stack) {
+        return 0;
+    }
+    let Some(contents) = read(rules, stack) else {
+        return MAX_NESTING + 1;
+    };
+    if contents.is_empty() {
+        return 0;
+    }
+    1 + contents
+        .iter()
+        .map(|inner| nesting(rules, inner))
+        .max()
+        .unwrap_or(0)
+}
+
+fn merge_index(rules: &ItemRules<'_>, contents: &[ItemStack], stack: &ItemStack) -> Option<usize> {
+    if rules.max_stack(stack) <= 1 {
+        return None;
+    }
+    contents.iter().position(|old| can_stack(old, stack))
+}
+
+/// How many of `stack` still fit (vanilla `BundleContents.Mutable.getMaxAmountToAdd`), also
+/// refusing what the wire could not carry: a tree nested past `MAX_NESTING` or a list past
+/// `MAX_ENTRIES`.
 pub(super) fn room(rules: &ItemRules<'_>, contents: &[ItemStack], stack: &ItemStack) -> i32 {
-    if !can_fit(rules, stack) {
+    if !can_fit(rules, stack)
+        || nesting(rules, stack) >= MAX_NESTING
+        || (contents.len() >= MAX_ENTRIES && merge_index(rules, contents, stack).is_none())
+    {
         return 0;
     }
     let (Some(used), Some(each)) = (total(rules, contents), weight(rules, stack)) else {
@@ -173,9 +209,7 @@ pub(super) fn insert(
     }
     let mut entry = stack.clone();
     entry.count = moved;
-    if rules.max_stack(stack) > 1
-        && let Some(index) = contents.iter().position(|old| can_stack(old, stack))
-    {
+    if let Some(index) = merge_index(rules, contents, stack) {
         entry.count += contents.remove(index).count;
     }
     contents.insert(0, entry);

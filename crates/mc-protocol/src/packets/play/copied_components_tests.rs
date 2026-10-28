@@ -657,3 +657,44 @@ fn map_id_is_a_varint_so_a_filled_map_can_reach_the_client() {
     fixture("minecraft:map_id", Tag::Int(300), vec![0xac, 0x02]);
     fixture("minecraft:map_id", Tag::Int(0), vec![0]);
 }
+
+#[test]
+fn bundle_nesting_encodes_up_to_eight_non_empty_levels_and_no_deeper() {
+    // core's inventory::bundle::MAX_NESTING mirrors this bound.
+    let bundle = |contents: Vec<Tag>| {
+        let mut components = Vec::new();
+        if !contents.is_empty() {
+            components.push((
+                "minecraft:bundle_contents",
+                Tag::List(ListTag {
+                    element_type: tag_type::COMPOUND,
+                    elements: contents,
+                }),
+            ));
+        }
+        let fields = vec![
+            ("id".to_string(), text("minecraft:bundle")),
+            ("count".to_string(), Tag::Int(1)),
+            ("components".to_string(), fields(components)),
+        ];
+        fields
+    };
+    let encodes = |levels: usize| {
+        let mut inner = Vec::new();
+        for _ in 0..levels {
+            let wrapped = if inner.is_empty() {
+                bundle(Vec::new())
+            } else {
+                inner
+            };
+            inner = bundle(vec![Tag::Compound(wrapped)]);
+        }
+        let Ok(Some(stack)) = mc_data::item_nbt::stack_from_fields(items(), &inner) else {
+            return false;
+        };
+        let mut out = Vec::new();
+        stack.encode(&mut out).is_ok()
+    };
+    assert!(encodes(8));
+    assert!(!encodes(9));
+}
