@@ -299,6 +299,7 @@ pub(super) fn encode_one<B: BufMut>(
                 buf.write_varint(color(string(required(fields, "color")?)?)?);
             }
         }
+        ids::BASE_COLOR => buf.write_varint(color(string(&value)?)?),
         // Optional templates retain absent faces, counts and nested patches.
         ids::POT_DECORATIONS => {
             let decorations = compound(&value)?;
@@ -415,6 +416,7 @@ pub(super) fn decode<B: Buf>(
                 ("color".into(), Tag::String(color.into())),
             ]))
         })?),
+        ids::BASE_COLOR => Tag::String(color_name(buf.read_varint()?)?.into()),
         ids::POT_DECORATIONS => {
             let mut sides = Vec::with_capacity(4);
             for side in ["back", "left", "right", "front"] {

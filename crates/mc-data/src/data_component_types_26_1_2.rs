@@ -36,6 +36,7 @@ pub const ITEM_COMPONENT_CODECS: &[(&str, i32)] = &[
     ("minecraft:profile", 72),
     ("minecraft:note_block_sound", 73),
     ("minecraft:banner_patterns", 74),
+    ("minecraft:base_color", 75),
     ("minecraft:pot_decorations", 76),
     ("minecraft:container", 77),
     ("minecraft:block_state", 78),
@@ -87,6 +88,7 @@ pub const FIREWORKS: i32 = 71;
 pub const PROFILE: i32 = 72;
 pub const NOTE_BLOCK_SOUND: i32 = 73;
 pub const BANNER_PATTERNS: i32 = 74;
+pub const BASE_COLOR: i32 = 75;
 pub const POT_DECORATIONS: i32 = 76;
 pub const CONTAINER: i32 = 77;
 pub const BLOCK_STATE: i32 = 78;

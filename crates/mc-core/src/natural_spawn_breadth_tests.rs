@@ -601,6 +601,10 @@ fn spawn_census_matches_population_oracle_for_all_categories_and_observers() {
             let row = state.entities.row(slot);
             if !state.entities.body(slot).alive
                 || row.persistent
+                || !state.world.has_chunk(
+                    state.entities.chunk_of(slot).x,
+                    state.entities.chunk_of(slot).z,
+                )
                 || category(&state, state.entities.body(slot).id) != wanted
             {
                 continue;

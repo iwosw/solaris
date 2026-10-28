@@ -283,6 +283,54 @@ fn arrow_kind(state: &TickState, stack: &ItemStack) -> ProjectileKind {
     }
 }
 
+/// Launch a detached firework from the clicked block face.
+pub(crate) fn use_rocket_on_block(
+    state: &mut TickState,
+    actor: EntityId,
+    hand: Hand,
+    position: crate::boundary::BlockPos,
+    face: crate::placement::Face,
+    cursor: [f32; 3],
+) -> bool {
+    let Some(slot) = held_slot(state, actor, hand) else {
+        return false;
+    };
+    let stack = state.players[&actor].inventory.slots[slot].clone();
+    if stack.is_empty() || super::item_name(state, &stack) != Some("minecraft:firework_rocket") {
+        return false;
+    }
+    let player = &state.players[&actor];
+    if player.spectator()
+        || player.vitals.is_dead()
+        || player.item_on_cooldown(stack.item_id)
+        || !available(state, ProjectileKind::Firework)
+        || (!player.creative() && !costs_allowed(state, actor, &[(slot, 1)], slot, None))
+    {
+        return true;
+    }
+    let Some(actor_slot) = state.entities.slot_of(actor) else {
+        return true;
+    };
+    let owner = state.entities.row(actor_slot).uuid;
+    let offset = face.offset();
+    let block = [position.x, position.y, position.z];
+    let origin = std::array::from_fn(|i| {
+        f64::from(block[i]) + f64::from(cursor[i]) + f64::from(offset[i]) * 0.15
+    });
+    let item_id = stack.item_id;
+    let record = ProjectileState::new(ProjectileKind::Firework, Some(owner), stack);
+    if super::launch(state, record, origin, [0.0, 0.05, 0.0]).is_none() {
+        return true;
+    }
+    let player = state.players.get_mut(&actor).unwrap();
+    player.statistics.increment(StatType::Used, item_id, 1);
+    if !player.creative() {
+        consume(&mut player.inventory.slots[slot]);
+    }
+    sync(state, actor);
+    true
+}
+
 /// Returns true for a projectile item even when its use is refused. Such an
 /// item must not fall through into food consumption or other action owners.
 pub(crate) fn use_item(state: &mut TickState, actor: EntityId, hand: Hand) -> bool {

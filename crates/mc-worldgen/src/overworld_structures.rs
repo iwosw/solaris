@@ -1,5 +1,6 @@
 //! Immutable generation-time structure plans. Locate and chunk paste share starts.
 //! Shapes are Solaris-authored, not copies of decompiled game implementation.
+use crate::vanilla_features::{LegacyRandom, RandomSource};
 use crate::{
     structures::{StructureTemplate, TemplateBlock, TemplateBlockEntity, TemplateChest},
     village::placement::RandomSpreadPlacement,
@@ -35,6 +36,8 @@ pub(crate) struct OverworldStructures {
     seed: i64,
     strongholds: Vec<(i32, i32)>,
     stronghold: StructureTemplate,
+    stronghold_eye_states: [(BlockStateId, BlockStateId); 4],
+    stronghold_portal: BlockStateId,
     families: Vec<Family>,
     features: Vec<features::Feature>,
     reach_before: [i32; 2],
@@ -242,6 +245,8 @@ impl OverworldStructures {
             seed,
             strongholds,
             stronghold,
+            stronghold_eye_states: stronghold_eye_states(blocks)?,
+            stronghold_portal: state(blocks, "minecraft:end_portal")?,
             families,
             features: features::load(root, blocks)?,
             reach_before,
@@ -376,7 +381,9 @@ impl OverworldStructures {
                         z: origin.z + max[2],
                     },
                 );
-                let changed = paste_template(chunk, template, origin, self.seed);
+                let eyes = (structure.path() == "stronghold")
+                    .then_some((&self.stronghold_eye_states, self.stronghold_portal));
+                let changed = paste_template_with_eyes(chunk, template, origin, self.seed, eyes);
                 for (t, c) in touched.iter_mut().zip(changed) {
                     *t |= c;
                 }
@@ -392,6 +399,21 @@ fn paste_template(
     origin: BlockPos,
     seed: i64,
 ) -> [bool; 256] {
+    paste_template_with_eyes(chunk, template, origin, seed, None)
+}
+
+fn paste_template_with_eyes(
+    chunk: &mut Chunk,
+    template: &StructureTemplate,
+    origin: BlockPos,
+    seed: i64,
+    eyes: Option<(&[(BlockStateId, BlockStateId); 4], BlockStateId)>,
+) -> [bool; 256] {
+    // Recreate the start's stream for every clipped paste, so frame outcomes
+    // do not depend on chunk generation order.
+    let mut random = eyes.map(|_| LegacyRandom::new(hash(seed, origin.x, origin.z) as i64));
+    let mut frame_count = 0;
+    let mut filled_count = 0;
     let mut touched = [false; 256];
     let chunk_pos = chunk.pos;
     let geometry = chunk.geometry();
@@ -412,6 +434,24 @@ fn paste_template(
         }
     };
     for block in template.blocks() {
+        let mut block_state = block.state;
+        if let Some((_, filled)) = eyes.and_then(|(states, _)| {
+            states
+                .iter()
+                .find(|(empty, filled)| *empty == block.state || *filled == block.state)
+        }) {
+            frame_count += 1;
+            if block.state == *filled
+                || random
+                    .as_mut()
+                    .expect("eye states have a random stream")
+                    .next_float()
+                    < 0.1
+            {
+                block_state = *filled;
+                filled_count += 1;
+            }
+        }
         let pos = BlockPos {
             x: origin.x + block.pos[0],
             y: origin.y + block.pos[1],
@@ -421,7 +461,7 @@ fn paste_template(
         if (0..16).contains(&x)
             && (0..16).contains(&z)
             && chunk
-                .set_block(x as u8, pos.y, z as u8, block.state)
+                .set_block(x as u8, pos.y, z as u8, block_state)
                 .is_some()
         {
             touched[z as usize * 16 + x as usize] = true;
@@ -430,6 +470,25 @@ fn paste_template(
             chunk.furnaces.remove(&pos);
             chunk.hoppers.remove(&pos);
             chunk.brewing_stands.remove(&pos);
+        }
+    }
+    if frame_count == 12
+        && filled_count == 12
+        && let Some((_, portal)) = eyes
+    {
+        for x in 6..=8 {
+            for z in 6..=8 {
+                if let Some((pos, x, z)) = local([x, 3, z])
+                    && chunk.set_block(x, pos.y, z, portal).is_some()
+                {
+                    touched[z as usize * 16 + x as usize] = true;
+                    chunk.block_entities.remove(&pos);
+                    chunk.chests.remove(&pos);
+                    chunk.furnaces.remove(&pos);
+                    chunk.hoppers.remove(&pos);
+                    chunk.brewing_stands.remove(&pos);
+                }
+            }
         }
     }
     for chest in template.chests() {
@@ -692,6 +751,24 @@ impl<'a> Builder<'a> {
         .with_block_entities(self.entities)
     }
 }
+fn stronghold_eye_states(
+    registry: &BlockRegistry,
+) -> Result<[(BlockStateId, BlockStateId); 4], String> {
+    let mut states = [(BlockStateId(0), BlockStateId(0)); 4];
+    for (index, facing) in ["south", "north", "east", "west"].into_iter().enumerate() {
+        let frame = |eye: &str| {
+            registry
+                .by_name_and_props(
+                    &id("minecraft:end_portal_frame"),
+                    &[("eye".into(), eye.into()), ("facing".into(), facing.into())],
+                )
+                .ok_or_else(|| "missing oriented end portal frame".to_owned())
+        };
+        states[index] = (frame("false")?, frame("true")?);
+    }
+    Ok(states)
+}
+
 fn stronghold(registry: &BlockRegistry) -> Result<StructureTemplate, String> {
     let mut b = Builder::new(registry);
     b.room([0, 0, 0], [14, 7, 16])?;

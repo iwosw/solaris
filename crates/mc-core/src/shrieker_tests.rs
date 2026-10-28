@@ -1,4 +1,5 @@
 use super::*;
+use crate::boundary::PlayerChange;
 use crate::journal::{
     JournalEntry, JournalWriter, Replay, read_complete_batches_after, replay_batches,
 };
@@ -56,6 +57,56 @@ fn wardens(state: &TickState) -> usize {
             )
         })
         .count()
+}
+
+#[test]
+fn shrieker_level_event_reaches_only_nearby_same_dimension() {
+    use crate::boundary::{ConnectionId, PlayerInput};
+    let (mut state, player, pos) = fixture(false);
+    crate::tick::run_tick(
+        &mut state,
+        &[PlayerInput::Join {
+            connection: ConnectionId(2),
+            uuid: uuid::Uuid::new_v4(),
+            name: "far".into(),
+            permission_level: 0,
+        }],
+    );
+    let far = state.connections.entity_of(ConnectionId(2)).unwrap();
+    state.entities.set_pos(
+        state.entities.slot_of(far).unwrap(),
+        [f64::from(pos.x) + 200.0, f64::from(pos.y), f64::from(pos.z)],
+    );
+    let (mut other, _, _) = fixture(false);
+    other.dimension = crate::dimensions::Dimension::Nether;
+    crate::tick::run_tick(
+        &mut other,
+        &[PlayerInput::Join {
+            connection: ConnectionId(3),
+            uuid: uuid::Uuid::new_v4(),
+            name: "other".into(),
+            permission_level: 0,
+        }],
+    );
+    other.outbox.clear();
+    state
+        .other_dimensions
+        .insert(crate::dimensions::Dimension::Nether, Box::new(other));
+    state.outbox.clear();
+    assert!(shriek(&mut state, pos, player));
+    let received = |events: Option<&Vec<PlayerChange>>| {
+        events.is_some_and(|events| {
+        events.iter().any(|event| matches!(event, PlayerChange::ProjectileLevelEvent { event: 3007, position, .. } if *position == pos))
+    })
+    };
+    let nearby = state.players[&player].connection;
+    assert!(received(state.outbox.get(&nearby)));
+    assert!(!received(state.outbox.get(&ConnectionId(2))));
+    assert!(!received(
+        state.other_dimensions[&crate::dimensions::Dimension::Nether]
+            .outbox
+            .get(&ConnectionId(3))
+    ));
 }
 #[test]
 fn three_warnings_darkness_fourth_spawns_emerging_once() {

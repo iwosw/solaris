@@ -394,6 +394,16 @@ pub(in crate::tick) fn use_item_on(
     if crate::signs::use_on(state, entity, *hand, *position) {
         return;
     }
+    if crate::projectiles::weapons::use_rocket_on_block(
+        state,
+        entity,
+        *hand,
+        *position,
+        crate::placement::Face::from_code(*face),
+        *cursor,
+    ) {
+        return;
+    }
     if let Some(mut intent) = plan_placement(state, entity, *hand, *position, *face, *cursor, &held)
     {
         intent.seq = state.next_seq(entity);

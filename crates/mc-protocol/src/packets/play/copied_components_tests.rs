@@ -72,6 +72,13 @@ fn nbt(value: &Tag) -> Vec<u8> {
 }
 
 #[test]
+fn copied_shield_base_color_roundtrips_all_dyes() {
+    for (id, color) in mc_data::stations::DYE_COLORS.iter().enumerate() {
+        fixture("minecraft:base_color", text(color), vec![id as u8]);
+    }
+}
+
+#[test]
 fn copied_death_protection_empty_actions_use_vanilla_list_count() {
     for value in [
         fields(Vec::new()),
@@ -398,7 +405,6 @@ const UNSUPPORTED: &[&str] = &[
     "minecraft:attack_range",
     "minecraft:attribute_modifiers",
     "minecraft:axolotl/variant",
-    "minecraft:base_color",
     "minecraft:block_entity_data",
     "minecraft:blocks_attacks",
     "minecraft:break_sound",

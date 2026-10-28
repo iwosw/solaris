@@ -115,6 +115,64 @@ fn step(state: &mut TickState) -> Vec<crate::journal::JournalEntry> {
     let (output, _, _) = run_tick(state, &[]);
     crate::core::journal_entries_for_tick(state, &output)
 }
+
+#[test]
+fn crafter_level_event_reaches_only_nearby_same_dimension() {
+    let (mut state, _) = fixture(None);
+    run_tick(
+        &mut state,
+        &[PlayerInput::Join {
+            connection: ConnectionId(2),
+            uuid: uuid::Uuid::new_v4(),
+            name: "far".into(),
+            permission_level: 0,
+        }],
+    );
+    let far = state.connections.entity_of(ConnectionId(2)).unwrap();
+    state
+        .entities
+        .set_pos(state.entities.slot_of(far).unwrap(), [200.0, 201.0, 8.5]);
+    let (mut other, _) = fixture(None);
+    other.dimension = crate::dimensions::Dimension::Nether;
+    run_tick(
+        &mut other,
+        &[PlayerInput::Join {
+            connection: ConnectionId(3),
+            uuid: uuid::Uuid::new_v4(),
+            name: "other".into(),
+            permission_level: 0,
+        }],
+    );
+    other.outbox.clear();
+    state
+        .other_dimensions
+        .insert(crate::dimensions::Dimension::Nether, Box::new(other));
+    install(&mut state, "north_up");
+    state.outbox.clear();
+    pulse(&mut state);
+    scheduled(&mut state, POS, 8, &mut Vec::new(), &mut Vec::new());
+    let received = |events: Option<&Vec<PlayerChange>>| {
+        events.is_some_and(|events| {
+        events.iter().any(|event| matches!(event, PlayerChange::ProjectileLevelEvent { position, .. } if *position == POS))
+    })
+    };
+    assert!(received(state.outbox.get(&ConnectionId(1))));
+    assert!(!received(state.outbox.get(&ConnectionId(2))));
+    assert!(!received(
+        state.other_dimensions[&crate::dimensions::Dimension::Nether]
+            .outbox
+            .get(&ConnectionId(3))
+    ));
+    state.outbox.clear();
+    state.block_entities.get_mut(&KEY).unwrap().slots[0] = stack(&state, "oak_log", 1);
+    scheduled(&mut state, POS, 8, &mut Vec::new(), &mut Vec::new());
+    for event_id in [1049, 2010] {
+        assert!(state.outbox[&ConnectionId(1)].iter().any(|event| matches!(
+            event, PlayerChange::ProjectileLevelEvent { event, .. } if *event == event_id
+        )));
+    }
+    assert!(!received(state.outbox.get(&ConnectionId(2))));
+}
 #[test]
 fn pulse_crafts_once_disabled_slots_and_all_six_ejection_directions() {
     for (orientation, travel) in [
@@ -663,4 +721,55 @@ fn banner_copy_ejects_output_and_original_without_destroying_source() {
             Some(&source)
         );
     }
+}
+
+#[test]
+fn shield_decoration_crafter_ejects_decorated_output() {
+    let (mut state, _) = fixture(None);
+    install(&mut state, "north_up");
+    let mut banner = stack(&state, "red_banner", 1);
+    banner
+        .extended_mut()
+        .banner_patterns
+        .push(mc_data::item_stack::BannerPattern {
+            pattern: mc_data::Identifier::parse("minecraft:stripe_bottom").unwrap(),
+            color: 11,
+        });
+    let mut shield = stack(&state, "shield", 1);
+    shield.damage = Some(23);
+    state.block_entities.get_mut(&KEY).unwrap().slots[1] = banner.clone();
+    state.block_entities.get_mut(&KEY).unwrap().slots[8] = shield.clone();
+    pulse(&mut state);
+    let mut drops = Vec::new();
+    scheduled(&mut state, POS, 8, &mut Vec::new(), &mut drops);
+    assert_eq!(drops.len(), 1);
+    let slot = state.entities.slot_of(drops[0]).unwrap();
+    let output = state
+        .entities
+        .row(slot)
+        .item
+        .as_ref()
+        .unwrap()
+        .stack
+        .as_ref()
+        .unwrap();
+    assert_eq!(output.item_id, shield.item_id);
+    assert_eq!(output.damage, shield.damage);
+    assert_eq!(
+        output.extended().banner_patterns,
+        banner.extended().banner_patterns
+    );
+    assert!(
+        output
+            .extended()
+            .preserved_components
+            .iter()
+            .any(|c| c.name == "minecraft:base_color")
+    );
+    assert!(
+        state.block_entities[&KEY]
+            .slots
+            .iter()
+            .all(ItemStack::is_empty)
+    );
 }

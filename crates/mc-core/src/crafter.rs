@@ -301,21 +301,16 @@ fn eject(
     false
 }
 fn event(state: &mut TickState, pos: BlockPos, event: i32, data: i32) {
-    let viewers: Vec<_> = state
-        .players
-        .values()
-        .map(|player| player.connection)
-        .collect();
-    for connection in viewers {
-        state.push_player(
-            connection,
-            PlayerChange::ProjectileLevelEvent {
-                position: pos,
-                event,
-                data,
-            },
-        );
-    }
+    crate::projectiles::payloads::level_event(
+        state,
+        [
+            f64::from(pos.x) + 0.5,
+            f64::from(pos.y) + 0.5,
+            f64::from(pos.z) + 0.5,
+        ],
+        event,
+        data,
+    );
 }
 fn craft(
     state: &mut TickState,
@@ -330,6 +325,13 @@ fn craft(
         &ingredients,
     )
     .or_else(|| mc_data::recipes::armor_dye_crafting_result(&state.registry.items, &ingredients))
+    .or_else(|| {
+        mc_data::recipes::shield_decoration::result(
+            &state.registry.items,
+            &state.registry.item_facts,
+            &ingredients,
+        )
+    })
     .or_else(|| {
         mc_data::recipes::cloning::result(
             &state.registry.items,
