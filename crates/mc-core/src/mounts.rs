@@ -572,10 +572,35 @@ pub(crate) fn sync_rider(state: &mut TickState, slot: EntitySlot) {
     let already_mounted = state.entities.row(slot).appearance.passengers.as_slice() == [id];
     state.entities.row_mut(rider).entity_life.mount.vehicle = Some(state.entities.body(slot).id);
     let pos = state.entities.pos(slot);
-    let height = state.entities.body(slot).height * 0.75;
-    state
-        .entities
-        .set_pos(rider, [pos[0], pos[1] + height, pos[2]]);
+    let (height, forward) =
+        if crate::vehicles::kind(state, slot) == Some(crate::vehicles::VehicleKind::Boat) {
+            // 26.3 Boat/ChestBoat.rideHeight and Raft/ChestRaft.rideHeight,
+            // minus the player's VEHICLE attachment (0.6). Only players ride here.
+            let kind = name(state, slot);
+            let body_height = state.entities.body(slot).height as f32;
+            let attachment = if kind.ends_with("_raft") {
+                body_height * 0.888_888_9_f32
+            } else {
+                body_height / 3.0
+            };
+            let forward = if kind.contains("_chest_") {
+                f64::from(0.15_f32)
+            } else {
+                0.0
+            };
+            (f64::from(attachment) - f64::from(0.6_f32), forward)
+        } else {
+            (state.entities.body(slot).height * 0.75, 0.0)
+        };
+    let yaw = f64::from(state.entities.rot(slot)[0]).to_radians();
+    state.entities.set_pos(
+        rider,
+        [
+            pos[0] - forward * f64::from(mc_physics::mth::sin(yaw)),
+            pos[1] + height,
+            pos[2] + forward * f64::from(mc_physics::mth::cos(yaw)),
+        ],
+    );
     state.entities.set_vel(rider, [0.0; 3]);
     if already_mounted {
         let new = state.entities.pos(rider);
@@ -588,8 +613,14 @@ pub(crate) fn sync_rider(state: &mut TickState, slot: EntitySlot) {
     }
 }
 fn controllable(state: &TickState, slot: EntitySlot, actor: EntityId) -> bool {
-    if crate::vehicles::kind(state, slot).is_some() {
+    let Some(player) = state.players.get(&actor) else {
         return false;
+    };
+    if player.spectator() || player.vitals.is_dead() {
+        return false;
+    }
+    if let Some(kind) = crate::vehicles::kind(state, slot) {
+        return kind == crate::vehicles::VehicleKind::Boat;
     }
     let row = state.entities.row(slot);
     let capabilities = capabilities(state, slot);
@@ -597,12 +628,6 @@ fn controllable(state: &TickState, slot: EntitySlot, actor: EntityId) -> bool {
         || capabilities.riding == crate::blueprint::RidingProfile::Unsteered
         || (capabilities.taming.equine() && !row.entity_life.tamed)
     {
-        return false;
-    }
-    let Some(player) = state.players.get(&actor) else {
-        return false;
-    };
-    if player.spectator() || player.vitals.is_dead() {
         return false;
     }
     let stick = match capabilities.riding {
@@ -683,6 +708,17 @@ pub(crate) fn move_vehicle(
             state.entities.set_rot(slot, yaw, pitch);
             state.entities.set_ground(slot, r.grounded);
             state.entities.set_vel(slot, [0.0; 3]);
+            // Accepted client steering is not a correction. Echoing every
+            // accepted boat packet resets prediction and generates an echo loop.
+            if r.delta.x == delta[0] && r.delta.y == delta[1] && r.delta.z == delta[2] {
+                state
+                    .players
+                    .get_mut(&actor)
+                    .expect("live rider")
+                    .last_vehicle_motion_tick = Some(state.tick);
+                sync_rider(state, slot);
+                return;
+            }
         }
     }
     sync_rider(state, slot);

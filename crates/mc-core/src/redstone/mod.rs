@@ -114,6 +114,7 @@ pub(super) fn reactive(path: &str) -> bool {
             | "calibrated_sculk_sensor"
             | "target"
     ) || path.ends_with("_door")
+        || path.ends_with("copper_bulb")
         || path.ends_with("_trapdoor")
         || path.ends_with("_fence_gate")
         || path.ends_with("_button")
@@ -841,6 +842,29 @@ fn tick_cell(
             } else if prop(block, "lit") == Some("true") {
                 schedule_cell(state, pos, 4, 6);
             }
+        }
+        _ if path.ends_with("copper_bulb") => {
+            let powered = power_at(state, pos) > 0;
+            if powered && prop(block, "powered") != Some("true") {
+                change(
+                    state,
+                    writes,
+                    pos,
+                    "lit",
+                    if prop(block, "lit") == Some("true") {
+                        "false"
+                    } else {
+                        "true"
+                    },
+                );
+            }
+            change(
+                state,
+                writes,
+                pos,
+                "powered",
+                if powered { "true" } else { "false" },
+            );
         }
         _ if path.ends_with("_button") => {
             let wooden = !matches!(path, "stone_button" | "polished_blackstone_button");

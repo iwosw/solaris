@@ -152,6 +152,11 @@ pub(super) fn analog(state: &TickState, pos: BlockPos) -> Option<u8> {
         "jukebox" => crate::jukebox::comparator(state, pos),
         "lectern" => crate::lectern::comparator(state, pos),
         "chiseled_bookshelf" => Some(crate::chiseled_shelf::comparator(state, pos)),
+        _ if path.ends_with("copper_bulb") => Some(if prop(block, "lit") == Some("true") {
+            15
+        } else {
+            0
+        }),
         _ if containers::has_analog_output(path) => Some(containers::signal(state, pos)),
         _ => None,
     }

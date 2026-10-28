@@ -273,6 +273,196 @@ fn occupied_or_solid_boat_placement_never_spends_item() {
     assert_eq!(s.players[&actor].statistics.get(StatType::Used, boat), 0);
 }
 #[test]
+fn boat_rejected_movement_does_not_suppress_native_gravity() {
+    let mut state = fixture();
+    let actor = player(&mut state, [0.5, 65.0, -0.5]);
+    let boat = mob(&mut state, "oak_boat", [0.5, 65.0, 0.5]);
+    run_tick(
+        &mut state,
+        &[PlayerInput::InteractEntity {
+            connection: ConnectionId(1),
+            target: boat,
+            hand: Hand::Main,
+            location: [0.0; 3],
+        }],
+    );
+    let slot = state.entities.slot_of(boat).unwrap();
+    assert_eq!(
+        crate::mounts::rider(&state, slot),
+        state.entities.slot_of(actor)
+    );
+    state.entities.set_pos(slot, [0.5, 70.0, 0.5]);
+    state.entities.set_vel(slot, [0.0; 3]);
+    run_tick(
+        &mut state,
+        &[PlayerInput::MoveVehicle {
+            connection: ConnectionId(1),
+            position: [50.0, 70.0, 50.0],
+            yaw: 0.0,
+            pitch: 0.0,
+            on_ground: false,
+        }],
+    );
+    assert!(
+        state.entities.pos(slot)[1] < 70.0,
+        "a rejected packet cannot freeze a boat in midair"
+    );
+}
+
+#[test]
+fn boat_client_water_moves_are_accepted_without_correction_feedback() {
+    let mut state = fixture();
+    let actor = player(&mut state, [0.5, 65.8, -0.5]);
+    let water = block(&state, "water", &[("level", "0")]);
+    for x in -2..=2 {
+        for z in -2..=12 {
+            state.world.set_block(x, 65, z, water);
+        }
+    }
+    let boat = mob(&mut state, "oak_boat", [0.5, 65.8, 0.5]);
+    run_tick(
+        &mut state,
+        &[PlayerInput::InteractEntity {
+            connection: ConnectionId(1),
+            target: boat,
+            hand: Hand::Main,
+            location: [0.0; 3],
+        }],
+    );
+    let slot = state.entities.slot_of(boat).unwrap();
+    assert_eq!(
+        crate::mounts::rider(&state, slot),
+        state.entities.slot_of(actor)
+    );
+    let start = state.entities.pos(slot);
+    for step in 1..=30 {
+        let position = [start[0], start[1], start[2] + f64::from(step) * 0.1];
+        let (_, changes, _) = run_tick(
+            &mut state,
+            &[
+                PlayerInput::VehicleInput {
+                    connection: ConnectionId(1),
+                    flags: 1,
+                },
+                PlayerInput::MoveVehicle {
+                    connection: ConnectionId(1),
+                    position,
+                    yaw: 0.0,
+                    pitch: 0.0,
+                    on_ground: false,
+                },
+            ],
+        );
+        assert!(
+            !changes
+                .iter()
+                .flat_map(|(_, changes)| changes)
+                .any(|change| matches!(
+                    change,
+                    crate::boundary::PlayerChange::VehicleCorrected { .. }
+                )),
+            "accepted water movement must not trigger correction/echo feedback"
+        );
+        assert_eq!(
+            state.entities.pos(slot),
+            position,
+            "do not integrate a client-steered boat twice"
+        );
+    }
+    assert!(state.entities.pos(slot)[2] > start[2] + 2.9);
+    let stone = state.registry.states.stone;
+    for y in 65..=67 {
+        state.world.set_block(0, y, 5, stone);
+    }
+    let (_, changes, _) = run_tick(
+        &mut state,
+        &[PlayerInput::MoveVehicle {
+            connection: ConnectionId(1),
+            position: [start[0], start[1], 5.5],
+            yaw: 0.0,
+            pitch: 0.0,
+            on_ground: false,
+        }],
+    );
+    assert!(
+        state.entities.pos(slot)[2] < 5.0,
+        "boat cannot pass through a wall"
+    );
+    assert!(
+        changes
+            .iter()
+            .flat_map(|(_, changes)| changes)
+            .any(|change| matches!(
+                change,
+                crate::boundary::PlayerChange::VehicleCorrected { .. }
+            )),
+        "clipped vehicle moves still require correction"
+    );
+    let (_, changes, _) = run_tick(
+        &mut state,
+        &[PlayerInput::MoveVehicle {
+            connection: ConnectionId(1),
+            position: [50.0, 65.8, 50.0],
+            yaw: 0.0,
+            pitch: 0.0,
+            on_ground: false,
+        }],
+    );
+    assert!(
+        changes
+            .iter()
+            .flat_map(|(_, changes)| changes)
+            .any(|change| matches!(
+                change,
+                crate::boundary::PlayerChange::VehicleCorrected { .. }
+            )),
+        "invalid vehicle moves still require correction"
+    );
+}
+
+#[test]
+fn boat_and_raft_player_seats_use_vehicle_attachment_points() {
+    for (name, height_fraction, forward) in [
+        ("oak_boat", 1.0 / 3.0, 0.0),
+        ("oak_chest_boat", 1.0 / 3.0, f64::from(0.15_f32)),
+        ("bamboo_raft", f64::from(0.888_888_9_f32), 0.0),
+        (
+            "bamboo_chest_raft",
+            f64::from(0.888_888_9_f32),
+            f64::from(0.15_f32),
+        ),
+    ] {
+        let mut state = fixture();
+        let actor = player(&mut state, [0.5, 65.0, -0.5]);
+        let boat = mob(&mut state, name, [0.5, 65.0, 0.5]);
+        run_tick(
+            &mut state,
+            &[PlayerInput::InteractEntity {
+                connection: ConnectionId(1),
+                target: boat,
+                hand: Hand::Main,
+                location: [0.0; 3],
+            }],
+        );
+        let slot = state.entities.slot_of(boat).unwrap();
+        let rider = state.entities.slot_of(actor).unwrap();
+        assert_eq!(crate::mounts::rider(&state, slot), Some(rider));
+        let at = state.entities.pos(slot);
+        let player_at = state.entities.pos(rider);
+        let expected_y =
+            at[1] + state.entities.body(slot).height * height_fraction - f64::from(0.6_f32);
+        assert!(
+            (player_at[1] - expected_y).abs() < 1e-6,
+            "{name}: {player_at:?}, expected y={expected_y}"
+        );
+        assert!(
+            (player_at[2] - at[2] - forward).abs() < 1e-6,
+            "{name}: chest seat offset"
+        );
+    }
+}
+
+#[test]
 fn riding_boat_steers_paddles_collides_and_cannot_client_teleport() {
     let mut s = fixture();
     let actor = player(&mut s, [0.5, 65.8, -0.5]);

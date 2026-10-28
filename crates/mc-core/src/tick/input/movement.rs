@@ -6,13 +6,74 @@ use mc_physics::mth;
 
 const FLY_KICK_REASON: &str = "Flying is not enabled on this server";
 
-fn supported(state: &TickState, slot: crate::entities::EntitySlot, position: [f64; 3]) -> bool {
-    let body = state.entities.body(slot);
-    mc_physics::resolve_collision_displacement(
-        &TickSampler {
+/// Scaffolding collision depends on the player's feet and sneak input, not only
+/// the block state. The context-free registry shape is the top platform.
+struct MovementSampler<'a> {
+    base: TickSampler<'a>,
+    feet_y: f64,
+    descending: bool,
+}
+
+impl mc_physics::BlockSampler for MovementSampler<'_> {
+    fn material_at(&self, x: i32, y: i32, z: i32) -> mc_physics::BlockMaterial {
+        self.base.material_at(x, y, z)
+    }
+
+    fn max_collision_box_y(&self) -> u8 {
+        self.base.max_collision_box_y()
+    }
+
+    fn collision_boxes_at(
+        &self,
+        x: i32,
+        y: i32,
+        z: i32,
+        emit: &mut dyn FnMut(mc_physics::BlockCollisionBox),
+    ) {
+        let id = self.base.world.physics_block_at(x, y, z);
+        if let Some(block) =
+            id.and_then(|id| self.base.registry.blocks.by_id(mc_world::BlockStateId(id)))
+            && block.block.id.path() == "scaffolding"
+        {
+            let above = |height| self.feet_y > f64::from(y) + height - f64::from(1e-5_f32);
+            if !above(1.0) || self.descending {
+                let prop = |name: &str, value: &str| {
+                    block
+                        .properties
+                        .iter()
+                        .any(|(key, val)| key == name && val == value)
+                };
+                if !prop("distance", "0") && prop("bottom", "true") && above(0.0) {
+                    emit(
+                        mc_physics::BlockCollisionBox::from_sixteenths(0, 0, 0, 16, 2, 16).unwrap(),
+                    );
+                }
+                return;
+            }
+        }
+        crate::tick::emit_collision_boxes(self.base.registry, id, emit);
+    }
+}
+
+fn movement_sampler(
+    state: &TickState,
+    slot: crate::entities::EntitySlot,
+    feet_y: f64,
+) -> MovementSampler<'_> {
+    MovementSampler {
+        base: TickSampler {
             world: &state.world,
             registry: &state.registry,
         },
+        feet_y,
+        descending: state.entities.row(slot).appearance.shared_flags & SNEAKING_FLAG != 0,
+    }
+}
+
+fn supported(state: &TickState, slot: crate::entities::EntitySlot, position: [f64; 3]) -> bool {
+    let body = state.entities.body(slot);
+    mc_physics::resolve_collision_displacement(
+        &movement_sampler(state, slot, position[1]),
         mc_physics::Vec3::new(position[0], position[1], position[2]),
         mc_physics::Aabb {
             half_width: body.half_width,
@@ -55,11 +116,8 @@ fn air_time_exception(
     };
     let water = |y| {
         at(y).is_some_and(|block| {
-            block.block.id.path() == "water"
-                || block
-                    .properties
-                    .iter()
-                    .any(|(name, value)| name == "waterlogged" && value == "true")
+            crate::fluids::contained(state, block.id.0)
+                .is_some_and(|(fluid, _)| fluid == crate::fluids::Fluid::Water)
         })
     };
     water(position[1])
@@ -176,10 +234,7 @@ pub(in crate::tick) fn move_input(
         state.correct_position(*connection, old, *yaw, *pitch);
         return;
     }
-    let sampler = TickSampler {
-        world: &state.world,
-        registry: &state.registry,
-    };
+    let sampler = movement_sampler(state, slot, old[1]);
     let body = state.entities.body(slot);
     let half_width = body.half_width;
     let height = body.height;
