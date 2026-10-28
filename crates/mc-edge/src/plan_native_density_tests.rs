@@ -8,11 +8,55 @@
 use super::*;
 use std::time::Instant;
 
-/// Protocol type ids in fixture order: cow, sheep, pig, chicken, zombie,
-/// skeleton, spider, creeper.
-const MOB_KINDS: [u32; 8] = [30, 111, 100, 26, 150, 115, 124, 32];
+/// Canonical types, resolved once during setup before any timed publish.
+/// Fixture order: cow, sheep, pig, chicken, zombie, skeleton, spider, creeper.
+static MOB_KINDS: std::sync::LazyLock<[u32; 8]> = std::sync::LazyLock::new(|| {
+    [
+        "minecraft:cow",
+        "minecraft:sheep",
+        "minecraft:pig",
+        "minecraft:chicken",
+        "minecraft:zombie",
+        "minecraft:skeleton",
+        "minecraft:spider",
+        "minecraft:creeper",
+    ]
+    .map(density_type_id)
+});
 
-const VILLAGER_TYPE_ID: u32 = 139;
+static VILLAGER_TYPE_ID: std::sync::LazyLock<u32> =
+    std::sync::LazyLock::new(|| density_type_id("minecraft:villager"));
+
+fn density_type_id(name: &str) -> u32 {
+    mc_data::entity_types::entity_type_contract_26_1_2_by_name(name)
+        .expect("canonical density fixture entity")
+        .protocol_id
+}
+
+#[test]
+fn density_fixture_uses_canonical_entity_types() {
+    let names = [
+        "minecraft:cow",
+        "minecraft:sheep",
+        "minecraft:pig",
+        "minecraft:chicken",
+        "minecraft:zombie",
+        "minecraft:skeleton",
+        "minecraft:spider",
+        "minecraft:creeper",
+        "minecraft:villager",
+    ];
+    let actual: Vec<_> = MOB_KINDS
+        .iter()
+        .copied()
+        .chain(std::iter::once(*VILLAGER_TYPE_ID))
+        .map(|id| {
+            mc_data::entity_types::entity_type_contract_26_1_2_by_protocol_id(id)
+                .map(|contract| contract.name.to_owned())
+        })
+        .collect();
+    assert_eq!(actual, names.map(|name| Some(name.to_owned())));
+}
 
 fn region_center(region: i32) -> (f64, f64) {
     (
@@ -88,7 +132,7 @@ fn edge_plan_native_density_bench() {
             2.5 + 8.0 * f64::from(n / 8),
         ];
         let mut villager = entity(200_000 + n, position);
-        villager.type_id = VILLAGER_TYPE_ID;
+        villager.type_id = *VILLAGER_TYPE_ID;
         villager.appearance = Arc::clone(&shared_appearance);
         entities.push(villager);
         mob_positions.push(position);
@@ -283,7 +327,7 @@ fn edge_plan_native_delta_bench() {
             EntityId(id),
             uuid::Uuid::from_u128(id as u128),
             EntityKind::Mob {
-                type_id: VILLAGER_TYPE_ID,
+                type_id: *VILLAGER_TYPE_ID,
             },
             cold(position),
         ));

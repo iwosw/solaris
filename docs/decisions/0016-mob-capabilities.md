@@ -114,6 +114,12 @@ Limits that follow from presenting as a vanilla type:
   the mob presents as a creeper; any other presentation keeps the fuse on the
   server. Writing a creeper field into another type's layout would break client
   decoding.
+  The same rule applies to crossbow charging: Pillager owns BOOLEAN17 and Piglin
+  owns BOOLEAN18 (17 is its baby state), in both protocol777 and legacy775.
+  Skeleton/zombie carriers can execute the crossbow capability and publish
+  charged equipment without inventing a Pillager accessor. In particular Stray
+  ends at inherited Mob15, while Zombie17 is INT special-type data. Native
+  charging transitions and replay restoration use the same carrier-owned writer.
 - Vanilla kill/riding statistics stay vanilla-typed: a custom key does not
   impersonate its presentation type. Plugin entity events report the custom
   namespaced id.

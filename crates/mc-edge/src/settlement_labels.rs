@@ -9,11 +9,10 @@
 //! core store and are never targetable/pushable (`text_display` has no
 //! hitbox).
 //!
-//! `minecraft:text_display` is protocol id 131 in the local 26.1.2
-//! `minecraft:entity_type` report
-//! (`crates/mc-data/data/required_registries.json`), matching the dense
-//! contract row's `Display.TextDisplay` recreation method. Metadata indices
-//! are the local 26.1.2 client jar `javap` oracle:
+//! The spawn type comes from the canonical entity contract: 26.3 text_display
+//! is 135, not the old 26.1.2 id 131 (now Stray). The legacy registry-name map
+//! translates 135 back to 131 for protocol 775. Metadata indices are identical in
+//! the local 26.3 and 26.1.2 `javap` oracles:
 //! `Entity` defines 0..7 (shared flags 0, custom name 2, visible 3),
 //! `Display` defines 8..22 (billboard 15, view range 17, shadow 18..19, width
 //! 20, height 21), `Display$TextDisplay` defines 23..27 (text 23, line width
@@ -34,8 +33,12 @@ use mc_protocol::packets::play::{
 
 use crate::plan::{PlannedPacket, ViewerState, push_reliable};
 
-/// Protocol id of `minecraft:text_display` (local 26.1.2 registry report).
-const TEXT_DISPLAY_TYPE_ID: i32 = 131;
+/// Cached canonical type, never a version-specific duplicate of the registry.
+static TEXT_DISPLAY_TYPE_ID: std::sync::LazyLock<i32> = std::sync::LazyLock::new(|| {
+    mc_data::entity_types::entity_type_contract_26_1_2_by_name("minecraft:text_display")
+        .expect("canonical text_display entity contract")
+        .protocol_id as i32
+});
 
 /// `Display.DATA_BILLBOARD_RENDER_CONSTRAINTS_ID`: index 15, BYTE serializer.
 /// CENTER (3) faces the viewer, matching in-world sign readability.
@@ -256,7 +259,7 @@ pub(crate) fn plan_labels(
             &AddEntity {
                 entity_id: id,
                 uuid: label_uuid(snapshot.dimension, label.anchor),
-                entity_type_id: TEXT_DISPLAY_TYPE_ID,
+                entity_type_id: *TEXT_DISPLAY_TYPE_ID,
                 x: label.position[0],
                 y: label.position[1],
                 z: label.position[2],

@@ -15,6 +15,51 @@ fn session() -> Session {
 }
 
 #[test]
+fn settlement_text_display_maps_to_legacy_type_without_changing_its_accessors() {
+    let mut s = test_session(Tables {
+        entities: IdMap::by_name(
+            [("minecraft:text_display", 135)],
+            [("minecraft:text_display", 131)],
+            |_| None,
+        ),
+        ..Tables::default()
+    });
+    let mut body = Vec::new();
+    body.write_varint(-1);
+    body.extend([0; 16]); // UUID
+    body.write_varint(135); // 26.3 text_display, not stray131
+    for value in [8.5, 66.6, 8.5] {
+        body.write_f64(value);
+    }
+    body.extend([0; 5]); // zero LP velocity, three rotations, spawn data
+    let legacy = clientbound(&mut s, "minecraft:add_entity", &body)
+        .unwrap()
+        .unwrap();
+    let mut reader = &legacy[..];
+    assert_eq!(reader.read_varint().unwrap(), -1);
+    reader.read_uuid().unwrap();
+    assert_eq!(reader.read_varint().unwrap(), 131);
+    assert!(
+        !s.entities.contains_key(&-1),
+        "display metadata layout is unchanged"
+    );
+
+    let mut data = Vec::new();
+    data.write_varint(-1);
+    data.extend([17, 3]); // Display view range: FLOAT17 in both versions
+    data.write_f32(1.0);
+    data.extend([23, 5, 8, 0, 5]); // TextDisplay COMPONENT23, network NBT string
+    data.extend(b"House");
+    data.push(255);
+    assert_eq!(
+        clientbound(&mut s, "minecraft:set_entity_data", &data)
+            .unwrap()
+            .unwrap(),
+        data
+    );
+}
+
+#[test]
 fn light_masks_expand_native_bytes_into_legacy_longs() {
     let native = [
         2, 0, 2, // sky: bit 9

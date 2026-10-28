@@ -131,8 +131,8 @@ fn settlement_labels_spawn_real_text_display_metadata() {
         "virtual ids never alias gameplay positives"
     );
     assert_eq!(
-        added.entity_type_id, 131,
-        "minecraft:text_display registry id"
+        added.entity_type_id, 135,
+        "26.3 minecraft:text_display registry id;131 is stray"
     );
     assert!((added.x - 8.5).abs() < f64::EPSILON);
     assert!((added.y - 66.6).abs() < 1e-9);

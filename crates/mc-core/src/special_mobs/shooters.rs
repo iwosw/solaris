@@ -330,12 +330,6 @@ fn crossbow(state: &mut TickState, id: EntityId, slot: EntitySlot, at: [f64; 3])
             }
         },
     };
-    metadata(
-        state,
-        slot,
-        17,
-        EntityDataValue::Boolean(next.is_some_and(|value| value.phase == CrossbowPhase::Charging)),
-    );
     state
         .entities
         .row_mut(slot)
