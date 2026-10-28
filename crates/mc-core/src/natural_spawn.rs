@@ -448,7 +448,10 @@ fn observe_slot(state: &mut TickState, slot: EntitySlot) {
     let entity = row.id;
     let position = state.entities.pos(slot);
     let width = row.half_width;
-    let category = (!persistent(state.entities.row(slot)))
+    // Native rows outlive residency, unlike vanilla's loaded-entity census.
+    // Keep their bodies indexed for overlap checks, but not in loaded mob caps.
+    let cell = chunk_of(position);
+    let category = (!persistent(state.entities.row(slot)) && state.world.has_chunk(cell.0, cell.1))
         .then(|| category_of(state, slot))
         .and_then(category_index);
     state
