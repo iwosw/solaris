@@ -223,3 +223,38 @@ and do not require Mojang data.
 Set `SOLARIS_SERVER_BINARY` to the actual Cargo target path if
 `CARGO_TARGET_DIR` is overridden, and `SOLARIS_LOADER_ROOT` to the checkout
 containing the 26.1.2 graphical automation agent.
+
+## Canonical 26.3 Play wire acceptance (2026-10-28)
+
+The agent-run Minecraft Java 26.3 client (NeoForge 26.3.0.83 plus the
+automation agent) passed all four requested profiles on the same release
+server SHA-256
+`3d65f95698b60f8ee45dfd356ce97667f26d546768b9e0980dc41dcf42bdd9ab`.
+The two wire fixes are the named HolderSet marker in recipe tag displays and
+byte-array BitSets in chunk/incremental lighting; neither fix suppresses packets.
+
+Receipts below are relative to the `pauline/tags263` validation checkout:
+
+| Profile | Passed scope | Receipt (`result.json`) |
+|---|---|---|
+| `core-client --client java` | Play join and own-chat echo on the same connection/dimension; not Wasm/economy/Loader-required checks | `.analysis/validation/20261028T095727-core-client-ny4t4eqy/` |
+| `inventory --client java` | Cursor conservation, oak-log-to-four-planks crafting, empty grid/cursor and hotbar selection | `.analysis/validation/20261028T095829-inventory-gvlkvyux/` |
+| `survival --client java` | Ordinary mining, item pickup, selection, placement and consumption | `.analysis/validation/20261028T095920-survival-_pf6nb4e/` |
+| `entities --client java` | Same pig UUID fed, damaged, killed, removed and its drop collected/selected | `.analysis/validation/20261028T100001-entities-74xk4fiv/` |
+
+These are bounded 777 gameplay passes, not full vanilla parity. Client logs
+still report decorated-pot block-entity NBT `sherds` lists rejected as
+`Not a map` (for example the core-client `client.log:130–156`). This is an
+observed remaining NBT presentation defect; the gates do not certify pottery
+appearance. The OpenGL backend attempt fails with `EGL_BAD_DISPLAY`, after
+which the client creates a Wayland window and reaches Play; no packet decode
+disconnect remains in these four receipts.
+
+Focused validation: 460 `mc-protocol` library tests, 31 legacy unit tests,
+the explicitly enabled legacy TCP join/chunk test, and strict Clippy
+`-p mc-protocol -p mc-edge --all-targets -- -D warnings` passed.
+Failing-first logs and local-jar disassembly evidence are retained under
+`.analysis/codex-logs/Wire263/`. Reproduce using the commands above with the
+26.3 automation checkout in `SOLARIS_LOADER_ROOT` and the actual release binary
+in `SOLARIS_SERVER_BINARY`; the legacy TCP test used
+`SOLARIS_LEGACY_CONTENT_CACHE=/home/kaiserroman/solaris/data/vanilla`.
