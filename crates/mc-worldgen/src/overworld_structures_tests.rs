@@ -10,6 +10,169 @@ fn root() -> std::path::PathBuf {
 }
 
 #[test]
+fn generated_fully_eyed_stronghold_activates_portal() {
+    let registry = registry();
+    let original = stronghold(&registry).unwrap();
+    let eyes = stronghold_eye_states(&registry).unwrap();
+    let blocks = original
+        .blocks()
+        .iter()
+        .map(|block| {
+            let mut block = *block;
+            if let Some((_, filled)) = eyes.iter().find(|(empty, _)| *empty == block.state) {
+                block.state = *filled;
+            }
+            block
+        })
+        .collect();
+    let template = StructureTemplate::new(original.size(), blocks)
+        .with_chests(original.chests().to_vec())
+        .with_block_entities(original.block_entities().to_vec())
+        .with_entities(original.entities().to_vec());
+    let structures = OverworldStructures {
+        seed: 42,
+        strongholds: vec![(0, 0)],
+        stronghold: template,
+        stronghold_eye_states: eyes,
+        stronghold_portal: state(&registry, "minecraft:end_portal").unwrap(),
+        families: Vec::new(),
+        features: Vec::new(),
+        reach_before: [3, 2],
+        reach_after: [0, 0],
+    };
+    let mut chunk = Chunk::empty(
+        ChunkPos { x: 0, z: 0 },
+        state(&registry, "minecraft:stone").unwrap(),
+        id("minecraft:plains"),
+    );
+    structures.paste(&mut chunk, |_, _| 32, |_, _, _| id("minecraft:plains"));
+    let portal = state(&registry, "minecraft:end_portal").unwrap();
+    for x in 6..=8 {
+        for z in 6..=8 {
+            assert_eq!(chunk.get_block(x, 3, z), Some(portal), "portal at {x},{z}");
+        }
+    }
+}
+
+#[test]
+fn generated_stronghold_eye_patterns_vary_between_sites_in_one_world() {
+    let registry = registry();
+    let template = stronghold(&registry).unwrap();
+    let structures = OverworldStructures {
+        seed: 42,
+        strongholds: (0..16).map(|x| (x * 10, 0)).collect(),
+        stronghold: template.clone(),
+        stronghold_eye_states: stronghold_eye_states(&registry).unwrap(),
+        stronghold_portal: state(&registry, "minecraft:end_portal").unwrap(),
+        families: Vec::new(),
+        features: Vec::new(),
+        reach_before: [3, 2],
+        reach_after: [0, 0],
+    };
+    let mut patterns = HashSet::new();
+    for x in 0..16 {
+        let mut chunk = Chunk::empty(
+            ChunkPos { x: x * 10, z: 0 },
+            state(&registry, "minecraft:stone").unwrap(),
+            id("minecraft:plains"),
+        );
+        structures.paste(&mut chunk, |_, _| 32, |_, _, _| id("minecraft:plains"));
+        let pattern: Vec<_> = template
+            .blocks()
+            .iter()
+            .filter(|block| {
+                registry.by_id(block.state).unwrap().block.id == id("minecraft:end_portal_frame")
+            })
+            .map(|block| {
+                let [x, y, z] = block.pos;
+                let state = chunk.get_block(x as u8, y, z as u8).unwrap();
+                registry
+                    .by_id(state)
+                    .unwrap()
+                    .properties
+                    .iter()
+                    .any(|(k, v)| k == "eye" && v == "true")
+            })
+            .collect();
+        patterns.insert(pattern);
+    }
+    assert!(
+        patterns.len() > 1,
+        "strongholds in one world must not share a single eye pattern"
+    );
+}
+
+#[test]
+fn generated_stronghold_frame_eyes_are_independent_and_seeded() {
+    let registry = registry();
+    let template = stronghold(&registry).unwrap();
+    let mut eyes = 0;
+    let mut empty_rooms = 0;
+    let mut mixed_rooms = 0;
+    for seed in 0..256 {
+        let structures = OverworldStructures {
+            seed,
+            strongholds: vec![(0, 0)],
+            stronghold: template.clone(),
+            stronghold_eye_states: stronghold_eye_states(&registry).unwrap(),
+            stronghold_portal: state(&registry, "minecraft:end_portal").unwrap(),
+            families: Vec::new(),
+            features: Vec::new(),
+            reach_before: [3, 2],
+            reach_after: [0, 0],
+        };
+        let generate = || {
+            let mut chunk = Chunk::empty(
+                ChunkPos { x: 0, z: 0 },
+                state(&registry, "minecraft:stone").unwrap(),
+                id("minecraft:plains"),
+            );
+            structures.paste(&mut chunk, |_, _| 32, |_, _, _| id("minecraft:plains"));
+            chunk
+        };
+        let chunk = generate();
+        let repeat = generate();
+        let mut room_eyes = 0;
+        for block in template.blocks().iter().filter(|block| {
+            registry.by_id(block.state).unwrap().block.id == id("minecraft:end_portal_frame")
+        }) {
+            let [x, y, z] = block.pos;
+            let actual = chunk.get_block(x as u8, y, z as u8).unwrap();
+            assert_eq!(repeat.get_block(x as u8, y, z as u8), Some(actual));
+            let actual = registry.by_id(actual).unwrap();
+            let original = registry.by_id(block.state).unwrap();
+            assert_eq!(actual.block.id, original.block.id);
+            assert_eq!(
+                actual.properties.iter().find(|(k, _)| k == "facing"),
+                original.properties.iter().find(|(k, _)| k == "facing")
+            );
+            if actual
+                .properties
+                .iter()
+                .any(|(k, v)| k == "eye" && v == "true")
+            {
+                room_eyes += 1;
+            }
+        }
+        eyes += room_eyes;
+        empty_rooms += usize::from(room_eyes == 0);
+        mixed_rooms += usize::from((1..12).contains(&room_eyes));
+    }
+    assert!(
+        (215..=400).contains(&eyes),
+        "expected approximately 10% of 3072 eyes, got {eyes}"
+    );
+    assert!(
+        empty_rooms > 20,
+        "no forced guaranteed eyes: {empty_rooms} empty rooms"
+    );
+    assert!(
+        mixed_rooms > 100,
+        "frame outcomes must vary independently: {mixed_rooms} mixed rooms"
+    );
+}
+
+#[test]
 fn stronghold_portal_room_has_twelve_inward_frames_spawner_and_loot() {
     let registry = registry();
     let template = stronghold(&registry).unwrap();
@@ -128,16 +291,16 @@ fn vanilla_catalog_loads_and_located_stronghold_generates_portal() {
         x: site.start_chunk.0,
         z: site.start_chunk.1,
     });
-    let expected = registry
-        .by_name_and_props(
-            &id("minecraft:end_portal_frame"),
-            &[
-                ("eye".into(), "false".into()),
-                ("facing".into(), "south".into()),
-            ],
-        )
+    let frame = registry
+        .by_id(chunk.get_block(6, site.position.y + 3, 5).unwrap())
         .unwrap();
-    assert_eq!(chunk.get_block(6, site.position.y + 3, 5), Some(expected));
+    assert_eq!(frame.block.id, id("minecraft:end_portal_frame"));
+    assert!(
+        frame
+            .properties
+            .iter()
+            .any(|(key, value)| key == "facing" && value == "south")
+    );
     assert!(chunk.block_entities.contains_key(&BlockPos {
         x: site.position.x + 7,
         y: site.position.y + 1,
