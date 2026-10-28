@@ -18,6 +18,7 @@ import json
 import math
 import os
 from pathlib import Path
+import shlex
 import shutil
 import signal
 import tempfile
@@ -195,7 +196,8 @@ class CoreSession(load.Session):
 
     async def start_server(self) -> None:
         command = [str(self.args.server_bin), "--config", str(self.config), "--no-console"]
-        command = ["taskset", "-c", self.args.server_cpus, *command]
+        command = [*shlex.split(getattr(self.args, "server_wrapper", "") or ""),
+                   "taskset", "-c", self.args.server_cpus, *command]
         load.scale.dump(self.directory / "server-command.json", command)
         await self.spawn("server", command)
 

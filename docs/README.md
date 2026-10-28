@@ -24,7 +24,8 @@ installation and a source quick start.
   and [scenario index](generated/scenario-index.md): source-derived navigation.
 - [Physics oracles](physics-oracles.md), [core profiling](performance/CORE_PROFILE_MATRIX.md)
   and [entity scale profiling](performance/ENTITY_SCALE_PROFILE.md),
-  [v2 player capacity receipt](performance/PLAYER_CAPACITY.md).
+  [v2 player capacity receipt](performance/PLAYER_CAPACITY.md),
+  [weak-hardware / scaling / worldgen / VPS benchmarks](performance/BENCHMARKS.md).
 - [Settlements owner decisions](settlements/OWNER_DECISIONS.md) and
   [warehouse binding](architecture/pilot-warehouse-binding.md): scoped domain contracts.
 
