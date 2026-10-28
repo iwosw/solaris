@@ -60,6 +60,43 @@ on an unsupported protocol receives vanilla's
 close. Sessions of the previous release (26.1.2, protocol 775) are translated
 at the edge as described in ADR 0015.
 
+### Retaining 26.1.2 clients after upgrading to 26.3
+
+Protocol 775 clients need a **separate, intact 26.1.2 content cache**. Keep
+the deployment's existing cache before importing 26.3; do not overwrite the
+old cache. It must include the datapack, `reports/packets.json`,
+`reports/registries.json`, `reports/blocks.json` and captured
+`reports/registry_network_nbt`, not just a version file or jar.
+
+The edge finds it in this order:
+
+1. `SOLARIS_LEGACY_CONTENT_CACHE` (an explicit path).
+2. A sibling release directory: canonical `.../content/26.3` uses
+   `.../content/26.1.2`.
+3. Otherwise, the canonical path with `-26.1.2` appended: `data/vanilla`
+   uses `data/vanilla-26.1.2`.
+
+For a custom layout, set the environment in the server's normal launch
+environment (or its service configuration), for example:
+
+```sh
+export SOLARIS_LEGACY_CONTENT_CACHE=/srv/solaris/content/26.1.2
+```
+
+The server logs `26.1.2 (protocol 775) clients enabled` when loading succeeds.
+A missing or unusable old cache logs the reason and disables 775 logins;
+they receive the incompatible-version disconnect. Canonical 777 clients
+continue to use the 26.3 cache. The rc.1 `content import` command imports
+26.3 only: retain the old deployment cache rather than trying to recreate it
+with that command. A fresh 26.3-only installation, including native-client
+singleplayer, does not need the legacy cache unless it will admit 775 clients.
+
+Legacy clients receive their own registry/tag snapshot. New block states,
+items and entity types are shown as named 26.1.2 substitutes (for example,
+cinnabar as granite and a sulfur cube as a slime), not their shifted numeric
+ids. This is protocol compatibility, not identical rendering or mechanics for
+new content; see [ADR 0015](decisions/0015-multiversion-protocol-translation.md).
+
 ## Supported configuration
 
 ```toml
