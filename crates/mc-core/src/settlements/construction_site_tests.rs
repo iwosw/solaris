@@ -446,3 +446,105 @@ fn terrain_preparation_rejects_four_block_variance_and_protected_cells() {
         );
     }
 }
+
+fn unfunded_near_foundation() -> (TickState, SettlementId, [i32; 3]) {
+    let (mut state, id, _) = fixture();
+    fund(&mut state, "storage", 1);
+    solid_plateau(&mut state);
+    let size = storage_size(&state);
+    let anchor = state.settlements.get(id).unwrap().anchor;
+    let near = centred(anchor, size, 0, 0);
+    let far = centred(anchor, size, -12, 0);
+    clear(&mut state, near, size);
+    clear(&mut state, far, size);
+    // The near pocket needs one dirt below its authored floor. The stock
+    // funds the complete building, but contains no foundation dirt.
+    let (x, z) = (near[0] + 1, near[2] + 1);
+    state
+        .world
+        .set_block(x, 198, z, state.registry.states.stone);
+    for y in 199..=200 {
+        state.world.set_block(x, y, z, state.registry.states.air);
+    }
+    state.world.fold_overlay();
+    assert!(site_free(
+        &state,
+        state.settlements.get(id).unwrap(),
+        near,
+        size
+    ));
+    assert!(site_free(
+        &state,
+        state.settlements.get(id).unwrap(),
+        far,
+        size
+    ));
+    (state, id, far)
+}
+
+#[test]
+fn hillside_review_autonomous_search_skips_unfunded_foundation_within_budget() {
+    let (mut state, id, far) = unfunded_near_foundation();
+    plan(&mut state, id);
+    let record = state.settlements.get(id).unwrap();
+    assert!(
+        record.project.is_none(),
+        "far site is outside the first pass"
+    );
+    assert_eq!(
+        record.construction_cursor, SITE_ATTEMPTS,
+        "unfunded site cannot reset the cursor"
+    );
+    for _ in 0..32 {
+        plan(&mut state, id);
+        if state.settlements.get(id).unwrap().project.is_some() {
+            break;
+        }
+    }
+    let project = state
+        .settlements
+        .get(id)
+        .unwrap()
+        .project
+        .as_ref()
+        .expect("far funded site");
+    assert_eq!(project.origin, far);
+}
+
+#[test]
+fn hillside_review_owner_search_skips_unfunded_foundation() {
+    let (mut state, id, far) = unfunded_near_foundation();
+    request_build(&mut state, id, "storage").expect("far funded site");
+    let project = state.settlements.get(id).unwrap().project.as_ref().unwrap();
+    assert_eq!(project.origin, far);
+    assert!(project.ordered);
+}
+
+#[test]
+fn hillside_review_floor_under_overhang_preserves_fluids_and_protected_blocks() {
+    let (mut state, id, _) = fixture();
+    let origin = [5, 200, 5];
+    let size = [3, 5, 3];
+    state
+        .world
+        .set_block(6, 201, 6, state.registry.states.stone);
+    assert!(
+        site_free(&state, state.settlements.get(id).unwrap(), origin, size),
+        "solid natural ground below the overhang is replaceable"
+    );
+    for name in [
+        "minecraft:water",
+        "minecraft:lava",
+        "minecraft:dirt_path",
+        "minecraft:farmland",
+        "minecraft:wheat",
+        "minecraft:torch",
+    ] {
+        let block = crate::settlements::allocator::tests::block(&state, name, &[]);
+        state.world.set_block(6, 200, 6, block);
+        assert!(
+            !site_free(&state, state.settlements.get(id).unwrap(), origin, size),
+            "protected floor under overhang: {name}"
+        );
+    }
+}

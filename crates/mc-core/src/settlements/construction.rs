@@ -109,15 +109,12 @@ pub(crate) fn request_build(
         preempt(state, id)?;
     }
     let record = state.settlements.get(id).expect("claimed settlement");
-    let (project, cursor) = site_project(state, record, blueprint, 0, u32::MAX);
-    let mut project = project.ok_or("No free loaded construction site is available.")?;
-    let (bounds, cells) = planned_cells(state, &project).ok_or("Construction admission failed.")?;
-    let bill = cell_bill(state, &cells).ok_or("Construction admission failed.")?;
-    if let Some(error) = funding_error(state, id, &bill) {
-        return Err(error);
-    }
-    project.ordered = true;
-    if !begin_cells(state, project, bounds, cells) {
+    let images = executor::source_images(state, id);
+    let (site, cursor) = site_project(state, record, blueprint, 0, u32::MAX, &images);
+    let mut site =
+        site.ok_or("No free loaded construction site is available within the material budget.")?;
+    site.project.ordered = true;
+    if !begin_cells(state, site.project, site.bounds, site.cells) {
         return Err("Construction admission failed.".into());
     }
     state
@@ -327,6 +324,25 @@ fn excavatable(state: &TickState, block: u32) -> bool {
 
 const SITE_VARIANCE: i32 = 3;
 
+/// Floor replacement permits solid ground or clearable fill space, but never
+/// fluids, paths, paid crops or authored non-ground blocks under an overhang.
+fn floor_replaceable(state: &TickState, block: u32) -> bool {
+    clearable(state, block)
+        || (state
+            .registry
+            .collision_boxes
+            .get(block as usize)
+            .is_some_and(|boxes| !boxes.is_empty())
+            && state
+                .registry
+                .blocks
+                .by_id(mc_world::BlockStateId(block))
+                .is_some_and(|definition| {
+                    !definition.has_fluid()
+                        && !matches!(definition.block.id.path(), "dirt_path" | "farmland")
+                }))
+}
+
 /// Check the whole future footprint, not merely this level's placed cells.
 /// One candidate per planning admission; never load chunks or clear paths.
 pub(super) fn site_free(
@@ -369,14 +385,7 @@ pub(super) fn site_free(
                 .world
                 .physics_block_at(x, height, z)
                 .expect("loaded surface");
-            if state
-                .registry
-                .blocks
-                .by_id(mc_world::BlockStateId(ground))
-                .is_some_and(|definition| {
-                    matches!(definition.block.id.path(), "dirt_path" | "farmland")
-                })
-            {
+            if !floor_replaceable(state, ground) {
                 return false;
             }
             for y in height.min(origin[1])..=max[1].max(height) {
@@ -384,6 +393,7 @@ pub(super) fn site_free(
                     return false;
                 };
                 if state.block_entities.contains_key(&(x, y, z))
+                    || (y == origin[1] && !floor_replaceable(state, block))
                     || (y > origin[1] && !clearable(state, block) && !excavatable(state, block))
                     || (y > height && y <= origin[1] && !clearable(state, block))
                 {
@@ -641,11 +651,17 @@ fn ring_offset(n: u32) -> (i32, i32) {
     }
 }
 
+struct FundedSite {
+    project: Project,
+    bounds: ScriptWorldBounds,
+    cells: Vec<executor::PlannedCell>,
+}
+
 /// The same bounded site search serves autonomous planning and immediate
-/// owner admission: the nearest free site to the settlement anchor, searched
+/// owner admission: the nearest free, fully funded site to the settlement anchor, searched
 /// outward in rings from ring index `start`. `attempts` bounds the columns
 /// examined; the owner order starts at the anchor with `u32::MAX` and so finds
-/// a loaded site on the first try when any exists. A rejected owner order does
+/// a funded loaded site on the first try when any exists. A rejected owner order does
 /// not save a search cursor; success returns cursor 0 so the next search
 /// starts at the anchor again.
 fn site_project(
@@ -654,7 +670,8 @@ fn site_project(
     blueprint: &blueprints::Blueprint,
     start: u32,
     attempts: u32,
-) -> (Option<Project>, u32) {
+    images: &[super::inventory::Image],
+) -> (Option<FundedSite>, u32) {
     let size = blueprint.footprint(Rotation::from_quarter_turns(0));
     let radius = record.radius.min(256) as i32;
     let cells = ((radius * 2 + 1) as u32).pow(2);
@@ -679,19 +696,29 @@ fn site_project(
         };
         let origin = [x, ground, z];
         if site_free(state, record, origin, size) {
-            return (
-                Some(Project {
-                    settlement: record.id,
-                    blueprint: blueprint.id.clone(),
-                    level: 1,
-                    origin,
-                    rotation: 0,
-                    building: None,
-                    structure: String::new(),
-                    ordered: false,
-                }),
-                0,
-            );
+            let project = Project {
+                settlement: record.id,
+                blueprint: blueprint.id.clone(),
+                level: 1,
+                origin,
+                rotation: 0,
+                building: None,
+                structure: String::new(),
+                ordered: false,
+            };
+            if let Some((bounds, cells)) = planned_cells(state, &project)
+                && let Some(bill) = cell_bill(state, &cells)
+                && super::construction_crafting::can_fund(state, &bill, images)
+            {
+                return (
+                    Some(FundedSite {
+                        project,
+                        bounds,
+                        cells,
+                    }),
+                    0,
+                );
+            }
         }
     }
     (None, index)
@@ -724,21 +751,19 @@ fn plan(state: &mut TickState, id: SettlementId) {
         }
         return;
     };
-    let (project, cursor) = site_project(
+    let (site, cursor) = site_project(
         state,
         record,
         blueprint,
         record.construction_cursor,
         SITE_ATTEMPTS,
+        &images,
     );
     let record = state.settlements.get_mut(id).expect("planned settlement");
     record.construction_cursor = cursor;
     record.revision = record.revision.saturating_add(1);
-    if let Some(project) = project
-        && let Some((bounds, cells)) = planned_cells(state, &project)
-        && cell_bill(state, &cells).is_some_and(|bill| executor::can_fund(state, id, &bill))
-    {
-        begin_cells(state, project, bounds, cells);
+    if let Some(site) = site {
+        begin_cells(state, site.project, site.bounds, site.cells);
     }
 }
 
