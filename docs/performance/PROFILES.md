@@ -212,6 +212,10 @@ binary hashes identify both its producer and current consumer. Use
 receipt is **not** a measurement. The PGO cache is reusable only when the recipe,
 content and fixture parameters match exactly; instrumented PGO timings are never
 published as these release measurements.
+Public input-echo fences during preparation share the bot's total
+`--prepare-seconds` readiness deadline rather than a separate per-batch timeout.
+The bot continues processing packets and replying to heartbeats while waiting
+for a slow `save-all flush` to complete; measured open-loop demand is unchanged.
 
 For a lifecycle-only check outside an exclusive window, add `--smoke`: the same
 full population runs for 2 seconds warmup and 5 seconds observation. Its status

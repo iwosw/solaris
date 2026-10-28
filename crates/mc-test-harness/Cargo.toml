@@ -55,3 +55,6 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 parking_lot = "0.12"
 tempfile = "3"
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }
