@@ -205,30 +205,30 @@ fn crafter_slot_toggle_exact_wire_reaches_core_and_rejects_trailing_bytes() {
 
 #[test]
 fn merchant_select_trade_matches_vanilla_varint_and_rejects_trailing_bytes() {
-    // Local 26.1.2 javap: GameProtocols registration 51; SelectTrade.write
+    // Local 26.3 packets.json: select_trade = 52; SelectTrade.write still
     // writes precisely one VarInt, with no container or revision field.
     use mc_protocol::packets::play::ServerboundSelectTrade;
-    assert_eq!(ServerboundSelectTrade::ID, 0x33);
+    assert_eq!(ServerboundSelectTrade::ID, 0x34);
     assert_eq!(
-        decode(0x33, vec![0xac, 0x02], &mut state()).unwrap(),
+        decode(0x34, vec![0xac, 0x02], &mut state()).unwrap(),
         vec![PlayerInput::SelectTrade {
             connection: conn(),
             offer: 300
         }]
     );
-    assert!(decode(0x33, vec![0x01, 0x00], &mut state()).is_err());
-    assert!(decode(0x33, vec![0xff, 0xff, 0xff, 0xff, 0x0f], &mut state()).is_err());
+    assert!(decode(0x34, vec![0x01, 0x00], &mut state()).is_err());
+    assert!(decode(0x34, vec![0xff, 0xff, 0xff, 0xff, 0x0f], &mut state()).is_err());
 }
 
 #[test]
 fn beacon_set_effect_reaches_core_with_zero_based_ids() {
-    // Local 26.1.2 javap: SERVERBOUND_SET_BEACON is the 53rd serverbound
-    // game addPacket call = wire id 0x34; body is two `optional(holderRegistry)`
-    // fields: one boolean each, then a VarInt zero-based mob_effect id.
+    // Local 26.3 packets.json: set_beacon = 53; body remains two
+    // `optional(holderRegistry)` fields: one boolean each, then a VarInt
+    // zero-based mob_effect id.
     use mc_protocol::packets::play::ServerboundSetBeacon;
-    assert_eq!(ServerboundSetBeacon::ID, 0x34);
+    assert_eq!(ServerboundSetBeacon::ID, 0x35);
     assert_eq!(
-        decode(0x34, vec![1, 1, 1, 9], &mut state()).unwrap(),
+        decode(0x35, vec![1, 1, 1, 9], &mut state()).unwrap(),
         vec![PlayerInput::SetBeacon {
             connection: conn(),
             primary: Some(1),
@@ -236,15 +236,15 @@ fn beacon_set_effect_reaches_core_with_zero_based_ids() {
         }]
     );
     assert_eq!(
-        decode(0x34, vec![0, 0], &mut state()).unwrap(),
+        decode(0x35, vec![0, 0], &mut state()).unwrap(),
         vec![PlayerInput::SetBeacon {
             connection: conn(),
             primary: None,
             secondary: None,
         }]
     );
-    assert!(decode(0x34, vec![1, 1], &mut state()).is_err());
-    assert!(decode(0x34, vec![1, 1, 1, 9, 0], &mut state()).is_err());
+    assert!(decode(0x35, vec![1, 1], &mut state()).is_err());
+    assert!(decode(0x35, vec![1, 1, 1, 9, 0], &mut state()).is_err());
 }
 
 #[test]
@@ -1035,7 +1035,7 @@ fn sneak_and_creative_slot_become_inputs() {
     ));
     let stack = mc_data::item_stack::ItemStack::new(1, 5);
     let out = decode(
-        0x38,
+        mc_protocol::packets::play::ServerboundSetCreativeModeSlot::ID,
         body(
             &mc_protocol::packets::play::ServerboundSetCreativeModeSlot {
                 slot: 36,

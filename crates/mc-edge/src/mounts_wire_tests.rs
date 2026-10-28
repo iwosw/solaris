@@ -110,7 +110,7 @@ fn tame_owner_reference_and_vehicle_correction_use_exact_protocol_codecs() {
     let mut viewer = ViewerState::new(ConnectionId(7), EntityId(7), [0.0; 3]);
     let packets = plan_player_changes(&[change], &mut viewer);
     assert_eq!(packets.len(), 1);
-    assert_eq!(packets[0].id, 0x39);
+    assert_eq!(packets[0].id, 0x3a);
     let decoded = ClientboundMoveVehicle::decode(&mut body(&packets[0])).unwrap();
     assert_eq!(
         (decoded.x, decoded.y, decoded.z, decoded.yaw, decoded.pitch),

@@ -192,9 +192,17 @@ fn cache_rejects_missing_artifacts_and_empty_network_payload_directory() {
     std::fs::remove_dir_all(temp.path().join(REQUIRED_REGISTRY_PAYLOAD_DIR)).unwrap();
     let error = format!("{:#}", validate_content_cache(temp.path()).unwrap_err());
     assert!(error.contains(REQUIRED_REGISTRY_PAYLOAD_DIR), "{error}");
-    std::fs::create_dir_all(temp.path().join(REQUIRED_REGISTRY_PAYLOAD_DIR)).unwrap();
+    // Keep the current payload directory layout, but no payload files.
+    for (registry, _) in mc_data::KNOWN_REGISTRIES {
+        let registry = mc_data::Identifier::parse(format!("minecraft:{registry}")).unwrap();
+        let entry = mc_data::Identifier::parse("minecraft:sample").unwrap();
+        let path = mc_data::network_registry_payload_path(temp.path(), &registry, &entry).unwrap();
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    }
     let error = format!("{:#}", validate_content_cache(temp.path()).unwrap_err());
-    assert!(error.contains("payload missing"), "{error}");
+    assert!(error.contains("captured RegistryData payloads"), "{error}");
+    assert!(error.contains("minecraft:sample"), "{error}");
+    assert!(error.contains("have no such entry"), "{error}");
     std::fs::remove_file(temp.path().join("reports/block_mining.json")).unwrap();
     let error = format!("{:#}", validate_content_cache(temp.path()).unwrap_err());
     assert!(

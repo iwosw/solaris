@@ -244,9 +244,9 @@ fn merchant_packets_match_local_vanilla_javap_layout_and_viewer_ownership() {
     ];
     let packets = plan_player_changes(&changes, &mut viewer_at(7, [0.0; 3]));
     assert_eq!(packets.len(), 2);
-    // GameProtocols javap registration indexes: OpenScreen59, MerchantOffers52.
-    assert_eq!(packets[0].id, 0x3b);
-    assert_eq!(packets[1].id, 0x34);
+    // 26.3 packets.json: open_screen = 60, merchant_offers = 53.
+    assert_eq!(packets[0].id, 0x3c);
+    assert_eq!(packets[1].id, 0x35);
     let open = ClientboundOpenScreen::decode(&mut body_of(&packets[0])).unwrap();
     assert_eq!(open.container_id, 4);
     assert_eq!(open.menu_type, 19);
@@ -518,7 +518,7 @@ fn wooden_sword_and_empty_hand_sync_own_attack_speed() {
         let packet = ClientboundUpdateEntityAttributes::decode(&mut body).unwrap();
         assert_eq!(packet.entity_id, 7);
         let attribute = &packet.attributes[0];
-        assert_eq!(attribute.attribute_id.raw(), 4);
+        assert_eq!(attribute.attribute_id.raw(), 5);
         let value = attribute.base + attribute.modifiers.iter().map(|m| m.amount).sum::<f64>();
         assert!((value - expected).abs() < 1.0e-12);
         assert!(body.is_empty());
@@ -560,7 +560,7 @@ fn speed_effect_uses_existing_movement_attribute_packet_and_reset() {
         let packet = ClientboundUpdateEntityAttributes::decode(&mut body).unwrap();
         assert_eq!(packet.entity_id, 7);
         let attribute = &packet.attributes[0];
-        assert_eq!(attribute.attribute_id.raw(), 22);
+        assert_eq!(attribute.attribute_id.raw(), 26);
         let value = attribute
             .modifiers
             .iter()
@@ -1273,7 +1273,7 @@ fn menus_health_chat_gamemode_cursor() {
         mc_protocol::packets::play::ClientboundOpenScreen::ID,
         mc_protocol::packets::play::ClientboundContainerSetContent::ID,
         mc_protocol::packets::play::ClientboundContainerSetSlot::ID,
-        0x60,
+        mc_protocol::packets::play::ClientboundSetCursorItem::ID,
         mc_protocol::packets::play::ClientboundContainerSetData::ID,
         mc_protocol::packets::play::ClientboundSetHealth::ID,
         mc_protocol::packets::play::ClientboundSetExperience::ID,
@@ -1398,7 +1398,7 @@ fn entity_events_map() {
         assert!(
             packets
                 .iter()
-                .any(|p| p.id == mc_protocol::packets::play::EntityAnimation::ID)
+                .any(|p| p.id == mc_protocol::packets::play::ClientboundSwingAnimation::ID)
         );
         assert!(
             packets
@@ -2424,7 +2424,7 @@ fn campfire_items_sync_is_reliable_and_targets_only_its_viewer() {
 }
 
 #[test]
-fn shelf_items_sync_uses_native_type_forty_and_slot_byte() {
+fn shelf_items_sync_uses_native_type_thirty_nine_and_slot_byte() {
     use mc_data::block_entity_kinds::BlockEntityKind;
     use mc_nbt::{ListTag, Tag, tag_type};
     use mc_protocol::packets::play::ClientboundBlockEntityData;
@@ -2463,7 +2463,7 @@ fn shelf_items_sync_uses_native_type_forty_and_slot_byte() {
     let mut cursor = &body[..];
     let decoded = ClientboundBlockEntityData::decode(&mut cursor).unwrap();
     assert!(cursor.is_empty(), "native packet has no trailing fields");
-    assert_eq!(decoded.block_entity_type, 40);
+    assert_eq!(decoded.block_entity_type, 39);
     assert_eq!(decoded.position, pack_block_pos(192, 78, -446));
     assert_eq!(decoded.nbt, nbt);
 }
@@ -2482,16 +2482,20 @@ fn sweep_event_encodes_vanilla_sound_and_single_directional_particle() {
         },
     );
     assert_eq!(packets.len(), 2);
-    assert_eq!(packets[0].id, 0x74);
+    assert_eq!(packets[0].id, 0x76);
     let sound = ClientboundSoundEntity::decode(&mut &body_of(&packets[0])[..]).unwrap();
     assert_eq!(sound.sound.as_str(), "minecraft:entity.player.attack.sweep");
     assert_eq!((sound.entity_id, sound.source), (41, 7));
     assert_eq!((sound.volume, sound.pitch), (1.0, 1.0));
-    assert_eq!(packets[1].id, 0x2F);
+    assert_eq!(packets[1].id, 0x30);
     let body = body_of(&packets[1]);
-    assert_eq!(body.len(), 47);
-    assert_eq!(&body[..2], &[0, 0]);
-    assert_eq!(body[46], 67);
+    assert_eq!(body.len(), 53);
+    assert_eq!(&body[..3], &[77, 0, 0], "26.3 particle id precedes flags");
+    assert_eq!(
+        &body[39..],
+        &[0; 14],
+        "zero speeds, count and randomization"
+    );
     let particle = ClientboundSweepParticle::decode(&mut &body[..]).unwrap();
     assert_eq!(particle.position, [8.0, 64.9, 9.0]);
     assert_eq!(particle.direction, [0.0, 0.0, 1.0]);
@@ -2511,7 +2515,7 @@ fn shield_events_send_vanilla_entity_sound_not_removed_status_bytes() {
             },
         );
         assert_eq!(packets.len(), 1);
-        assert_eq!(packets[0].id, 0x74);
+        assert_eq!(packets[0].id, 0x76);
         let sound = ClientboundSoundEntity::decode(&mut &body_of(&packets[0])[..]).unwrap();
         assert_eq!(sound.entity_id, 41);
         assert_eq!(sound.source, 7);

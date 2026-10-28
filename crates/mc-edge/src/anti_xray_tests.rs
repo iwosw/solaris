@@ -10,7 +10,10 @@ use mc_core::boundary::{
     BlockChange, ChangeSet, ConnectionId, EntityId, SnapshotChunk, TickOutput, WorldSnapshot,
 };
 use mc_protocol::packets::Packet;
-use mc_protocol::packets::play::{BlockUpdate, LevelChunkWithLight, pack_block_pos};
+use mc_protocol::packets::play::{
+    LevelChunkWithLight, SectionBlockChange, SectionBlocksUpdate, pack_section_pos,
+    pack_section_relative_pos,
+};
 use mc_world::chunk::{ChunkPos, LightSection, SectionLight};
 
 struct Fixture {
@@ -314,17 +317,6 @@ fn chunk_body(output: &TickOutput, cache: &mut ChunkPacketCache, f: &Fixture) ->
     bodies.remove(0)
 }
 
-fn block_update(position: BlockPos, state: BlockStateId) -> bytes::Bytes {
-    let mut body = Vec::new();
-    BlockUpdate {
-        position: pack_block_pos(position.x, position.y, position.z),
-        state_id: state.0 as i32,
-    }
-    .encode(&mut body)
-    .expect("encodes");
-    body.into()
-}
-
 #[test]
 fn shared_cache_encodes_the_stand_in_once_for_every_viewer() {
     let f = fixture();
@@ -388,7 +380,7 @@ fn neighbour_change_invalidates_the_cached_border_chunk() {
 #[test]
 fn publish_sends_the_real_ore_when_a_block_beside_it_is_mined() {
     let f = fixture();
-    let (diamond, air, stone) = (f.id("diamond_ore"), f.id("air"), f.id("stone"));
+    let (diamond, air) = (f.id("diamond_ore"), f.id("air"));
     let mut cache = ChunkPacketCache::with_anti_xray(Some(Arc::new(f.policy(true, true))));
     let mut before = f.chunk(0, "stone");
     before.set_block(5, 10, 5, diamond);
@@ -420,21 +412,25 @@ fn publish_sends_the_real_ore_when_a_block_beside_it_is_mined() {
         &registries,
         &mut cache,
     );
-    let updates = frames(second, BlockUpdate::ID);
-    assert!(
-        updates.contains(&block_update(mined, air)),
-        "the mined block"
-    );
-    assert!(
-        updates.contains(&block_update(BlockPos { x: 5, y: 10, z: 5 }, diamond)),
-        "the ore the mined block exposed"
-    );
-    assert!(
-        !updates.contains(&block_update(BlockPos { x: 5, y: 13, z: 5 }, diamond)),
-        "the ore that is still enclosed stays hidden"
-    );
-    assert!(
-        !updates.contains(&block_update(BlockPos { x: 5, y: 13, z: 5 }, stone)),
-        "no stand-in update is ever sent"
+    let updates = frames(second, SectionBlocksUpdate::ID);
+    assert_eq!(updates.len(), 1, "mine and reveal share one section packet");
+    let mut body = updates[0].as_ref();
+    let mut update = SectionBlocksUpdate::decode(&mut body).unwrap();
+    assert!(body.is_empty());
+    assert_eq!(update.section_pos, pack_section_pos(0, 0, 0));
+    update.changes.sort_by_key(|change| change.relative_pos);
+    assert_eq!(
+        update.changes,
+        vec![
+            SectionBlockChange {
+                relative_pos: pack_section_relative_pos(5, 10, 5),
+                state_id: diamond.0 as i32,
+            },
+            SectionBlockChange {
+                relative_pos: pack_section_relative_pos(5, 11, 5),
+                state_id: air.0 as i32,
+            },
+        ],
+        "publish the mined cell and exposed ore only: no enclosed ore or stand-in"
     );
 }

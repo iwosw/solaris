@@ -12,8 +12,8 @@ fn server(root: &std::path::Path) -> EdgeServer {
     let content = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data/vanilla");
     let mut config = mc_core::CoreConfig::new(root.join("world"), 81);
     config.vanilla_data_dir = Some(content.clone());
-    // A real client view radius: the join burst spans hundreds of chunks, so
-    // the socket can die while it is still being written.
+    // Keep ordinary residency settings. Chunk streaming is separate from the
+    // join burst; the transport failure test synchronizes at the join boundary.
     config.view_distance = 8;
     config.simulation_distance = 8;
     let core = Arc::new(mc_core::Core::open(config).unwrap());
@@ -62,29 +62,40 @@ async fn client_dying_during_join_burst_leaves_core() {
     let server = Arc::new(server(dir.path()));
     let core = Arc::clone(&server.hub);
     let mut ticks = core.subscribe();
-    let pump = crate::server::spawn_pump(Arc::clone(&server)).unwrap();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     // Accept one connection and run the real connection pipeline; the pump
     // routes the join publication the burst waits for.
     let connection_server = Arc::clone(&server);
+    let (socket_tx, socket_rx) = tokio::sync::oneshot::channel();
     let accepted = tokio::spawn(async move {
         let (stream, _) = listener.accept().await.unwrap();
-        super::handle_connection(stream, connection_server).await
+        let stream = stream.into_std().unwrap();
+        socket_tx.send(stream.try_clone().unwrap()).unwrap();
+        super::handle_connection(TcpStream::from_std(stream).unwrap(), connection_server).await
     });
 
     let mut client = Client::connect(addr).await.unwrap();
     let login = client.drive_login(addr, "BurstVictim").await.unwrap();
     client.drive_configuration().await.unwrap();
-    // `Joined` is published before the edge starts the multi-second burst, so
-    // dropping the socket after this observation kills the connection while
-    // `send_join_burst` is still writing.
+    // Hold Joined in the real core outbox by delaying the pump. A static
+    // burst can fit in the kernel buffer, so observing a snapshot then closing
+    // the peer alone does not guarantee a failure inside send_join_burst.
     let uuid = login.uuid;
     wait_snapshot(&mut ticks, Duration::from_secs(60), |snapshot| {
         snapshot.entities.iter().any(|row| row.uuid == uuid)
     })
     .await;
     drop(client);
+    // A real half-closed transport makes the next burst write fail, without
+    // a sleep, an oversized burst, or a mock writer. Release the native Joined
+    // notification only after that boundary is established.
+    socket_rx
+        .await
+        .unwrap()
+        .shutdown(std::net::Shutdown::Write)
+        .unwrap();
+    let pump = crate::server::spawn_pump(Arc::clone(&server)).unwrap();
 
     let left = wait_snapshot(&mut ticks, Duration::from_secs(60), |snapshot| {
         !snapshot.entities.iter().any(|row| row.uuid == uuid)

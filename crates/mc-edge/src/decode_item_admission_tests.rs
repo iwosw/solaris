@@ -11,7 +11,7 @@ fn item_admission_decoded_unknown_creative_stack_produces_no_native_state_change
     state.players.get_mut(&actor).unwrap().inventory.slots[0] = stone;
     let before = state.players[&actor].inventory.slots.clone();
     let count = state.entities.len();
-    assert_eq!(ServerboundSetCreativeModeSlot::ID, 0x38);
+    assert_eq!(ServerboundSetCreativeModeSlot::ID, 0x39);
     for id in [-1, i32::MIN, i32::MAX] {
         let mut body = Vec::new();
         body.write_i16(36);

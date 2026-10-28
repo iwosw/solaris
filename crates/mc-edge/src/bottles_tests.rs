@@ -19,7 +19,7 @@ fn bottle_sounds_match_verified_fill_empty_identifiers_sources_and_wire_layout()
             },
         );
         assert_eq!(packets.len(), 1);
-        assert_eq!(packets[0].id, 0x74);
+        assert_eq!(packets[0].id, 0x76);
         let body = body_of(&packets[0]);
         // javap: direct sound holder, optional fixed range, enum ordinal,
         // entity VarInt, volume/pitch floats and signed long seed.
