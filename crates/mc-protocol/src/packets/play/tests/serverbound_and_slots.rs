@@ -1534,7 +1534,7 @@ fn serverbound_recipe_book_packets_match_local_vanilla() {
 }
 
 #[test]
-fn clientbound_recipe_book_packets_match_local_vanilla_2612() {
+fn clientbound_recipe_book_packets_match_local_vanilla_263() {
     assert_eq!(ClientboundRecipeBookSettings::ID, 0x4D);
     let settings = ClientboundRecipeBookSettings::default();
     let mut settings_bytes = Vec::new();
@@ -1566,7 +1566,20 @@ fn clientbound_recipe_book_packets_match_local_vanilla_2612() {
     };
     let mut bytes = Vec::new();
     packet.encode(&mut bytes).unwrap();
-    let mut expected = vec![0x01, 0x02, 0x00, 0x01, 0x06, 0x14];
+    // 26.3 SlotDisplay$TagSlotDisplay.STREAM_CODEC uses holderSet(ITEM),
+    // whose named-set branch is VarInt 0 followed by the tag identifier.
+    let mut vanilla: &[u8] = &bytes;
+    assert_eq!(vanilla.read_varint().unwrap(), 1); // entries
+    assert_eq!(vanilla.read_varint().unwrap(), 2); // display id
+    assert_eq!(vanilla.read_varint().unwrap(), 0); // shapeless
+    assert_eq!(vanilla.read_varint().unwrap(), 1); // ingredients
+    assert_eq!(vanilla.read_varint().unwrap(), 6); // tag display
+    assert_eq!(vanilla.read_varint().unwrap(), 0); // named HolderSet
+    assert_eq!(
+        vanilla.read_identifier().unwrap(),
+        sample_identifier("minecraft:birch_logs")
+    );
+    let mut expected = vec![0x01, 0x02, 0x00, 0x01, 0x06, 0x00, 0x14];
     expected.extend_from_slice(b"minecraft:birch_logs");
     expected.extend_from_slice(&[0x05, 0x05, 0x04, 0x00, 0x00, 0x04, 0x06]);
     expected.extend_from_slice(&[0x00, 0x00, 0x01, 0x01, 0x00, 0x14]);

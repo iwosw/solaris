@@ -43,6 +43,19 @@ fn recipes_remap_templates_and_ingredients() {
     let expected = [1, 7, 0, 1, 4, 3, 5, 3, 2, 0, 0, 1, 0, 0, 1, 1, 2, 3, 3, 1];
     assert_eq!(translate("recipe_book_add", &body), expected);
 }
+
+#[test]
+fn recipe_tag_slot_removes_native_holder_set_marker() {
+    // A ghost shapeless display with one named tag slot. The surrounding
+    // composite exercises the same nested slot path used by recipe_book_add.
+    let mut body = vec![1, 0, 1, 10, 1, 6, 0];
+    body.write_string("minecraft:birch_logs", 32767).unwrap();
+    body.extend([0, 1]); // result empty, station any fuel
+    let mut expected = vec![1, 0, 1, 10, 1, 6];
+    expected.write_string("minecraft:birch_logs", 32767).unwrap();
+    expected.extend([0, 1]);
+    assert_eq!(translate("place_ghost_recipe", &body), expected);
+}
 #[test]
 fn custom_stat_insertions_do_not_relabel_counters() {
     assert_eq!(translate("award_stats", &[1, 8, 9, 12]), [1, 8, 8, 12]);

@@ -690,8 +690,8 @@ impl Packet for ClientboundRecipeBookSettings {
 }
 
 /// The slot-display variants Solaris emits in initial recipe-book entries.
-/// Registry ids are pinned to the bundled 26.1.2 `minecraft:slot_display`
-/// registry report.
+/// Registry ids are pinned to the bundled 26.3 `minecraft:slot_display`
+/// registry report. Named tag displays use the item HolderSet codec.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RecipeBookSlotDisplay {
     Empty,
@@ -736,6 +736,8 @@ impl RecipeBookSlotDisplay {
             }
             Self::Tag(tag) => {
                 buf.write_varint(6);
+                // 26.3 TagSlotDisplay wraps a HolderSet, not a bare TagKey.
+                buf.write_varint(0);
                 buf.write_identifier(tag)?;
             }
             Self::Composite(displays) => {
@@ -783,7 +785,14 @@ impl RecipeBookSlotDisplay {
                     count,
                 )?)))
             }
-            6 => Ok(Self::Tag(buf.read_identifier()?)),
+            6 => {
+                if buf.read_varint()? != 0 {
+                    return Err(CodecError::NotSupported(
+                        "direct holder-set recipe-book tag display",
+                    ));
+                }
+                Ok(Self::Tag(buf.read_identifier()?))
+            }
             10 => {
                 let count = read_count(buf, MAX_RECIPE_BOOK_SLOTS)?;
                 let mut displays = bounded_vec(count);
@@ -1198,7 +1207,7 @@ impl RecipeBookEntry {
     }
 }
 
-/// `ClientboundRecipeBookAddPacket` from the local vanilla 26.1.2 jar.
+/// `ClientboundRecipeBookAddPacket` from the local vanilla 26.3 jar.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ClientboundRecipeBookAdd {
     pub entries: Vec<RecipeBookEntry>,

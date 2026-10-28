@@ -47,7 +47,12 @@ fn slot(t: &Tables, r: &mut &[u8], w: &mut Vec<u8>, depth: usize) -> Result<()> 
         0 | 1 => {}
         4 => item(t, r, w)?,
         5 => items::template(t, To::Legacy, r, w)?,
-        6 => string(r, w)?,
+        6 => {
+            // Native 26.3 TagSlotDisplay uses HolderSet(ITEM); 26.1.2 uses
+            // a bare tag identifier. Solaris emits only named tag sets.
+            ensure!(r.read_varint()? == 0, "direct recipe tag display");
+            string(r, w)?;
+        }
         10 => {
             for _ in 0..count(r, w)? {
                 slot(t, r, w, depth + 1)?;

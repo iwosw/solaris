@@ -148,9 +148,15 @@ field. It lives in `crates/mc-edge/src/legacy/` and follows points 1-5 above:
   and `spectate_entity` becomes `spectator_action`. Commands, recipes, recipe
   book entries, advancements, merchant offers and statistics retain their
   presentations with registry ids remapped; advancement coordinates move back
-  inside the legacy display record. Nested item templates retain their
-  item-first layout (not optional slot layout); pot decorations convert the
-  new four optional templates into the legacy four-item list.
+  inside the legacy display record. Recipe tag slot displays remove the 26.3
+  named item-HolderSet marker before writing the 26.1.2 bare tag identifier.
+  The local 26.3 `javap -c -p SlotDisplay$TagSlotDisplay` static initializer
+  selects `ByteBufCodecs.holderSet(Registries.ITEM)`; `ByteBufCodecs$34`
+  writes VarInt zero before a named set's identifier. Omitting that marker
+  makes the client consume identifier bytes as item registry ids during join.
+  Nested item templates retain their item-first layout (not optional slot
+  layout); pot decorations convert the new four optional templates into the
+  legacy four-item list.
 - **Failure policy.** Packets with malformed or untranslatable payloads fail
   the connection with context rather than silently discarding an inventory or
   world update. Explicitly new-only presentation packets (`post_effects`,
