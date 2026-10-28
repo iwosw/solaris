@@ -1,0 +1,98 @@
+[
+  {
+    "label": "sunset_ridge",
+    "tp": [
+      60.5,
+      120,
+      64.5
+    ],
+    "yaw": 90,
+    "pitch": 4,
+    "time": 12750,
+    "mode": "spectator"
+  },
+  {
+    "label": "sunset_lake",
+    "tp": [
+      106.5,
+      76,
+      64.5
+    ],
+    "yaw": 90,
+    "pitch": 4,
+    "time": 12600,
+    "mode": "spectator"
+  },
+  {
+    "label": "golden_ridge",
+    "tp": [
+      60.5,
+      120,
+      64.5
+    ],
+    "yaw": 90,
+    "pitch": 8,
+    "time": 11800,
+    "mode": "spectator"
+  },
+  {
+    "label": "lake_morning",
+    "tp": [
+      106.5,
+      72,
+      64.5
+    ],
+    "yaw": 90,
+    "pitch": 6,
+    "time": 9000,
+    "mode": "spectator"
+  },
+  {
+    "label": "forest_dawn",
+    "tp": [
+      150.5,
+      76,
+      70.5
+    ],
+    "yaw": -90,
+    "pitch": 4,
+    "time": 23100,
+    "mode": "spectator"
+  },
+  {
+    "label": "village_street",
+    "tp": [
+      262.5,
+      72,
+      58.5
+    ],
+    "yaw": 180,
+    "pitch": 8,
+    "time": 9500,
+    "mode": "spectator"
+  },
+  {
+    "label": "vista_noon",
+    "tp": [
+      200.5,
+      150,
+      60.5
+    ],
+    "yaw": -90,
+    "pitch": 32,
+    "time": 7000,
+    "mode": "spectator"
+  },
+  {
+    "label": "vista_dusk",
+    "tp": [
+      200.5,
+      150,
+      60.5
+    ],
+    "yaw": -90,
+    "pitch": 32,
+    "time": 12200,
+    "mode": "spectator"
+  }
+]
