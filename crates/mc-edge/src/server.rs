@@ -538,12 +538,29 @@ impl EdgeServer {
             .collect();
         let mut reason_nbt = Vec::new();
         mc_nbt::write_network(&mut reason_nbt, &mc_nbt::Tag::Compound(fields))?;
-        self.connections
-            .stash_disconnect_reason(id, reason.to_string());
-        self.send(
-            id,
-            &mc_protocol::packets::play::PlayDisconnect { reason_nbt },
-        )
+        let mut body = Vec::new();
+        mc_protocol::packets::play::PlayDisconnect { reason_nbt }.encode(&mut body)?;
+        let mut frame = bytes::BytesMut::new();
+        mc_protocol::frame::append_frame(
+            &mut frame,
+            mc_protocol::packets::play::PlayDisconnect::ID,
+            &body,
+            mc_protocol::frame::Compression::Threshold(256),
+        )?;
+        // Publish the terminal frame and reason atomically with the writer's
+        // terminal-queue check, not before enqueueing the frame.
+        let mut inner = self.connections.inner.lock();
+        let handles = inner
+            .handles
+            .get(&id)
+            .ok_or_else(|| anyhow::anyhow!("connection closed before disconnect"))?;
+        if handles.reliable_tx.try_send(frame.freeze()).is_err() {
+            drop(inner);
+            self.connections.remove(id);
+            anyhow::bail!("reliable command queue full");
+        }
+        inner.disconnect_reasons.insert(id, reason.to_string());
+        Ok(())
     }
 
     /// Vanilla `/transfer <hostname> [port] [players]`: sends the clientbound
