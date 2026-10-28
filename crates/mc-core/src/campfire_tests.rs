@@ -144,7 +144,7 @@ fn raw_chicken_cooks_at_recipe_time_and_syncs_items() {
         .find_map(|change| match change {
             PlayerChange::BlockEntityData {
                 position,
-                block_entity_type: 33,
+                block_entity_type: 32,
                 nbt: Tag::Compound(fields),
                 ..
             } if *position == POS => field(fields, "Items"),

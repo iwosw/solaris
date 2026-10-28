@@ -91,7 +91,7 @@ fn protected_piston_footprints_refuse_push_pull_head_and_destroy_atomically() {
 }
 
 #[test]
-fn complete_26_1_2_registry_reactions_match_the_native_server_oracle() {
+fn complete_26_3_registry_reactions_match_the_native_server_oracle() {
     let mut s = state();
     let base = cell(4, 4);
     let head = cell(5, 4);
@@ -99,8 +99,8 @@ fn complete_26_1_2_registry_reactions_match_the_native_server_oracle() {
     let mut count = 0;
     // Independently extracted from all vanilla states, not from the Rust
     // classifier. The only deliberate divergence is retained block-entity
-    // custody: DESTROY item/opaque entities still refuse instead of spilling.
-    for row in include_str!("piston_reactions_26_1_2.tsv").lines() {
+    // custody: POPPED item/opaque entities still refuse instead of spilling.
+    for row in include_str!("piston_reactions_26_3.tsv").lines() {
         if row.starts_with('#') {
             continue;
         }
@@ -123,11 +123,7 @@ fn complete_26_1_2_registry_reactions_match_the_native_server_oracle() {
         let unextended_piston = matches!(path, "piston" | "sticky_piston");
         let blocked = (block_entity && path != "comparator")
             || negative_hardness
-            || (reaction == "BLOCK" && !unextended_piston)
-            || matches!(
-                path,
-                "obsidian" | "crying_obsidian" | "respawn_anchor" | "reinforced_deepslate"
-            );
+            || (reaction == "IMMOVEABLE" && !unextended_piston);
         let result = move_now(&mut s, base, true);
         if blocked {
             assert_eq!(result, Err(piston::Refusal::Immovable(head)), "{path}");
@@ -137,7 +133,7 @@ fn complete_26_1_2_registry_reactions_match_the_native_server_oracle() {
             assert_eq!(result, Ok(()), "{path}");
             assert_eq!(name(&s, head), "piston_head", "{path}");
             let expected =
-                if reaction == "DESTROY" || matches!(path, "air" | "cave_air" | "void_air") {
+                if reaction == "POPPED" || matches!(path, "air" | "cave_air" | "void_air") {
                     "air"
                 } else {
                     path

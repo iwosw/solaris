@@ -60,7 +60,8 @@ fn every_native_block_entity_type_is_created_by_setblock_at_shared_commit_bounda
             count += 1;
         }
     }
-    assert_eq!(count, 201);
+    // 26.3 BlockEntityType: 201 - 16 beds + 5 poplar variants + potent sulfur.
+    assert_eq!(count, 191);
 }
 
 #[test]

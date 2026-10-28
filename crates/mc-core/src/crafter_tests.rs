@@ -338,7 +338,7 @@ fn crafter_wal_checkpoint_restart_retains_slots_disabled_and_pulse_latch_once() 
     assert_eq!(
         mc_data::block_entity_types::solaris_required_block_entity_types()
             .id_of(&crafter.type_name),
-        Some(43)
+        Some(42)
     );
     let registry = Arc::clone(&original.registry);
     let generator = Arc::new(mc_worldgen::TerrainGenerator::new(
