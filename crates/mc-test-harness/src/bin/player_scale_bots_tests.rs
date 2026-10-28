@@ -631,37 +631,46 @@ fn fixture_save_success_requires_exact_public_reply_grammar() {
 
 #[tokio::test]
 async fn public_save_feedback_accepts_success_and_refuses_failure() -> Result<()> {
-    let mut bot = terrain_bot(0.5, 64, 0.5, 0);
-    let (mut client, _peer, _buffer) = connection().await?;
-    let component = |text: &str| {
-        component_chat_frame(&mc_nbt::Tag::Compound(vec![(
-            "text".into(),
-            mc_nbt::Tag::String(text.into()),
-        )]))
-    };
-    bot.frame(
-        &mut client,
-        component("Saved 1 players, 2 entities, 5 chunks")?,
-        2,
-        false,
-    )
-    .await?;
-    assert_eq!(bot.metrics.command_feedback_received, 1);
-    let error = bot
-        .frame(
+    for preparing in [false, true] {
+        let mut bot = terrain_bot(0.5, 64, 0.5, 0);
+        bot.commands = Arc::new(CommandSchedule {
+            setup: vec!["save-all flush".into()],
+            recurring: Vec::new(),
+        });
+        let (mut client, _peer, _buffer) = connection().await?;
+        let component = |text: &str| {
+            component_chat_frame(&mc_nbt::Tag::Compound(vec![(
+                "text".into(),
+                mc_nbt::Tag::String(text.into()),
+            )]))
+        };
+        bot.frame(
             &mut client,
-            component("Save-all failed; see server log")?,
+            component("Saved 1 players, 2 entities, 5 chunks")?,
             2,
-            false,
+            preparing,
         )
-        .await
-        .expect_err("a failed save must refuse fixture preparation");
-    assert!(
-        error
-            .to_string()
-            .contains("fixture command refused: Save-all failed; see server log")
-    );
-    assert_eq!(bot.metrics.command_feedback_received, 1);
+        .await?;
+        assert_eq!(
+            bot.metrics.command_feedback_received, 1,
+            "preparing={preparing}"
+        );
+        let error = bot
+            .frame(
+                &mut client,
+                component("Save-all failed; see server log")?,
+                2,
+                preparing,
+            )
+            .await
+            .expect_err("a failed save must refuse fixture preparation");
+        assert!(
+            error
+                .to_string()
+                .contains("fixture command refused: Save-all failed; see server log")
+        );
+        assert_eq!(bot.metrics.command_feedback_received, 1);
+    }
     Ok(())
 }
 
