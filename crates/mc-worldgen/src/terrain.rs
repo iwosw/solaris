@@ -79,8 +79,8 @@ const ORE_DIRECTIONS: [[i8; 3]; 6] = [
 ];
 const CAVE_SURFACE_CLEARANCE: i32 = 32;
 const CAVE_VERTICAL_SAMPLE_STEP: i32 = 2;
-const DEEPSLATE_TOP_Y: i32 = 0;
-const DEEPSLATE_SOLID_Y: i32 = -8;
+const DEEPSLATE_TOP_Y: i32 = 8;
+const DEEPSLATE_SOLID_Y: i32 = 0;
 const VEGETATION_REGION_SCALE: f64 = 192.0;
 /// Columns per plains tree outside groves: vanilla `trees_plains` places one
 /// tree with 5% chance per chunk (256 columns / 0.05).
@@ -2636,13 +2636,16 @@ impl TerrainGenerator {
         if y <= DEEPSLATE_SOLID_Y {
             return self.deepslate;
         }
-        if y > DEEPSLATE_TOP_Y {
+        if y >= DEEPSLATE_TOP_Y {
             return self.stone;
         }
         let wx = world_block_coordinate(pos.x, lx);
         let wz = world_block_coordinate(pos.z, lz);
-        let deepslate_chance = (DEEPSLATE_TOP_Y - y + 1) as u64;
-        if feature_hash(self.seed, wx, y, wz, 0xD33F).is_multiple_of(9 - deepslate_chance) {
+        // Vanilla's vertical_gradient is certain at Y=0 and zero at Y=8.
+        // Keep the existing coordinate hash, but use a linear probability.
+        let deepslate_chance = (DEEPSLATE_TOP_Y - y) as u64;
+        let span = (DEEPSLATE_TOP_Y - DEEPSLATE_SOLID_Y) as u64;
+        if feature_hash(self.seed, wx, y, wz, 0xD33F) % span < deepslate_chance {
             self.deepslate
         } else {
             self.stone
@@ -2997,6 +3000,10 @@ impl ChunkGenerator for TerrainGenerator {
 #[cfg(test)]
 #[path = "terrain/tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "terrain/deepslate_tests.rs"]
+mod deepslate_tests;
 
 #[cfg(test)]
 #[path = "terrain/coastal_tests.rs"]
