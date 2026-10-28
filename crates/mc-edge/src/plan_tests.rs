@@ -3554,3 +3554,39 @@ fn dimension_change_removes_boss_bars_the_client_still_shows() {
         assert!(again.is_empty());
     });
 }
+
+#[test]
+fn filled_map_slot_update_is_planned_for_the_client() {
+    // s22-04: the map_id component had no wire codec, so the whole slot packet was dropped.
+    with_cache(|_| {
+        let id = ConnectionId(3);
+        let mut v = ViewerState::new(id, EntityId(41), [8.0, 64.0, 8.0]);
+        let filled = mc_data::items::solaris_required_items()
+            .id_of(&mc_data::Identifier::parse("minecraft:filled_map").unwrap())
+            .unwrap();
+        let mut stack = mc_data::ItemStack::new(filled, 1);
+        let mut value = Vec::new();
+        mc_nbt::write_network_value(&mut value, &mc_nbt::Tag::Int(7)).unwrap();
+        stack.extended_mut().preserved_components.push(
+            mc_data::item_stack::PreservedItemComponent {
+                name: "minecraft:map_id".into(),
+                value,
+                baseline: None,
+            },
+        );
+        let planned = plan_player_changes(
+            &[PlayerChange::MenuSlot {
+                window: 0,
+                state_id: 2,
+                slot: 36,
+                item: Some(stack),
+            }],
+            &mut v,
+        );
+        assert_eq!(planned.len(), 1);
+        assert_eq!(
+            planned[0].id,
+            mc_protocol::packets::play::ClientboundContainerSetSlot::ID
+        );
+    });
+}

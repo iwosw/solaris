@@ -208,9 +208,11 @@ pub(super) fn encode_one<B: BufMut>(
             }
             mc_nbt::write_network(buf, &value)?;
         }
-        ids::MAX_DAMAGE | ids::DAMAGE | ids::REPAIR_COST | ids::OMINOUS_BOTTLE_AMPLIFIER => {
-            buf.write_varint(integer(&value)?)
-        }
+        ids::MAX_DAMAGE
+        | ids::DAMAGE
+        | ids::REPAIR_COST
+        | ids::MAP_ID
+        | ids::OMINOUS_BOTTLE_AMPLIFIER => buf.write_varint(integer(&value)?),
         ids::DEATH_PROTECTION => {
             mc_data::item_stack::validate_death_protection(&value)
                 .map_err(CodecError::NotSupported)?;
@@ -400,6 +402,7 @@ pub(super) fn decode<B: Buf>(
             Tag::Compound(vec![("death_effects".into(), make_list(Vec::new()))])
         }
         ids::DYED_COLOR => Tag::Int(buf.read_i32()?),
+        ids::MAP_ID => Tag::Int(buf.read_varint()?),
         ids::BUNDLE_CONTENTS => templates::decode_list(buf, depth)?,
         ids::PROFILE => profile::decode(buf)?,
         ids::NOTE_BLOCK_SOUND => Tag::String(buf.read_identifier()?.as_str().into()),

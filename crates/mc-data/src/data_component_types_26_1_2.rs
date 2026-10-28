@@ -23,6 +23,7 @@ pub const ITEM_COMPONENT_CODECS: &[(&str, i32)] = &[
     ("minecraft:death_protection", 36),
     ("minecraft:stored_enchantments", 45),
     ("minecraft:dyed_color", 47),
+    ("minecraft:map_id", 48),
     ("minecraft:charged_projectiles", 51),
     ("minecraft:bundle_contents", 52),
     ("minecraft:potion_contents", 53),
@@ -73,6 +74,7 @@ pub const USE_REMAINDER: i32 = 25;
 pub const DEATH_PROTECTION: i32 = 36;
 pub const STORED_ENCHANTMENTS: i32 = 45;
 pub const DYED_COLOR: i32 = 47;
+pub const MAP_ID: i32 = 48;
 pub const CHARGED_PROJECTILES: i32 = 51;
 pub const BUNDLE_CONTENTS: i32 = 52;
 pub const POTION_CONTENTS: i32 = 53;

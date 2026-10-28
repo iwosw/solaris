@@ -466,3 +466,35 @@ fn saved_maps_cartographer_offer_and_map_share_replayed_wal_commit() {
     ));
     assert_eq!(state.maps.next_id, 1);
 }
+
+#[test]
+fn using_an_empty_map_sends_the_filled_map_slot_to_the_player() {
+    let mut state = test_state();
+    let actor = join(&mut state, 1, "mapper");
+    let connection = state.players[&actor].connection;
+    let items = &state.registry.items;
+    let empty = items
+        .id_of(&mc_data::Identifier::parse("minecraft:map").unwrap())
+        .unwrap();
+    let filled = items
+        .id_of(&mc_data::Identifier::parse("minecraft:filled_map").unwrap())
+        .unwrap();
+    state.players.get_mut(&actor).unwrap().inventory.slots[0] = mc_data::ItemStack::new(empty, 1);
+    state.outbox.clear();
+    let mut changes = ChangeSet::default();
+    assert!(crate::maps::use_empty(
+        &mut state,
+        actor,
+        Hand::Main,
+        &mut changes
+    ));
+    let sent = state.outbox.get(&connection).cloned().unwrap_or_default();
+    assert!(
+        sent.iter().any(|change| matches!(
+            change,
+            crate::boundary::PlayerChange::MenuSlot { slot: 36, item: Some(item), .. }
+                if item.item_id == filled
+        )),
+        "client must be told hotbar slot 0 now holds the filled map: {sent:?}"
+    );
+}

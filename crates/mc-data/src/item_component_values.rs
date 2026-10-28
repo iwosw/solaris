@@ -253,7 +253,7 @@ fn value_shape(
         ids::MAX_DAMAGE => crate::item_stack::validate_max_damage(
             u32::try_from(integer(value)?).map_err(|_| "invalid max_damage")?,
         )?,
-        ids::DAMAGE | ids::REPAIR_COST => {
+        ids::DAMAGE | ids::REPAIR_COST | ids::MAP_ID => {
             if integer(value)? < 0 {
                 return Err("negative integer");
             }
