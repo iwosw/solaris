@@ -618,6 +618,12 @@ class CatalogEventTests(unittest.IsolatedAsyncioTestCase):
                     await load.public_region(SimpleNamespace(readiness_seconds=1, view_distance=8),
                                              root, 25565, region, save_command=save_command)
                 self.assertEqual(bot_command.call_args.args[0].view_distance, 8)
+                command = phase.spawn.call_args.args[1]
+                self.assertIn("--open-loop", command)
+                schedule = Path(command[command.index("--schedule-file") + 1])
+                self.assertEqual(schedule, root / "schedule.json")
+                self.assertEqual(json.loads(schedule.read_text()),
+                                 {"windows": [{"name": "steady", "duration_ms": 1000}]})
                 commands = json.loads((root / "commands.json").read_text())
                 self.assertEqual(commands["setup"], ["time set 2000", save_command])
                 self.assertEqual(set(commands), {"setup"})
@@ -670,12 +676,14 @@ class CatalogEventTests(unittest.IsolatedAsyncioTestCase):
     async def test_checkpoint_ack_survives_consumed_ready_and_queue_eviction(self):
         reader = asyncio.StreamReader(limit=64 * 1024 * 1024)
         events = [{"event": "fixture_commands_sent", "commands_sent": 1},
-                  {"event": "ready", "clients": 1}, {"event": "fixture_checkpoint_saved", "bot": 0}]
-        events += [{"event": "sample", "sample": index} for index in range(200)]
+                  {"event": "fixture_checkpoint_saved", "bot": 0}, {"event": "ready", "clients": 1}]
         reader.feed_data(b"".join(json.dumps(row).encode() + b"\n" for row in events))
         reader.feed_eof()
         session = load.Session(None, Path("."))
         await session.read_events(SimpleNamespace(stdout=reader), io.BytesIO())
+        self.assertEqual((await session.ready(1, 1))["clients"], 1)
+        for index in range(200):
+            session.push_event({"event": "sample", "sample": index})
         receipt = await load._await_fixture_checkpoint(session, 1)
         self.assertEqual(receipt["commands_sent_event"]["commands_sent"], 1)
         self.assertEqual(receipt["checkpoint_event"]["event"], "fixture_checkpoint_saved")

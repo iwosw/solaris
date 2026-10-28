@@ -214,6 +214,8 @@ content and fixture parameters match exactly; instrumented PGO timings are never
 published as these release measurements.
 Public input-echo fences during preparation share the bot's total
 `--prepare-seconds` readiness deadline rather than a separate per-batch timeout.
+Regional fixture clients use open-loop readiness to complete their setup before
+Ready; no Run event is issued and their required schedule is never started.
 The bot continues processing packets and replying to heartbeats while waiting
 for a slow `save-all flush` to complete; measured open-loop demand is unchanged.
 
