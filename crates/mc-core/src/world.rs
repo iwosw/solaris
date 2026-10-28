@@ -7,7 +7,7 @@
 //! chunks by `Arc`.
 
 use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
-use std::sync::Arc;
+use std::sync::{Arc, atomic::AtomicU64};
 
 use mc_data::Identifier;
 use mc_world::native::{NativeChunkSnapshot, NativeStore};
@@ -117,6 +117,10 @@ pub struct ChunkWorld {
     admission_deadline: Option<std::time::Instant>,
     /// Admission wall time across every ensure call in the current global tick.
     admission_tick_elapsed: std::time::Duration,
+    /// Remaining mandatory progress costs, shared by this tick's worlds.
+    admission_progress_reservations: Option<Arc<AtomicU64>>,
+    /// This world's reservation until its first progress batch settles.
+    admission_progress_reserve_us: u64,
     /// Failed stored loads remain unavailable until an operator repairs and restarts.
     failed: HashMap<ChunkPos, ChunkLoadError>,
     /// Durable revisions fence checkpoint ACKs for resident chunks and absent
@@ -481,6 +485,8 @@ impl ChunkWorld {
             admission_us_per_chunk: ADMISSION_BUDGET_US,
             admission_deadline: None,
             admission_tick_elapsed: std::time::Duration::ZERO,
+            admission_progress_reservations: None,
+            admission_progress_reserve_us: 0,
             failed: HashMap::default(),
             revisions: HashMap::default(),
             next_revision: 0,

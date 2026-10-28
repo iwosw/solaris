@@ -2,6 +2,7 @@
 //! Moved verbatim from `world.rs`.
 
 use super::*;
+use std::sync::atomic::Ordering;
 
 impl ChunkWorld {
     /// Join finished off-tick loads for wanted chunks and request the
@@ -38,13 +39,32 @@ impl ChunkWorld {
                 batch_end.saturating_duration_since(batch_start).as_micros(),
                 admitted,
             );
+            // The elapsed clock already accounts for this batch. Keep only
+            // other worlds' still-unspent floors reserved before any extras.
+            if self.admission_progress_reserve_us != 0
+                && let Some(reservations) = &self.admission_progress_reservations
+            {
+                reservations.fetch_sub(
+                    std::mem::take(&mut self.admission_progress_reserve_us),
+                    Ordering::Relaxed,
+                );
+            }
             // Keep the original progress batch, then spend real shared tick
             // slack one whole light fence at a time. An underestimated chunk
             // may overrun, but it cannot authorize another extra chunk.
             if admitted == 0
                 || loaded.len() >= crate::chunk_loader::READY_LOADS_MAX
                 || !self.admission_deadline.is_some_and(|deadline| {
-                    deadline.saturating_duration_since(batch_end).as_micros()
+                    deadline
+                        .saturating_duration_since(batch_end)
+                        .as_micros()
+                        .saturating_sub(
+                            self.admission_progress_reservations
+                                .as_ref()
+                                .map_or(0, |reservations| {
+                                    u128::from(reservations.load(Ordering::Relaxed))
+                                }),
+                        )
                         >= self.admission_us_per_chunk
                 })
             {
@@ -75,9 +95,23 @@ impl ChunkWorld {
     }
 
     /// Called once by the global tick owner, with the same deadline in all worlds.
-    pub(crate) fn begin_admission_tick(&mut self, deadline: std::time::Instant) {
+    pub(crate) fn begin_admission_tick(
+        &mut self,
+        deadline: std::time::Instant,
+        reservations: &Arc<AtomicU64>,
+    ) {
         self.admission_deadline = Some(deadline);
         self.admission_tick_elapsed = std::time::Duration::ZERO;
+        self.admission_progress_reserve_us = (self.admission_us_per_chunk
+            * self.admission_limit() as u128)
+            .min(u128::from(u64::MAX)) as u64;
+        match &mut self.admission_progress_reservations {
+            Some(shared) => shared.clone_from(reservations),
+            None => self.admission_progress_reservations = Some(Arc::clone(reservations)),
+        }
+        // Only the tick owner mutates these counters. Atomics preserve Send
+        // without putting a lock around each world's admission path.
+        reservations.fetch_add(self.admission_progress_reserve_us, Ordering::Relaxed);
     }
 
     pub(crate) fn admission_elapsed(&self) -> std::time::Duration {

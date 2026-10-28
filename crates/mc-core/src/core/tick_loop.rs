@@ -2,6 +2,7 @@
 //! Moved verbatim from `core.rs`.
 
 use super::*;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 /// Tick loop: 20 TPS, event-driven wake (no sleeps beyond the tick timer).
 /// Channels owned by the tick thread.
@@ -49,6 +50,7 @@ pub(super) fn tick_loop(mut state: TickState, mut channels: TickChannels) {
         .period()
         .as_micros()
         .saturating_sub(crate::world::ADMISSION_BUDGET_US);
+    let admission_progress_reservations = Arc::new(AtomicU64::new(0));
     let checkpoint_every = channels.checkpoint_every.max(1);
     let mut since_checkpoint = 0u64;
     // At most one checkpoint in flight: its acknowledgement (chunks written
@@ -218,9 +220,14 @@ pub(super) fn tick_loop(mut state: TickState, mut channels: TickChannels) {
             .saturating_sub(admission_reserve_us);
         let admission_deadline = wall_start
             + std::time::Duration::from_micros(admission_slack_us.min(u64::MAX as u128) as u64);
-        state.world.begin_admission_tick(admission_deadline);
+        admission_progress_reservations.store(0, Ordering::Relaxed);
+        state
+            .world
+            .begin_admission_tick(admission_deadline, &admission_progress_reservations);
         for dimension in state.other_dimensions.values_mut() {
-            dimension.world.begin_admission_tick(admission_deadline);
+            dimension
+                .world
+                .begin_admission_tick(admission_deadline, &admission_progress_reservations);
         }
         // Secrets: connections the auth gate holds locked, before and after
         // this tick (a join locks during it; a plugin unlock lifts it).

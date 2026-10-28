@@ -226,6 +226,8 @@ and use the same immutable bot binary. Their different progress changes the
 admitted-chunk distribution, so aggregate CPU is not an identical-chunk
 comparison. Both hit the deliberately shortened 100 s all-client readiness
 deadline; neither is a readiness pass or a quiet 2-/6-CPU acceptance result.
+These figures predate the 26.3 rebase and the multi-world progress-reservation
+correction; the corrected integrated tree needs its own acceptance measurement.
 Receipts in the `pauline/weakhw-login` worktree:
 `.analysis/admission-cpu-comparison.json`,
 `.analysis/login-cpu-{baseline,candidate}/admission-cost-summary.json`,

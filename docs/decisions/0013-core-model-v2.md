@@ -2858,7 +2858,13 @@ synchronous light install/revision fence. Empty batches do not train it.
 After settling that batch, admission may use actual remaining tick slack,
 one whole chunk at a time, provided its estimated cost fits before the deadline.
 All dimensions share the same absolute deadline, set once at global tick entry.
-It reserves the previous tick's non-admission work, increasing immediately on a
+Before any world spends extra slack, the tick owner also reserves each world's
+estimated mandatory progress-batch cost in one shared counter. A world releases
+its reservation after its first progress batch settles, even if it admits no
+chunks. Extra chunks must fit after subtracting all unreleased reservations;
+an earlier dimension cannot borrow time needed by a later dimension's floor.
+The counter resets at every global tick, including consecutive loading ticks.
+The deadline reserves the previous tick's non-admission work, increasing immediately on a
 larger sample and decaying with a 1/4 EWMA otherwise. New dimensions fall back to
 the progress batch until the next global tick. The total per `ensure` remains
 bounded by 32 chunks; previews and repeated calls never renew the deadline.

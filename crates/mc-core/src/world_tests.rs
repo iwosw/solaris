@@ -3,7 +3,10 @@
 //! write through flush (resident and absent chunks alike).
 
 use rustc_hash::FxHashMap as HashMap;
-use std::sync::Arc;
+use std::sync::{
+    Arc,
+    atomic::{AtomicU64, Ordering},
+};
 
 use crate::world::{ChunkCapture, ChunkWorld, SectionMatchCache, chunks_in_radius};
 use mc_world::native::{NativeCheckpoint, NativeDomainRecord, NativeStore};
@@ -1001,6 +1004,59 @@ fn tick_admission_shares_one_nearest_first_budget_with_recent_hits() {
 }
 
 #[test]
+fn tick_admission_reserves_other_world_progress_across_consecutive_ticks() {
+    use std::time::{Duration, Instant};
+
+    let mut worlds = std::array::from_fn::<_, 3, _>(|_| test_world(None));
+    let mut wants = std::array::from_fn::<_, 3, _>(|_| HashMap::default());
+    let reservations = Arc::new(AtomicU64::new(0));
+    for (world, want) in worlds.iter_mut().zip(&mut wants) {
+        for x in 0..20 {
+            let pos = mc_world::ChunkPos { x, z: 0 };
+            let (chunk, _) = world.source.load_or_generate(pos).unwrap();
+            world.recent.insert(pos, Arc::new(chunk));
+            want.insert(pos, x);
+        }
+    }
+
+    for tick in 0..4 {
+        let start = Instant::now();
+        // 50 ms period minus 5 ms of non-admission work. Every world has
+        // an 8 ms progress floor, which must survive earlier worlds' extras.
+        reservations.store(0, Ordering::Relaxed);
+        for world in &mut worlds {
+            world.begin_admission_tick(start + Duration::from_millis(45), &reservations);
+        }
+        let mut elapsed_ms = 0;
+        for (dimension, (world, want)) in worlds.iter_mut().zip(&wants).enumerate() {
+            let mut first_read = true;
+            let loaded = world.ensure_with_clock(want, || {
+                if first_read {
+                    first_read = false;
+                } else {
+                    elapsed_ms += 8;
+                }
+                start + Duration::from_millis(elapsed_ms)
+            });
+            assert_eq!(
+                loaded.len(),
+                [3, 1, 1][dimension],
+                "tick {tick}, dimension {dimension}: leave room for later progress floors",
+            );
+        }
+        assert_eq!(
+            reservations.load(Ordering::Relaxed),
+            0,
+            "tick {tick}: every progress reservation must be released exactly once",
+        );
+        assert!(
+            elapsed_ms + 5 <= 50,
+            "tick {tick}: mandatory batches must not cause sustained overshoot",
+        );
+    }
+}
+
+#[test]
 fn tick_admission_spends_actual_slack_and_stops_after_an_overrun() {
     use std::time::{Duration, Instant};
 
@@ -1010,6 +1066,7 @@ fn tick_admission_spends_actual_slack_and_stops_after_an_overrun() {
         ("one extra chunk overruns", [0, 1, 25, 25, 25], 2),
     ] {
         let mut world = test_world(None);
+        let reservations = Arc::new(AtomicU64::new(0));
         let positions =
             std::array::from_fn::<_, 3, _>(|x| mc_world::ChunkPos { x: x as i32, z: 0 });
         let want = positions
@@ -1024,7 +1081,7 @@ fn tick_admission_spends_actual_slack_and_stops_after_an_overrun() {
             world.ready.push((*pos, ticket, Ok(result)));
         }
         let start = Instant::now();
-        world.begin_admission_tick(start + Duration::from_millis(20));
+        world.begin_admission_tick(start + Duration::from_millis(20), &reservations);
         let mut clock_ms = clock_ms.into_iter();
         let mut last_ms = 0;
         let loaded = world.ensure_with_clock(&want, || {
@@ -1033,7 +1090,7 @@ fn tick_admission_spends_actual_slack_and_stops_after_an_overrun() {
         });
         assert_eq!(loaded, positions[..expected], "{case}");
         assert_eq!(world.admission_elapsed(), Duration::from_millis(last_ms));
-        world.begin_admission_tick(start + Duration::from_millis(40));
+        world.begin_admission_tick(start + Duration::from_millis(40), &reservations);
         assert_eq!(world.admission_elapsed(), Duration::ZERO);
         assert!(world.ready.len() + world.loader.pending() <= crate::chunk_loader::READY_LOADS_MAX);
         let mut workspace = mc_world::light::LightWorkspace::new();
@@ -1063,6 +1120,7 @@ fn tick_admission_spends_actual_slack_and_stops_after_an_overrun() {
 #[test]
 fn tick_admission_slack_keeps_the_whole_chunk_queue_bound() {
     let mut world = test_world(None);
+    let reservations = Arc::new(AtomicU64::new(0));
     let mut want = HashMap::default();
     for x in 0..=crate::chunk_loader::READY_LOADS_MAX as i32 {
         let pos = mc_world::ChunkPos { x, z: 0 };
@@ -1071,7 +1129,7 @@ fn tick_admission_slack_keeps_the_whole_chunk_queue_bound() {
         want.insert(pos, x);
     }
     let start = std::time::Instant::now();
-    world.begin_admission_tick(start + std::time::Duration::from_secs(1));
+    world.begin_admission_tick(start + std::time::Duration::from_secs(1), &reservations);
     assert_eq!(
         world.ensure_with_clock(&want, || start).len(),
         crate::chunk_loader::READY_LOADS_MAX,
