@@ -54,14 +54,13 @@ use mc_protocol::packets::Packet;
 use mc_protocol::packets::play::{
     AGEABLE_ENTITY_DATA_BABY_INDEX, AddEntity, BlockUpdate, ClientboundExplode,
     ClientboundSetEntityData, ClientboundSetEntityEquipment, ClientboundSetTime,
-    ClientboundTakeItemEntity, ENTITY_DATA_POSE_INDEX, ENTITY_DATA_SHARED_FLAGS_INDEX,
-    EntityAnimation, EntityAnimationAction, EntityDataValue as WireEntityDataValue,
-    EntityEquipment, EntityEvent as WireEntityEvent, EntityPose, EntityPositionSync,
-    EntityRotations, EntityVec3, EquipmentSlot, ExplosionBlockParticle, ForgetLevelChunk,
-    ITEM_ENTITY_DATA_ITEM_INDEX, LIVING_ENTITY_DATA_EFFECT_AMBIENCE_INDEX,
-    LIVING_ENTITY_DATA_EFFECT_PARTICLES_INDEX, LIVING_ENTITY_DATA_HEALTH_INDEX_26_1_2,
-    MoveEntityPos, MoveEntityPosRot, MoveEntityRot, PLAYER_DATA_ABSORPTION_INDEX,
-    PositionMoveRotation, RemoveEntities, RotateHead, SetCenterChunk, SetChunkCacheRadius,
+    ClientboundSwingAnimation, ClientboundTakeItemEntity, ENTITY_DATA_POSE_INDEX,
+    ENTITY_DATA_SHARED_FLAGS_INDEX, EntityDataValue as WireEntityDataValue, EntityEquipment,
+    EntityEvent as WireEntityEvent, EntityPose, EntityPositionSync, EntityRotations, EntityVec3,
+    EquipmentSlot, ExplosionBlockParticle, ForgetLevelChunk, ITEM_ENTITY_DATA_ITEM_INDEX,
+    LIVING_ENTITY_DATA_EFFECT_AMBIENCE_INDEX, LIVING_ENTITY_DATA_EFFECT_PARTICLES_INDEX,
+    LIVING_ENTITY_DATA_HEALTH_INDEX_26_1_2, MoveEntityPos, MoveEntityPosRot, MoveEntityRot,
+    PLAYER_DATA_ABSORPTION_INDEX, RemoveEntities, RotateHead, SetCenterChunk, SetChunkCacheRadius,
 };
 
 /// Entity's fourth defineId call uses BOOLEAN (26.1.2 javap Entity static ctor).
@@ -1410,16 +1409,13 @@ fn entity_movement(
         }),
         _ => MovePacket::Sync(EntityPositionSync {
             entity_id: entity.id.0,
-            values: PositionMoveRotation {
-                position: EntityVec3 {
-                    x: entity.position[0],
-                    y: entity.position[1],
-                    z: entity.position[2],
-                },
-                delta_movement: per_tick(entity.velocity),
-                yaw: entity.yaw,
-                pitch: entity.pitch,
+            position: EntityVec3 {
+                x: entity.position[0],
+                y: entity.position[1],
+                z: entity.position[2],
             },
+            yaw: entity.yaw,
+            pitch: entity.pitch,
             on_ground: entity.on_ground,
         }),
     };
@@ -1549,13 +1545,7 @@ fn push_entity_event(out: &mut Vec<PlannedPacket>, conn: ConnectionId, event: En
             push_best_effort(
                 out,
                 conn,
-                &EntityAnimation {
-                    entity_id: entity.0,
-                    action: match hand {
-                        Hand::Main => EntityAnimationAction::SwingMainHand,
-                        Hand::Off => EntityAnimationAction::SwingOffHand,
-                    },
-                },
+                &ClientboundSwingAnimation::default_swing(entity.0, matches!(hand, Hand::Off)),
             );
         }
         EntityEvent::Damage {
@@ -1619,8 +1609,9 @@ fn push_entity_event(out: &mut Vec<PlannedPacket>, conn: ConnectionId, event: En
 const EXPLOSION_RANGE_SQ: f64 = 64.0 * 64.0;
 
 /// The explode packet of a blast, as the vanilla TNT fixture shapes it
-/// (particle 22, sound reference 697, two block particles; ids from the
-/// verified explosion wire layout): `viewer`'s own knockback rides it.
+/// (26.3 ids: particle explosion_emitter 29, sound reference
+/// entity.generic.explode 703, poof 69 / smoke 72 block particles):
+/// `viewer`'s own knockback rides it.
 fn explode_packet(
     explosion: &mc_core::boundary::ExplosionEvent,
     viewer: EntityId,
@@ -1639,22 +1630,23 @@ fn explode_packet(
                 y: *y,
                 z: *z,
             }),
-        explosion_particle_id: 22,
-        sound_reference_id: 697,
+        explosion_particle_id: 29,
+        sound_reference_id: 703,
         block_particles: vec![
             ExplosionBlockParticle {
-                particle_id: 59,
+                particle_id: 69,
                 scaling: 0.5,
                 speed: 1.0,
                 weight: 1,
             },
             ExplosionBlockParticle {
-                particle_id: 62,
+                particle_id: 72,
                 scaling: 1.0,
                 speed: 1.0,
                 weight: 1,
             },
         ],
+        play_sound: true,
     }
 }
 

@@ -11,7 +11,7 @@ impl Packet for ServerboundResourcePack {
     // `.analysis/protocol-dump.txt`: game SERVERBOUND_RESOURCE_PACK is
     // serverbound registration index 49, wire id 0x31. Body is local decompiled
     // `ServerboundResourcePackPacket(UUID id, Action action)`.
-    const ID: i32 = 0x31;
+    const ID: i32 = 0x32;
 
     fn encode<B: BufMut>(&self, buf: &mut B) -> Result<(), CodecError> {
         self.status.encode(buf)
@@ -70,25 +70,60 @@ impl Packet for ServerboundCustomPayload {
 
 /// `Confirm Teleportation` (SB). Client echoes our
 /// `SynchronizePlayerPosition.teleport_id` back to confirm it accepted
-/// the snap. If we don't see this we may need to resend the position.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// the snap. 26.3 appends the client's resulting position and rotation
+/// (it no longer sends a separate move packet after a teleport).
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ConfirmTeleportation {
     pub teleport_id: i32,
+    pub position: [f64; 3],
+    pub yaw: f32,
+    pub pitch: f32,
+}
+
+impl ConfirmTeleportation {
+    /// The confirmation a client sends after applying an absolute
+    /// (`relative_flags == 0`) [`SynchronizePlayerPosition`]: it echoes the
+    /// resulting position and rotation, exactly as the vanilla 26.3 client.
+    #[must_use]
+    pub fn accepting(sync: &SynchronizePlayerPosition) -> Self {
+        Self {
+            teleport_id: sync.teleport_id,
+            position: [sync.x, sync.y, sync.z],
+            yaw: sync.yaw,
+            pitch: sync.pitch,
+        }
+    }
 }
 
 impl Packet for ConfirmTeleportation {
-    // Verified via `javap` of vanilla 26.1.2's GameProtocols:
-    // SERVERBOUND_ACCEPT_TELEPORTATION at game-SB index 0 = wire id 0x00.
+    // 26.3 `ServerboundAcceptTeleportationPacket.STREAM_CODEC`: VarInt id,
+    // f64 x/y/z, f32 yRot, f32 xRot. Game-SB index 0.
     const ID: i32 = 0x00;
 
     fn encode<B: BufMut>(&self, buf: &mut B) -> Result<(), CodecError> {
         buf.write_varint(self.teleport_id);
+        for coordinate in self.position {
+            buf.write_f64(coordinate);
+        }
+        buf.write_f32(self.yaw);
+        buf.write_f32(self.pitch);
         Ok(())
     }
 
     fn decode<B: Buf>(buf: &mut B) -> Result<Self, CodecError> {
+        let teleport_id = buf.read_varint()?;
+        let position = [buf.read_f64()?, buf.read_f64()?, buf.read_f64()?];
+        let yaw = buf.read_f32()?;
+        let pitch = buf.read_f32()?;
+        if !position.iter().all(|value| value.is_finite()) || !yaw.is_finite() || !pitch.is_finite()
+        {
+            return Err(CodecError::NotSupported("non-finite teleport confirmation"));
+        }
         Ok(Self {
-            teleport_id: buf.read_varint()?,
+            teleport_id,
+            position,
+            yaw,
+            pitch,
         })
     }
 }
@@ -394,36 +429,37 @@ impl Packet for ServerboundMovePlayerStatusOnly {
 /// (`ServerboundPlayerActionPacket$Action`), verified against
 /// `javap -p` on the unobfuscated jar.
 ///
-/// M5's break-block path only acts on `StartDestroyBlock` and
-/// `StopDestroyBlock`. The other variants are decoded so the
-/// handler can log-and-ignore them without breaking the connection.
+/// The variants follow the 26.3 `ServerboundPlayerActionPacket$Action`
+/// ordinal order (`readEnum`), which inserted `CHANGE_DESTROY_DIRECTION` at 1.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PlayerActionKind {
     StartDestroyBlock = 0,
-    AbortDestroyBlock = 1,
-    StopDestroyBlock = 2,
-    DropAllItems = 3,
-    DropItem = 4,
-    ReleaseUseItem = 5,
-    SwapItemWithOffhand = 6,
-    Stab = 7,
+    ChangeDestroyDirection = 1,
+    AbortDestroyBlock = 2,
+    StopDestroyBlock = 3,
+    DropAllItems = 4,
+    DropItem = 5,
+    ReleaseUseItem = 6,
+    SwapItemWithOffhand = 7,
+    Stab = 8,
 }
 
 impl PlayerActionKind {
     fn from_wire(v: i32) -> Result<Self, CodecError> {
         Ok(match v {
             0 => Self::StartDestroyBlock,
-            1 => Self::AbortDestroyBlock,
-            2 => Self::StopDestroyBlock,
-            3 => Self::DropAllItems,
-            4 => Self::DropItem,
-            5 => Self::ReleaseUseItem,
-            6 => Self::SwapItemWithOffhand,
-            7 => Self::Stab,
+            1 => Self::ChangeDestroyDirection,
+            2 => Self::AbortDestroyBlock,
+            3 => Self::StopDestroyBlock,
+            4 => Self::DropAllItems,
+            5 => Self::DropItem,
+            6 => Self::ReleaseUseItem,
+            7 => Self::SwapItemWithOffhand,
+            8 => Self::Stab,
             other => {
                 return Err(CodecError::StringTooLong {
                     len: other as usize,
-                    max: 7,
+                    max: 8,
                 });
             }
         })
@@ -571,8 +607,7 @@ impl Packet for ServerboundPlayerCommand {
 }
 
 impl Packet for ServerboundPlayerAction {
-    // Verified via `javap` of vanilla 26.1.2's GameProtocols:
-    // SERVERBOUND_PLAYER_ACTION sits at game-SB index 41 = wire id 0x29.
+    // 26.3 `packets.json`: play serverbound `minecraft:player_action` = 41.
     const ID: i32 = 0x29;
 
     fn encode<B: BufMut>(&self, buf: &mut B) -> Result<(), CodecError> {
@@ -597,26 +632,22 @@ impl Packet for ServerboundPlayerAction {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ServerboundSwing {
-    pub hand: InteractionHand,
-}
+/// 26.3 `ServerboundPunchPacket` (`StreamCodec.unit`): a left click that hit
+/// nothing. It replaced the 26.1.2 serverbound swing packet; vanilla swings
+/// the main hand and resets the attack-strength ticker.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ServerboundPunch;
 
-impl Packet for ServerboundSwing {
-    // `.analysis/protocol-dump.txt`: SERVERBOUND_SWING follows
-    // SERVERBOUND_SPECTATE_ENTITY at game-SB index 63, wire id 0x3F.
-    // `javap -p` shows a single InteractionHand field.
-    const ID: i32 = 0x3F;
+impl Packet for ServerboundPunch {
+    // 26.3 `packets.json`: play serverbound `minecraft:punch` = 46.
+    const ID: i32 = 0x2E;
 
-    fn encode<B: BufMut>(&self, buf: &mut B) -> Result<(), CodecError> {
-        buf.write_varint(self.hand as i32);
+    fn encode<B: BufMut>(&self, _buf: &mut B) -> Result<(), CodecError> {
         Ok(())
     }
 
-    fn decode<B: Buf>(buf: &mut B) -> Result<Self, CodecError> {
-        Ok(Self {
-            hand: interaction_hand_from_wire(buf.read_varint()?)?,
-        })
+    fn decode<B: Buf>(_buf: &mut B) -> Result<Self, CodecError> {
+        Ok(Self)
     }
 }
 

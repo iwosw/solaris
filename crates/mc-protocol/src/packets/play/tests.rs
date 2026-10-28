@@ -38,6 +38,7 @@ fn login_play_round_trip_minimum() {
         portal_cooldown: 0,
         sea_level: 63,
         enforces_secure_chat: false,
+        online_mode: true,
     });
 }
 
@@ -68,6 +69,7 @@ fn login_play_round_trip_with_death_location() {
         portal_cooldown: 100,
         sea_level: 0,
         enforces_secure_chat: true,
+        online_mode: false,
     });
 }
 
@@ -110,6 +112,7 @@ fn login_play_encode_rejects_dimension_count_over_decode_cap() {
         portal_cooldown: 0,
         sea_level: 63,
         enforces_secure_chat: false,
+        online_mode: true,
     };
     let mut body = Vec::new();
 
@@ -395,7 +398,12 @@ fn move_player_flags_use_low_two_bits() {
 
 #[test]
 fn confirm_teleportation_round_trip() {
-    round_trip(ConfirmTeleportation { teleport_id: 1 });
+    round_trip(ConfirmTeleportation {
+        teleport_id: 1,
+        position: [1.5, 64.0, -2.25],
+        yaw: 90.0,
+        pitch: -10.0,
+    });
 }
 
 #[test]
@@ -623,16 +631,13 @@ fn add_player_entity_zero_motion_round_trips() {
 fn entity_position_sync_round_trips() {
     round_trip(EntityPositionSync {
         entity_id: 42,
-        values: PositionMoveRotation {
-            position: EntityVec3 {
-                x: 1.0,
-                y: 2.0,
-                z: 3.0,
-            },
-            delta_movement: EntityVec3::ZERO,
-            yaw: 90.0,
-            pitch: -15.0,
+        position: EntityVec3 {
+            x: 1.0,
+            y: 2.0,
+            z: 3.0,
         },
+        yaw: 90.0,
+        pitch: -15.0,
         on_ground: true,
     });
 }
@@ -762,18 +767,17 @@ fn take_item_entity_layout_matches_javap() {
 }
 
 #[test]
-fn serverbound_swing_layout_matches_javap() {
-    assert_eq!(ServerboundSwing::ID, 0x3F);
-    let packet = ServerboundSwing {
-        hand: InteractionHand::MainHand,
-    };
+fn serverbound_punch_layout_matches_packets_report() {
+    assert_eq!(ServerboundPunch::ID, 0x2E);
     let mut buf = Vec::new();
-    packet.encode(&mut buf).unwrap();
-    assert_eq!(buf, vec![0]);
+    ServerboundPunch.encode(&mut buf).unwrap();
+    assert!(buf.is_empty());
 
     let mut cursor: &[u8] = &buf;
-    assert_eq!(ServerboundSwing::decode(&mut cursor).unwrap(), packet);
-    assert!(cursor.is_empty());
+    assert_eq!(
+        ServerboundPunch::decode(&mut cursor).unwrap(),
+        ServerboundPunch
+    );
 }
 
 #[test]
@@ -781,14 +785,30 @@ fn entity_animation_id_and_wire_layout_match_server_javap() {
     assert_eq!(EntityAnimation::ID, 0x02);
     let packet = EntityAnimation {
         entity_id: 300,
-        action: EntityAnimationAction::SwingMainHand,
+        action: EntityAnimationAction::CriticalHit,
     };
     let mut buf = Vec::new();
     packet.encode(&mut buf).unwrap();
-    assert_eq!(buf, vec![0xAC, 0x02, 0x00]);
+    assert_eq!(buf, vec![0xAC, 0x02, 0x01]);
 
     let mut cursor: &[u8] = &buf;
     assert_eq!(EntityAnimation::decode(&mut cursor).unwrap(), packet);
+    assert!(cursor.is_empty());
+}
+
+#[test]
+fn swing_animation_id_and_wire_layout_match_packets_report() {
+    assert_eq!(ClientboundSwingAnimation::ID, 0x7B);
+    let packet = ClientboundSwingAnimation::default_swing(300, true);
+    let mut buf = Vec::new();
+    packet.encode(&mut buf).unwrap();
+    assert_eq!(buf, vec![0xAC, 0x02, 0x01, 0x01, 0x06]);
+
+    let mut cursor: &[u8] = &buf;
+    assert_eq!(
+        ClientboundSwingAnimation::decode(&mut cursor).unwrap(),
+        packet
+    );
     assert!(cursor.is_empty());
 }
 

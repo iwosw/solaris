@@ -779,30 +779,31 @@ fn clientbound_explode_matches_vanilla_tnt_fixture() {
             y: 0.5,
             z: -0.75,
         }),
-        explosion_particle_id: 22,
-        sound_reference_id: 697,
+        explosion_particle_id: 29,
+        sound_reference_id: 703,
         block_particles: vec![
             ExplosionBlockParticle {
-                particle_id: 59,
+                particle_id: 69,
                 scaling: 0.5,
                 speed: 1.0,
                 weight: 1,
             },
             ExplosionBlockParticle {
-                particle_id: 62,
+                particle_id: 72,
                 scaling: 1.0,
                 speed: 1.0,
                 weight: 1,
             },
         ],
+        play_sound: true,
     };
-    let expected: [u8; 81] = [
+    let expected: [u8; 82] = [
         0x3f, 0xf8, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x40, 0x50, 0x04, 0x00, 0x00, 0x00, 0x00,
         0x00, 0xc0, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x40, 0x80, 0x00, 0x00, 0x00, 0x00,
         0x00, 0x01, 0x01, 0x3f, 0xd0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x3f, 0xe0, 0x00, 0x00,
-        0x00, 0x00, 0x00, 0x00, 0xbf, 0xe8, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x16, 0xba, 0x05,
-        0x02, 0x3b, 0x3f, 0x00, 0x00, 0x00, 0x3f, 0x80, 0x00, 0x00, 0x01, 0x3e, 0x3f, 0x80, 0x00,
-        0x00, 0x3f, 0x80, 0x00, 0x00, 0x01,
+        0x00, 0x00, 0x00, 0x00, 0xbf, 0xe8, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x1d, 0xc0, 0x05,
+        0x02, 0x45, 0x3f, 0x00, 0x00, 0x00, 0x3f, 0x80, 0x00, 0x00, 0x01, 0x48, 0x3f, 0x80, 0x00,
+        0x00, 0x3f, 0x80, 0x00, 0x00, 0x01, 0x01,
     ];
 
     assert_eq!(ClientboundExplode::ID, 0x24);
@@ -833,9 +834,10 @@ fn simple_explode_packet() -> ClientboundExplode {
         radius: 0.0,
         block_count: 0,
         knockback: None,
-        explosion_particle_id: 22,
-        sound_reference_id: 697,
+        explosion_particle_id: 29,
+        sound_reference_id: 703,
         block_particles: Vec::new(),
+        play_sound: false,
     }
 }
 
@@ -854,7 +856,7 @@ fn explode_body_through_sound_holder(explosion_particle_id: i32, sound_holder: i
 
 #[test]
 fn clientbound_explode_rejects_negative_block_particle_count() {
-    let mut bytes = explode_body_through_sound_holder(22, 698);
+    let mut bytes = explode_body_through_sound_holder(29, 704);
     bytes.write_varint(-1);
 
     let err = ClientboundExplode::decode(&mut bytes.as_slice()).unwrap_err();
@@ -863,7 +865,7 @@ fn clientbound_explode_rejects_negative_block_particle_count() {
 
 #[test]
 fn clientbound_explode_rejects_oversized_block_particle_count() {
-    let mut bytes = explode_body_through_sound_holder(22, 698);
+    let mut bytes = explode_body_through_sound_holder(29, 704);
     bytes.write_varint((MAX_EXPLOSION_BLOCK_PARTICLES + 1) as i32);
 
     let err = ClientboundExplode::decode(&mut bytes.as_slice()).unwrap_err();
@@ -878,7 +880,7 @@ fn clientbound_explode_rejects_oversized_block_particle_count() {
 
 #[test]
 fn clientbound_explode_rejects_inline_sound_holder() {
-    let bytes = explode_body_through_sound_holder(22, 0);
+    let bytes = explode_body_through_sound_holder(29, 0);
 
     let err = ClientboundExplode::decode(&mut bytes.as_slice()).unwrap_err();
     assert_eq!(
@@ -890,7 +892,7 @@ fn clientbound_explode_rejects_inline_sound_holder() {
 #[test]
 fn clientbound_explode_encode_rejects_unsupported_explosion_particle() {
     let mut packet = simple_explode_packet();
-    packet.explosion_particle_id = 23;
+    packet.explosion_particle_id = 30;
 
     let err = packet.encode(&mut Vec::new()).unwrap_err();
     assert_eq!(
@@ -901,7 +903,7 @@ fn clientbound_explode_encode_rejects_unsupported_explosion_particle() {
 
 #[test]
 fn clientbound_explode_decode_rejects_unsupported_explosion_particle() {
-    let mut bytes = explode_body_through_sound_holder(23, 698);
+    let mut bytes = explode_body_through_sound_holder(30, 704);
     bytes.write_varint(0);
 
     let err = ClientboundExplode::decode(&mut bytes.as_slice()).unwrap_err();
@@ -915,7 +917,7 @@ fn clientbound_explode_decode_rejects_unsupported_explosion_particle() {
 fn clientbound_explode_encode_rejects_unsupported_block_particle() {
     let mut packet = simple_explode_packet();
     packet.block_particles.push(ExplosionBlockParticle {
-        particle_id: 60,
+        particle_id: 70,
         scaling: 1.0,
         speed: 1.0,
         weight: 1,
@@ -930,9 +932,9 @@ fn clientbound_explode_encode_rejects_unsupported_block_particle() {
 
 #[test]
 fn clientbound_explode_decode_rejects_unsupported_block_particle() {
-    let mut bytes = explode_body_through_sound_holder(22, 698);
+    let mut bytes = explode_body_through_sound_holder(29, 704);
     bytes.write_varint(1);
-    bytes.write_varint(60);
+    bytes.write_varint(70);
     bytes.write_f32(1.0);
     bytes.write_f32(1.0);
     bytes.write_varint(1);
@@ -948,7 +950,7 @@ fn clientbound_explode_decode_rejects_unsupported_block_particle() {
 fn clientbound_explode_encode_rejects_negative_block_particle_weight() {
     let mut packet = simple_explode_packet();
     packet.block_particles.push(ExplosionBlockParticle {
-        particle_id: 59,
+        particle_id: 69,
         scaling: 1.0,
         speed: 1.0,
         weight: -1,
@@ -963,9 +965,9 @@ fn clientbound_explode_encode_rejects_negative_block_particle_weight() {
 
 #[test]
 fn clientbound_explode_decode_rejects_negative_block_particle_weight() {
-    let mut bytes = explode_body_through_sound_holder(22, 698);
+    let mut bytes = explode_body_through_sound_holder(29, 704);
     bytes.write_varint(1);
-    bytes.write_varint(59);
+    bytes.write_varint(69);
     bytes.write_f32(1.0);
     bytes.write_f32(1.0);
     bytes.write_varint(-1);

@@ -7,6 +7,13 @@
 //! RegistryData wire capture. A sibling staging tree is validated before
 //! publication, leaving the previous cache untouched on derivation failure.
 //!
+//! A cache joins two bundles. The target release supplies every protocol
+//! identity: `version.json`, the datagen reports, the per-state extractor
+//! reports and the captured RegistryData. The gameplay data pack (worldgen,
+//! loot, recipes, advancements, tags, structures, registry definitions) comes
+//! from [`GAMEPLAY_DATAPACK_RELEASE`], whose JSON grammar Solaris's loaders
+//! read; its `version.json` is kept as `gameplay_version.json`.
+//!
 //! Nothing here reads a repo shell script and nothing rewrites existing content
 //! in place: the installer is the only writer, and it writes a staging tree
 //! beside the cache before swapping.
@@ -27,6 +34,14 @@ const VERSION_MANIFEST_URL: &str =
 
 /// Java major version the pinned release's bundle declares.
 const REQUIRED_JAVA_MAJOR: u32 = 25;
+
+/// The release whose `data/minecraft` data pack Solaris's gameplay loaders
+/// read. 26.3 rewrote the loot/predicate and worldgen grammars; every name in
+/// this pack exists in the target release's registries.
+pub const GAMEPLAY_DATAPACK_RELEASE: &str = "26.1.2";
+
+/// Where the gameplay bundle's own `version.json` is published in the cache.
+pub const GAMEPLAY_VERSION_FILE: &str = "gameplay_version.json";
 
 /// How much of a failing JVM's stderr is folded into the error.
 const JVM_STDERR_TAIL_BYTES: usize = 2048;
@@ -81,9 +96,10 @@ const WORLDGEN_DIRS: &[&str] = &[
     "multi_noise_biome_source_parameter_list",
 ];
 
-/// The Java extractors Solaris compiles against the bundle's classpath. Their
+/// The Java extractors Solaris compiles against the target bundle's classpath:
+/// per-state facts indexed by the target release's block-state ids. Their
 /// sources are the repo's own tooling, kept in-tree rather than shelled.
-const JAVA_EXTRACTORS: &[JavaExtractor] = &[
+const IDENTITY_EXTRACTORS: &[JavaExtractor] = &[
     JavaExtractor {
         class_name: "MapColorExtractor",
         source: include_str!("../../../tools/extract-block-map-colors/MapColorExtractor.java"),
@@ -104,12 +120,15 @@ const JAVA_EXTRACTORS: &[JavaExtractor] = &[
         source: include_str!("../../../tools/extract-block-explosion/ExplosionExtractor.java"),
         output_relative: "reports/block_explosion.json",
     },
-    JavaExtractor {
-        class_name: "VanillaWorldgenOracle",
-        source: include_str!("../../../tools/VanillaWorldgenOracle.java"),
-        output_relative: "data",
-    },
 ];
+
+/// Extractors run against the gameplay bundle: the worldgen registries they
+/// export use that release's codecs, matching the copied data pack.
+const GAMEPLAY_EXTRACTORS: &[JavaExtractor] = &[JavaExtractor {
+    class_name: "VanillaWorldgenOracle",
+    source: include_str!("../../../tools/VanillaWorldgenOracle.java"),
+    output_relative: "data",
+}];
 
 struct JavaExtractor {
     class_name: &'static str,
@@ -131,6 +150,8 @@ pub enum ContentSource {
 pub struct ImportRequest {
     pub version: String,
     pub source: ContentSource,
+    /// The [`GAMEPLAY_DATAPACK_RELEASE`] bundle supplying the data pack.
+    pub gameplay_source: ContentSource,
     pub cache: PathBuf,
 }
 
@@ -232,20 +253,27 @@ async fn derive_into(request: &ImportRequest, staging: &Path) -> Result<ImportRe
     let staging = fs::canonicalize(staging)
         .with_context(|| format!("resolve the staging tree {}", staging.display()))?;
     let staging = staging.as_path();
-    // The licensed jar is scratch, never part of the published cache.
+    // The licensed jars are scratch, never part of the published cache.
     let work = staging.join(".work");
-    fs::create_dir_all(&work).with_context(|| format!("create {}", work.display()))?;
-    let local_jar = if let ContentSource::LocalJar(path) = &request.source {
-        report(&format!(
-            "staging the supplied server jar {}",
-            path.display()
-        ));
-        let jar = stage_local_jar(path, &work)?;
-        install_version_json(&jar, staging)?;
-        Some(jar)
-    } else {
-        None
-    };
+    let identity_work = work.join("identity");
+    let gameplay_work = work.join("gameplay");
+    for dir in [&identity_work, &gameplay_work] {
+        fs::create_dir_all(dir).with_context(|| format!("create {}", dir.display()))?;
+    }
+    let version_file = staging.join("version.json");
+    let gameplay_version_file = staging.join(GAMEPLAY_VERSION_FILE);
+    let identity_local = stage_local_release(
+        &request.source,
+        &identity_work,
+        &request.version,
+        &version_file,
+    )?;
+    let gameplay_local = stage_local_release(
+        &request.gameplay_source,
+        &gameplay_work,
+        GAMEPLAY_DATAPACK_RELEASE,
+        &gameplay_version_file,
+    )?;
     // A JVM that cannot load the bundle's class files would fail deep inside the
     // derivation with an opaque exit status, so the runtime is validated first:
     // nothing is downloaded and no JVM is started against a wrong runtime.
@@ -255,26 +283,46 @@ async fn derive_into(request: &ImportRequest, staging: &Path) -> Result<ImportRe
     ));
     let java = preflight_java()?;
     let javac = javac_command(&java);
-    let jar = match local_jar {
+    let jar = match identity_local {
+        Some(jar) => jar,
+        None => download_release(&request.version, &identity_work, &version_file).await?,
+    };
+    let gameplay_jar = match gameplay_local {
         Some(jar) => jar,
         None => {
-            report(&format!(
-                "resolving {} through Mojang's public version manifest",
-                request.version,
-            ));
-            let metadata = resolve_version_metadata(&request.version).await?;
-            let jar = download_server_jar(&metadata, &work).await?;
-            install_version_json(&jar, staging)?;
-            jar
+            download_release(
+                GAMEPLAY_DATAPACK_RELEASE,
+                &gameplay_work,
+                &gameplay_version_file,
+            )
+            .await?
         }
     };
 
-    report("unpacking the bundle and installing the data/minecraft subset");
-    let bundle = unpack_bundle(&jar, &work)?;
-    copy_data_subset(&bundle.inner_jar, staging)?;
-    run_datagen(&java, &jar, &work, staging)?;
-    run_java_extractors(&java, &javac, &bundle, &work, staging)?;
-    let captured = capture_registry_payloads(&java, &jar, &work, staging).await?;
+    report(&format!(
+        "unpacking the bundles and installing the {GAMEPLAY_DATAPACK_RELEASE} data/minecraft subset"
+    ));
+    let bundle = unpack_bundle(&jar, &identity_work)?;
+    let gameplay = unpack_bundle(&gameplay_jar, &gameplay_work)?;
+    copy_data_subset(&gameplay.inner_jar, staging)?;
+    run_datagen(&java, &jar, &identity_work, staging)?;
+    run_java_extractors(
+        &java,
+        &javac,
+        &bundle,
+        IDENTITY_EXTRACTORS,
+        &identity_work,
+        staging,
+    )?;
+    run_java_extractors(
+        &java,
+        &javac,
+        &gameplay,
+        GAMEPLAY_EXTRACTORS,
+        &gameplay_work,
+        staging,
+    )?;
+    let captured = capture_registry_payloads(&java, &jar, &identity_work, staging).await?;
 
     fs::remove_dir_all(&work).with_context(|| format!("remove {}", work.display()))?;
     report("validating the derived cache");
@@ -285,6 +333,37 @@ async fn derive_into(request: &ImportRequest, staging: &Path) -> Result<ImportRe
         registries: captured.len(),
         entries,
     })
+}
+
+/// Stage an operator-supplied bundle of `expected` and publish its
+/// `version.json` as `version_file`; `None` when the release is downloaded.
+fn stage_local_release(
+    source: &ContentSource,
+    work: &Path,
+    expected: &str,
+    version_file: &Path,
+) -> Result<Option<PathBuf>> {
+    let ContentSource::LocalJar(path) = source else {
+        return Ok(None);
+    };
+    report(&format!(
+        "staging the supplied {expected} server jar {}",
+        path.display()
+    ));
+    let jar = stage_local_jar(path, work)?;
+    install_version_json(&jar, expected, version_file)?;
+    Ok(Some(jar))
+}
+
+/// Download the `version` bundle into `work` and publish its `version.json`.
+async fn download_release(version: &str, work: &Path, version_file: &Path) -> Result<PathBuf> {
+    report(&format!(
+        "resolving {version} through Mojang's public version manifest"
+    ));
+    let metadata = resolve_version_metadata(version).await?;
+    let jar = download_server_jar(&metadata, work).await?;
+    install_version_json(&jar, version, version_file)?;
+    Ok(jar)
 }
 
 /// The pinned release's metadata as the manifest states it.
@@ -302,14 +381,18 @@ pub struct Artifact {
     pub size: u64,
 }
 
-/// Resolve the pinned version through the public manifest and verify it.
+/// Resolve `version` through the public manifest and verify it.
 async fn resolve_version_metadata(version: &str) -> Result<VersionMetadata> {
     let client = http_client()?;
     let manifest = get_text(&client, VERSION_MANIFEST_URL).await?;
     let entry = manifest_version_entry(&manifest, version)?;
     let body = get_text_verified(&client, &entry.url, &entry.sha1).await?;
     let metadata = parse_version_metadata(&body)?;
-    require_target_version(&metadata.id)?;
+    ensure!(
+        metadata.id == version,
+        "Mojang's metadata for {version} names release {}",
+        metadata.id
+    );
     Ok(metadata)
 }
 
@@ -584,7 +667,8 @@ fn collect_jars(root: &Path) -> Result<Vec<PathBuf>> {
     Ok(jars)
 }
 
-fn install_version_json(jar: &Path, staging: &Path) -> Result<()> {
+/// Check the bundle's own `version.json` names `expected`, then publish it.
+fn install_version_json(jar: &Path, expected: &str, version_file: &Path) -> Result<()> {
     let mut archive = zip::ZipArchive::new(
         File::open(jar).with_context(|| format!("open the server bundle {}", jar.display()))?,
     )
@@ -604,12 +688,10 @@ fn install_version_json(jar: &Path, staging: &Path) -> Result<()> {
         .and_then(|id| id.as_str())
         .context("version.json has no id")?;
     ensure!(
-        id == mc_protocol::TARGET_RELEASE,
-        "the supplied jar is {id} but Solaris targets {}",
-        mc_protocol::TARGET_RELEASE
+        id == expected,
+        "the supplied jar is {id} but this cache needs {expected}"
     );
-    fs::write(staging.join("version.json"), &raw)
-        .with_context(|| format!("write {}/version.json", staging.display()))?;
+    fs::write(version_file, &raw).with_context(|| format!("write {}", version_file.display()))?;
     Ok(())
 }
 
@@ -713,6 +795,7 @@ fn run_java_extractors(
     java: &OsStr,
     javac: &OsStr,
     bundle: &UnpackedBundle,
+    extractors: &[JavaExtractor],
     work: &Path,
     staging: &Path,
 ) -> Result<()> {
@@ -722,7 +805,7 @@ fn run_java_extractors(
     let classes = sources.join("classes");
     fs::create_dir_all(&classes).with_context(|| format!("create {}", classes.display()))?;
     report("running the in-tree Java extractors");
-    for extractor in JAVA_EXTRACTORS {
+    for extractor in extractors {
         let source = sources.join(format!("{}.java", extractor.class_name));
         fs::write(&source, extractor.source)
             .with_context(|| format!("write {}", source.display()))?;

@@ -109,6 +109,8 @@ pub struct JoinBurst<'a> {
     pub op_level: u8,
     /// Manifest roots from the actual loaded host.
     pub plugin_commands: &'a [(String, u8)],
+    /// `[auth] online_mode`, sent as 26.3 `ClientboundLoginPacket.onlineMode`.
+    pub online_mode: bool,
 }
 
 pub async fn send_join_burst(burst: JoinBurst<'_>) -> anyhow::Result<()> {
@@ -125,6 +127,7 @@ pub async fn send_join_burst(burst: JoinBurst<'_>) -> anyhow::Result<()> {
         recipes,
         op_level,
         plugin_commands,
+        online_mode,
     } = burst;
     let (dimension_type_id, dimension_name, dimension_names) = spawn_dimension(data, dimension)?;
     let max_players = i32::try_from(data.entry_count().min(128)).unwrap_or(20);
@@ -150,6 +153,7 @@ pub async fn send_join_burst(burst: JoinBurst<'_>) -> anyhow::Result<()> {
         death_location: None,
         portal_cooldown: 0,
         sea_level: dimension.sea_level(),
+        online_mode,
         enforces_secure_chat: false,
     })
     .await?;

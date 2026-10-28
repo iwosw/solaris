@@ -367,9 +367,7 @@ impl Client {
         let _: GameEvent = client.read_typed().await.context("GameEvent")?;
         let _: SetCenterChunk = client.read_typed().await.context("SetCenterChunk")?;
         client
-            .write_packet(&ConfirmTeleportation {
-                teleport_id: sync.teleport_id,
-            })
+            .write_packet(&ConfirmTeleportation::accepting(&sync))
             .await
             .context("ack teleport")?;
         Ok((client, sync))

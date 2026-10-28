@@ -2,9 +2,10 @@ use std::io::Write;
 use std::path::Path;
 
 use super::{
-    ContentSource, ImportReport, ImportRequest, finish_import, import_content,
-    install_version_json, manifest_version_entry, parse_version_metadata, publish,
-    require_target_version, stage_local_jar, staging_dir, wanted_data_entry,
+    ContentSource, GAMEPLAY_DATAPACK_RELEASE, GAMEPLAY_VERSION_FILE, ImportReport, ImportRequest,
+    finish_import, import_content, install_version_json, manifest_version_entry,
+    parse_version_metadata, publish, require_target_version, stage_local_jar, staging_dir,
+    wanted_data_entry,
 };
 use crate::content_cache::tests::write_valid_cache;
 
@@ -27,19 +28,22 @@ fn write_bundle(path: &Path, version: &str) {
 #[test]
 fn manifest_selection_uses_the_pinned_version_not_latest() {
     let manifest = r#"{
-        "latest": {"release": "26.2"},
+        "latest": {"release": "26.4"},
         "versions": [
-            {"id":"26.2","url":"https://example.invalid/newer","sha1":"newer"},
-            {"id":"26.1.2","url":"https://example.invalid/pinned","sha1":"pinned"}
+            {"id":"26.4","url":"https://example.invalid/newer","sha1":"newer"},
+            {"id":"26.3","url":"https://example.invalid/pinned","sha1":"pinned"},
+            {"id":"26.1.2","url":"https://example.invalid/gameplay","sha1":"gameplay"}
         ]
     }"#;
     let entry = manifest_version_entry(manifest, mc_protocol::TARGET_RELEASE).unwrap();
     assert_eq!(entry.url, "https://example.invalid/pinned");
     assert_eq!(entry.sha1, "pinned");
+    let gameplay = manifest_version_entry(manifest, GAMEPLAY_DATAPACK_RELEASE).unwrap();
+    assert_eq!(gameplay.url, "https://example.invalid/gameplay");
     assert!(manifest_version_entry(manifest, "missing").is_err());
     let metadata = parse_version_metadata(
         r#"{
-        "id":"26.1.2",
+        "id":"26.3",
         "downloads":{"server":{"url":"https://example.invalid/server.jar","sha1":"abc","size":42}}
     }"#,
     )
@@ -58,6 +62,7 @@ async fn rejected_version_does_not_create_staging_or_change_existing_cache() {
     let error = import_content(&ImportRequest {
         version: "26.2".into(),
         source: ContentSource::Download,
+        gameplay_source: ContentSource::Download,
         cache: cache.clone(),
     })
     .await
@@ -77,6 +82,7 @@ async fn actual_local_import_failure_preserves_complete_cache_and_discards_stagi
     let error = import_content(&ImportRequest {
         version: mc_protocol::TARGET_RELEASE.into(),
         source: ContentSource::LocalJar(parent.path().join("missing.jar")),
+        gameplay_source: ContentSource::Download,
         cache: cache.clone(),
     })
     .await
@@ -102,6 +108,7 @@ async fn foreign_local_bundle_fails_before_java_or_network_and_preserves_cache()
     let error = import_content(&ImportRequest {
         version: mc_protocol::TARGET_RELEASE.into(),
         source: ContentSource::LocalJar(jar),
+        gameplay_source: ContentSource::Download,
         cache: cache.clone(),
     })
     .await
@@ -114,14 +121,62 @@ async fn foreign_local_bundle_fails_before_java_or_network_and_preserves_cache()
     assert_eq!(std::fs::read_dir(parent.path()).unwrap().count(), 2);
 }
 
+#[tokio::test]
+async fn foreign_gameplay_bundle_fails_before_java_or_network() {
+    let parent = tempfile::tempdir().unwrap();
+    let cache = parent.path().join("cache");
+    write_valid_cache(&cache);
+    let jar = parent.path().join("licensed.jar");
+    write_bundle(&jar, mc_protocol::TARGET_RELEASE);
+    let gameplay = parent.path().join("gameplay.jar");
+    write_bundle(&gameplay, mc_protocol::TARGET_RELEASE);
+    let error = import_content(&ImportRequest {
+        version: mc_protocol::TARGET_RELEASE.into(),
+        source: ContentSource::LocalJar(jar),
+        gameplay_source: ContentSource::LocalJar(gameplay),
+        cache: cache.clone(),
+    })
+    .await
+    .unwrap_err();
+    assert!(
+        error.to_string().contains(&format!(
+            "supplied jar is {} but this cache needs {GAMEPLAY_DATAPACK_RELEASE}",
+            mc_protocol::TARGET_RELEASE
+        )),
+        "{error:#}"
+    );
+}
+
 #[test]
 fn local_jar_staging_and_version_check_are_offline() {
     let parent = tempfile::tempdir().unwrap();
     let jar = parent.path().join("licensed.jar");
     write_bundle(&jar, mc_protocol::TARGET_RELEASE);
+    let gameplay_jar = parent.path().join("gameplay.jar");
+    write_bundle(&gameplay_jar, GAMEPLAY_DATAPACK_RELEASE);
     let staging = staging_dir(&parent.path().join("cache")).unwrap();
-    let staged = stage_local_jar(&jar, staging.path()).unwrap();
-    install_version_json(&staged, staging.path()).unwrap();
+    let identity = staging.path().join("identity");
+    let gameplay = staging.path().join("gameplay");
+    std::fs::create_dir_all(&identity).unwrap();
+    std::fs::create_dir_all(&gameplay).unwrap();
+    let staged = stage_local_jar(&jar, &identity).unwrap();
+    install_version_json(
+        &staged,
+        mc_protocol::TARGET_RELEASE,
+        &staging.path().join("version.json"),
+    )
+    .unwrap();
+    let error = crate::startup_data::validate_vanilla_sidecar_version(staging.path())
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("gameplay data-pack version"), "{error}");
+    let staged_gameplay = stage_local_jar(&gameplay_jar, &gameplay).unwrap();
+    install_version_json(
+        &staged_gameplay,
+        GAMEPLAY_DATAPACK_RELEASE,
+        &staging.path().join(GAMEPLAY_VERSION_FILE),
+    )
+    .unwrap();
     crate::startup_data::validate_vanilla_sidecar_version(staging.path()).unwrap();
     assert_eq!(std::fs::read(staged).unwrap(), std::fs::read(jar).unwrap());
 }

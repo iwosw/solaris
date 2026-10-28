@@ -105,11 +105,11 @@ pub use chunks::{
 };
 pub use entity::{
     AddEntity, BlockStateId, ClientboundSetEntityData, ClientboundSetPassengers,
-    ClientboundTakeItemEntity, EffectParticle, EntityAnimation, EntityAnimationAction,
-    EntityDataValue, EntityDirection, EntityEvent, EntityPose, EntityPositionSync, EntityRotations,
-    EntityVec3, MoveEntityPos, MoveEntityPosRot, MoveEntityRot, PlayerInfoActions, PlayerInfoEntry,
-    PlayerInfoRemove, PlayerInfoUpdate, PositionMoveRotation, RemoveEntities, RotateHead,
-    SetEntityMotion,
+    ClientboundSwingAnimation, ClientboundTakeItemEntity, EffectParticle, EntityAnimation,
+    EntityAnimationAction, EntityDataValue, EntityDirection, EntityEvent, EntityPose,
+    EntityPositionSync, EntityRotations, EntityVec3, MoveEntityPos, MoveEntityPosRot,
+    MoveEntityRot, PlayerInfoActions, PlayerInfoEntry, PlayerInfoRemove, PlayerInfoUpdate,
+    RemoveEntities, RotateHead, SetEntityMotion, SwingAnimationType,
 };
 pub use env_state::{
     ClientboundBlockDestruction, ClientboundBlockEntityData, ClientboundBlockEvent,
@@ -126,7 +126,7 @@ pub use interaction::{
     ServerboundKeepAlive, ServerboundMovePlayerPos, ServerboundMovePlayerPosRot,
     ServerboundMovePlayerRot, ServerboundMovePlayerStatusOnly, ServerboundPickItemFromBlock,
     ServerboundPickItemFromEntity, ServerboundPlayerAction, ServerboundPlayerCommand,
-    ServerboundPlayerInput, ServerboundResourcePack, ServerboundSwing, ServerboundUseItem,
+    ServerboundPlayerInput, ServerboundPunch, ServerboundResourcePack, ServerboundUseItem,
     ServerboundUseItemOn,
 };
 pub use inventory::{
@@ -215,10 +215,10 @@ const ENTITY_DATA_PARTICLES_SERIALIZER_ID: i32 = 17;
 /// Built-in effect count plus registry-growth headroom for particle metadata.
 pub const MAX_ENTITY_EFFECT_PARTICLES: usize = 256;
 /// `minecraft:particle_type` protocol id of `minecraft:entity_effect`
-/// (`data/vanilla/reports/registries.json`); its stream codec is one `i32` ARGB.
-const PARTICLE_TYPE_ENTITY_EFFECT: i32 = 21;
-const PARTICLE_TYPE_RAID_OMEN: i32 = 113;
-const PARTICLE_TYPE_TRIAL_OMEN: i32 = 114;
+/// (26.3 `data/vanilla/reports/registries.json`); its stream codec is one `i32` ARGB.
+const PARTICLE_TYPE_ENTITY_EFFECT: i32 = 28;
+const PARTICLE_TYPE_RAID_OMEN: i32 = 123;
+const PARTICLE_TYPE_TRIAL_OMEN: i32 = 124;
 pub const ENTITY_DATA_SHARED_FLAGS_INDEX: u8 = 0;
 pub const ENTITY_DATA_AIR_SUPPLY_INDEX: u8 = 1;
 pub const ENTITY_DATA_POSE_INDEX: u8 = 6;
@@ -241,19 +241,15 @@ pub const VILLAGER_ENTITY_DATA_INDEX: u8 = 19;
 pub const LIVING_ENTITY_FLAG_USING_ITEM: i8 = 0x01;
 pub const LIVING_ENTITY_FLAG_OFF_HAND: i8 = 0x02;
 pub const ITEM_ENTITY_DATA_ITEM_INDEX: u8 = 8;
-/// Local vanilla 26.1.2 DataComponents registration order (javap).
-pub const DATA_COMPONENT_CUSTOM_DATA_ID: i32 = 0;
-pub const DATA_COMPONENT_MAX_DAMAGE_ID: i32 = 2;
-pub const DATA_COMPONENT_DAMAGE_ID: i32 = 3;
-/// `minecraft:custom_name` in the bundled vanilla 26.1.2
-/// `minecraft:data_component_type` registry. `DataComponents.CUSTOM_NAME`
-/// uses the `Component` stream codec, which is network NBT for the supported
-/// literal text component shape.
-pub const DATA_COMPONENT_CUSTOM_NAME_ID: i32 = 6;
-/// `minecraft:item_model` in the local vanilla 26.1.2
-/// `minecraft:data_component_type` registry report.
-pub const DATA_COMPONENT_ITEM_MODEL_ID: i32 = 10;
-pub const DATA_COMPONENT_ENCHANTMENTS_ID: i32 = 13;
+/// `minecraft:data_component_type` wire ids (26.3 registry report).
+pub const DATA_COMPONENT_CUSTOM_DATA_ID: i32 = mc_data::data_component_types_26_1_2::CUSTOM_DATA;
+pub const DATA_COMPONENT_MAX_DAMAGE_ID: i32 = mc_data::data_component_types_26_1_2::MAX_DAMAGE;
+pub const DATA_COMPONENT_DAMAGE_ID: i32 = mc_data::data_component_types_26_1_2::DAMAGE;
+/// `DataComponents.CUSTOM_NAME` uses the `Component` stream codec, which is
+/// network NBT for the supported literal text component shape.
+pub const DATA_COMPONENT_CUSTOM_NAME_ID: i32 = mc_data::data_component_types_26_1_2::CUSTOM_NAME;
+pub const DATA_COMPONENT_ITEM_MODEL_ID: i32 = mc_data::data_component_types_26_1_2::ITEM_MODEL;
+pub const DATA_COMPONENT_ENCHANTMENTS_ID: i32 = mc_data::data_component_types_26_1_2::ENCHANTMENTS;
 
 thread_local! {
     static VANILLA_ITEM_MODELS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
@@ -278,8 +274,8 @@ fn wire_item_model(stack: &ItemStack) -> Option<&mc_data::Identifier> {
         .as_deref()
         .filter(|model| !VANILLA_ITEM_MODELS.get() || model.namespace() == "minecraft")
 }
-/// `minecraft:suspicious_stew_effects` in the local 26.1.2 component registry.
-pub const DATA_COMPONENT_SUSPICIOUS_STEW_EFFECTS_ID: i32 = 53;
+pub const DATA_COMPONENT_SUSPICIOUS_STEW_EFFECTS_ID: i32 =
+    mc_data::data_component_types_26_1_2::SUSPICIOUS_STEW_EFFECTS;
 
 fn write_long_array<B: BufMut>(buf: &mut B, longs: &[i64]) -> Result<(), CodecError> {
     if longs.len() > MAX_LONG_ARRAY_LEN {
@@ -415,10 +411,10 @@ fn unpack_lp_component(v: u64) -> f64 {
 // -----------------------------------------------------------------------
 
 fn validate_simple_explosion_particle_id(particle_id: i32) -> Result<i32, CodecError> {
-    // Vanilla 26.1.2 IDs verified for the current TNT packet shape:
-    // explosion_emitter=22, poof=59, smoke=62. These codecs have no payload.
+    // Vanilla 26.3 `minecraft:particle_type` IDs for the current TNT packet
+    // shape: explosion_emitter=29, poof=69, smoke=72. These codecs have no payload.
     match particle_id {
-        22 | 59 | 62 => Ok(particle_id),
+        29 | 69 | 72 => Ok(particle_id),
         _ => Err(CodecError::NotSupported(
             "unsupported simple explosion particle id",
         )),

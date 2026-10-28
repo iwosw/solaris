@@ -905,6 +905,7 @@ mod tests {
                 uuid: Uuid::nil(),
                 name: "RegistryCapture".into(),
                 properties: Vec::new(),
+                session_id: Uuid::nil(),
             },
         )
         .await?;
@@ -915,7 +916,7 @@ mod tests {
                 packs: vec![KnownPackEntry {
                     namespace: "minecraft".into(),
                     id: "core".into(),
-                    version: "26.1.2".into(),
+                    version: mc_protocol::TARGET_RELEASE.into(),
                 }],
             },
         )

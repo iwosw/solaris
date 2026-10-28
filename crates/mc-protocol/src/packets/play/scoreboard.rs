@@ -1,6 +1,5 @@
-//! Vanilla 26.1.2 scoreboard packets, from the patched 26.1.2.76 source jar.
-//! IDs count GameProtocols.CLIENTBOUND_TEMPLATE registrations, including bundle
-//! delimiter at zero. Components use the trusted network-NBT stream codec.
+//! Vanilla 26.3 scoreboard packets. IDs follow the 26.3 `packets.json`
+//! report. Components use the trusted network-NBT stream codec.
 
 use super::*;
 
@@ -10,34 +9,59 @@ pub struct TeamParameters {
     pub options: u8,
     pub nametag_visibility: i32,
     pub collision_rule: i32,
+    /// `ChatFormatting` ordinal: 0..=15 are the team colors (26.3 `TeamColor`
+    /// ids share that order); any other value (vanilla `RESET` = 21) is no color.
     pub color: i32,
     pub prefix: Tag,
     pub suffix: Tag,
 }
 
+/// `ChatFormatting.RESET`, the "no team color" value on the Solaris side.
+const TEAM_COLOR_NONE: i32 = 21;
+
 impl TeamParameters {
+    // 26.3 `ClientboundSetPlayerTeamPacket.Parameters.STREAM_CODEC`: display
+    // name, prefix, suffix, visibility, collision rule, Optional<TeamColor>,
+    // then the options byte. Visibility/collision/team color are idMapper VarInts.
     fn encode<B: BufMut>(&self, buf: &mut B) -> Result<(), CodecError> {
         mc_nbt::write_network_value(buf, &self.display_name)?;
-        buf.write_u8(self.options);
-        // Team.Visibility and Team.CollisionRule use ByteBufCodecs.idMapper,
-        // not the legacy UTF names. ChatFormatting uses writeEnum (VarInt).
-        buf.write_varint(self.nametag_visibility);
-        buf.write_varint(self.collision_rule);
-        buf.write_varint(self.color);
         mc_nbt::write_network_value(buf, &self.prefix)?;
         mc_nbt::write_network_value(buf, &self.suffix)?;
+        buf.write_varint(self.nametag_visibility);
+        buf.write_varint(self.collision_rule);
+        if (0..=15).contains(&self.color) {
+            buf.write_bool(true);
+            buf.write_varint(self.color);
+        } else {
+            buf.write_bool(false);
+        }
+        buf.write_u8(self.options);
         Ok(())
     }
 
     fn decode<B: Buf>(buf: &mut B) -> Result<Self, CodecError> {
+        let display_name = mc_nbt::read_network_value(buf)?;
+        let prefix = mc_nbt::read_network_value(buf)?;
+        let suffix = mc_nbt::read_network_value(buf)?;
+        let nametag_visibility = buf.read_varint()?;
+        let collision_rule = buf.read_varint()?;
+        let color = if buf.read_bool()? {
+            let color = buf.read_varint()?;
+            if !(0..=15).contains(&color) {
+                return Err(CodecError::NotSupported("unknown team color"));
+            }
+            color
+        } else {
+            TEAM_COLOR_NONE
+        };
         Ok(Self {
-            display_name: mc_nbt::read_network_value(buf)?,
+            display_name,
             options: buf.read_u8()?,
-            nametag_visibility: buf.read_varint()?,
-            collision_rule: buf.read_varint()?,
-            color: buf.read_varint()?,
-            prefix: mc_nbt::read_network_value(buf)?,
-            suffix: mc_nbt::read_network_value(buf)?,
+            nametag_visibility,
+            collision_rule,
+            color,
+            prefix,
+            suffix,
         })
     }
 }
@@ -52,7 +76,7 @@ pub struct ClientboundSetPlayerTeam {
 
 impl Packet for ClientboundSetPlayerTeam {
     // GamePacketTypes.CLIENTBOUND_SET_PLAYER_TEAM, registration 109.
-    const ID: i32 = 0x6D;
+    const ID: i32 = 0x6F;
 
     fn encode<B: BufMut>(&self, buf: &mut B) -> Result<(), CodecError> {
         if self.method > 4 {
@@ -119,7 +143,7 @@ pub struct ClientboundSetObjective {
 
 impl Packet for ClientboundSetObjective {
     // GamePacketTypes.CLIENTBOUND_SET_OBJECTIVE, registration 106.
-    const ID: i32 = 0x6A;
+    const ID: i32 = 0x6C;
 
     fn encode<B: BufMut>(&self, buf: &mut B) -> Result<(), CodecError> {
         if self.method > 2 {
@@ -174,7 +198,7 @@ pub struct ClientboundSetScore {
 
 impl Packet for ClientboundSetScore {
     // GamePacketTypes.CLIENTBOUND_SET_SCORE, registration 110.
-    const ID: i32 = 0x6E;
+    const ID: i32 = 0x70;
 
     fn encode<B: BufMut>(&self, buf: &mut B) -> Result<(), CodecError> {
         buf.write_string(&self.owner, DEFAULT_MAX_STRING_LEN)?;
@@ -211,7 +235,7 @@ pub struct ClientboundResetScore {
 
 impl Packet for ClientboundResetScore {
     // GamePacketTypes.CLIENTBOUND_RESET_SCORE, registration 79.
-    const ID: i32 = 0x4F;
+    const ID: i32 = 0x50;
 
     fn encode<B: BufMut>(&self, buf: &mut B) -> Result<(), CodecError> {
         buf.write_string(&self.owner, DEFAULT_MAX_STRING_LEN)?;
@@ -241,7 +265,7 @@ pub struct ClientboundSetDisplayObjective {
 
 impl Packet for ClientboundSetDisplayObjective {
     // GamePacketTypes.CLIENTBOUND_SET_DISPLAY_OBJECTIVE, registration 98.
-    const ID: i32 = 0x62;
+    const ID: i32 = 0x64;
 
     fn encode<B: BufMut>(&self, buf: &mut B) -> Result<(), CodecError> {
         buf.write_varint(self.slot); // FriendlyByteBuf.writeById uses VarInt.
@@ -295,7 +319,9 @@ mod tests {
             let has_players = matches!(method, 0 | 3 | 4);
             let mut wire = vec![1, b't', method];
             if has_parameters {
-                wire.extend_from_slice(&[8, 0, 1, b'D', 3, 2, 3, 21, 8, 0, 1, b'P', 8, 0, 1, b'S']);
+                // 26.3 order: display, prefix, suffix, visibility 2, collision 3,
+                // absent Optional<TeamColor> (RESET), options 3.
+                wire.extend_from_slice(&[8, 0, 1, b'D', 8, 0, 1, b'P', 8, 0, 1, b'S', 2, 3, 0, 3]);
             }
             if has_players {
                 wire.extend_from_slice(&[1, 1, b'p']);

@@ -345,9 +345,7 @@ impl WireClient {
                             background_writer
                                 .lock()
                                 .await
-                                .send_packet(&ConfirmTeleportation {
-                                    teleport_id: position.teleport_id,
-                                })
+                                .send_packet(&ConfirmTeleportation::accepting(&position))
                                 .await?;
                             Some(WireEvent::Position(position))
                         }

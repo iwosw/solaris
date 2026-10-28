@@ -18,7 +18,7 @@ pub struct ForgetLevelChunk {
 }
 
 impl Packet for ForgetLevelChunk {
-    const ID: i32 = 0x25;
+    const ID: i32 = 0x26;
 
     fn encode<B: BufMut>(&self, buf: &mut B) -> Result<(), CodecError> {
         buf.write_i64(pack_chunk_pos(self.chunk_x, self.chunk_z));
@@ -232,7 +232,7 @@ pub struct LevelChunkWithLight {
 impl Packet for LevelChunkWithLight {
     // Verified via `javap` of vanilla 26.1.2's GameProtocols:
     // CLIENTBOUND_LEVEL_CHUNK_WITH_LIGHT at game-CB index 45 = 0x2D.
-    const ID: i32 = 0x2D;
+    const ID: i32 = 0x2E;
 
     fn encode<B: BufMut>(&self, buf: &mut B) -> Result<(), CodecError> {
         if self.heightmaps.len() > MAX_CHUNK_HEIGHTMAPS {
@@ -337,7 +337,7 @@ pub struct LevelEvent {
 
 impl Packet for LevelEvent {
     // CLIENTBOUND_LEVEL_EVENT at game-CB index 46 = wire id 0x2E.
-    const ID: i32 = 0x2E;
+    const ID: i32 = 0x2F;
 
     fn encode<B: BufMut>(&self, buf: &mut B) -> Result<(), CodecError> {
         buf.write_i32(self.event_id);
@@ -376,7 +376,7 @@ pub struct SetCenterChunk {
 impl Packet for SetCenterChunk {
     // Verified via `javap` of vanilla 26.1.2's GameProtocols:
     // CLIENTBOUND_SET_CHUNK_CACHE_CENTER at game-CB index 94 = 0x5E.
-    const ID: i32 = 0x5E;
+    const ID: i32 = 0x60;
 
     fn encode<B: BufMut>(&self, buf: &mut B) -> Result<(), CodecError> {
         buf.write_varint(self.chunk_x);
@@ -400,7 +400,7 @@ pub struct SetChunkCacheRadius {
 
 impl Packet for SetChunkCacheRadius {
     // Verified via `javap` of vanilla 26.1.2: game-CB index 95, one VarInt.
-    const ID: i32 = 0x5F;
+    const ID: i32 = 0x61;
 
     fn encode<B: BufMut>(&self, buf: &mut B) -> Result<(), CodecError> {
         buf.write_varint(self.radius);
@@ -476,7 +476,7 @@ pub struct SectionBlocksUpdate {
 impl Packet for SectionBlocksUpdate {
     // Verified via `javap` of vanilla 26.1.2's GameProtocols:
     // CLIENTBOUND_SECTION_BLOCKS_UPDATE at game-CB index 84 = wire id 0x54.
-    const ID: i32 = 0x54;
+    const ID: i32 = 0x56;
 
     fn encode<B: BufMut>(&self, buf: &mut B) -> Result<(), CodecError> {
         buf.write_i64(self.section_pos);
@@ -561,7 +561,7 @@ pub struct LightUpdate {
 impl Packet for LightUpdate {
     // Verified via `javap` of vanilla 26.1.2's GameProtocols:
     // CLIENTBOUND_LIGHT_UPDATE at game-CB index 48 = wire id 0x30.
-    const ID: i32 = 0x30;
+    const ID: i32 = 0x31;
 
     fn encode<B: BufMut>(&self, buf: &mut B) -> Result<(), CodecError> {
         buf.write_varint(self.chunk_x);

@@ -70,6 +70,7 @@ pub mod item_profiles;
 pub mod item_semantics_26_1_2;
 pub mod item_stack;
 pub mod items;
+pub mod legacy_26_1_2;
 pub mod loot;
 pub mod mob_behavior_26_1_2;
 pub mod mob_effects_26_1_2;
@@ -195,6 +196,16 @@ pub enum DataError {
 
     #[error("captured registry Network-NBT has trailing bytes at {path}")]
     RegistryPayloadTrailing { path: PathBuf },
+
+    #[error(
+        "registry {registry} defines {entry} under data/minecraft but the captured \
+         RegistryData payloads at {path} have no such entry"
+    )]
+    DefinitionWithoutPayload {
+        registry: String,
+        entry: String,
+        path: PathBuf,
+    },
 }
 
 /// One built-in registry — the registry name plus the sorted list of
@@ -429,10 +440,15 @@ fn load_registry_payload(opened: OpenedResource) -> Result<Vec<u8>, DataError> {
 /// Load the vanilla data sidecar rooted at `path` (typically
 /// `data/vanilla/`).
 ///
-/// Walks `<path>/data/minecraft/<registry>/**/*.json` for each
-/// well-known registry. Registries that have zero entries are an error,
-/// because that means either the operator forgot to run the extraction
-/// script or this Mojang version dropped a registry we still expect.
+/// With captured RegistryData payloads the wire registry is exactly the
+/// payload set (`reports/registry_network_nbt/minecraft/<registry>/**/*.nbt`):
+/// that is what the client receives and what every numeric id indexes. The
+/// gameplay definitions under `<path>/data/minecraft/<registry>/**/*.json`
+/// may come from an older data pack, so they must name a subset of it.
+/// Without payloads the definitions are the registry. Registries that have
+/// zero entries are an error, because that means either the operator forgot
+/// to run the extraction script or this Mojang version dropped a registry we
+/// still expect.
 pub fn load(path: impl Into<PathBuf>) -> Result<VanillaData, DataError> {
     let root = path.into();
     if !root.is_dir() {
@@ -452,7 +468,28 @@ pub fn load(path: impl Into<PathBuf>) -> Result<VanillaData, DataError> {
             });
         }
         let mut entries = Vec::new();
-        collect_entries(&root, &dir, &mut entries)?;
+        collect_entries(&root, &dir, "json", &mut entries)?;
+        if has_network_payloads {
+            let payload_dir = root
+                .join(NETWORK_REGISTRY_PAYLOAD_DIR)
+                .join("minecraft")
+                .join(registry_path)
+                .join("minecraft");
+            let mut wire = Vec::new();
+            collect_entries(&root, &payload_dir, "nbt", &mut wire)?;
+            wire.sort();
+            if let Some(entry) = entries
+                .iter()
+                .find(|entry| wire.binary_search(entry).is_err())
+            {
+                return Err(DataError::DefinitionWithoutPayload {
+                    registry: (*registry_path).to_string(),
+                    entry: format!("minecraft:{entry}"),
+                    path: payload_dir,
+                });
+            }
+            entries = wire;
+        }
         if entries.is_empty() {
             return Err(DataError::EmptyRegistry {
                 registry: (*registry_path).to_string(),
@@ -589,10 +626,11 @@ where
 fn collect_entries(
     trusted_root: &Path,
     root: &Path,
+    extension: &str,
     out: &mut Vec<String>,
 ) -> Result<(), DataError> {
     let paths =
-        sidecar::collect_files_under(trusted_root, root, "json", true).map_err(|error| {
+        sidecar::collect_files_under(trusted_root, root, extension, true).map_err(|error| {
             DataError::Io {
                 path: error.path,
                 source: error.source,

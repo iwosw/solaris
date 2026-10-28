@@ -259,7 +259,7 @@ impl Bot {
             }
             EntityPositionSync::ID => {
                 let packet = EntityPositionSync::decode(&mut body)?;
-                let p = packet.values.position;
+                let p = packet.position;
                 state.movement(self.index, packet.entity_id, [p.x, p.y, p.z], false, window);
             }
             RemoveEntities::ID => {

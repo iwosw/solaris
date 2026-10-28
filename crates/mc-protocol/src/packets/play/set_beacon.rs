@@ -26,7 +26,7 @@ pub struct ServerboundSetBeacon {
 }
 
 impl Packet for ServerboundSetBeacon {
-    const ID: i32 = 0x34;
+    const ID: i32 = 0x35;
 
     fn encode<B: BufMut>(&self, buf: &mut B) -> Result<(), CodecError> {
         write_effect(buf, self.primary)?;

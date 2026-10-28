@@ -295,6 +295,27 @@ pub fn validate_vanilla_sidecar_version(vanilla_data_dir: &Path) -> Result<()> {
         );
     }
 
+    let path = vanilla_data_dir.join(crate::content_import::GAMEPLAY_VERSION_FILE);
+    let raw = std::fs::read(&path).with_context(|| {
+        format!(
+            "reading the gameplay data-pack version from {}",
+            path.display()
+        )
+    })?;
+    let gameplay = serde_json::from_slice::<VanillaVersionMetadata>(&raw).with_context(|| {
+        format!(
+            "parsing the gameplay data-pack version from {}",
+            path.display()
+        )
+    })?;
+    if gameplay.id != crate::content_import::GAMEPLAY_DATAPACK_RELEASE {
+        bail!(
+            "gameplay data pack release {:?} does not match Solaris's {:?}",
+            gameplay.id,
+            crate::content_import::GAMEPLAY_DATAPACK_RELEASE
+        );
+    }
+
     Ok(())
 }
 

@@ -98,8 +98,8 @@ fn hash_bytes(mut hash: u64, bytes: &[u8]) -> u64 {
 
 #[test]
 fn dense_registry_ids_are_exhaustive_and_round_trip() {
-    assert_eq!(MINECRAFT_VERSION, "26.1.2");
-    assert_eq!(ENTITY_TYPE_COUNT, 157);
+    assert_eq!(MINECRAFT_VERSION, "26.3");
+    assert_eq!(ENTITY_TYPE_COUNT, 161);
 
     for (expected_id, contract) in entity_type_contracts_26_1_2().enumerate() {
         assert_eq!(contract.protocol_id as usize, expected_id);

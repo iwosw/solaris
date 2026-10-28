@@ -122,7 +122,7 @@ pub struct ClientboundKnownPacks {
 }
 
 impl Packet for ClientboundKnownPacks {
-    const ID: i32 = 0x0E;
+    const ID: i32 = 0x0F;
 
     fn encode<B: BufMut>(&self, buf: &mut B) -> Result<(), CodecError> {
         write_known_pack_array(buf, &self.packs, MAX_CLIENTBOUND_KNOWN_PACKS)
@@ -135,14 +135,14 @@ impl Packet for ClientboundKnownPacks {
     }
 }
 
-/// Clientbound 0x0C — feature flags selected by the server data packs.
+/// Clientbound 0x0D — feature flags selected by the server data packs.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UpdateEnabledFeatures {
     pub features: Vec<Identifier>,
 }
 
 impl Packet for UpdateEnabledFeatures {
-    const ID: i32 = 0x0C;
+    const ID: i32 = 0x0D;
 
     fn encode<B: BufMut>(&self, buf: &mut B) -> Result<(), CodecError> {
         write_count(buf, self.features.len(), MAX_ENABLED_FEATURES)?;
@@ -450,9 +450,9 @@ pub struct UpdateTags {
 }
 
 impl Packet for UpdateTags {
-    // Verified via `javap` of vanilla 26.1.2's ConfigurationProtocols:
-    // CLIENTBOUND_UPDATE_TAGS at configuration-CB index 13 = wire id 0x0D.
-    const ID: i32 = 0x0D;
+    // `data/vanilla/reports/packets.json` (26.3): configuration clientbound
+    // `minecraft:update_tags` = 14 (`post_effects` was inserted at 10).
+    const ID: i32 = 0x0E;
 
     fn encode<B: BufMut>(&self, buf: &mut B) -> Result<(), CodecError> {
         write_count(buf, self.registries.len(), MAX_TAG_REGISTRIES)?;

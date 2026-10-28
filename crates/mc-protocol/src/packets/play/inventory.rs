@@ -14,7 +14,7 @@ pub struct ClientboundSetHeldSlot {
 impl Packet for ClientboundSetHeldSlot {
     // Verified via `javap` of vanilla 26.1.2's GameProtocols:
     // CLIENTBOUND_SET_HELD_SLOT at game-CB index 105 = wire id 0x69.
-    const ID: i32 = 0x69;
+    const ID: i32 = 0x6B;
 
     fn encode<B: BufMut>(&self, buf: &mut B) -> Result<(), CodecError> {
         buf.write_varint(self.slot);
@@ -193,7 +193,7 @@ pub struct ClientboundSetCursorItem {
 }
 
 impl Packet for ClientboundSetCursorItem {
-    const ID: i32 = 0x60;
+    const ID: i32 = 0x62;
 
     fn encode<B: BufMut>(&self, buf: &mut B) -> Result<(), CodecError> {
         self.item_stack.encode(buf)
@@ -218,7 +218,7 @@ pub struct ClientboundOpenScreen {
 }
 
 impl Packet for ClientboundOpenScreen {
-    const ID: i32 = 0x3B;
+    const ID: i32 = 0x3C;
 
     fn encode<B: BufMut>(&self, buf: &mut B) -> Result<(), CodecError> {
         buf.write_varint(self.container_id);
@@ -250,7 +250,7 @@ pub struct ClientboundMountScreenOpen {
 }
 
 impl Packet for ClientboundMountScreenOpen {
-    const ID: i32 = 0x29;
+    const ID: i32 = 0x2A;
 
     fn encode<B: BufMut>(&self, buf: &mut B) -> Result<(), CodecError> {
         buf.write_varint(self.container_id);
@@ -568,7 +568,7 @@ pub struct ServerboundSetCarriedItem {
 impl Packet for ServerboundSetCarriedItem {
     // Verified via `javap` of vanilla 26.1.2's GameProtocols:
     // SERVERBOUND_SET_CARRIED_ITEM at game-SB index 53 = wire id 0x35.
-    const ID: i32 = 0x35;
+    const ID: i32 = 0x36;
 
     fn encode<B: BufMut>(&self, buf: &mut B) -> Result<(), CodecError> {
         buf.write_i16(self.slot);
@@ -604,7 +604,7 @@ impl Packet for ServerboundSetCreativeModeSlot {
     // 0x38. Cross-checked against the pinned ids of the same builder
     // lambda: SERVERBOUND_PLAYER_ACTION at index 41 = 0x29 and
     // SERVERBOUND_SET_CARRIED_ITEM at index 53 = 0x35.
-    const ID: i32 = 0x38;
+    const ID: i32 = 0x39;
 
     fn encode<B: BufMut>(&self, buf: &mut B) -> Result<(), CodecError> {
         buf.write_i16(self.slot);
@@ -670,7 +670,7 @@ pub struct ClientboundRecipeBookSettings {
 }
 
 impl Packet for ClientboundRecipeBookSettings {
-    const ID: i32 = 0x4C;
+    const ID: i32 = 0x4D;
 
     fn encode<B: BufMut>(&self, buf: &mut B) -> Result<(), CodecError> {
         for settings in [self.crafting, self.furnace, self.blast_furnace, self.smoker] {
@@ -842,7 +842,7 @@ pub struct ClientboundUpdateRecipes {
 impl Packet for ClientboundUpdateRecipes {
     // GameProtocols' bundle packet is wire id 0. UPDATE_RECIPES is the
     // 133rd following clientbound registration, giving wire id 0x85.
-    const ID: i32 = 0x85;
+    const ID: i32 = 0x88;
 
     fn encode<B: BufMut>(&self, buf: &mut B) -> Result<(), CodecError> {
         write_bounded_count(buf, self.item_sets.len(), MAX_RECIPE_BOOK_ENTRIES)?;
@@ -1213,7 +1213,7 @@ pub struct ClientboundRecipeBookAdd {
 }
 
 impl Packet for ClientboundRecipeBookAdd {
-    const ID: i32 = 0x4A;
+    const ID: i32 = 0x4B;
 
     fn encode<B: BufMut>(&self, buf: &mut B) -> Result<(), CodecError> {
         write_bounded_count(buf, self.entries.len(), MAX_RECIPE_BOOK_ENTRIES)?;
@@ -1303,7 +1303,7 @@ pub struct ServerboundRecipeBookChangeSettings {
 }
 
 impl Packet for ServerboundRecipeBookChangeSettings {
-    const ID: i32 = 0x2E;
+    const ID: i32 = 0x2F;
 
     fn encode<B: BufMut>(&self, buf: &mut B) -> Result<(), CodecError> {
         buf.write_varint(self.book_type.as_wire());
@@ -1329,7 +1329,7 @@ pub struct ServerboundRecipeBookSeenRecipe {
 }
 
 impl Packet for ServerboundRecipeBookSeenRecipe {
-    const ID: i32 = 0x2F;
+    const ID: i32 = 0x30;
 
     fn encode<B: BufMut>(&self, buf: &mut B) -> Result<(), CodecError> {
         buf.write_varint(self.recipe_display_id);

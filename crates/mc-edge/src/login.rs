@@ -25,6 +25,15 @@ use crate::crypto::{
 /// Default `SetCompression` threshold for the login flow.
 pub const DEFAULT_COMPRESSION_THRESHOLD: i32 = 256;
 
+/// 26.3 `ServerConnectionListener.getSessionId()`: one random UUID per server
+/// process, carried by every `ClientboundLoginFinishedPacket`.
+static SERVER_SESSION_ID: std::sync::LazyLock<uuid::Uuid> = std::sync::LazyLock::new(|| {
+    use rsa::rand_core::{OsRng, RngCore};
+    let mut bytes = [0_u8; 16];
+    OsRng.fill_bytes(&mut bytes);
+    uuid::Builder::from_random_bytes(bytes).into_uuid()
+});
+
 /// Options controlling the login flow.
 #[derive(Debug, Clone)]
 pub struct LoginOpts {
@@ -265,6 +274,7 @@ pub(crate) async fn handle_login_admitted(
         uuid,
         name: name.clone(),
         properties: properties.clone(),
+        session_id: *SERVER_SESSION_ID,
     })
     .await?;
 

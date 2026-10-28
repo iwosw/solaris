@@ -1904,9 +1904,7 @@ impl Bot {
                     self.direction = (self.direction + 1) % 4;
                 }
                 client
-                    .write_packet(&ConfirmTeleportation {
-                        teleport_id: packet.teleport_id,
-                    })
+                    .write_packet(&ConfirmTeleportation::accepting(&packet))
                     .await?;
                 if self.wire_trace_sink.is_some() {
                     self.trace_wire(

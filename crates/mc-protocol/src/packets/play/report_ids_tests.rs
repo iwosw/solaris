@@ -1,5 +1,5 @@
-//! Every play packet id equals the local 26.1.2 vanilla report
-//! (`data/vanilla/reports/packets.json`); ids typed from memory once
+//! Every play and configuration packet id equals the local vanilla report
+//! (`data/vanilla/reports/packets.json`, 26.3); ids typed from memory once
 //! collided and kicked every dying client.
 use super::*;
 use crate::packets::Packet;
@@ -383,7 +383,12 @@ fn play_packet_ids_match_the_vanilla_report() {
             "minecraft:player_action",
             ServerboundPlayerAction::ID,
         ),
-        ("serverbound", "minecraft:swing", ServerboundSwing::ID),
+        ("serverbound", "minecraft:punch", ServerboundPunch::ID),
+        (
+            "clientbound",
+            "minecraft:swing_animation",
+            ClientboundSwingAnimation::ID,
+        ),
         (
             "serverbound",
             "minecraft:use_item_on",
@@ -620,5 +625,89 @@ fn play_packet_ids_match_the_vanilla_report() {
             .as_i64()
             .unwrap_or_else(|| panic!("{direction} {name} missing from the report"));
         assert_eq!(i64::from(id), expected, "{direction} {name}");
+    }
+}
+
+#[test]
+fn configuration_packet_ids_match_the_vanilla_report() {
+    use crate::packets::configuration::{
+        AcknowledgeFinishConfiguration, ClientboundCustomPayload, ClientboundKnownPacks,
+        ConfigurationDisconnect, FinishConfiguration, RegistryData, ServerboundClientInformation,
+        ServerboundCustomPayload, ServerboundKnownPacks, ServerboundResourcePack,
+        UpdateEnabledFeatures, UpdateTags,
+    };
+    use crate::packets::resource_pack::ResourcePackPush;
+    let path = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../data/vanilla/reports/packets.json"
+    );
+    let report: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(path).expect("run content import for data/vanilla/reports/packets.json"),
+    )
+    .expect("packets.json");
+    let packets: &[(&str, &str, i32)] = &[
+        (
+            "clientbound",
+            "minecraft:custom_payload",
+            ClientboundCustomPayload::ID,
+        ),
+        (
+            "clientbound",
+            "minecraft:disconnect",
+            ConfigurationDisconnect::ID,
+        ),
+        (
+            "clientbound",
+            "minecraft:finish_configuration",
+            FinishConfiguration::ID,
+        ),
+        ("clientbound", "minecraft:registry_data", RegistryData::ID),
+        (
+            "clientbound",
+            "minecraft:resource_pack_push",
+            ResourcePackPush::ID,
+        ),
+        (
+            "clientbound",
+            "minecraft:update_enabled_features",
+            UpdateEnabledFeatures::ID,
+        ),
+        ("clientbound", "minecraft:update_tags", UpdateTags::ID),
+        (
+            "clientbound",
+            "minecraft:select_known_packs",
+            ClientboundKnownPacks::ID,
+        ),
+        (
+            "serverbound",
+            "minecraft:client_information",
+            ServerboundClientInformation::ID,
+        ),
+        (
+            "serverbound",
+            "minecraft:custom_payload",
+            ServerboundCustomPayload::ID,
+        ),
+        (
+            "serverbound",
+            "minecraft:finish_configuration",
+            AcknowledgeFinishConfiguration::ID,
+        ),
+        (
+            "serverbound",
+            "minecraft:resource_pack",
+            ServerboundResourcePack::ID,
+        ),
+        (
+            "serverbound",
+            "minecraft:select_known_packs",
+            ServerboundKnownPacks::ID,
+        ),
+    ];
+    for &(direction, name, id) in packets {
+        let expected = report["configuration"][direction][name]["protocol_id"]
+            .as_i64()
+            .unwrap_or_else(|| panic!("{direction} {name} missing from the report"));
+        assert_eq!(i64::from(id), expected, "configuration {direction} {name}");
     }
 }

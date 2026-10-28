@@ -980,16 +980,17 @@ fn stack_or_empty(stack: &Option<ItemStack>) -> ItemStack {
     stack.clone().unwrap_or(ItemStack::EMPTY)
 }
 
-/// Equipment attributes the client tracks, by `Attributes.java` registration
-/// order (vanilla 26.1.2); other kinds and unknown operations are not sent.
+/// Equipment attributes the client tracks, by `minecraft:attribute` registry
+/// order (vanilla 26.3 registries.json); other kinds and unknown operations are
+/// not sent.
 fn attribute_snapshot(attribute: &PlayerAttribute) -> Option<EntityAttributeSnapshot> {
     let id = match attribute.kind {
-        "armor" => 0,
-        "armor_toughness" => 1,
-        "attack_damage" => 2,
-        "attack_speed" => 4,
-        "knockback_resistance" => 16,
-        "movement_speed" => 22,
+        "armor" => 1,
+        "armor_toughness" => 2,
+        "attack_damage" => 3,
+        "attack_speed" => 5,
+        "knockback_resistance" => 20,
+        "movement_speed" => 26,
         _ => return None,
     };
     Some(EntityAttributeSnapshot {

@@ -89,6 +89,7 @@ async fn join_burst_carries_load_start_before_center() {
             recipes: &recipes,
             op_level: 0,
             plugin_commands: &[],
+            online_mode: true,
         })
         .await
         .unwrap();
