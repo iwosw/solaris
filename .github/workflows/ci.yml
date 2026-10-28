@@ -326,17 +326,21 @@ jobs:
           TAG: ${{ github.ref_name }}
         run: |
           set -euo pipefail
-          release_args=(--repo "$GITHUB_REPOSITORY" --verify-tag --title "Solaris ${TAG}")
+          title="Solaris ${TAG}"
+          release_args=(--repo "$GITHUB_REPOSITORY" --verify-tag)
           # Every 0.x release is preliminary (draft maturity); keep it off `latest`.
           if [[ "$TAG" == *-* || "$TAG" == v0.* ]]; then
             release_args+=(--prerelease)
           fi
           notes_file="docs/releases/${TAG}.md"
           if [[ -f "$notes_file" ]]; then
+            # The notes' first heading names the release (e.g. its codename).
+            title="$(sed -n 's/^# //p' "$notes_file" | head -n 1)"
             release_args+=(--notes-file "$notes_file")
           else
             release_args+=(--generate-notes)
           fi
+          release_args+=(--title "$title")
           gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 || \
             gh release create "$TAG" "${release_args[@]}"
           gh release upload "$TAG" \
