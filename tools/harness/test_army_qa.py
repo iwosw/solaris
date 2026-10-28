@@ -58,6 +58,28 @@ class GuardLureTests(unittest.TestCase):
         self.assertLess(lure[0] - post[0], 12.0)
 
 
+class CommandOrderRosterTests(unittest.TestCase):
+    def test_old_ordered_chat_does_not_prove_patrol(self) -> None:
+        detail = {}
+        with self.assertRaisesRegex(RuntimeError, "missing for"):
+            army_qa._verify_order_coverage(
+                detail, "Patrol",
+                {"recent_chat": ["Ordered 3 soldiers: Patrol.",
+                                 "36373a87 — 20 HP — Return"]},
+                ["36373a87"])
+        self.assertFalse(detail["order_Patrol_covered"])
+
+    def test_every_recruited_soldier_must_show_patrol(self) -> None:
+        detail = {}
+        rows = ["36373a87 — 20 HP — Patrol", "b6ac53fe — 20 HP — Patrol"]
+        army_qa._verify_order_coverage(
+            detail, "Patrol", {"recent_chat": rows}, ["36373a87", "b6ac53fe"])
+        self.assertTrue(detail["order_Patrol_covered"])
+        with self.assertRaisesRegex(RuntimeError, "missing for"):
+            army_qa._verify_order_coverage(
+                detail, "Patrol", {"recent_chat": rows[:1]}, ["36373a87", "b6ac53fe"])
+
+
 class WatchdogTests(unittest.TestCase):
     def test_fast_send_passes_through(self) -> None:
         from .backends.army_qa_watchdog import send_guarded

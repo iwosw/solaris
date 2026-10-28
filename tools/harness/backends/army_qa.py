@@ -1226,10 +1226,22 @@ def _scenario(probe: ProbeSteps, detail: dict[str, Any], ctx: ProfileContext,
                 sum(1 for u in recruited if u in cmd_text) >= 1
                 and victim not in cmd_text)
     # command order all + command dismiss consistency: order via command, verify via dialog
+    fence = _chat_echo(probe, "army_cmd_order")
+    fence_line = next(l for l in fence.get("recent_chat", []) if "army_cmd_order" in l)
     probe.call("minecraft_send_chat", {"message": "settlement army order all patrol", "command": True})
-    cmd_order = _chat_echo(probe, "army_cmd_order")
-    detail["army_cmd_order"] = cmd_order.get("recent_chat", [])[:6]
-    probe.check("cmd_order_ok", any("Ordered" in l for l in cmd_order.get("recent_chat", [])))
+    cmd_order = _bwait(
+        probe, lambda s: any("Ordered" in l for l in _newer_than_fence(s)),
+        "army_cmd_order_reply", timeout=60.0)
+    detail["army_cmd_order"] = cmd_order.get("recent_chat", [])[:10]
+    probe.check("cmd_order_ok", any("Ordered" in l for l in _newer_than_fence(cmd_order)))
+    main_cmd = _open_dialog(probe)
+    probe.check("dialog_after_cmd_order", (main_cmd["screen"].get("title") or "").startswith("Settlement"))
+    roster_cmd = _press(probe, "Army")
+    detail["army_cmd_order_roster"] = _body(roster_cmd).splitlines()
+    _verify_order_coverage(detail, "Patrol",
+                           {"recent_chat": detail["army_cmd_order_roster"]},
+                           [u[:8] for u in recruited])
+    probe.check("cmd_order_roster_patrol", True)
 
     detail["phase_a_done"] = True
     probe.check("phase_a_complete", True)
