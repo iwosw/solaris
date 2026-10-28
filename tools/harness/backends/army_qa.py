@@ -1192,12 +1192,21 @@ def _scenario(probe: ProbeSteps, detail: dict[str, Any], ctx: ProfileContext,
     # (chat commands resolve the enclosing settlement by player position:
     # stand inside the radius first)
     teleport(float(x1) + 4.5, float(y1) + 1.0, float(z1) + 8.5)
+    # Fence first, then command: the reply may arrive after a later chat
+    # echo, so wait for a roster line newer than the fence (recent_chat is
+    # newest first) instead of reading lines at a fixed offset.
+    fence = _chat_echo(probe, "army_cmd_list")
+    fence_line = next(l for l in fence.get("recent_chat", []) if "army_cmd_list" in l)
     probe.call("minecraft_send_chat", {"message": "settlement army list", "command": True})
-    cmd_list = _chat_echo(probe, "army_cmd_list")
+
+    def _newer_than_fence(s: dict[str, Any]) -> list[str]:
+        lines = s.get("recent_chat", [])
+        return lines[:lines.index(fence_line)] if fence_line in lines else []
+
+    cmd_list = probe.wait(lambda s: any(" HP " in l for l in _newer_than_fence(s)),
+                          "army_cmd_list_reply")
     detail["army_cmd_list"] = cmd_list.get("recent_chat", [])[:10]
-    lines = cmd_list.get("recent_chat", [])
-    marker_idx = next((i for i, l in enumerate(lines) if "army_cmd_list" in l), -1)
-    cmd_text = "\n".join(lines[marker_idx + 1:marker_idx + 5])
+    cmd_text = "\n".join(_newer_than_fence(cmd_list))
     probe.check("cmd_list_matches_ui",
                 sum(1 for u in recruited if u in cmd_text) >= 1
                 and victim not in cmd_text)
