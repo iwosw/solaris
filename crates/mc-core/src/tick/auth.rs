@@ -33,8 +33,11 @@ pub(super) fn refuse_input(state: &mut TickState, input: &PlayerInput) -> bool {
                 // route_command itself requires a declared plugin root. Never fall
                 // through to native commands, echo text or log credential arguments.
                 crate::plugin::route_command(state, connection, command, *permission_level);
+            } else {
+                refuse_with_hint(state, connection);
             }
         }
+        PlayerInput::Chat { .. } => refuse_with_hint(state, connection),
         // Fence only a real displacement, once per teleport. The client answers every
         // teleport with accept + its pose, so correcting each input (or an echoed
         // pose) is a ping-pong that floods the connection until a queue overflows.
@@ -61,6 +64,19 @@ pub(super) fn refuse_input(state: &mut TickState, input: &PlayerInput) -> bool {
     }
     true
 }
+
+/// Locked sessions get one fixed line, never an echo of what they typed.
+fn refuse_with_hint(state: &mut TickState, connection: ConnectionId) {
+    state.push_player(
+        connection,
+        crate::boundary::PlayerChange::Chat {
+            message: LOCKED_HINT.into(),
+        },
+    );
+}
+
+const LOCKED_HINT: &str = "Сначала войдите: /login <пароль> или /register <пароль> <пароль> / \
+    Log in first: /login <password> or /register <password> <password>";
 
 /// Commit the first verified claim, then restore private saved state and finish
 /// cursor/grid custody. Locked presentations never replace durable player data.

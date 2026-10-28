@@ -83,8 +83,12 @@ ignition, environmental simulation and damage are not build hooks; protected
 zones (below) cover them natively instead.
 Hook-free deployment keeps the direct native path.
 
-With `[auth].require_plugin_login = true`, the native session gate denies
-gameplay until an authentication plugin unlocks that session. `UnlockSession`
+Deploying an auth-capable package (manifest capability `auth`) enables the
+native session gate by itself; `[auth].require_plugin_login = true` also makes
+startup fail when no such package is deployed. The gate denies gameplay until
+an authentication plugin unlocks that session. Until then only `/register`,
+`/login` and `/changepassword` run; every other command and chat line is
+refused with a short Russian/English hint and nothing is broadcast. `UnlockSession`
 requires the explicit manifest capability `auth`; observing `player.joined`
 alone grants no unlock authority. Only `solaris-auth` in the standard pack
 declares `auth`. It does not register a `before-build` hook: the native login

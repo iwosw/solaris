@@ -1454,6 +1454,19 @@ fn plugin_login_rejects_a_deployment_without_an_auth_provider() {
     );
 }
 
+#[test]
+fn a_missing_plugin_directory_is_created_empty_instead_of_refusing_startup() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut config = crate::config::CoreConfig::new(directory.path().join("world"), 42);
+    let plugins = directory.path().join("plugins");
+    config.plugin_directory = Some(plugins.clone());
+    assert!(!plugins.exists());
+    let runtime = crate::plugin::PluginRuntime::open(&config)
+        .expect("a first start without a plugins directory must succeed");
+    assert!(runtime.is_some());
+    assert!(plugins.is_dir(), "the empty deployment root is created");
+}
+
 #[tokio::test]
 async fn durable_callbacks_survive_full_delivery_queue_and_remain_ack_gated() {
     use mc_script::{ScriptEvent, ScriptEventKind};

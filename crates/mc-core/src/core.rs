@@ -446,7 +446,7 @@ pub(crate) fn end_terrain(
 impl Core {
     /// Open the world: build registries, recover the journal, spawn the tick
     /// and journal threads.
-    pub fn open(config: CoreConfig) -> Result<Self, CoreError> {
+    pub fn open(mut config: CoreConfig) -> Result<Self, CoreError> {
         stop::install_panic_hook();
         let is_stage = |path: &std::path::Path| {
             path.file_name()
@@ -488,6 +488,16 @@ impl Core {
         }
         let registry = Arc::new(CoreRegistry::load(config.vanilla_data_dir.as_deref())?);
         let mut plugin_runtime = crate::plugin::PluginRuntime::open(&config)?;
+        if let Some(runtime) = &plugin_runtime
+            && !runtime.required_auth_plugins.is_empty()
+            && !config.require_plugin_login
+        {
+            tracing::info!(
+                plugins = ?runtime.required_auth_plugins,
+                "auth plugin deployed: new sessions stay locked until it unlocks them"
+            );
+            config.require_plugin_login = true;
+        }
         let mut registry = Arc::try_unwrap(registry).expect("registry has no readers at startup");
         // Native settlement startup installs on the same pipeline whether or
         // not a plugin deployment exists: the default contribution carries no

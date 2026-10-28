@@ -611,6 +611,18 @@ impl PluginRuntime {
         let Some(directory) = &config.plugin_directory else {
             return Ok(None);
         };
+        if !directory.exists() {
+            std::fs::create_dir_all(directory).map_err(|error| {
+                CoreError::Plugin(format!(
+                    "plugin directory {} does not exist and could not be created: {error}",
+                    directory.display()
+                ))
+            })?;
+            tracing::info!(
+                directory = %directory.display(),
+                "plugin directory did not exist; created it empty (no plugins deployed)"
+            );
+        }
         let limits = mc_plugin_host::PluginLimits::default();
         let packages = mc_plugin_host::discover_directory(
             directory.clone(),
@@ -624,27 +636,24 @@ impl PluginRuntime {
             .map(|p| (p.manifest().plugin_id().into(), p.root().to_owned()))
             .collect();
         let death_graves = death_graves_owner(&packages)?;
-        let required_auth_plugins = if config.require_plugin_login {
-            let providers: Vec<String> = packages
-                .iter()
-                .filter(|package| {
-                    package
-                        .requested_capabilities()
-                        .iter()
-                        .any(|capability| capability == "auth")
-                })
-                .map(|package| package.manifest().plugin_id().to_owned())
-                .collect();
-            if providers.is_empty() {
-                return Err(CoreError::Plugin(
-                    "plugin login requires an auth-capable package; repair the deployment and restart"
-                        .into(),
-                ));
-            }
-            providers
-        } else {
-            Vec::new()
-        };
+        // A deployed auth provider always turns the native login fence on
+        // (`Core::open` reads this list); the flag additionally demands one.
+        let required_auth_plugins: Vec<String> = packages
+            .iter()
+            .filter(|package| {
+                package
+                    .requested_capabilities()
+                    .iter()
+                    .any(|capability| capability == "auth")
+            })
+            .map(|package| package.manifest().plugin_id().to_owned())
+            .collect();
+        if config.require_plugin_login && required_auth_plugins.is_empty() {
+            return Err(CoreError::Plugin(
+                "plugin login requires an auth-capable package; repair the deployment and restart"
+                    .into(),
+            ));
+        }
         let sessions = Arc::new(Sessions::default());
         let queues = mc_plugin_host::host::HostQueues {
             defer_initial_timer_clock: true,

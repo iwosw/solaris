@@ -4269,8 +4269,13 @@ not exclusive performance or real-client acceptance.
 ## Native session auth gate — opt-in plugin login (2026-10-19)
 
 `[auth] require_plugin_login` (default `false`) wires `EdgeConfig.auth` into
-`CoreConfig.require_plugin_login` at edge startup. Default behavior is
-unchanged: native sessions play immediately when the flag is off.
+`CoreConfig.require_plugin_login` at edge startup. With the flag off and no
+auth-capable package deployed, native sessions play immediately. Deploying a
+package that requests the `auth` capability enables the gate even with the flag
+off (`Core::open` raises it after plugin discovery, so a server that ships
+`solaris-auth` never hands command/chat powers to an unauthenticated offline
+name); the flag set to `true` additionally refuses startup without such a
+package.
 
 When enabled, each new native play session starts locked and fails closed until
 an admitted plugin `unlock_session(session)` command releases that exact session.
