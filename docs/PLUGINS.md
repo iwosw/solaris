@@ -91,11 +91,13 @@ declares `auth`. It does not register a `before-build` hook: the native login
 gate is the single login-lock enforcement path.
 
 Registered commands are advertised in the actual client Commands tree and
-dispatch to the loaded component. A manifest-owned root takes precedence over
-an otherwise available native root, including its manifest permission in the
+dispatch to the loaded component. For player sources, a manifest-owned root takes
+precedence over an otherwise available native root, including its manifest permission in the
 tree, help and completions. Its immutable deployment reservation survives guest
 retirement: unavailable admission returns an error, never native-command fallback.
 Native aliases not claimed by a manifest retain their native behavior.
+The console has no player context and uses native commands rather than these
+player-only reservations; for example, Essentials does not shadow console `msg`.
 Plugin KV and native effects share v2's native checkpoint and tick WAL; there are
 no separate plugin state files. The journal worker maintains the committed plugin
 image and serializes it for checkpoints outside the tick. Operation callbacks and
@@ -366,6 +368,15 @@ teleportation, zones, inventory, or world changes. They are not client
 permissions and they do not make a request authoritative. Every native owner
 still checks the live player session, ownership, revisions, input bounds,
 capacity, and its domain invariants before committing work.
+
+`command-invoked` carries the player's authoritative dimension alongside the
+position captured at admission. `teleport-player` requires an explicit
+destination dimension and only moves a player already in that dimension;
+otherwise its typed result is `dimension-mismatch` and no teleport occurs. This
+check happens when the request is applied, including after asynchronous storage
+callbacks. Cross-dimension plugin teleports are not supported.
+Rebuild and redeploy components against this record layout before enabling them;
+older component binaries do not have these fields.
 
 ### Command permission nodes
 

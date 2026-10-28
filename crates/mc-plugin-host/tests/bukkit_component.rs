@@ -100,6 +100,7 @@ fn converted_jar_runs_through_existing_component_host() {
                 y: 64.0,
                 z: 0.0,
             },
+            dimension: "minecraft:overworld".to_owned(),
             name: "hello".to_owned(),
             arguments: vec!["one".to_owned(), "two".to_owned()],
             raw_arguments: "one two".to_owned(),

@@ -6,6 +6,7 @@ fn event_is_a_validated_snapshot_without_integer_caps() {
         "123e4567-e89b-12d3-a456-426614174000",
         "kaiser",
         true,
+        "minecraft:overworld",
         12.25,
         70.0,
         -4.5,
@@ -46,7 +47,15 @@ fn event_is_a_validated_snapshot_without_integer_caps() {
 
 #[test]
 fn event_rejects_invalid_ids_and_zero_count() {
-    let context = ScriptPlayerContext::new("player-42", "kaiser", false, 0.0, 64.0, 0.0);
+    let context = ScriptPlayerContext::new(
+        "player-42",
+        "kaiser",
+        false,
+        "minecraft:overworld",
+        0.0,
+        64.0,
+        0.0,
+    );
     for (dimension, item_id, count) in [
         ("overworld", "minecraft:stick", 1),
         ("minecraft:overworld", "minecraft:Stick", 1),

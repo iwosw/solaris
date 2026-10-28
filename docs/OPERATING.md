@@ -501,16 +501,23 @@ but bypass the player cap only with `bypassesPlayerLimit` in `ops.json`.
 `/whitelist reload` re-reads a hand-edited `whitelist.json`; `/whitelist add`
 resolves a live or already-known player, or an offline-mode name.
 
-`/ban <player> [duration] [reason]` keeps vanilla's argument order and adds one
-optional token: a duration such as `30m`, `2h30m`, `1d` or `1w`. Without it the
+`/kick <players> [reason]`, `/ban <profiles> [duration] [reason]` and
+`/pardon <profiles>` accept player selectors such as `@a`; selectors resolve
+only online players, while literal profile names can also target known offline
+players (or offline-mode names). `/ban-ip` accepts an IPv4 address or an online
+player name; `/pardon-ip` accepts an IPv4 address, not a player name.
+`/ban` keeps vanilla's argument order and adds one optional token: a duration
+such as `30m`, `2h30m`, `1d` or `1w`. Without it the
 ban is permanent; with it the row's vanilla `expires` stamp makes the ban expire,
 the login refusal shows the expiration line, and `/banlist` stops listing it.
 Anything that does not parse as a duration is the first word of the reason, so
 vanilla `/ban <player> <reason>` is unchanged. `/mute <player> [duration]
 [reason]` and `/unmute <player>` use `muted-players.json` in the same directory:
 a muted identity cannot send ordinary chat or native communication commands
-(`/me`, `/msg`, `/tell`, `/w`, `/teammsg`, `/tm`, `/say`, `/tellraw`, `/title`); other command rights
+(`/me`, `/msg`, `/reply`, `/tell`, `/w`, `/teammsg`, `/tm`, `/say`, `/tellraw`, `/title`); other command rights
 are unchanged. Refused messages receive a private "You are muted." notice.
+For the console, native `/msg` remains available even when a plugin reserves
+that root for player commands; player-side plugin reservations are unchanged.
 `/warn <player> [reason]` delivers one private warning line to an online player
 and keeps no record.
 

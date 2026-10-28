@@ -6,6 +6,7 @@ fn event_is_a_validated_authoritative_player_snapshot() {
         "123e4567-e89b-12d3-a456-426614174000",
         "kaiser",
         true,
+        "minecraft:overworld",
         12.25,
         70.0,
         -4.5,
@@ -37,7 +38,15 @@ fn event_is_a_validated_authoritative_player_snapshot() {
 
 #[test]
 fn event_rejects_invalid_context_and_dimension() {
-    let valid = ScriptPlayerContext::new("player-42", "kaiser", false, 0.0, 64.0, 0.0);
+    let valid = ScriptPlayerContext::new(
+        "player-42",
+        "kaiser",
+        false,
+        "minecraft:overworld",
+        0.0,
+        64.0,
+        0.0,
+    );
     assert!(
         ScriptEvent::try_player_died_with_context(
             ScriptPlayerId::new(42),
@@ -48,7 +57,18 @@ fn event_rejects_invalid_context_and_dimension() {
         .is_err()
     );
 
-    assert!(ScriptPlayerContext::try_new("player-42", "", false, 0.0, 64.0, 0.0).is_err());
+    assert!(
+        ScriptPlayerContext::try_new(
+            "player-42",
+            "",
+            false,
+            "minecraft:overworld",
+            0.0,
+            64.0,
+            0.0
+        )
+        .is_err()
+    );
 }
 
 #[test]
@@ -57,6 +77,7 @@ fn grave_observation_is_targeted_and_validated_against_its_own_bounds() {
         "123e4567-e89b-12d3-a456-426614174000",
         "kaiser",
         false,
+        "minecraft:overworld",
         12.25,
         70.0,
         -4.5,
@@ -98,7 +119,15 @@ fn grave_observation_is_targeted_and_validated_against_its_own_bounds() {
 
 #[test]
 fn grave_observation_rejects_a_dimension_code_and_unbounded_counts() {
-    let context = ScriptPlayerContext::new("player-42", "kaiser", false, 0.0, 64.0, 0.0);
+    let context = ScriptPlayerContext::new(
+        "player-42",
+        "kaiser",
+        false,
+        "minecraft:overworld",
+        0.0,
+        64.0,
+        0.0,
+    );
     let build = |dimension: &str, items: u32| {
         ScriptEvent::try_player_grave_created_with_context(
             "graves",

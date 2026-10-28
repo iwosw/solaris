@@ -1693,6 +1693,7 @@ fn contract_events(event: &ScriptEvent, tick: u64) -> Option<(EventContext, Vec<
                 y: context.y(),
                 z: context.z(),
             },
+            dimension: context.dimension().to_owned(),
             name: root.clone(),
             arguments: arguments.split_whitespace().map(str::to_owned).collect(),
             raw_arguments: arguments.clone(),
@@ -1942,6 +1943,7 @@ fn storage_failure(failure: ScriptPluginStorageFailure) -> StorageFailure {
 fn teleport_failure(failure: ScriptPlayerTeleportFailure) -> PlayerTeleportFailure {
     match failure {
         ScriptPlayerTeleportFailure::PlayerUnavailable => PlayerTeleportFailure::PlayerUnavailable,
+        ScriptPlayerTeleportFailure::DimensionMismatch => PlayerTeleportFailure::DimensionMismatch,
         ScriptPlayerTeleportFailure::RuntimeUnavailable | _ => {
             PlayerTeleportFailure::RuntimeUnavailable
         }
@@ -2186,6 +2188,7 @@ mod tests {
                 "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
                 "Ada",
                 true,
+                "minecraft:the_nether",
                 0.0,
                 64.0,
                 0.0,
@@ -2203,6 +2206,7 @@ mod tests {
         assert_eq!(invoked.session, 7);
         assert_eq!(invoked.username, "Ada");
         assert!(invoked.operator);
+        assert_eq!(invoked.dimension, "minecraft:the_nether");
         assert_eq!(invoked.position.x, 0.0);
         assert_eq!(invoked.position.y, 64.0);
         assert_eq!(invoked.position.z, 0.0);

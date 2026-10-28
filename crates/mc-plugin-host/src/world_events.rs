@@ -225,6 +225,7 @@ mod tests {
                 "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
                 "Ada",
                 false,
+                "minecraft:overworld",
                 12.9,
                 64.2,
                 -4.7,

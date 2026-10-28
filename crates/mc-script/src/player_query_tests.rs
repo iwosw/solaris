@@ -42,6 +42,7 @@ async fn admitted_player_query_is_bounded_capability_gated_and_targeted() {
             "00000000-0000-0000-0000-000000000007",
             "Alice",
             false,
+            "minecraft:overworld",
             1.0,
             64.0,
             2.0,

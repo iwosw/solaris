@@ -65,6 +65,8 @@ interface events {
         operator: bool,
         /// The player's server-authoritative pose when the command was parsed.
         position: position,
+        /// The authoritative dimension at command admission.
+        dimension: string,
         /// The command name as the manifest declared it, without the prefix.
         name: string,
         /// The remaining arguments, split on whitespace and bounded by the host.
@@ -117,6 +119,8 @@ interface events {
         /// replaced and that exact session no longer exists. The world did not
         /// change.
         player-unavailable,
+        /// The requested dimension differs from the player's current dimension.
+        dimension-mismatch,
         /// Never sent: a newer teleport supersedes an unconfirmed one, as in
         /// vanilla. Reserved outcome; native supersession emits no result.
         teleport-pending,

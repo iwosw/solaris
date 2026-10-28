@@ -158,6 +158,7 @@ fn teleport(request: &str, session: u64, x: f64, y: f64, z: f64) -> Command {
     Command::TeleportPlayer(TeleportPlayer {
         request: request.to_owned(),
         session,
+        dimension: "minecraft:overworld".to_owned(),
         position: Position { x, y, z },
     })
 }
@@ -218,6 +219,7 @@ fn a_guest_teleport_becomes_the_dto_the_server_applies() {
             request: ScriptPlayerTeleportRequest::try_new(
                 "warp-home",
                 ScriptPlayerId::new(SESSION),
+                "minecraft:overworld",
                 ScriptPosition::try_new(12.5, 70.0, -4.5).expect("the fixture's coordinates"),
             )
             .expect("the fixture's request"),
@@ -363,6 +365,7 @@ fn a_request_past_a_contract_bound_is_refused_rather_than_clamped() {
             request: ScriptPlayerTeleportRequest::try_new(
                 "r".repeat(MAX_SCRIPT_ID_BYTES),
                 ScriptPlayerId::new(SESSION),
+                "minecraft:overworld",
                 ScriptPosition::try_new(
                     SCRIPT_HORIZONTAL_COORDINATE_LIMIT,
                     SCRIPT_VERTICAL_COORDINATE_LIMIT,
@@ -428,8 +431,16 @@ fn deployment(root: &Path, ids: &[&str]) -> Vec<LoadedPackage> {
 
 /// The join a live server would hand the host, for one connection.
 fn server_join(session: u64) -> ScriptEvent {
-    let context = ScriptPlayerContext::try_new(PLAYER_UUID, "Ada", false, 0.0, 64.0, 0.0)
-        .expect("player context");
+    let context = ScriptPlayerContext::try_new(
+        PLAYER_UUID,
+        "Ada",
+        false,
+        "minecraft:overworld",
+        0.0,
+        64.0,
+        0.0,
+    )
+    .expect("player context");
     ScriptEvent::player_joined_with_context(ScriptPlayerId::new(session), context)
 }
 

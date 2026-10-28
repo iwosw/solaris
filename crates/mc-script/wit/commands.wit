@@ -95,19 +95,17 @@ interface commands {
     /// teleport is an effect on one live connection: a request the server
     /// receives after that connection ended is refused with
     /// `player-unavailable` instead of moving whoever holds the identity now.
-    /// There is no dimension member - cross-dimension transfer is not part of
-    /// this contract.
+    /// Cross-dimension transfer is not supported: a mismatch is refused without
+    /// moving the player, including if the player travels while a request waits.
     ///
     /// A package may send it only when its manifest declares the
     /// `player_teleport` capability; the host converts a batch under the
     /// package's own grants, so an undeclared capability is refused before the
     /// server sees the command.
     ///
-    /// Bounds: this record carries no list and no text, so the host-call budget
-    /// is not what bounds it. Its correlation id is the contract's 64-byte
-    /// script id and its coordinates are the `position` bounds, both enforced
-    /// when the host converts the record into the server's own DTO - a request
-    /// outside them is refused, never clamped.
+    /// The correlation id and destination dimension are bounded script and
+    /// resource identifiers. Coordinates obey the `position` bounds; the host
+    /// refuses values outside those bounds rather than clamping them.
     record teleport-player {
         /// The plugin's correlation id, 1..64 bytes, as in `storage-get`. The
         /// answer event carries it back, so a plugin may keep several teleports
@@ -115,6 +113,8 @@ interface commands {
         request: string,
         /// The connection to move.
         session: session-id,
+        /// Namespaced destination dimension, which must match the player's world.
+        dimension: string,
         /// Where the player goes. The server's own position validator bounds
         /// every coordinate as `position` documents; the host refuses a request
         /// outside those bounds rather than clamping it.

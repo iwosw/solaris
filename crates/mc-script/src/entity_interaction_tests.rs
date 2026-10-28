@@ -6,6 +6,7 @@ fn event_is_an_exact_validated_authoritative_interaction_snapshot() {
         "123e4567-e89b-12d3-a456-426614174000",
         "kaiser",
         true,
+        "minecraft:overworld",
         12.25,
         70.0,
         -4.5,
@@ -49,7 +50,15 @@ fn event_is_an_exact_validated_authoritative_interaction_snapshot() {
 
 #[test]
 fn event_rejects_invalid_context_dimension_and_entity_type() {
-    let valid = ScriptPlayerContext::new("player-42", "kaiser", false, 0.0, 64.0, 0.0);
+    let valid = ScriptPlayerContext::new(
+        "player-42",
+        "kaiser",
+        false,
+        "minecraft:overworld",
+        0.0,
+        64.0,
+        0.0,
+    );
     for (dimension, entity_type) in [
         ("overworld", "minecraft:villager"),
         ("minecraft:overworld", "minecraft:Villager"),

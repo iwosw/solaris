@@ -227,6 +227,7 @@ async fn compatible_reload_restarts_the_runtime_timer_store() {
                 "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
                 "Ada",
                 false,
+                "minecraft:overworld",
                 0.0,
                 64.0,
                 0.0,
@@ -460,7 +461,16 @@ fn permission_denied(host: &mc_plugin_host::PluginHost) -> bool {
     matches!(
         host.boundary().prepare_player_command_with_context(
             ScriptPlayerId::new(1),
-            ScriptPlayerContext::try_new(PERMISSION_PLAYER, "Alex", false, 0.0, 64.0, 0.0).unwrap(),
+            ScriptPlayerContext::try_new(
+                PERMISSION_PLAYER,
+                "Alex",
+                false,
+                "minecraft:overworld",
+                0.0,
+                64.0,
+                0.0
+            )
+            .unwrap(),
             "gated",
         ),
         Ok(mc_script::PreparedPlayerCommand::PermissionDenied)
@@ -539,7 +549,16 @@ async fn permission_provider_trap_keeps_surviving_commands_denied() {
     host.boundary()
         .try_enqueue_event(ScriptEvent::player_joined_with_context(
             ScriptPlayerId::new(1),
-            ScriptPlayerContext::try_new(PERMISSION_PLAYER, "Alex", false, 0.0, 64.0, 0.0).unwrap(),
+            ScriptPlayerContext::try_new(
+                PERMISSION_PLAYER,
+                "Alex",
+                false,
+                "minecraft:overworld",
+                0.0,
+                64.0,
+                0.0,
+            )
+            .unwrap(),
         ))
         .unwrap();
     // A refused reload is a FIFO barrier, not a replacement for the retired guest.

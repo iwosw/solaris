@@ -130,7 +130,8 @@ impl PlayerSessions for Sessions {
 }
 
 fn context() -> ScriptPlayerContext {
-    ScriptPlayerContext::try_new(PLAYER, "Ada", false, 0.0, 64.0, 0.0).unwrap()
+    ScriptPlayerContext::try_new(PLAYER, "Ada", false, "minecraft:overworld", 0.0, 64.0, 0.0)
+        .unwrap()
 }
 
 #[tokio::test]

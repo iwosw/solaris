@@ -807,6 +807,7 @@ fn context(state: &TickState, connection: ConnectionId) -> Option<ScriptPlayerCo
         world.connections.uuid_of(connection)?.to_string(),
         world.connections.name_of(entity)?,
         state.plugin_players.is_operator(connection),
+        world.dimension.name(),
         position[0],
         position[1],
         position[2],

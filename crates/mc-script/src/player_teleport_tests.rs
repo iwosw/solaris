@@ -7,6 +7,7 @@ async fn admitted_player_teleport_is_capability_gated_and_builds_targeted_result
     let request = ScriptPlayerTeleportRequest::try_new(
         "warp-home",
         ScriptPlayerId::new(7),
+        "minecraft:overworld",
         ScriptPosition::try_new(12.5, 70.0, -4.5).unwrap(),
     )
     .unwrap();
@@ -83,8 +84,13 @@ fn player_teleport_request_rejects_invalid_request_ids() {
     let position = ScriptPosition::try_new(0.0, 64.0, 0.0).unwrap();
     for request_id in ["", "contains space", &"x".repeat(MAX_SCRIPT_ID_BYTES + 1)] {
         assert!(
-            ScriptPlayerTeleportRequest::try_new(request_id, ScriptPlayerId::new(1), position,)
-                .is_err(),
+            ScriptPlayerTeleportRequest::try_new(
+                request_id,
+                ScriptPlayerId::new(1),
+                "minecraft:overworld",
+                position,
+            )
+            .is_err(),
             "accepted request id {request_id:?}"
         );
     }
