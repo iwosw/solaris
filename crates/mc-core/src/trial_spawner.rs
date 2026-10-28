@@ -132,7 +132,7 @@ pub(crate) fn persist(
     pos: BlockPos,
     id: &str,
     fields: Fields,
-    wire: Fields,
+    wire: Tag,
     type_id: u32,
 ) {
     let bytes = nbt::encode(fields, id, [pos.x, pos.y, pos.z]);
@@ -152,7 +152,7 @@ pub(crate) fn persist(
             PlayerChange::BlockEntityData {
                 position: pos,
                 block_entity_type: type_id,
-                nbt: Tag::Compound(wire.clone()),
+                nbt: wire.clone(),
             },
         );
     }
@@ -242,11 +242,10 @@ impl Spawner {
     }
     fn persist(&self, state: &mut TickState, pos: BlockPos) {
         let fields = self.fields(&state.registry.items);
-        let wire = fields
-            .iter()
-            .filter(|(name, _)| matches!(name.as_str(), "spawn_data" | "next_mob_spawns_at"))
-            .cloned()
-            .collect();
+        let wire = mc_world::wire::trial_spawner_update_tag(
+            &fields,
+            property(state, pos, "trial_spawner_state") == Some("active"),
+        );
         let kind = mc_data::block_entity_kinds::BlockEntityKind::TrialSpawner;
         persist(
             state,

@@ -267,6 +267,98 @@ fn client_block_entities_emit_stripped_chest_update_tag() {
 }
 
 #[test]
+fn client_block_entities_use_vanilla_trial_and_vault_update_tags() {
+    let registry = BlockRegistry::from_report(&[
+        BlockReport {
+            id: Identifier::parse("minecraft:air").unwrap(),
+            properties: BTreeMap::new(),
+            states: vec![BlockStateReport {
+                id: 0,
+                default: true,
+                properties: BTreeMap::new(),
+            }],
+        },
+        BlockReport {
+            id: Identifier::parse("minecraft:trial_spawner").unwrap(),
+            properties: BTreeMap::from([(
+                "trial_spawner_state".into(),
+                vec!["active".into(), "inactive".into()],
+            )]),
+            states: ["active", "inactive"]
+                .into_iter()
+                .enumerate()
+                .map(|(i, state)| BlockStateReport {
+                    id: i as u32 + 1,
+                    default: i == 0,
+                    properties: BTreeMap::from([("trial_spawner_state".into(), state.into())]),
+                })
+                .collect(),
+        },
+    ])
+    .unwrap();
+    let mut chunk = empty_chunk();
+    let spawn = Tag::Compound(vec![(
+        "entity".into(),
+        Tag::Compound(vec![("id".into(), Tag::String("minecraft:zombie".into()))]),
+    )]);
+    for (x, state) in [(1, 1), (2, 2)] {
+        let pos = BlockPos { x, y: 64, z: 1 };
+        chunk
+            .set_block(x as u8, 64, 1, BlockStateId(state))
+            .unwrap();
+        let tag = Tag::Compound(vec![
+            ("id".into(), Tag::String("minecraft:trial_spawner".into())),
+            (
+                "normal_config".into(),
+                Tag::String("minecraft:trial_chamber/melee/zombie/normal".into()),
+            ),
+            (
+                "ominous_config".into(),
+                Tag::String("minecraft:trial_chamber/melee/zombie/ominous".into()),
+            ),
+            ("spawn_data".into(), spawn.clone()),
+            ("next_mob_spawns_at".into(), Tag::Long(42)),
+            ("total_mobs_spawned".into(), Tag::Int(5)),
+        ]);
+        let mut bytes = Vec::new();
+        mc_nbt::write_network(&mut bytes, &tag).unwrap();
+        chunk.block_entities.insert(pos, bytes);
+    }
+    let vault_pos = BlockPos { x: 3, y: 64, z: 1 };
+    let shared = Tag::Compound(vec![("connected_particles_range".into(), Tag::Double(4.5))]);
+    let vault = Tag::Compound(vec![
+        ("id".into(), Tag::String("minecraft:vault".into())),
+        ("config".into(), Tag::Compound(vec![])),
+        ("server_data".into(), Tag::Compound(vec![])),
+        ("shared_data".into(), shared.clone()),
+    ]);
+    let mut bytes = Vec::new();
+    mc_nbt::write_network(&mut bytes, &vault).unwrap();
+    chunk.block_entities.insert(vault_pos, bytes);
+
+    let records = client_block_entities(&chunk, &registry, &item_registry());
+    let mut encoded = Vec::new();
+    mc_nbt::write_network(&mut encoded, &records[0].nbt).unwrap();
+    let decoded = mc_nbt::read_network(&mut encoded.as_slice()).unwrap();
+    assert_eq!(decoded, records[0].nbt);
+    assert_eq!(
+        records[0].nbt,
+        Tag::Compound(vec![
+            ("next_mob_spawns_at".into(), Tag::Long(42)),
+            ("spawn_data".into(), spawn.clone())
+        ])
+    );
+    assert_eq!(
+        records[1].nbt,
+        Tag::Compound(vec![("spawn_data".into(), spawn)])
+    );
+    assert_eq!(
+        records[2].nbt,
+        Tag::Compound(vec![("shared_data".into(), shared)])
+    );
+}
+
+#[test]
 fn client_block_entities_strip_solaris_campfire_persistence_fields() {
     let registry = air_chest_registry();
     let items = item_registry();

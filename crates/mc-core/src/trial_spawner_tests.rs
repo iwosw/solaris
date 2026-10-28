@@ -92,6 +92,68 @@ fn kill_wave(state: &mut TickState) {
     }
 }
 #[test]
+fn trial_spawner_updates_use_client_tag_and_keep_saved_config() {
+    let mut state = state(None);
+    join(&mut state, 1);
+    place(&mut state);
+    let mut spawner = state.trial_spawners[&key(POS)].clone();
+    nbt::set(
+        &mut spawner.data.fields,
+        "normal_config",
+        Tag::String("minecraft:trial_chamber/melee/zombie/normal".into()),
+    );
+    spawner.data.next_spawn = 42;
+    set_properties(
+        &mut state,
+        POS,
+        &[("trial_spawner_state", "active")],
+        &mut Vec::new(),
+    );
+    state.outbox.clear();
+    spawner.persist(&mut state, POS);
+    let updates = &state.outbox[&ConnectionId(1)];
+    let tag = updates
+        .iter()
+        .find_map(|change| match change {
+            PlayerChange::BlockEntityData { position, nbt, .. } if *position == POS => Some(nbt),
+            _ => None,
+        })
+        .unwrap();
+    let spawn = field(&spawner.data.fields, "spawn_data").unwrap().clone();
+    assert_eq!(
+        tag,
+        &Tag::Compound(vec![
+            ("next_mob_spawns_at".into(), Tag::Long(42)),
+            ("spawn_data".into(), spawn.clone()),
+        ])
+    );
+    let bytes = state
+        .world
+        .chunk(ChunkPos { x: 0, z: 0 })
+        .unwrap()
+        .block_entities
+        .get(&POS)
+        .unwrap();
+    assert!(matches!(
+        field(&nbt::decode(bytes).unwrap(), "normal_config"),
+        Some(Tag::String(_))
+    ));
+    set_properties(
+        &mut state,
+        POS,
+        &[("trial_spawner_state", "cooldown")],
+        &mut Vec::new(),
+    );
+    state.outbox.clear();
+    spawner.persist(&mut state, POS);
+    assert!(state.outbox[&ConnectionId(1)].iter().any(|change| matches!(
+        change,
+        PlayerChange::BlockEntityData { position, nbt, .. } if *position == POS
+            && *nbt == Tag::Compound(vec![("spawn_data".into(), spawn.clone())])
+    )));
+}
+
+#[test]
 fn trial_spawner_caps_wave_tracks_players_and_ejects_keys_then_cools_down() {
     let mut state = state(None);
     let first = join(&mut state, 1);
