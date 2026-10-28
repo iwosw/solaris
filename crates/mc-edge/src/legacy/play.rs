@@ -98,7 +98,7 @@ pub(super) fn clientbound(
             } else {
                 data
             });
-            w.extend_from_slice(r);
+            w.write_bool(r.read_bool()?);
         }
         "add_entity" => {
             let entity = r.read_varint()?;

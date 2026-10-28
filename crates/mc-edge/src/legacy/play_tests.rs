@@ -15,6 +15,29 @@ fn session() -> Session {
 }
 
 #[test]
+fn level_event_consumes_global_and_remaps_block_state() {
+    let mut s = session();
+    for (event, data, expected_data) in [(2002, 9, 9), (2001, 9, 4)] {
+        for global in [false, true] {
+            let mut body = Vec::new();
+            body.write_i32(event);
+            body.write_i64(123);
+            body.write_i32(data);
+            body.write_bool(global);
+            let out = clientbound(&mut s, "minecraft:level_event", &body)
+                .unwrap()
+                .unwrap();
+            let mut r = out.as_slice();
+            assert_eq!(r.read_i32().unwrap(), event);
+            assert_eq!(r.read_i64().unwrap(), 123);
+            assert_eq!(r.read_i32().unwrap(), expected_data);
+            assert_eq!(r.read_bool().unwrap(), global);
+            assert!(r.is_empty());
+        }
+    }
+}
+
+#[test]
 fn settlement_text_display_maps_to_legacy_type_without_changing_its_accessors() {
     let mut s = test_session(Tables {
         entities: IdMap::by_name(

@@ -16,6 +16,21 @@ fn sample_identifier(s: &str) -> Identifier {
 }
 
 #[test]
+fn player_command_invalid_ordinal_reports_enum_error() {
+    for ordinal in [7, 8, -1] {
+        let mut body = Vec::new();
+        body.write_varint(42);
+        body.write_varint(ordinal);
+        body.write_varint(0);
+        let error = ServerboundPlayerCommand::decode(&mut body.as_slice()).unwrap_err();
+        assert_eq!(
+            format!("{error:?}"),
+            format!("InvalidEnumOrdinal {{ value: {ordinal}, max: 6 }}")
+        );
+    }
+}
+
+#[test]
 fn login_play_round_trip_minimum() {
     round_trip(LoginPlay {
         entity_id: 1,

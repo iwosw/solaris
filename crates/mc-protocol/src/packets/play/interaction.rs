@@ -506,8 +506,8 @@ impl PlayerCommandAction {
             5 => Self::OpenInventory,
             6 => Self::StartFallFlying,
             other => {
-                return Err(CodecError::StringTooLong {
-                    len: other as usize,
+                return Err(CodecError::InvalidEnumOrdinal {
+                    value: other,
                     max: 6,
                 });
             }
