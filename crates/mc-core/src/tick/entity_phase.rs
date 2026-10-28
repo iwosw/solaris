@@ -83,6 +83,7 @@ pub(super) struct MoveWrite {
     pub(super) rotation: [f32; 3],
     pub(super) air_supply: i32,
     pub(super) ground: bool,
+    pub(super) wall_climbing: bool,
     pub(super) horizontal_impulse: [f64; 2],
     /// Only a newly acquired target needs serial memory writeback.
     pub(super) chase_target: crate::target_grid::Nearest,
@@ -1150,6 +1151,7 @@ pub(super) fn run_entity_phase(state: &mut TickState, sim: bool) -> Vec<Intent> 
             write.pos,
             was_ground,
             write.ground,
+            write.wall_climbing,
         );
         if fall > 0.0 {
             let actor = state.entities.body(write.slot).id;
@@ -1306,6 +1308,7 @@ pub(super) fn step_entity(row: ReadRow, ctx: &StepCtx) -> (MoveWrite, Vec<RawInt
                 pos: [body.position.x, body.position.y, body.position.z],
                 vel: [body.velocity.x, body.velocity.y, body.velocity.z],
                 ground: body.on_ground,
+                wall_climbing: false,
                 horizontal_impulse: [0.0; 2],
                 rotation: row.rotation,
                 air_supply: row.air_supply,
@@ -1322,6 +1325,7 @@ pub(super) fn step_entity(row: ReadRow, ctx: &StepCtx) -> (MoveWrite, Vec<RawInt
                 pos: row.pos,
                 vel: row.vel,
                 ground: row.ground,
+                wall_climbing: false,
                 horizontal_impulse: [0.0; 2],
                 rotation: row.rotation,
                 air_supply: row.air_supply,
@@ -1337,6 +1341,7 @@ pub(super) fn step_entity(row: ReadRow, ctx: &StepCtx) -> (MoveWrite, Vec<RawInt
                 pos: row.pos,
                 vel: [0.0; 3],
                 ground: row.ground,
+                wall_climbing: false,
                 horizontal_impulse: [0.0; 2],
                 rotation: row.rotation,
                 air_supply: row.air_supply,
@@ -1400,6 +1405,7 @@ pub(super) fn step_entity(row: ReadRow, ctx: &StepCtx) -> (MoveWrite, Vec<RawInt
                     pos: row.pos,
                     vel: [0.0; 3],
                     ground: true,
+                    wall_climbing: false,
                     horizontal_impulse: [0.0; 2],
                     rotation: row.rotation,
                     air_supply: row.air_supply,
@@ -1728,6 +1734,7 @@ pub(super) fn step_entity(row: ReadRow, ctx: &StepCtx) -> (MoveWrite, Vec<RawInt
                 motion.body.velocity.z,
             ],
             ground: motion.body.on_ground,
+            wall_climbing: motion.wall_climbing,
             horizontal_impulse: motion.impulse,
             rotation: motion.rotation,
             air_supply: motion.air_supply,

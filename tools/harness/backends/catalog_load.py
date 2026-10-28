@@ -496,12 +496,16 @@ async def public_region(args: argparse.Namespace, directory: Path, game: int,
     commands = {"setup": [*region["commands"], save_command]}
     scale.dump(directory / "commands.json", commands)
     scale.dump(directory / "anchors.json", [region["anchor"]])
+    # Open-loop setup runs inside the total readiness deadline, before Ready.
+    # Its required schedule is never started: this phase issues no Run event.
+    scale.dump(directory / "schedule.json", {"windows": [{"name": "steady", "duration_ms": 1000}]})
     phase = Session(phase_args, directory)
     row: dict[str, Any] = {"region": region["name"], "commands_sha256": digest(commands)}
     try:
         command = bot_command(phase_args, directory, game, 1, {"group_size": 1}) + [
             "--commands-file", str(directory / "commands.json"), "--anchors", str(directory / "anchors.json"),
-            "--no-edits", "--name-prefix", "load_setup"]
+            "--no-edits", "--name-prefix", "load_setup", "--open-loop",
+            "--schedule-file", str(directory / "schedule.json")]
         if region.get("street_routes"):
             scale.dump(directory / "street-routes.json", region["street_routes"])
             command += ["--street-routes", str(directory / "street-routes.json")]

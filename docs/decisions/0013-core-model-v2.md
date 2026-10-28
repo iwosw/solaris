@@ -212,6 +212,17 @@ cleanup credits. Edge composition adds one credit per configured player slot to
 the ordinary input budget. Gameplay/session removal remains native tick work;
 there is no second player authority or persistence stream.
 
+Administrative completion (notably `save-all flush`) preserves per-connection
+input order but must not gate socket liveness on native checkpoint progress.
+While waiting, the same Play reader validates and forwards KeepAlive echoes
+directly to the writer; other decoded frames wait in a one-MiB FIFO, including
+per-frame overhead in its budget. Per-packet rate admission remains at receipt;
+command decoding and dispatch wait until the preceding command finishes, so
+`deop` cannot race a following privileged command. Overflow sends an explicit
+disconnect reason and closes the session; no frames are silently discarded or
+replayed ahead of the command. The normal path allocates no queue storage and
+keeps the existing heartbeat deadlines.
+
 ## G1-A event-driven allocator (2026-10-16)
 
 Decision 008 replaces the per-tick population validator with a runtime dirty

@@ -57,11 +57,14 @@ def fixture(mobs: int, villagers: int) -> dict[str, Any]:
             # Species-separated roofed pens prevent sunlight burning, villager
             # predation, crossfire and spider escape. Creative observers cannot
             # trigger creepers. No NoAI, invulnerability, healing or refill.
-            commands += [f"fill {x - 9} 64 {z - 9} {x + 73} 70 {z - 9} minecraft:stone",
-                         f"fill {x - 9} 64 {z + 73} {x + 73} 70 {z + 73} minecraft:stone",
-                         f"fill {x - 9} 64 {z - 8} {x - 9} 70 {z + 72} minecraft:stone",
-                         f"fill {x + 73} 64 {z - 8} {x + 73} 70 {z + 72} minecraft:stone",
-                         f"fill {x - 9} 71 {z - 9} {x + 73} 71 {z + 73} minecraft:stone"]
+            # Spiders still take damage after detaching from a wall. Keep their
+            # climb/drop below three blocks rather than disabling natural damage.
+            ceiling = 67 if kind == "spider" else 71
+            commands += [f"fill {x - 9} 64 {z - 9} {x + 73} {ceiling - 1} {z - 9} minecraft:stone",
+                         f"fill {x - 9} 64 {z + 73} {x + 73} {ceiling - 1} {z + 73} minecraft:stone",
+                         f"fill {x - 9} 64 {z - 8} {x - 9} {ceiling - 1} {z + 72} minecraft:stone",
+                         f"fill {x + 73} 64 {z - 8} {x + 73} {ceiling - 1} {z + 72} minecraft:stone",
+                         f"fill {x - 9} {ceiling} {z - 9} {x + 73} {ceiling} {z + 73} minecraft:stone"]
             if not group:
                 commands = rules + commands
                 commands.append("setblock 32 64 34 minecraft:crafting_table")

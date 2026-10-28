@@ -22,7 +22,14 @@ pub(crate) fn after_move(
     new: [f64; 3],
     was_ground: bool,
     ground: bool,
+    wall_climbing: bool,
 ) -> f32 {
+    // Vanilla LivingEntity.handleOnClimbable resets fall distance. A clipped
+    // climb still counts: otherwise tiny ceiling drops accumulate across rises.
+    if wall_climbing {
+        state.entities.row_mut_unmarked(slot).controls.fall_distance = 0.0;
+        return 0.0;
+    }
     let dy = new[1] - old[1];
     if (was_ground || !ground) && dy >= 0.0 {
         return 0.0;
