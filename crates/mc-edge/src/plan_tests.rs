@@ -3180,14 +3180,14 @@ fn edge_plan_scale_bench() {
                 }
                 if scene == "sparse" {
                     let mut own = entity(cell + 1, [f64::from(x * 16) + 8.0, 64.0, 8.0]);
-                    own.type_id = 155;
+                    own.type_id = player_entity_type_id();
                     entities.push(own);
                 }
             }
             if scene == "dense" {
                 for id in 1..=players {
                     let mut own = entity(id, [8.0, 64.0, 8.0]);
-                    own.type_id = 155;
+                    own.type_id = player_entity_type_id();
                     entities.push(own);
                 }
             }

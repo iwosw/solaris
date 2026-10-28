@@ -1039,7 +1039,9 @@ fn villager_entry(state: crate::villager::VillagerState, tick: u64) -> JournalEn
     JournalEntry::Entity {
         id: 7,
         uuid: uuid::Uuid::from_u128(7).to_string(),
-        type_id: 119,
+        type_id: mc_data::entity_types::entity_type_contract_26_1_2_by_name("minecraft:villager")
+            .unwrap()
+            .protocol_id,
         health: 20.0,
         alive: true,
         age: 0,
@@ -1058,6 +1060,18 @@ fn villager_entry(state: crate::villager::VillagerState, tick: u64) -> JournalEn
         yaw: 1.0,
         pitch: 0.0,
     }
+}
+
+#[test]
+fn villager_fixture_uses_canonical_entity_types() {
+    let JournalEntry::Entity { type_id, .. } = villager_entry(Default::default(), 1) else {
+        panic!("villager fixture must be an entity entry");
+    };
+    assert_eq!(
+        mc_data::entity_types::entity_type_contract_26_1_2_by_protocol_id(type_id)
+            .map(|contract| contract.name),
+        Some("minecraft:villager"),
+    );
 }
 
 #[test]
@@ -1106,7 +1120,11 @@ fn villager_checkpoint_and_wal_recover_absolute_conversion_custody_and_memories(
         7,
         crate::journal::ReplayEntity {
             uuid: native.uuid.to_string(),
-            type_id: 119,
+            type_id: mc_data::entity_types::entity_type_contract_26_1_2_by_name(
+                "minecraft:villager",
+            )
+            .unwrap()
+            .protocol_id,
             pos: native.pos,
             vel: [10.0, 0.0, 0.0],
             yaw: native.yaw,
