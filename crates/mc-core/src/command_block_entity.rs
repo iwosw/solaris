@@ -116,4 +116,48 @@ pub(crate) fn install(state: &mut TickState, pos: BlockPos, mut image: Prepared)
     }
     crate::monster_spawner::forget(&mut state.monster_spawners, pos);
     state.block_entities.mark_dirty(cell);
+    state.world.mark_block_entity_visible(pos);
+    publish(state, pos);
+}
+
+/// Viewers already hold the chunk, so the installed image reaches them as the same
+/// client record a later chunk send would carry (the block update alone leaves e.g. a
+/// sign's text empty until the chunk is re-sent).
+fn publish(state: &mut TickState, pos: BlockPos) {
+    let Some(kind) = state
+        .world
+        .block_at(pos.x, pos.y, pos.z)
+        .and_then(|id| state.registry.blocks.by_id(mc_world::BlockStateId(id)))
+        .and_then(|block| BlockEntityKind::for_block(block.block.id.path()))
+    else {
+        return;
+    };
+    let Some(chunk) = state.world.chunk(crate::boundary::ChunkPos {
+        x: pos.x.div_euclid(16),
+        z: pos.z.div_euclid(16),
+    }) else {
+        return;
+    };
+    let Some(record) =
+        mc_world::wire::client_block_entities(chunk, &state.registry.blocks, &state.registry.items)
+            .into_iter()
+            .find(|record| record.pos == pos)
+    else {
+        return;
+    };
+    let viewers: Vec<_> = state
+        .players
+        .values()
+        .map(|player| player.connection)
+        .collect();
+    for viewer in viewers {
+        state.push_player(
+            viewer,
+            crate::boundary::PlayerChange::BlockEntityData {
+                position: pos,
+                block_entity_type: kind.protocol_id(),
+                nbt: record.nbt.clone(),
+            },
+        );
+    }
 }
