@@ -37,9 +37,9 @@ the server takes the whole pool they **share** it (the table says so).
 ## Prerequisites
 
 Linux, Python 3.11+, `taskset`, `lscpu`, `lsblk`, `findmnt`, cgroup v2, `systemd-run` (a user
-session, or root) for the memory cap, and the imported 26.1.2 content cache
-(`solaris-v2 content import --version 26.1.2 --download`; the dir holding `version.json`, passed
-as `--vanilla-data-dir` if it is not `./data/vanilla` or `~/.local/share/solaris/content/26.1.2`).
+session, or root) for the memory cap, and the imported 26.3 content cache
+(`solaris-v2 content import --version 26.3 --download`; the dir holding `version.json`, passed
+as `--vanilla-data-dir` if it is not `./data/vanilla` or `~/.local/share/solaris/content/26.3`).
 `/usr/bin/time` (GNU time) is optional: it adds peak RSS and CPU-ms/chunk to the worldgen tables.
 For comparable runs use the `performance` CPU governor (`cpupower frequency-set -g performance`);
 the governor is recorded.
@@ -141,7 +141,7 @@ open-loop schedule, exact `/load-metrics` ticks, cohort check after the run).
 
 ```sh
 python3 -m tools.bench vps --host root@203.0.113.7 \
-    --remote-data-dir /opt/solaris/.local/share/solaris/content/26.1.2 \
+    --remote-data-dir /opt/solaris/.local/share/solaris/content/26.3 \
     --server-bin target/release/solaris-v2 --bots-bin target/release/player-scale-bots
 # 26.3 / release tarball server instead of --server-bin:
 #   --server-tarball solaris-x86_64-unknown-linux-gnu.tar.gz
