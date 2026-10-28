@@ -2,6 +2,9 @@ use super::super::ItemStackWireCodec;
 use super::*;
 use mc_data::item_stack::PreservedItemComponent;
 
+#[path = "copied_components_26_3_tests.rs"]
+mod v263;
+
 fn text(value: &str) -> Tag {
     Tag::String(value.into())
 }
@@ -33,11 +36,7 @@ fn fixture(name: &str, value: Tag, payload: Vec<u8>) {
     expected.write_varint(1);
     expected.write_varint(0);
     expected.write_varint(
-        ITEM_COMPONENT_CODECS
-            .iter()
-            .find(|(candidate, _)| *candidate == name)
-            .unwrap()
-            .1,
+        mc_data::data_component_types_26_1_2::id(&Identifier::parse(name).unwrap()).unwrap() as i32,
     );
     expected.extend(payload);
     let stored = Tag::Compound(mc_data::item_nbt::stack_to_fields(items(), &stack).unwrap());
@@ -54,9 +53,17 @@ fn fixture(name: &str, value: Tag, payload: Vec<u8>) {
     let mut cursor = actual.as_slice();
     let decoded = ItemStack::decode(&mut cursor).unwrap();
     assert!(cursor.is_empty());
+    // Native inventory snapshots serialize ItemStack; recreate it before the
+    // second publication to catch loss after save/restart, not just on the wire.
+    let saved = serde_json::to_vec(&decoded).unwrap();
+    let restored: ItemStack = serde_json::from_slice(&saved).unwrap();
+    let durable = mc_data::item_nbt::stack_to_fields(items(), &restored).unwrap();
+    let restored = mc_data::item_nbt::stack_from_fields(items(), &durable)
+        .unwrap()
+        .unwrap();
     let mut again = Vec::new();
-    decoded.encode(&mut again).unwrap();
-    assert_eq!(again, expected, "{name} authoritative decode/re-encode");
+    restored.encode(&mut again).unwrap();
+    assert_eq!(again, expected, "{name} decode/save/restart/re-encode");
 }
 fn nbt(value: &Tag) -> Vec<u8> {
     let mut bytes = Vec::new();
@@ -287,7 +294,12 @@ fn copied_pot_decorations_are_four_optional_item_templates() {
     }
     fixture(
         "minecraft:pot_decorations",
-        make_list(vec![text("minecraft:angler_pottery_sherd")]),
+        fields(vec![
+            ("back", text("minecraft:angler_pottery_sherd")),
+            ("left", text("minecraft:brick")),
+            ("right", text("minecraft:brick")),
+            ("front", text("minecraft:brick")),
+        ]),
         expected,
     );
 }
@@ -379,20 +391,17 @@ fn duplicate_preserved_component_fails_loud_even_when_typed_projection_collapses
     ));
 }
 
-// Every other 26.1.2 registered component is deliberately unsupported on the
+// Every other 26.3 registered component is deliberately unsupported on the
 // preserved-component wire path. It is retained durably, but sending it must fail.
 const UNSUPPORTED: &[&str] = &[
     "minecraft:additional_trade_cost",
-    "minecraft:attack_animation",
     "minecraft:attack_range",
     "minecraft:attribute_modifiers",
     "minecraft:axolotl/variant",
     "minecraft:base_color",
     "minecraft:block_entity_data",
-    "minecraft:block_transformer",
     "minecraft:blocks_attacks",
     "minecraft:break_sound",
-    "minecraft:brewing_fuel",
     "minecraft:bucket_entity_data",
     "minecraft:can_break",
     "minecraft:can_place_on",
@@ -401,13 +410,10 @@ const UNSUPPORTED: &[&str] = &[
     "minecraft:cat/variant",
     "minecraft:chicken/sound_variant",
     "minecraft:chicken/variant",
-    "minecraft:compostable",
     "minecraft:consumable",
-    "minecraft:cooking_fuel",
     "minecraft:cow/sound_variant",
     "minecraft:cow/variant",
     "minecraft:creative_slot_lock",
-    "minecraft:cushion/color",
     "minecraft:custom_model_data",
     "minecraft:damage_resistant",
     "minecraft:damage_type",
@@ -424,7 +430,6 @@ const UNSUPPORTED: &[&str] = &[
     "minecraft:horse/variant",
     "minecraft:instrument",
     "minecraft:intangible_projectile",
-    "minecraft:interact_animation",
     "minecraft:jukebox_playable",
     "minecraft:kinetic_weapon",
     "minecraft:llama/variant",
@@ -434,7 +439,6 @@ const UNSUPPORTED: &[&str] = &[
     "minecraft:map_post_processing",
     "minecraft:max_stack_size",
     "minecraft:minimum_attack_charge",
-    "minecraft:mob_visibility",
     "minecraft:mooshroom/variant",
     "minecraft:painting/variant",
     "minecraft:parrot/variant",
@@ -443,7 +447,6 @@ const UNSUPPORTED: &[&str] = &[
     "minecraft:pig/variant",
     "minecraft:potion_duration_scale",
     "minecraft:provides_banner_patterns",
-    "minecraft:provides_pottery_pattern",
     "minecraft:provides_trim_material",
     "minecraft:rabbit/variant",
     "minecraft:recipes",
@@ -451,9 +454,6 @@ const UNSUPPORTED: &[&str] = &[
     "minecraft:salmon/size",
     "minecraft:sheep/color",
     "minecraft:shulker/color",
-    "minecraft:sign_text_back",
-    "minecraft:sign_text_front",
-    "minecraft:sulfur_cube_content",
     "minecraft:tool",
     "minecraft:tooltip_style",
     "minecraft:tropical_fish/base_color",
@@ -463,8 +463,6 @@ const UNSUPPORTED: &[&str] = &[
     "minecraft:use_cooldown",
     "minecraft:use_effects",
     "minecraft:villager/variant",
-    "minecraft:villager_food",
-    "minecraft:waxed",
     "minecraft:weapon",
     "minecraft:wolf/collar",
     "minecraft:wolf/sound_variant",

@@ -24,7 +24,12 @@ mod old_payloads;
 mod old_player_map;
 mod old_worldgen;
 mod text;
+mod v263;
 mod walk;
+pub use v263::{prepare_export, requires_26_3};
+
+/// Native 26.3 source/export version, from the local official version.json.
+pub const NATIVE_26_3_DATA_VERSION: i32 = 5023;
 
 #[cfg(test)]
 mod tests;
@@ -120,7 +125,7 @@ impl UpgradeReport {
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
 pub enum UpgradeError {
     #[error(
-        "unsupported Minecraft DataVersion {0}; supported Java Edition world records are 1.15 ({MIN_DATA_VERSION}) through 26.1.2 ({TARGET_DATA_VERSION})"
+        "unsupported Minecraft DataVersion {0}; supported Java Edition world records are 1.15 ({MIN_DATA_VERSION}) through 26.1.2 ({TARGET_DATA_VERSION}), or native 26.3 ({NATIVE_26_3_DATA_VERSION})"
     )]
     UnsupportedVersion(i32),
     #[error("record DataVersion {actual} differs from supplied source version {supplied}")]
@@ -192,8 +197,8 @@ const VERSIONS: &[i32] = &[
 
 /// Upgrade one complete root record in place. `level.dat` may use its `Data`
 /// wrapper; all other records are unwrapped compounds. Source versions below
-/// [`MIN_DATA_VERSION`] or above4790 are rejected before mutation for world records.
-/// Player/item records accept all older integer source stamps. Successful calls stamp4790.
+/// [`MIN_DATA_VERSION`] or above 4790 are rejected, except native 26.3 (5023).
+/// Successful calls normalize to the native reader's 4790 block-state spelling.
 /// Missing DataVersion is allowed because `from` is explicit caller input.
 /// On an error the caller must discard the record (see module documentation).
 pub fn upgrade_record(
@@ -201,7 +206,7 @@ pub fn upgrade_record(
     kind: RecordKind,
     from: i32,
 ) -> Result<UpgradeReport, UpgradeError> {
-    if from > TARGET_DATA_VERSION
+    if (from > TARGET_DATA_VERSION && from != NATIVE_26_3_DATA_VERSION)
         || (from < MIN_DATA_VERSION && !matches!(kind, RecordKind::Player | RecordKind::Item))
     {
         return Err(UpgradeError::UnsupportedVersion(from));
@@ -273,6 +278,9 @@ pub fn upgrade_record(
     }) {
         walk::visit(root, node, version, &mut report)?;
     }
+    // Schema-scoped normalization also upgrades legacy pot lists to named
+    // templates. Never rewrite similarly named fields inside opaque payloads.
+    walk::visit(root, node, NATIVE_26_3_DATA_VERSION, &mut report)?;
     nbt::set(root, "DataVersion", Tag::Int(TARGET_DATA_VERSION));
     if outer_version.is_some() {
         nbt::set(tag, "DataVersion", Tag::Int(TARGET_DATA_VERSION));
@@ -325,3 +333,6 @@ pub fn upgrade_level(tag: &mut Tag, from: i32) -> Result<UpgradeReport, UpgradeE
 pub fn upgrade_item(tag: &mut Tag, from: i32) -> Result<UpgradeReport, UpgradeError> {
     upgrade_record(tag, RecordKind::Item, from)
 }
+
+#[cfg(test)]
+mod v263_tests;

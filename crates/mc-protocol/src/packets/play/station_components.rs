@@ -11,14 +11,21 @@ use mc_data::{Identifier, ItemEnchantment};
 
 pub(super) fn count(c: &ExtendedItemComponents, overrides: &[(i32, mc_nbt::Tag)]) -> i32 {
     use super::copied_components::contains;
-    i32::from(c.has_potion_contents() && !contains(overrides, 51))
-        + i32::from(c.trim.is_some() && !contains(overrides, 56))
-        + i32::from(!c.banner_patterns.is_empty() && !contains(overrides, 72))
-        + i32::from(c.repair_cost != 0 && !contains(overrides, 19))
-        + i32::from(!c.stored_enchantments.is_empty() && !contains(overrides, 42))
-        + i32::from(!c.charged_projectiles.is_empty() && !contains(overrides, 49))
-        + i32::from(c.fireworks.is_some() && !contains(overrides, 69))
-        + i32::from(c.ominous_bottle_amplifier.is_some() && !contains(overrides, 63))
+    i32::from(c.has_potion_contents() && !contains(overrides, ids::POTION_CONTENTS))
+        + i32::from(c.trim.is_some() && !contains(overrides, ids::TRIM))
+        + i32::from(!c.banner_patterns.is_empty() && !contains(overrides, ids::BANNER_PATTERNS))
+        + i32::from(c.repair_cost != 0 && !contains(overrides, ids::REPAIR_COST))
+        + i32::from(
+            !c.stored_enchantments.is_empty() && !contains(overrides, ids::STORED_ENCHANTMENTS),
+        )
+        + i32::from(
+            !c.charged_projectiles.is_empty() && !contains(overrides, ids::CHARGED_PROJECTILES),
+        )
+        + i32::from(c.fireworks.is_some() && !contains(overrides, ids::FIREWORKS))
+        + i32::from(
+            c.ominous_bottle_amplifier.is_some()
+                && !contains(overrides, ids::OMINOUS_BOTTLE_AMPLIFIER),
+        )
 }
 
 fn write_holder<B: BufMut>(buf: &mut B, registry: &str, id: &Identifier) -> Result<(), CodecError> {
@@ -102,11 +109,11 @@ pub(super) fn encode<B: BufMut>(
     depth: usize,
 ) -> Result<(), CodecError> {
     use super::copied_components::contains;
-    if c.repair_cost != 0 && !contains(overrides, 19) {
+    if c.repair_cost != 0 && !contains(overrides, ids::REPAIR_COST) {
         buf.write_varint(ids::REPAIR_COST);
         buf.write_varint(c.repair_cost);
     }
-    if !c.stored_enchantments.is_empty() && !contains(overrides, 42) {
+    if !c.stored_enchantments.is_empty() && !contains(overrides, ids::STORED_ENCHANTMENTS) {
         buf.write_varint(ids::STORED_ENCHANTMENTS);
         write_count(buf, c.stored_enchantments.len())?;
         for e in &c.stored_enchantments {
@@ -116,14 +123,14 @@ pub(super) fn encode<B: BufMut>(
             buf.write_varint(e.level);
         }
     }
-    if !c.charged_projectiles.is_empty() && !contains(overrides, 49) {
+    if !c.charged_projectiles.is_empty() && !contains(overrides, ids::CHARGED_PROJECTILES) {
         buf.write_varint(ids::CHARGED_PROJECTILES);
         write_count(buf, c.charged_projectiles.len())?;
         for stack in &c.charged_projectiles {
             item_stack_template::encode(buf, stack, depth + 1)?;
         }
     }
-    if c.has_potion_contents() && !contains(overrides, 51) {
+    if c.has_potion_contents() && !contains(overrides, ids::POTION_CONTENTS) {
         if c.potion_custom_effects.len() > MAX_POTION_CUSTOM_EFFECTS {
             return Err(CodecError::StringTooLong {
                 len: c.potion_custom_effects.len(),
@@ -154,13 +161,13 @@ pub(super) fn encode<B: BufMut>(
         }
     }
     if let Some(trim) = &c.trim
-        && !contains(overrides, 56)
+        && !contains(overrides, ids::TRIM)
     {
         buf.write_varint(ids::TRIM);
         write_holder(buf, "trim_material", &trim.material)?;
         write_holder(buf, "trim_pattern", &trim.pattern)?;
     }
-    if !c.banner_patterns.is_empty() && !contains(overrides, 72) {
+    if !c.banner_patterns.is_empty() && !contains(overrides, ids::BANNER_PATTERNS) {
         buf.write_varint(ids::BANNER_PATTERNS);
         write_count(buf, c.banner_patterns.len())?;
         for layer in &c.banner_patterns {
@@ -169,7 +176,7 @@ pub(super) fn encode<B: BufMut>(
         }
     }
     if let Some(amplifier) = c.ominous_bottle_amplifier
-        && !contains(overrides, 63)
+        && !contains(overrides, ids::OMINOUS_BOTTLE_AMPLIFIER)
     {
         if !(0..=4).contains(&amplifier) {
             return Err(CodecError::NotSupported("invalid ominous bottle amplifier"));
@@ -178,7 +185,7 @@ pub(super) fn encode<B: BufMut>(
         buf.write_varint(amplifier);
     }
     if let Some(fireworks) = &c.fireworks
-        && !contains(overrides, 69)
+        && !contains(overrides, ids::FIREWORKS)
     {
         if !(0..=255).contains(&fireworks.flight_duration) || fireworks.explosions.len() > 256 {
             return Err(CodecError::NotSupported("invalid fireworks"));
@@ -234,8 +241,9 @@ pub(super) fn decode<B: Buf>(
             if depth >= super::copied_components::MAX_ITEM_COMPONENT_DEPTH {
                 return Err(CodecError::NotSupported("nested item component depth"));
             }
-            c.charged_projectiles =
-                read_bounded_vec(buf, 3, 4, |buf| item_stack_template::decode(buf, depth + 1))?;
+            c.charged_projectiles = read_bounded_vec(buf, 1024, 4, |buf| {
+                item_stack_template::decode(buf, depth + 1)
+            })?;
         }
         ids::POTION_CONTENTS => {
             if buf.read_bool()? {

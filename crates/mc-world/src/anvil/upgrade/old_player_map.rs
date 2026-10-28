@@ -167,7 +167,7 @@ fn dimension(tag: &mut Tag, key: &str) -> bool {
 }
 
 pub(super) fn upgrade_map_data(tag: &mut Tag, from: i32) -> Result<UpgradeReport, UpgradeError> {
-    if from > TARGET_DATA_VERSION {
+    if from > TARGET_DATA_VERSION && from != super::NATIVE_26_3_DATA_VERSION {
         return Err(UpgradeError::UnsupportedVersion(from));
     }
     if fields(tag).is_none() {
@@ -439,7 +439,7 @@ mod tests {
 
     #[test]
     fn map_bands_preserve_pixels_and_upgrade_dimension_and_banner_positions() {
-        for from in [-2, -1, 2230, 2580, 2586, 3807, 4790] {
+        for from in [-2, -1, 2230, 2580, 2586, 3807, 4790, 5023] {
             let old_dimension = from < 2537;
             let old_position = from <= 3807;
             let pos = if old_position {

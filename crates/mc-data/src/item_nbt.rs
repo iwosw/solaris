@@ -366,6 +366,37 @@ fn component_bytes(tag: &Tag) -> Result<Vec<u8>, ItemNbtError> {
     Ok(bytes)
 }
 
+/// Upgrade the pre-26.3 ordered sherd list at external NBT admission.
+/// Native custody uses named optional templates, preserving nested patches.
+pub fn upgrade_pot_decorations(value: &mut Tag) -> Result<(), ItemNbtError> {
+    let Tag::List(list) = value else {
+        return Ok(());
+    };
+    if list.elements.len() > 4 {
+        return Err(ItemNbtError::InvalidComponent(
+            "pot decorations exceed four sides".into(),
+        ));
+    }
+    let mut sides = Vec::with_capacity(4);
+    for (index, side) in ["back", "left", "right", "front"].into_iter().enumerate() {
+        let name = match list.elements.get(index) {
+            Some(Tag::String(name)) => name.as_str(),
+            None => "minecraft:brick",
+            _ => {
+                return Err(ItemNbtError::InvalidComponent(
+                    "pot decoration must be an item identifier".into(),
+                ));
+            }
+        };
+        sides.push((
+            side.into(),
+            Tag::Compound(vec![("id".into(), Tag::String(name.into()))]),
+        ));
+    }
+    *value = Tag::Compound(sides);
+    Ok(())
+}
+
 fn preserve_components(
     items: &ItemRegistry,
     fields: &[(String, Tag)],
@@ -408,7 +439,13 @@ fn preserve_components(
         }
         let component = super::item_stack::PreservedItemComponent {
             name: name.clone(),
-            value: component_bytes(value)?,
+            value: if name == "minecraft:pot_decorations" && matches!(value, Tag::List(_)) {
+                let mut value = value.clone();
+                upgrade_pot_decorations(&mut value)?;
+                component_bytes(&value)?
+            } else {
+                component_bytes(value)?
+            },
             baseline: baseline.map(component_bytes).transpose()?,
         };
         stack.extended_mut().preserved_components.push(component);

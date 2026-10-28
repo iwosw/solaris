@@ -655,7 +655,15 @@ impl LootTables {
                 }
                 if drop.dynamic_sherds {
                     let sherds = block_components::sherds(context, &drop.drop.item)?;
-                    output_items = output_items.checked_add(sherds.len() as u64).ok_or(
+                    // Templates produce fixed counts; do not consume RNG.
+                    let item_count = sherds.iter().try_fold(0_u64, |count, drop| {
+                        count
+                            .checked_add(u64::from(drop.count.try_sample(0)?))
+                            .ok_or(BlockLootEvaluationError::ArithmeticOverflow {
+                                operation: "counting dynamic block output items",
+                            })
+                    })?;
+                    output_items = output_items.checked_add(item_count).ok_or(
                         BlockLootEvaluationError::ArithmeticOverflow {
                             operation: "adding dynamic block output items",
                         },
@@ -666,7 +674,7 @@ impl LootTables {
                             maximum: MAX_BLOCK_OUTPUT_ITEMS,
                         });
                     }
-                    sampled.extend(sherds.into_iter().map(LootDrop::single));
+                    sampled.extend(sherds);
                     continue;
                 }
 

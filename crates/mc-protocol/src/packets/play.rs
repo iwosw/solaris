@@ -44,6 +44,7 @@ pub use dialog::{ClientboundClearDialog, ClientboundShowDialog, ServerboundCusto
 mod entity_sync_26_1_2;
 #[cfg(test)]
 mod item_admission_tests;
+mod item_stack_codec;
 mod item_stack_template;
 #[cfg(test)]
 mod item_stack_template_tests;
@@ -635,7 +636,10 @@ impl ItemStackWireCodec for ItemStack {
             + i32::from(self.custom_name.is_some() && !overridden(6))
             + i32::from(wire_item_model(self).is_some() && !overridden(10))
             + i32::from(!self.enchantments.is_empty() && !overridden(13))
-            + i32::from(!self.stew_effects.is_empty() && !overridden(53))
+            + i32::from(
+                !self.stew_effects.is_empty()
+                    && !overridden(DATA_COMPONENT_SUSPICIOUS_STEW_EFFECTS_ID),
+            )
             + i32::from(self.extended().max_damage.is_some() && !overridden(2))
             + i32::from(self.extended().custom_data.is_some() && !overridden(0))
             + station_components::count(self.extended(), &copied)
@@ -691,7 +695,7 @@ impl ItemStackWireCodec for ItemStack {
                 buf.write_varint(enchantment.level);
             }
         }
-        if !self.stew_effects.is_empty() && !overridden(53) {
+        if !self.stew_effects.is_empty() && !overridden(DATA_COMPONENT_SUSPICIOUS_STEW_EFFECTS_ID) {
             buf.write_varint(DATA_COMPONENT_SUSPICIOUS_STEW_EFFECTS_ID);
             write_count(buf, self.stew_effects.len())?;
             for effect in &self.stew_effects {
@@ -711,22 +715,7 @@ impl ItemStackWireCodec for ItemStack {
     }
 
     fn decode_at_depth<B: Buf>(buf: &mut B, depth: usize) -> Result<Self, CodecError> {
-        if depth > copied_components::MAX_ITEM_COMPONENT_DEPTH {
-            return Err(CodecError::NotSupported("nested item component depth"));
-        }
-        let count = buf.read_varint()?;
-        if count < 0 {
-            return Err(CodecError::NegativeLength(count));
-        }
-        if count == 0 {
-            return Ok(Self::EMPTY);
-        }
-        let item_id = u32::try_from(buf.read_varint()?)
-            .map_err(|_| CodecError::NotSupported("negative item id"))?;
-        if copied_components::items().name_of(item_id).is_none() {
-            return Err(CodecError::NotSupported("unknown item id"));
-        }
-        Self::decode_components_at_depth(buf, item_id, count, depth)
+        item_stack_codec::decode_stack(buf, depth, false)
     }
 
     fn decode_components<B: Buf>(
@@ -743,134 +732,7 @@ impl ItemStackWireCodec for ItemStack {
         count: i32,
         depth: usize,
     ) -> Result<Self, CodecError> {
-        if depth > copied_components::MAX_ITEM_COMPONENT_DEPTH {
-            return Err(CodecError::NotSupported("nested item component depth"));
-        }
-        let n_add = buf.read_varint()?;
-        let n_remove = buf.read_varint()?;
-        if n_add < 0 || n_remove < 0 {
-            return Err(CodecError::NegativeLength(n_add.min(n_remove)));
-        }
-        if n_add > 110 || n_remove > 110 || n_add + n_remove > 110 {
-            return Err(CodecError::NotSupported(
-                "ItemStack with unsupported DataComponentPatch shape",
-            ));
-        }
-        let mut damage = None;
-        let custom_name = None;
-        let mut item_model = None;
-        let mut enchantments = Vec::new();
-        let mut stew_effects = None;
-        let mut components = mc_data::item_stack::ExtendedItemComponents::EMPTY;
-        let mut seen = [0; 110];
-        let mut copied = Vec::new();
-        for index in 0..n_add as usize {
-            let component_id = buf.read_varint()?;
-            if seen[..index].contains(&component_id) {
-                return Err(CodecError::NotSupported("duplicate item component"));
-            }
-            seen[index] = component_id;
-            if let Some(component) = copied_components::decode(buf, component_id, depth)? {
-                copied.push(component);
-                continue;
-            }
-            match component_id {
-                DATA_COMPONENT_CUSTOM_DATA_ID if components.custom_data.is_none() => {
-                    let mut bounded =
-                        (&mut *buf).take(mc_data::item_stack::MAX_CUSTOM_DATA_BYTES - 2);
-                    let tag = mc_nbt::read_network(&mut bounded)?;
-                    components.custom_data = Some(
-                        mc_data::item_stack::custom_data_from_tag(tag)
-                            .map_err(CodecError::NotSupported)?,
-                    );
-                }
-                DATA_COMPONENT_MAX_DAMAGE_ID if components.max_damage.is_none() => {
-                    let value = u32::try_from(buf.read_varint()?)
-                        .map_err(|_| CodecError::NotSupported("invalid max_damage"))?;
-                    mc_data::item_stack::validate_max_damage(value)
-                        .map_err(CodecError::NotSupported)?;
-                    components.max_damage = Some(value);
-                }
-                DATA_COMPONENT_DAMAGE_ID if damage.is_none() => {
-                    damage = Some(buf.read_varint()?.max(0));
-                }
-                DATA_COMPONENT_ITEM_MODEL_ID if item_model.is_none() => {
-                    item_model = Some(std::sync::Arc::new(buf.read_identifier()?));
-                }
-                DATA_COMPONENT_ENCHANTMENTS_ID if enchantments.is_empty() => {
-                    enchantments = read_bounded_vec(buf, 256, 2, |buf| {
-                        let protocol_id = buf.read_varint()?;
-                        let protocol_id = u32::try_from(protocol_id).map_err(|_| {
-                            CodecError::NotSupported("negative enchantment registry id")
-                        })?;
-                        let id = mc_data::required_registry_entry("enchantment", protocol_id)
-                            .ok_or(CodecError::NotSupported(
-                                "unknown enchantment registry entry",
-                            ))?;
-                        let level = buf.read_varint()?;
-                        if !(1..=255).contains(&level) {
-                            return Err(CodecError::NotSupported(
-                                "invalid ItemStack enchantments component",
-                            ));
-                        }
-                        Ok(mc_data::ItemEnchantment { id, level })
-                    })?;
-                    enchantments.sort_unstable_by(|left, right| left.id.cmp(&right.id));
-                    if enchantments
-                        .windows(2)
-                        .any(|entries| entries[0].id == entries[1].id)
-                    {
-                        return Err(CodecError::NotSupported(
-                            "invalid ItemStack enchantments component",
-                        ));
-                    }
-                }
-                DATA_COMPONENT_SUSPICIOUS_STEW_EFFECTS_ID if stew_effects.is_none() => {
-                    stew_effects = Some(read_bounded_vec(buf, 256, 2, |buf| {
-                        let raw = buf.read_varint()?;
-                        let name = u32::try_from(raw)
-                            .ok()
-                            .and_then(mc_data::mob_effects_26_1_2::name_for_id)
-                            .ok_or(CodecError::NotSupported("unknown stew effect"))?;
-                        Ok(mc_data::item_stack::StewEffect {
-                            id: Identifier::parse(name).expect("canonical effect identifier"),
-                            duration: buf.read_varint()?,
-                        })
-                    })?);
-                }
-                id if station_components::decode(buf, id, &mut components, depth)? => {}
-                _ => {
-                    return Err(CodecError::NotSupported(
-                        "ItemStack with unsupported DataComponentPatch component",
-                    ));
-                }
-            }
-        }
-        for index in n_add as usize..(n_add + n_remove) as usize {
-            let component_id = buf.read_varint()?;
-            if seen[..index].contains(&component_id) {
-                return Err(CodecError::NotSupported("duplicate item component"));
-            }
-            let name = u32::try_from(component_id)
-                .ok()
-                .and_then(mc_data::data_component_types_26_1_2::name)
-                .ok_or(CodecError::NotSupported("unknown removed item component"))?;
-            seen[index] = component_id;
-            copied.push((format!("!{name}"), Tag::Compound(Vec::new())));
-        }
-        copied_components::finish(
-            Self {
-                count,
-                item_id,
-                damage,
-                enchantments,
-                custom_name,
-                item_model,
-                stew_effects: stew_effects.unwrap_or_default(),
-                components: components.into_optional(),
-            },
-            copied,
-        )
+        item_stack_codec::decode_components(buf, item_id, count, depth, false)
     }
 }
 fn write_literal_text_component<B: BufMut>(buf: &mut B, text: &str) -> Result<(), CodecError> {

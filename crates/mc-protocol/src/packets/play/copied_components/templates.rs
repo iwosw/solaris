@@ -59,6 +59,10 @@ pub(super) fn encode_list<B: BufMut>(
     }
     write_count(buf, entries.len())?;
     for entry in entries {
+        let entry = match entry {
+            Tag::Compound(fields) if fields.len() == 1 && fields[0].0.is_empty() => &fields[0].1,
+            _ => entry,
+        };
         encode(buf, entry, depth)?;
     }
     Ok(())

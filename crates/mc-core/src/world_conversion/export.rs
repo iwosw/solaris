@@ -30,6 +30,7 @@ pub(super) fn convert(
     let mut stats = ConversionStats {
         tick: checkpoint.tick,
         durable_tick: world.checkpoint.tick,
+        data_version: TARGET_DATA_VERSION,
         ..Default::default()
     };
     let mut extras = BTreeMap::new();
@@ -249,6 +250,7 @@ pub(super) fn convert(
                     }
                 }
                 portable_hopper_cooldowns(&mut tag, checkpoint.tick)?;
+                prepare_record(&mut tag, super::RecordKind::Chunk, &mut stats)?;
                 payloads.push(payload(x, z, &tag)?);
                 stats.chunks += 1;
             }
@@ -377,10 +379,6 @@ pub(super) fn convert(
         }
         metadata.remove(path);
     }
-    for (path, tag) in metadata {
-        crate::level_metadata::validate_relative_path(&path)?;
-        write_nbt(&stage.join(path), &tag)?;
-    }
     for player in &checkpoint.players {
         let uuid = uuid::Uuid::from_bytes(player.uuid);
         let mut tag = decode_tag(&player.record, "player")?;
@@ -464,8 +462,21 @@ pub(super) fn convert(
                 ));
             }
         }
+        prepare_record(&mut tag, super::RecordKind::Player, &mut stats)?;
         write_nbt(&stage.join(format!("players/data/{uuid}.dat")), &tag)?;
         stats.players += 1;
+    }
+    // Players can be the only source of new components; publish the level
+    // version only after every emitted record has selected its real format.
+    for (path, mut tag) in metadata {
+        crate::level_metadata::validate_relative_path(&path)?;
+        if path == "level.dat"
+            && stats.data_version == mc_world::anvil::upgrade::NATIVE_26_3_DATA_VERSION
+        {
+            mc_world::anvil::upgrade::prepare_export(&mut tag, super::RecordKind::Level)
+                .map_err(fail)?;
+        }
+        write_nbt(&stage.join(path), &tag)?;
     }
     for (relative, bytes) in extras {
         stats.opaque_retention.push(relative.clone());
@@ -758,7 +769,7 @@ fn export_entities(
     for ((rx, rz), chunks) in regions {
         let mut payloads = Vec::with_capacity(chunks.len());
         for ((x, z), entities) in chunks {
-            let root = Tag::Compound(vec![
+            let mut root = Tag::Compound(vec![
                 ("DataVersion".into(), Tag::Int(TARGET_DATA_VERSION)),
                 ("Position".into(), Tag::IntArray(vec![x, z])),
                 (
@@ -769,6 +780,7 @@ fn export_entities(
                     }),
                 ),
             ]);
+            prepare_record(&mut root, super::RecordKind::EntityRegion, stats)?;
             payloads.push(payload(x, z, &root)?);
         }
         mc_world::anvil::write_region_create_new(
@@ -843,6 +855,18 @@ fn merge_unknown(fresh: &mut Tag, old: Tag) -> Result<(), CoreError> {
             }
         }
         _ => {}
+    }
+    Ok(())
+}
+
+fn prepare_record(
+    tag: &mut Tag,
+    kind: super::RecordKind,
+    stats: &mut ConversionStats,
+) -> Result<(), CoreError> {
+    if mc_world::anvil::upgrade::requires_26_3(tag, kind).map_err(fail)? {
+        mc_world::anvil::upgrade::prepare_export(tag, kind).map_err(fail)?;
+        stats.data_version = mc_world::anvil::upgrade::NATIVE_26_3_DATA_VERSION;
     }
     Ok(())
 }

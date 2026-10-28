@@ -43,7 +43,7 @@ fn charged_projectile_decode_accepts_leaf_components_and_bounds_collection() {
     assert!(cursor.is_empty());
 
     let mut oversized = Vec::new();
-    for value in [1, 1, 1, 0, ids::CHARGED_PROJECTILES, 4, 0, 0, 0, 0] {
+    for value in [1, 1, 1, 0, ids::CHARGED_PROJECTILES, 1025, 0, 0, 0, 0] {
         oversized.write_varint(value);
     }
     assert!(matches!(
