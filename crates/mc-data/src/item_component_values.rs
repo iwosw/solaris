@@ -348,6 +348,7 @@ fn value_shape(
         ids::BANNER_PATTERNS => {
             list(value, 20)?;
         }
+        ids::BASE_COLOR => dye(value)?,
         ids::POT_DECORATIONS => {
             let fields = compound(value)?;
             for side in ["back", "left", "right", "front"] {

@@ -1,5 +1,5 @@
 //! Sculk shrieks and vanilla per-player warden_spawn_tracker persistence.
-use crate::boundary::{BlockPos, ChunkPos, EntityId, PlayerChange};
+use crate::boundary::{BlockPos, ChunkPos, EntityId};
 use crate::tick::TickState;
 use crate::vibration::{self, GameEvent, Pending};
 use mc_nbt::Tag;
@@ -493,17 +493,7 @@ pub(crate) fn shriek(state: &mut TickState, pos: BlockPos, player: EntityId) -> 
     entry.shriek_until = state.tick + 90;
     set_shrieking(state, pos, true);
     persist_listener(state, pos);
-    let connections: Vec<_> = state.players.values().map(|p| p.connection).collect();
-    for connection in connections {
-        state.push_player(
-            connection,
-            PlayerChange::ProjectileLevelEvent {
-                position: pos,
-                event: 3007,
-                data: 0,
-            },
-        );
-    }
+    crate::projectiles::payloads::level_event(state, centre, 3007, 0);
     vibration::emit(state, centre, GameEvent::Shriek, Some(player));
     true
 }
