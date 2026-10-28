@@ -943,6 +943,45 @@ solaris-v2 --config server.toml world export-anvil \
   --source /srv/native-world --destination /srv/exported-world --receipt /srv/export.json
 ```
 
+Native Java 26.3 worlds (`DataVersion` **5023**) are accepted in addition to the
+existing through-26.1.2 import range. Intermediate development/snapshot versions
+remain refused. The offline reader normalizes only schema-typed block states:
+26.3 `id`/`properties` become the native reader's `Name`/`Properties`; default-state
+identifier strings and mixed palette wrappers become homogeneous native compound
+palettes. Similarly named opaque/custom-data fields are untouched.
+Chunk/entity/player envelopes,
+section packing, inventories, positions and modeled saved-data fields retain
+their existing shapes. The local 26.3 `DataFixers` registrations identify the
+block-state change at 5006, pot template changes at 4996, and terrain-status
+change at 5013; full chunks are unaffected by the status merge.
+
+Ordinary exports remain **4790 / 26.1.2**. A record is promoted to **5023** only
+when it retains a native 26.3 chunk origin or actually contains new component/
+named-pot-template shapes. Promoted records use 26.3 `id`/`properties` block
+states and float blending heights (including the float no-value sentinel),
+not merely a newer version stamp. `level.dat` and the receipt identify
+the highest emitted record version: `Version.Name = "26.3"` / `Version.Id = 5023`
+if promotion was necessary, otherwise `"26.1.2"` / 4790. Unchanged saved-data
+codecs retain their 4790 writer; deferred opaque files retain original bytes.
+
+All 14 new 26.3 item components are admitted by `/give` and creative ingress
+and retained in native inventory snapshots: `attack_animation`,
+`interact_animation`, `block_transformer`, `villager_food`, `sulfur_cube_content`,
+`compostable`, `cooking_fuel`, `brewing_fuel`, `mob_visibility`,
+`provides_pottery_pattern`, `sign_text_front`, `sign_text_back`, `waxed`, and
+`cushion/color`. This is lossless component custody, not a claim that native
+gameplay implements each component's effect. `pot_decorations` stores optional
+`back`/`left`/`right`/`front` item templates, including counts and nested patches;
+absent sides remain absent rather than being rewritten as explicit brick faces.
+Cracked-pot drops keep each present template's count and component patch; missing
+optional sides do not create brick drops. Offline template traversal also accepts
+identifier shorthand and mixed-list NBT wrappers without changing their custody.
+Creative ingress uses the vanilla untrusted stack codec: each added outer
+component has its own VarInt byte length. Ordinary inventory publications and
+nested item templates keep their normal, unframed component codec.
+`charged_projectiles` uses vanilla's 1024-template storage/wire bound rather than
+the three-projectile count produced by ordinary Multishot gameplay.
+
 ### Interchange preservation and limits
 
 A successful receipt means the offline conversion published a complete destination,

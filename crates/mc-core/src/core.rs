@@ -1143,6 +1143,10 @@ fn surface_height(world: &ChunkWorld, air: u32, x: f64, z: f64) -> f64 {
 #[path = "native_checkpoint_crash_tests.rs"]
 mod native_checkpoint_crash_tests;
 
+#[cfg(test)]
+#[path = "native_component_26_3_tests.rs"]
+mod native_component_26_3_tests;
+
 #[cfg(all(test, target_os = "linux"))]
 #[path = "persistence_crash_tests.rs"]
 mod persistence_crash_tests;

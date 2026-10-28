@@ -259,37 +259,41 @@ fn intact_pots_copy_decorations_while_cracked_pots_expand_the_same_four_sherds()
             .map(|name| Tag::String((*name).into()))
             .collect(),
     });
-    let entity = Tag::Compound(vec![("sherds".into(), decorations.clone())]);
-    let tool = LootContextItem::empty();
-    for cracked in [false, true] {
-        let properties = vec![("cracked".into(), cracked.to_string())];
-        let context = BlockLootContext::try_new(
-            &block,
-            &properties,
-            &tool,
-            LootRandomBinding::new(tables.block_random_sequence(&block).cloned(), 1),
-        )
-        .unwrap()
-        .with_block_entity(&entity);
-        let drops = tables.evaluate_block(&context).unwrap().unwrap();
-        if cracked {
-            assert_eq!(
-                drops,
-                sherds
-                    .iter()
-                    .map(|name| LootDrop::single(id(name)))
-                    .collect::<Vec<_>>()
-            );
-        } else {
-            assert_eq!(drops.len(), 1);
-            assert_eq!(drops[0].item, block);
-            assert_eq!(
-                drops[0].components.as_deref(),
-                Some(&Tag::Compound(vec![(
-                    "minecraft:pot_decorations".into(),
-                    decorations.clone()
-                ),]))
-            );
+    let mut normalized = decorations.clone();
+    crate::item_nbt::upgrade_pot_decorations(&mut normalized).unwrap();
+    for source in [decorations.clone(), normalized.clone()] {
+        let entity = Tag::Compound(vec![("sherds".into(), source)]);
+        let tool = LootContextItem::empty();
+        for cracked in [false, true] {
+            let properties = vec![("cracked".into(), cracked.to_string())];
+            let context = BlockLootContext::try_new(
+                &block,
+                &properties,
+                &tool,
+                LootRandomBinding::new(tables.block_random_sequence(&block).cloned(), 1),
+            )
+            .unwrap()
+            .with_block_entity(&entity);
+            let drops = tables.evaluate_block(&context).unwrap().unwrap();
+            if cracked {
+                assert_eq!(
+                    drops,
+                    [1, 0, 3, 2]
+                        .into_iter()
+                        .map(|index| LootDrop::single(id(sherds[index])))
+                        .collect::<Vec<_>>()
+                );
+            } else {
+                assert_eq!(drops.len(), 1);
+                assert_eq!(drops[0].item, block);
+                assert_eq!(
+                    drops[0].components.as_deref(),
+                    Some(&Tag::Compound(vec![(
+                        "minecraft:pot_decorations".into(),
+                        normalized.clone()
+                    ),]))
+                );
+            }
         }
     }
 }
@@ -346,4 +350,38 @@ fn every_vanilla_block_copy_component_has_a_compiled_drop_owner() {
             "pot_decorations",
         ])
     );
+}
+
+#[test]
+fn cracked_26_3_pot_keeps_template_count_and_component_patch() {
+    let tables = tables("decorated_pot");
+    let block = id("minecraft:decorated_pot");
+    let patch = Tag::Compound(vec![(
+        "minecraft:custom_name".into(),
+        Tag::String("Keepsake".into()),
+    )]);
+    let template = Tag::Compound(vec![
+        ("id".into(), Tag::String("minecraft:brick".into())),
+        ("count".into(), Tag::Int(2)),
+        ("components".into(), patch.clone()),
+    ]);
+    let entity = Tag::Compound(vec![(
+        "sherds".into(),
+        Tag::Compound(vec![("back".into(), template)]),
+    )]);
+    let tool = LootContextItem::empty();
+    let properties = vec![("cracked".into(), "true".into())];
+    let context = BlockLootContext::try_new(
+        &block,
+        &properties,
+        &tool,
+        LootRandomBinding::new(tables.block_random_sequence(&block).cloned(), 1),
+    )
+    .unwrap()
+    .with_block_entity(&entity);
+    let drops = tables.evaluate_block(&context).unwrap().unwrap();
+    assert_eq!(drops[0].item, id("minecraft:brick"));
+    assert_eq!(drops[0].count, crate::loot::LootCount::Fixed(2));
+    assert_eq!(drops[0].components.as_deref(), Some(&patch));
+    assert_eq!(drops.len(), 1, "absent optional sides must not mint bricks");
 }

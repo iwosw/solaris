@@ -13,6 +13,7 @@ mod book;
 mod container;
 mod profile;
 mod templates;
+mod v263;
 
 pub(super) const MAX_ITEM_COMPONENT_DEPTH: usize = 8;
 
@@ -158,178 +159,194 @@ pub(super) fn encode<B: BufMut>(
 ) -> Result<(), CodecError> {
     // extract_if retains removal markers in place: no second patch allocation
     // or NBT clone is needed to emit the mandated added-then-removed ordering.
-    for (id, mut value) in components.extract_if(.., |(id, _)| *id >= 0) {
-        if matches!(
-            id,
-            ids::CHARGED_PROJECTILES | ids::POTION_CONTENTS | ids::TRIM | ids::FIREWORKS
-        ) {
-            let name = ITEM_COMPONENT_CODECS
-                .iter()
-                .find(|(_, candidate)| *candidate == id)
-                .unwrap()
-                .0;
-            let c = mc_data::item_stack::ExtendedItemComponents::from_nbt(
-                &[(name.into(), value)],
-                items(),
-            )
-            .map_err(CodecError::NotSupported)?;
-            if id == ids::CHARGED_PROJECTILES && c.charged_projectiles.is_empty() {
-                buf.write_varint(id);
-                buf.write_varint(0);
-            } else if id == ids::POTION_CONTENTS && !c.has_potion_contents() {
-                buf.write_varint(id);
-                buf.write_bool(false);
-                buf.write_bool(false);
-                buf.write_varint(0);
-                buf.write_bool(false);
-            } else {
-                super::station_components::encode(buf, &c, &[], depth)?;
-            }
-            continue;
-        }
-        buf.write_varint(id);
-        match id {
-            ids::CUSTOM_DATA => {
-                if !matches!(value, Tag::Compound(_)) {
-                    return Err(invalid());
-                }
-                mc_nbt::write_network(buf, &value)?;
-            }
-            ids::MAX_DAMAGE | ids::DAMAGE | ids::REPAIR_COST | ids::OMINOUS_BOTTLE_AMPLIFIER => {
-                buf.write_varint(integer(&value)?)
-            }
-            ids::DEATH_PROTECTION => {
-                mc_data::item_stack::validate_death_protection(&value)
-                    .map_err(CodecError::NotSupported)?;
-                // DeathProtection.STREAM_CODEC is ConsumeEffect's list codec.
-                buf.write_varint(0);
-            }
-            ids::CUSTOM_NAME | ids::ITEM_NAME => write_text(buf, &value)?,
-            ids::ITEM_MODEL | ids::NOTE_BLOCK_SOUND => {
-                buf.write_identifier(&Identifier::parse(string(&value)?).map_err(|_| invalid())?)?
-            }
-            ids::LORE => {
-                let lines = list(&value)?;
-                super::write_bounded_count(buf, lines.len(), 256)?;
-                for line in lines {
-                    write_text(buf, line)?;
-                }
-            }
-            ids::RARITY => buf.write_varint(match string(&value)? {
-                "common" => 0,
-                "uncommon" => 1,
-                "rare" => 2,
-                "epic" => 3,
-                _ => return Err(invalid()),
-            }),
-            ids::ENCHANTMENTS | ids::STORED_ENCHANTMENTS => {
-                let enchantments = compound(&value)?;
-                write_count(buf, enchantments.len())?;
-                for (name, level) in enchantments {
-                    buf.write_varint(registry_id("enchantment", name)?);
-                    buf.write_varint(integer(level)?);
-                }
-            }
-            ids::TOOLTIP_DISPLAY => {
-                let fields = compound(&value)?;
-                buf.write_bool(
-                    field(fields, "hide_tooltip")
-                        .map(integer)
-                        .transpose()?
-                        .unwrap_or(0)
-                        != 0,
-                );
-                let hidden = field(fields, "hidden_components")
-                    .map(list)
-                    .transpose()?
-                    .unwrap_or(&[]);
-                write_count(buf, hidden.len())?;
-                for component in hidden {
-                    buf.write_varint(registry_id("data_component_type", string(component)?)?);
-                }
-            }
-            ids::ENCHANTMENT_GLINT_OVERRIDE => buf.write_bool(integer(&value)? != 0),
-            // DyedItemColor.STREAM_CODEC: ByteBufCodecs.INT, not VAR_INT.
-            ids::DYED_COLOR => buf
-                .write_i32(mc_data::item_stack::decode_dyed_color(&value).map_err(|_| invalid())?),
-            ids::USE_REMAINDER => templates::encode(buf, &value, depth)?,
-            ids::BUNDLE_CONTENTS => templates::encode_list(buf, &value, depth)?,
-            ids::SUSPICIOUS_STEW_EFFECTS => {
-                let effects = list(&value)?;
-                write_count(buf, effects.len())?;
-                for effect in effects {
-                    let fields = compound(effect)?;
-                    buf.write_varint(registry_id("mob_effect", string(required(fields, "id")?)?)?);
-                    buf.write_varint(
-                        field(fields, "duration")
-                            .map(integer)
-                            .transpose()?
-                            .unwrap_or(160),
-                    );
-                }
-            }
-            ids::WRITABLE_BOOK_CONTENT | ids::WRITTEN_BOOK_CONTENT => {
-                book::encode(buf, &value, id == ids::WRITTEN_BOOK_CONTENT)?
-            }
-            ids::PROFILE => profile::encode(buf, &value)?,
-            ids::BANNER_PATTERNS => {
-                let layers = list(&value)?;
-                super::write_bounded_count(buf, layers.len(), 20)?;
-                for layer in layers {
-                    let fields = compound(layer)?;
-                    buf.write_varint(
-                        registry_id("banner_pattern", string(required(fields, "pattern")?)?)? + 1,
-                    );
-                    buf.write_varint(color(string(required(fields, "color")?)?)?);
-                }
-            }
-            // PotDecorations.STREAM_CODEC: back, left, right, front, each an
-            // optional ItemStackTemplate. The stored sherd list keeps that
-            // order; a missing side is the plain brick face.
-            ids::POT_DECORATIONS => {
-                let decorations = list(&value)?;
-                if decorations.len() > 4 {
-                    return Err(invalid());
-                }
-                for index in 0..4 {
-                    let name = decorations
-                        .get(index)
-                        .map(string)
-                        .transpose()?
-                        .unwrap_or("minecraft:brick");
-                    buf.write_bool(true);
-                    templates::encode(buf, &Tag::String(name.into()), depth)?;
-                }
-            }
-            ids::CONTAINER => container::encode(buf, &value, depth)?,
-            ids::BLOCK_STATE => {
-                let properties = compound(&value)?;
-                write_count(buf, properties.len())?;
-                for (name, value) in properties {
-                    buf.write_string(name, 32767)?;
-                    buf.write_string(string(value)?, 32767)?;
-                }
-            }
-            ids::BEES => encode_bees(buf, &mut value)?,
-            ids::LOCK => mc_nbt::write_network_value(buf, &value)?,
-            ids::CONTAINER_LOOT => {
-                let Tag::Compound(fields) = &mut value else {
-                    return Err(invalid());
-                };
-                if matches!(field(fields, "seed"), Some(Tag::Long(0))) {
-                    fields.retain(|(name, _)| name != "seed");
-                }
-                mc_nbt::write_network_value(buf, &value)?;
-            }
-            _ => {
-                return Err(CodecError::NotSupported(
-                    "unsupported preserved item component",
-                ));
-            }
-        }
+    for (id, value) in components.extract_if(.., |(id, _)| *id >= 0) {
+        encode_one(buf, id, value, depth)?;
     }
     for (id, _) in components {
         buf.write_varint(-id - 1);
+    }
+    Ok(())
+}
+
+pub(super) fn encode_one<B: BufMut>(
+    buf: &mut B,
+    id: i32,
+    mut value: Tag,
+    depth: usize,
+) -> Result<(), CodecError> {
+    if matches!(
+        id,
+        ids::CHARGED_PROJECTILES | ids::POTION_CONTENTS | ids::TRIM | ids::FIREWORKS
+    ) {
+        let name = ITEM_COMPONENT_CODECS
+            .iter()
+            .find(|(_, candidate)| *candidate == id)
+            .unwrap()
+            .0;
+        let c =
+            mc_data::item_stack::ExtendedItemComponents::from_nbt(&[(name.into(), value)], items())
+                .map_err(CodecError::NotSupported)?;
+        if id == ids::CHARGED_PROJECTILES && c.charged_projectiles.is_empty() {
+            buf.write_varint(id);
+            buf.write_varint(0);
+        } else if id == ids::POTION_CONTENTS && !c.has_potion_contents() {
+            buf.write_varint(id);
+            buf.write_bool(false);
+            buf.write_bool(false);
+            buf.write_varint(0);
+            buf.write_bool(false);
+        } else {
+            super::station_components::encode(buf, &c, &[], depth)?;
+        }
+        return Ok(());
+    }
+    buf.write_varint(id);
+    match id {
+        ids::CUSTOM_DATA => {
+            if !matches!(value, Tag::Compound(_)) {
+                return Err(invalid());
+            }
+            mc_nbt::write_network(buf, &value)?;
+        }
+        ids::MAX_DAMAGE | ids::DAMAGE | ids::REPAIR_COST | ids::OMINOUS_BOTTLE_AMPLIFIER => {
+            buf.write_varint(integer(&value)?)
+        }
+        ids::DEATH_PROTECTION => {
+            mc_data::item_stack::validate_death_protection(&value)
+                .map_err(CodecError::NotSupported)?;
+            // DeathProtection.STREAM_CODEC is ConsumeEffect's list codec.
+            buf.write_varint(0);
+        }
+        ids::CUSTOM_NAME | ids::ITEM_NAME => write_text(buf, &value)?,
+        ids::ITEM_MODEL | ids::NOTE_BLOCK_SOUND => {
+            buf.write_identifier(&Identifier::parse(string(&value)?).map_err(|_| invalid())?)?
+        }
+        ids::LORE => {
+            let lines = list(&value)?;
+            super::write_bounded_count(buf, lines.len(), 256)?;
+            for line in lines {
+                write_text(buf, line)?;
+            }
+        }
+        ids::RARITY => buf.write_varint(match string(&value)? {
+            "common" => 0,
+            "uncommon" => 1,
+            "rare" => 2,
+            "epic" => 3,
+            _ => return Err(invalid()),
+        }),
+        ids::ENCHANTMENTS | ids::STORED_ENCHANTMENTS => {
+            let enchantments = compound(&value)?;
+            write_count(buf, enchantments.len())?;
+            for (name, level) in enchantments {
+                buf.write_varint(registry_id("enchantment", name)?);
+                buf.write_varint(integer(level)?);
+            }
+        }
+        ids::TOOLTIP_DISPLAY => {
+            let fields = compound(&value)?;
+            buf.write_bool(
+                field(fields, "hide_tooltip")
+                    .map(integer)
+                    .transpose()?
+                    .unwrap_or(0)
+                    != 0,
+            );
+            let hidden = field(fields, "hidden_components")
+                .map(list)
+                .transpose()?
+                .unwrap_or(&[]);
+            write_count(buf, hidden.len())?;
+            for component in hidden {
+                buf.write_varint(registry_id("data_component_type", string(component)?)?);
+            }
+        }
+        ids::ENCHANTMENT_GLINT_OVERRIDE => buf.write_bool(integer(&value)? != 0),
+        // DyedItemColor.STREAM_CODEC: ByteBufCodecs.INT, not VAR_INT.
+        ids::DYED_COLOR => {
+            buf.write_i32(mc_data::item_stack::decode_dyed_color(&value).map_err(|_| invalid())?)
+        }
+        ids::USE_REMAINDER => templates::encode(buf, &value, depth)?,
+        ids::BUNDLE_CONTENTS => templates::encode_list(buf, &value, depth)?,
+        ids::SUSPICIOUS_STEW_EFFECTS => {
+            let effects = list(&value)?;
+            write_count(buf, effects.len())?;
+            for effect in effects {
+                let fields = compound(effect)?;
+                buf.write_varint(registry_id("mob_effect", string(required(fields, "id")?)?)?);
+                buf.write_varint(
+                    field(fields, "duration")
+                        .map(integer)
+                        .transpose()?
+                        .unwrap_or(160),
+                );
+            }
+        }
+        ids::WRITABLE_BOOK_CONTENT | ids::WRITTEN_BOOK_CONTENT => {
+            book::encode(buf, &value, id == ids::WRITTEN_BOOK_CONTENT)?
+        }
+        ids::PROFILE => profile::encode(buf, &value)?,
+        ids::BANNER_PATTERNS => {
+            let layers = list(&value)?;
+            super::write_bounded_count(buf, layers.len(), 20)?;
+            for layer in layers {
+                let fields = compound(layer)?;
+                buf.write_varint(
+                    registry_id("banner_pattern", string(required(fields, "pattern")?)?)? + 1,
+                );
+                buf.write_varint(color(string(required(fields, "color")?)?)?);
+            }
+        }
+        // Optional templates retain absent faces, counts and nested patches.
+        ids::POT_DECORATIONS => {
+            let decorations = compound(&value)?;
+            for side in ["back", "left", "right", "front"] {
+                let template = field(decorations, side);
+                buf.write_bool(template.is_some());
+                if let Some(template) = template {
+                    templates::encode(buf, template, depth)?;
+                }
+            }
+        }
+        ids::CONTAINER => container::encode(buf, &value, depth)?,
+        ids::BLOCK_STATE => {
+            let properties = compound(&value)?;
+            write_count(buf, properties.len())?;
+            for (name, value) in properties {
+                buf.write_string(name, 32767)?;
+                buf.write_string(string(value)?, 32767)?;
+            }
+        }
+        ids::BEES => encode_bees(buf, &mut value)?,
+        ids::LOCK => mc_nbt::write_network_value(buf, &value)?,
+        ids::CONTAINER_LOOT => {
+            let Tag::Compound(fields) = &mut value else {
+                return Err(invalid());
+            };
+            if matches!(field(fields, "seed"), Some(Tag::Long(0))) {
+                fields.retain(|(name, _)| name != "seed");
+            }
+            mc_nbt::write_network_value(buf, &value)?;
+        }
+        ids::ATTACK_ANIMATION
+        | ids::INTERACT_ANIMATION
+        | ids::BLOCK_TRANSFORMER
+        | ids::VILLAGER_FOOD
+        | ids::SULFUR_CUBE_CONTENT
+        | ids::COMPOSTABLE
+        | ids::COOKING_FUEL
+        | ids::BREWING_FUEL
+        | ids::MOB_VISIBILITY
+        | ids::PROVIDES_POTTERY_PATTERN
+        | ids::SIGN_TEXT_FRONT
+        | ids::SIGN_TEXT_BACK
+        | ids::WAXED
+        | ids::CUSHION_COLOR => v263::encode(buf, id, &value, depth)?,
+        _ => {
+            return Err(CodecError::NotSupported(
+                "unsupported preserved item component",
+            ));
+        }
     }
     Ok(())
 }
@@ -397,17 +414,12 @@ pub(super) fn decode<B: Buf>(
         })?),
         ids::POT_DECORATIONS => {
             let mut sides = Vec::with_capacity(4);
-            for _ in 0..4 {
-                let side = if buf.read_bool()? {
-                    let template = templates::decode(buf, depth)?;
-                    let fields = compound(&template)?;
-                    string(required(fields, "id")?)?.to_owned()
-                } else {
-                    "minecraft:brick".to_owned()
-                };
-                sides.push(Tag::String(side));
+            for side in ["back", "left", "right", "front"] {
+                if buf.read_bool()? {
+                    sides.push((side.into(), templates::decode(buf, depth)?));
+                }
             }
-            make_list(sides)
+            Tag::Compound(sides)
         }
         ids::CONTAINER => container::decode(buf, depth)?,
         ids::BLOCK_STATE => {
@@ -421,6 +433,20 @@ pub(super) fn decode<B: Buf>(
         }
         ids::BEES => decode_bees(buf)?,
         ids::LOCK | ids::CONTAINER_LOOT => mc_nbt::read_network_value(buf)?,
+        ids::ATTACK_ANIMATION
+        | ids::INTERACT_ANIMATION
+        | ids::BLOCK_TRANSFORMER
+        | ids::VILLAGER_FOOD
+        | ids::SULFUR_CUBE_CONTENT
+        | ids::COMPOSTABLE
+        | ids::COOKING_FUEL
+        | ids::BREWING_FUEL
+        | ids::MOB_VISIBILITY
+        | ids::PROVIDES_POTTERY_PATTERN
+        | ids::SIGN_TEXT_FRONT
+        | ids::SIGN_TEXT_BACK
+        | ids::WAXED
+        | ids::CUSHION_COLOR => v263::decode(buf, id, depth)?,
         _ => return Ok(None),
     };
     let name = ITEM_COMPONENT_CODECS

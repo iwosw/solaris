@@ -72,6 +72,53 @@ fn give_dyed_color_is_admitted_and_survives_inventory_and_durable_storage() {
 }
 
 #[test]
+fn give_all_new_26_3_components_survive_saved_inventory() {
+    for (name, value) in [
+        ("attack_animation", "{type:'stab',duration:9}"),
+        ("interact_animation", "{}"),
+        ("block_transformer", "'minecraft:axe'"),
+        ("villager_food", "{nutrition:12}"),
+        ("sulfur_cube_content", "'minecraft:stone'"),
+        ("compostable", "{layers:1}"),
+        ("cooking_fuel", "{burn_time:200,speed_multiplier:1.0f}"),
+        ("brewing_fuel", "{uses:20,speed_multiplier:1.0f}"),
+        (
+            "mob_visibility",
+            "{targeting_entity_types:'#minecraft:skeletons',visibility:0.5f}",
+        ),
+        ("provides_pottery_pattern", "'minecraft:angler'"),
+        ("sign_text_front", "{messages:['A','B','C','D']}"),
+        (
+            "sign_text_back",
+            "{messages:['a','b','c','d'],color:'red',has_glowing_text:true}",
+        ),
+        ("waxed", "{}"),
+        ("cushion/color", "'red'"),
+    ] {
+        let item = argument(&format!("give @s stone[minecraft:{name}={value}]"));
+        let stack = item.stack(&registry().items).unwrap();
+        let mut inventory = PlayerInventory::default();
+        commands::give(&registry().item_rules(), &mut inventory, &stack, 1);
+        let given = inventory
+            .slots
+            .iter()
+            .find(|stack| !stack.is_empty())
+            .unwrap();
+        let saved = serde_json::to_vec(given).unwrap();
+        let restored: ItemStack = serde_json::from_slice(&saved).unwrap();
+        let nbt = mc_data::item_nbt::stack_to_fields(&registry().items, &restored).unwrap();
+        let Some(Tag::Compound(components)) = mc_data::item_nbt::field(&nbt, "components") else {
+            panic!("missing {name}")
+        };
+        assert_eq!(
+            mc_data::item_nbt::field(components, &format!("minecraft:{name}")),
+            Some(&item.components[0].1),
+            "{name}"
+        );
+    }
+}
+
+#[test]
 fn give_death_protection_admits_empty_actions_and_rejects_custom_actions() {
     for value in ["{}", "{death_effects:[]}"] {
         let stack = argument(&format!("give @s stick[death_protection={value}]"))

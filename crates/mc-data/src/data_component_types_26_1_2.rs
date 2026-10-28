@@ -41,6 +41,20 @@ pub const ITEM_COMPONENT_CODECS: &[(&str, i32)] = &[
     ("minecraft:bees", 79),
     ("minecraft:lock", 81),
     ("minecraft:container_loot", 82),
+    ("minecraft:attack_animation", 40),
+    ("minecraft:interact_animation", 41),
+    ("minecraft:block_transformer", 43),
+    ("minecraft:villager_food", 44),
+    ("minecraft:sulfur_cube_content", 80),
+    ("minecraft:compostable", 84),
+    ("minecraft:cooking_fuel", 85),
+    ("minecraft:brewing_fuel", 86),
+    ("minecraft:mob_visibility", 87),
+    ("minecraft:provides_pottery_pattern", 117),
+    ("minecraft:sign_text_front", 118),
+    ("minecraft:sign_text_back", 119),
+    ("minecraft:waxed", 120),
+    ("minecraft:cushion/color", 121),
 ];
 /// Wire ids of the codec-backed components, named so encoders never carry bare numbers.
 pub const CUSTOM_DATA: i32 = 0;
@@ -77,6 +91,20 @@ pub const BLOCK_STATE: i32 = 78;
 pub const BEES: i32 = 79;
 pub const LOCK: i32 = 81;
 pub const CONTAINER_LOOT: i32 = 82;
+pub const ATTACK_ANIMATION: i32 = 40;
+pub const INTERACT_ANIMATION: i32 = 41;
+pub const BLOCK_TRANSFORMER: i32 = 43;
+pub const VILLAGER_FOOD: i32 = 44;
+pub const SULFUR_CUBE_CONTENT: i32 = 80;
+pub const COMPOSTABLE: i32 = 84;
+pub const COOKING_FUEL: i32 = 85;
+pub const BREWING_FUEL: i32 = 86;
+pub const MOB_VISIBILITY: i32 = 87;
+pub const PROVIDES_POTTERY_PATTERN: i32 = 117;
+pub const SIGN_TEXT_FRONT: i32 = 118;
+pub const SIGN_TEXT_BACK: i32 = 119;
+pub const WAXED: i32 = 120;
+pub const CUSHION_COLOR: i32 = 121;
 const BY_NAME: &[(&str, u32)] = &[
     ("minecraft:additional_trade_cost", 42),
     ("minecraft:attack_animation", 40),
