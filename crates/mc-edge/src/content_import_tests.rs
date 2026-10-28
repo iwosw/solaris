@@ -271,29 +271,62 @@ fn extraction_selects_consumed_content_and_rejects_path_traversal() {
 }
 
 #[test]
-fn identity_tag_extraction_overrides_only_client_block_and_item_tags() {
+fn identity_tags_merge_only_into_client_block_and_item_tags() {
     let source = tempfile::tempdir().unwrap();
     let jar = source.path().join("identity.jar");
     let file = std::fs::File::create(&jar).unwrap();
     let mut archive = zip::ZipWriter::new(file);
-    for name in [
-        "data/minecraft/tags/block/mineable/pickaxe.json",
-        "data/minecraft/tags/item/slabs.json",
-        "data/minecraft/tags/worldgen/biome/is_overworld.json",
+    for (name, body) in [
+        (
+            "data/minecraft/tags/block/deepslate_ore_replaceables.json",
+            &br#"{"values":["minecraft:deepslate","minecraft:cinnabar"]}"#[..],
+        ),
+        (
+            "data/minecraft/tags/block/mineable/pickaxe.json",
+            &br#"{"values":["minecraft:cinnabar"]}"#[..],
+        ),
+        (
+            "data/minecraft/tags/item/slabs.json",
+            &br#"{"values":[]}"#[..],
+        ),
+        (
+            "data/minecraft/tags/worldgen/biome/is_overworld.json",
+            &br#"{"values":[]}"#[..],
+        ),
     ] {
         archive
             .start_file(name, zip::write::SimpleFileOptions::default())
             .unwrap();
-        archive.write_all(br#"{"values":[]}"#).unwrap();
+        archive.write_all(body).unwrap();
     }
     archive.finish().unwrap();
 
     let staging = tempfile::tempdir().unwrap();
+    let tags = staging.path().join("data/minecraft/tags");
+    std::fs::create_dir_all(tags.join("block")).unwrap();
+    std::fs::write(
+        tags.join("block/deepslate_ore_replaceables.json"),
+        br#"{"values":["minecraft:deepslate","minecraft:tuff"]}"#,
+    )
+    .unwrap();
     copy_client_tag_subset(&jar, staging.path()).unwrap();
-    let minecraft = staging.path().join("data/minecraft/tags");
-    assert!(minecraft.join("block/mineable/pickaxe.json").is_file());
-    assert!(minecraft.join("item/slabs.json").is_file());
-    assert!(!minecraft.join("worldgen/biome/is_overworld.json").exists());
+
+    let merged: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(tags.join("block/deepslate_ore_replaceables.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        merged["values"],
+        serde_json::json!([
+            "minecraft:deepslate",
+            "minecraft:tuff",
+            "minecraft:cinnabar"
+        ]),
+        "26.1.2 members stay, new 26.3 members are added"
+    );
+    assert!(tags.join("block/mineable/pickaxe.json").is_file());
+    assert!(tags.join("item/slabs.json").is_file());
+    assert!(!tags.join("worldgen/biome/is_overworld.json").exists());
 }
 
 #[test]

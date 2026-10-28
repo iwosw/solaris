@@ -1091,6 +1091,29 @@ fn slime_sizes_scale_health_attack_hitboxes_and_spawn_only_vanilla_sizes() {
     }
 }
 
+/// A cube saved by a 26.1.2 Solaris carries size as a VarInt at index 16;
+/// restoring it on 26.3 must leave only the index-18 size.
+#[test]
+fn restored_cube_drops_its_26_1_2_size_index() {
+    for name in ["minecraft:slime", "minecraft:magma_cube"] {
+        let mut state = state();
+        let entity = mob(&mut state, name, 1.0);
+        let slot = state.entities.slot_of(entity).unwrap();
+        let row = state.entities.row_mut(slot);
+        row.loot.slime_size = Some(2);
+        std::sync::Arc::make_mut(&mut row.appearance)
+            .extra
+            .push((16, EntityDataValue::VarInt(2)));
+        restore(&mut state, slot);
+        let extra = &state.entities.row(slot).appearance.extra;
+        assert!(extra.contains(&(18, EntityDataValue::VarInt(2))), "{name}");
+        assert!(
+            !extra.iter().any(|(index, _)| *index == 16),
+            "{name}: stale 26.1.2 size at index 16 survived restore"
+        );
+    }
+}
+
 #[test]
 fn villager_carry_drops_once_on_death() {
     let mut state = state();

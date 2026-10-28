@@ -602,7 +602,12 @@ pub(crate) fn restore(state: &mut TickState, slot: EntitySlot) {
         row.loot.slime_size = Some(size);
         body.height = height * f64::from(size);
         let appearance = std::sync::Arc::make_mut(&mut row.appearance);
-        appearance.extra.retain(|(index, _)| *index != 18);
+        // 26.3 size is index 18; a slime saved before the bump still carries
+        // its size as a VarInt at 16, where 26.3 expects AgeableMob's baby
+        // Boolean, so that stale entry is dropped too.
+        appearance.extra.retain(|(index, value)| {
+            *index != 18 && !(*index == 16 && matches!(value, EntityDataValue::VarInt(_)))
+        });
         appearance
             .extra
             .push((18, EntityDataValue::VarInt(i32::from(size))));

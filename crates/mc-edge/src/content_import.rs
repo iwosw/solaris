@@ -8,12 +8,13 @@
 //! publication, leaving the previous cache untouched on derivation failure.
 //!
 //! A cache joins two bundles. The target release supplies every protocol
-//! identity: `version.json`, the datagen reports, the per-state extractor,
-//! captured `RegistryData`, and client block plus structural block-as-item
-//! tags. The gameplay data pack (worldgen, loot, recipes, advancements,
-//! remaining tags, structures, registry definitions) comes from
-//! [`GAMEPLAY_DATAPACK_RELEASE`], whose JSON grammar Solaris's loaders read;
-//! its `version.json` is kept as `gameplay_version.json`.
+//! identity: `version.json`, the datagen reports, the per-state extractor
+//! reports and the captured RegistryData. The gameplay data pack (worldgen,
+//! loot, recipes, advancements, tags, structures, registry definitions) comes
+//! from [`GAMEPLAY_DATAPACK_RELEASE`], whose JSON grammar Solaris's loaders
+//! read; its `version.json` is kept as `gameplay_version.json`. The target
+//! release's block tags (and structural block-as-item item tags) are merged
+//! into those tags so clients see the new blocks.
 //!
 //! Nothing here reads a repo shell script and nothing rewrites existing content
 //! in place: the installer is the only writer, and it writes a staging tree
@@ -698,19 +699,24 @@ fn install_version_json(jar: &Path, expected: &str, version_file: &Path) -> Resu
 }
 
 fn copy_data_subset(inner_jar: &Path, staging: &Path) -> Result<()> {
-    copy_data_entries(inner_jar, staging, wanted_data_entry)
+    copy_data_entries(inner_jar, staging, wanted_data_entry, false)
 }
 
-/// Overwrite block tags and the structural item tags the client treats as
-/// block-as-item classifications. All gameplay item tags remain from 26.1.2.
+/// Merge the target release's block tags and the structural block-as-item
+/// item tags into the 26.1.2 ones. A tag both releases define keeps its 26.1.2
+/// values and gains the 26.3 values it lacks, so gameplay membership over
+/// shared blocks never shrinks (26.3 drops tuff from
+/// `deepslate_ore_replaceables`) while the client sees the new 26.3 blocks; a
+/// tag new in 26.3 is copied whole. All other item tags remain 26.1.2.
 fn copy_client_tag_subset(inner_jar: &Path, staging: &Path) -> Result<()> {
-    copy_data_entries(inner_jar, staging, wanted_client_tag_entry)
+    copy_data_entries(inner_jar, staging, wanted_client_tag_entry, true)
 }
 
 fn copy_data_entries(
     inner_jar: &Path,
     staging: &Path,
     wanted: fn(&str) -> Option<PathBuf>,
+    merge_tags: bool,
 ) -> Result<()> {
     let minecraft = staging.join("data").join("minecraft");
     fs::create_dir_all(&minecraft).with_context(|| format!("create {}", minecraft.display()))?;
@@ -735,10 +741,41 @@ fn copy_data_entries(
         if let Some(parent) = dest.parent() {
             fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
         }
+        if merge_tags && dest.is_file() {
+            let mut newer = Vec::new();
+            entry
+                .read_to_end(&mut newer)
+                .with_context(|| format!("read {name} from {}", inner_jar.display()))?;
+            let older = fs::read(&dest).with_context(|| format!("read {}", dest.display()))?;
+            let merged = merge_tag_values(&older, &newer)
+                .with_context(|| format!("merge {name} into {}", dest.display()))?;
+            fs::write(&dest, merged).with_context(|| format!("write {}", dest.display()))?;
+            continue;
+        }
         let mut out = File::create(&dest).with_context(|| format!("create {}", dest.display()))?;
         io::copy(&mut entry, &mut out).with_context(|| format!("write {}", dest.display()))?;
     }
     Ok(())
+}
+
+/// `older` with every `values` entry of `newer` it lacks appended.
+fn merge_tag_values(older: &[u8], newer: &[u8]) -> Result<Vec<u8>> {
+    let mut older: serde_json::Value = serde_json::from_slice(older).context("parse older tag")?;
+    let newer: serde_json::Value = serde_json::from_slice(newer).context("parse newer tag")?;
+    let added = newer
+        .get("values")
+        .and_then(serde_json::Value::as_array)
+        .context("newer tag has no values array")?;
+    let values = older
+        .get_mut("values")
+        .and_then(serde_json::Value::as_array_mut)
+        .context("older tag has no values array")?;
+    for value in added {
+        if !values.contains(value) {
+            values.push(value.clone());
+        }
+    }
+    serde_json::to_vec_pretty(&older).context("encode merged tag")
 }
 
 /// Whether one inner-jar entry is part of the consumed `data/minecraft` subset,
