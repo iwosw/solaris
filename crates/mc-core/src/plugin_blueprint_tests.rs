@@ -162,3 +162,49 @@ fn guest_sky_creeper_spawns_flies_and_survives_checkpoint_restart() {
         "{error}"
     );
 }
+
+/// Deploying an auth-capable package is what turns the native login fence on:
+/// with `require_plugin_login` left at its default a joined session must still
+/// start locked, so `/op` and chat are refused until the package unlocks it.
+#[test]
+fn deploying_an_auth_capable_package_locks_new_sessions_without_the_flag() {
+    let directory = tempfile::tempdir().unwrap();
+    let packages = directory.path().join("plugins");
+    let package = packages.join("sky-creeper");
+    std::fs::create_dir_all(&package).unwrap();
+    let sdk = fixture::repo_root().join("sdk/rust");
+    let bytes = fixture::component_bytes_from_workspace(
+        &sdk,
+        "solaris-sky-creeper-plugin",
+        "solaris_sky_creeper_plugin.wasm",
+    );
+    std::fs::write(package.join("plugin.wasm"), bytes).unwrap();
+    let manifest = include_str!("../../../sdk/rust/examples/sky-creeper/plugin.toml");
+    std::fs::write(
+        package.join("plugin.toml"),
+        format!("{manifest}capabilities = [\"auth\"]\n"),
+    )
+    .unwrap();
+    let mut config = CoreConfig::new(directory.path().join("world"), 42);
+    config.plugin_directory = Some(packages);
+    config.view_distance = 2;
+    config.simulation_distance = 2;
+    config.checkpoint_every_ticks = u64::MAX;
+    assert!(!config.require_plugin_login, "the flag stays at its default");
+    let core = Core::open(config).unwrap();
+    let mut rx = core.subscribe();
+    core.submit(PlayerInput::Join {
+        connection: ConnectionId(1),
+        uuid: uuid::Uuid::from_u128(0xB055),
+        name: "Boss".into(),
+        permission_level: 4,
+    });
+    for _ in 0..5 {
+        next(&core, &mut rx);
+    }
+    assert!(
+        core.session_locked(ConnectionId(1)),
+        "an unauthenticated session must be locked once an auth package is deployed"
+    );
+    core.shutdown();
+}

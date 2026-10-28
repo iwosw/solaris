@@ -174,6 +174,11 @@ solaris content import --version 26.3 --download
 solaris --config example.toml
 ```
 
+The first start creates an empty `plugins/` directory next to the config; copy
+packages from `solaris-default-plugins` into it and restart to deploy them.
+Deploying `solaris-auth` locks every new session until the player runs
+`/register` or `/login`.
+
 Then connect a Minecraft Java 26.3 client to `127.0.0.1:25565`.
 
 > The example config listens on all interfaces with **offline authentication**.

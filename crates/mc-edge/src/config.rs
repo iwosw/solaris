@@ -282,9 +282,10 @@ pub struct AuthSection {
     /// `false` (default): offline mode, no Mojang verification.
     #[serde(default)]
     pub online_mode: bool,
-    /// `false` (default): native sessions play immediately.
+    /// `false` (default): native sessions play immediately unless an
+    /// auth-capable plugin package is deployed, which forces the gate on.
     /// `true`: new native sessions start locked and fail closed until the
-    /// auth plugin unlocks them via `unlock_session`.
+    /// auth plugin unlocks them via `unlock_session`; startup fails without one.
     #[serde(default)]
     pub require_plugin_login: bool,
 }

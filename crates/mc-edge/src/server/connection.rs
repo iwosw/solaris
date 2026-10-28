@@ -594,7 +594,10 @@ async fn run_connection(
                                 break 'play_loop "admin-command-error";
                             }
                         }
-                        if !crate::command_tree::permitted(
+                        // A locked session always reaches the native gate, which
+                        // answers every non-login command with the login hint.
+                        if !server.hub.session_locked(id)
+                            && !crate::command_tree::permitted(
                             command,
                             *permission_level,
                             server.hub.plugin_commands(),

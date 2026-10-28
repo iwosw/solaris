@@ -324,6 +324,61 @@ fn auth_gate_locked_gameplay_has_no_native_side_effects() {
     ));
 }
 
+/// An unauthenticated op-named session cannot run `/op` (or anything but the
+/// authentication commands) and chat is not broadcast; each refusal answers
+/// with the same short bilingual hint and never echoes the typed text.
+#[test]
+fn auth_gate_refuses_op_and_chat_with_a_bilingual_hint() {
+    let (mut state, _) = fixture(true);
+    let other = ConnectionId(2);
+    apply(
+        &mut state,
+        &[PlayerInput::Join {
+            connection: other,
+            uuid: uuid::Uuid::from_u128(2),
+            name: "Mallory".into(),
+            permission_level: 0,
+        }],
+    );
+    unlock_session(&mut state, other);
+    assert!(!state.session_locked(other));
+    state.outbox.get_mut(&SESSION).unwrap().clear();
+    state.outbox.get_mut(&other).unwrap().clear();
+    apply(
+        &mut state,
+        &[
+            PlayerInput::Command {
+                connection: SESSION,
+                command: "op Mallory".into(),
+                permission_level: 4,
+            },
+            PlayerInput::Chat {
+                connection: SESSION,
+                message: "hunter2".into(),
+            },
+        ],
+    );
+    let hints: Vec<_> = state.outbox[&SESSION]
+        .iter()
+        .filter_map(|change| match change {
+            PlayerChange::Chat { message } => Some(message.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(hints.len(), 2, "one hint per refused input: {hints:?}");
+    for hint in &hints {
+        assert!(hint.contains("/login") && hint.contains("/register"));
+        assert!(hint.contains("Log in first") && hint.contains("войдите"));
+        assert!(!hint.contains("Mallory") && !hint.contains("hunter2"));
+    }
+    assert!(
+        state.outbox[&other]
+            .iter()
+            .all(|change| !matches!(change, PlayerChange::Chat { .. })),
+        "an unauthenticated chat line must not reach other players"
+    );
+}
+
 #[test]
 fn auth_gate_config_off_and_unlock_restore_inventory_and_movement_inputs() {
     for required in [false, true] {

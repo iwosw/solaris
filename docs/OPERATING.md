@@ -1177,6 +1177,11 @@ Each child is a deployable package with `plugin.toml`, `plugin.wasm`, optional
 malformed entries, duplicate ids/command roots, failed startup and unsupported
 declarations refuse startup. Selecting it authorizes manifest-declared ordinary
 capabilities. There are no current strict/expected/grants or hot-reload settings.
+A configured directory that does not exist yet (the first start from
+`example.toml`) is created empty and logged; the server then runs without
+plugins. Deploying an auth-capable package such as `solaris-auth` locks every
+new session until the package unlocks it, regardless of `[auth]
+require_plugin_login`.
 
 Manifest `before-build` hooks register in deterministic package-id order with
 fail-closed policy. Unsupported hooks, including `before-damage`, fail startup.
