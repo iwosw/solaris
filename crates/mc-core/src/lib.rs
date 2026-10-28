@@ -61,6 +61,7 @@ pub(crate) mod command_debug;
 pub(crate) use command_debug::{Profiler as DebugProfiler, TraceArtifact as DebugTraceArtifact};
 pub mod command_enchant;
 mod command_execution;
+mod command_feedback;
 pub mod command_items;
 pub mod command_locate;
 mod command_nbt_path;

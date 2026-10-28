@@ -1,11 +1,12 @@
 //! Tick-owned vanilla command execution and target selection.
 use crate::boundary::{ChangeSet, ConnectionId, EntityId, PlayerChange};
+use crate::command_feedback::{text, translated};
 use crate::commands::{
     Command, Destination, Selector, SelectorKind, SelectorSort, Target, Weather,
 };
 use crate::entities::EntityKind;
 use crate::tick::{DamagePiece, TickState};
-use mc_nbt::{ListTag, Tag};
+use mc_nbt::Tag;
 
 /// Native execution outcome, independent of translated player feedback.
 /// `Success(0)` is distinct from failure; unavailable results are rejected
@@ -49,24 +50,6 @@ pub(crate) fn supports_store_result(command: &Command) -> bool {
         Command::Scoreboard(command) => command.supports_store_result(),
         _ => false,
     }
-}
-
-fn text(value: impl ToString) -> Tag {
-    Tag::Compound(vec![("text".into(), Tag::String(value.to_string()))])
-}
-
-fn translated(key: impl Into<String>, arguments: Vec<Tag>) -> Tag {
-    let mut fields = vec![("translate".into(), Tag::String(key.into()))];
-    if !arguments.is_empty() {
-        fields.push((
-            "with".into(),
-            Tag::List(ListTag {
-                element_type: mc_nbt::tag_type::COMPOUND,
-                elements: arguments,
-            }),
-        ));
-    }
-    Tag::Compound(fields)
 }
 
 pub(crate) fn feedback(
