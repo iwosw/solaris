@@ -75,12 +75,12 @@ pub(super) fn clientbound(
         }
         "block_entity_data" => {
             w.write_i64(r.read_i64()?);
-            let Some(kind) = t.block_entities.get(r.read_varint()?) else {
+            let native_kind = r.read_varint()?;
+            let Some(kind) = t.block_entities.get(native_kind) else {
                 return Ok(None);
             };
             w.write_varint(kind);
-            w.extend_from_slice(r);
-            r = &[];
+            copy_block_entity_nbt(native_kind, &mut r, &mut w)?;
         }
         "block_event" => {
             w.write_i64(r.read_i64()?);
@@ -596,9 +596,10 @@ fn chunk(t: &Tables, r: &mut &[u8], w: &mut Vec<u8>) -> Result<()> {
     for _ in 0..entities {
         let xz = r.read_u8()?;
         let y = r.read_i16()?;
-        let kind = t.block_entities.get(r.read_varint()?);
+        let native_kind = r.read_varint()?;
+        let kind = t.block_entities.get(native_kind);
         let mut nbt = Vec::new();
-        copy_nbt(r, &mut nbt)?;
+        copy_block_entity_nbt(native_kind, r, &mut nbt)?;
         if let Some(kind) = kind {
             out.write_u8(xz);
             out.write_i16(y);
@@ -610,6 +611,45 @@ fn chunk(t: &Tables, r: &mut &[u8], w: &mut Vec<u8>) -> Result<()> {
     w.write_varint(kept);
     w.extend_from_slice(&out);
     light_data(r, w)?;
+    Ok(())
+}
+
+/// PotDecorations changed from an ordered item-id list to a named template
+/// record. Only this typed field is downgraded; custom data and stored contents
+/// must never be recursively rewritten.
+fn copy_block_entity_nbt(kind: i32, r: &mut &[u8], w: &mut Vec<u8>) -> Result<()> {
+    if kind != mc_data::block_entity_kinds::BlockEntityKind::DecoratedPot.protocol_id() as i32 {
+        return copy_nbt(r, w);
+    }
+    let mut tag = mc_nbt::read_network(r)?;
+    let mc_nbt::Tag::Compound(fields) = &mut tag else {
+        bail!("decorated pot block entity must be a compound");
+    };
+    if let Some((_, value)) = fields.iter_mut().find(|(key, _)| key == "sherds") {
+        let mc_nbt::Tag::Compound(sides) = value else {
+            bail!("canonical decorated pot sherds must be a named template record");
+        };
+        let mut items = Vec::with_capacity(4);
+        for side in ["back", "left", "right", "front"] {
+            let item = match mc_data::item_nbt::field(sides, side) {
+                None => "minecraft:brick",
+                Some(mc_nbt::Tag::Compound(template)) => {
+                    let Some(mc_nbt::Tag::String(id)) = mc_data::item_nbt::field(template, "id")
+                    else {
+                        bail!("decorated pot {side} template has no item identifier");
+                    };
+                    id
+                }
+                Some(_) => bail!("decorated pot {side} must be an item template"),
+            };
+            items.push(mc_nbt::Tag::String(item.into()));
+        }
+        *value = mc_nbt::Tag::List(mc_nbt::ListTag {
+            element_type: mc_nbt::tag_type::STRING,
+            elements: items,
+        });
+    }
+    mc_nbt::write_network(w, &tag)?;
     Ok(())
 }
 

@@ -68,6 +68,136 @@ fn dense_all_air_is_a_replacement_not_an_absent_override() {
 }
 
 #[test]
+fn decorated_pot_26_3_native_reopen_migrates_old_sherds_without_losing_items() {
+    use mc_nbt::{ListTag, Tag, tag_type};
+    let blocks = BlockRegistry::from_report(&solaris_required_blocks_report()).unwrap();
+    let items = solaris_required_items();
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("pot.redb");
+    let baseline = empty(&blocks, ChunkPos { x: 0, z: 0 });
+    let pos = crate::chunk::BlockPos { x: 1, y: 64, z: 1 };
+    let item = Tag::Compound(vec![
+        ("id".into(), Tag::String("minecraft:stone".into())),
+        ("count".into(), Tag::Int(3)),
+    ]);
+    let old = Tag::Compound(vec![
+        ("id".into(), Tag::String("minecraft:decorated_pot".into())),
+        ("x".into(), Tag::Int(pos.x)),
+        ("y".into(), Tag::Int(pos.y)),
+        ("z".into(), Tag::Int(pos.z)),
+        (
+            "sherds".into(),
+            Tag::List(ListTag {
+                element_type: tag_type::STRING,
+                elements: vec![Tag::String("minecraft:angler_pottery_sherd".into())],
+            }),
+        ),
+        ("item".into(), item.clone()),
+    ]);
+    let mut bytes = Vec::new();
+    mc_nbt::write_network(&mut bytes, &old).unwrap();
+    let mut changed = baseline.clone();
+    changed
+        .set_block(1, 64, 1, state(&blocks, "minecraft:decorated_pot"))
+        .unwrap();
+    changed.block_entities.insert(pos, bytes);
+    changed.set_world_journal_lsn(1);
+    let store = NativeStore::create(&path, [9; 32]).unwrap();
+    store
+        .apply_snapshots(
+            &[NativeChunkSnapshot {
+                dimension: 0,
+                base: &baseline,
+                effective: &changed,
+                dirty_sections: None,
+            }],
+            &blocks,
+            &items,
+        )
+        .unwrap();
+    drop(store);
+    let store = NativeStore::open(&path, [9; 32]).unwrap();
+    let mut restored = store
+        .compose(
+            0,
+            &baseline,
+            &blocks,
+            &items,
+            &mc_data::loot::chest_26_1_2::ChestLootCatalog::new(),
+        )
+        .unwrap();
+    let Tag::Compound(mut fields) =
+        mc_nbt::read_network(&mut restored.block_entities[&pos].as_slice()).unwrap()
+    else {
+        panic!()
+    };
+    assert_eq!(mc_data::item_nbt::field(&fields, "item"), Some(&item));
+    let Some(Tag::Compound(sides)) = mc_data::item_nbt::field(&fields, "sherds") else {
+        panic!("an existing native world's legacy pot must migrate on read")
+    };
+    let Some(Tag::Compound(back)) = mc_data::item_nbt::field(sides, "back") else {
+        panic!()
+    };
+    assert_eq!(
+        mc_data::item_nbt::field(back, "id"),
+        Some(&Tag::String("minecraft:angler_pottery_sherd".into()))
+    );
+    let Some((_, Tag::Compound(sides))) = fields.iter_mut().find(|(key, _)| key == "sherds") else {
+        panic!()
+    };
+    let Some((_, Tag::Compound(back))) = sides.iter_mut().find(|(key, _)| key == "back") else {
+        panic!()
+    };
+    back.push(("count".into(), Tag::Int(2)));
+    back.push((
+        "components".into(),
+        Tag::Compound(vec![
+            ("minecraft:rarity".into(), Tag::String("rare".into())),
+            (
+                "minecraft:custom_data".into(),
+                Tag::Compound(vec![(
+                    "sherds".into(),
+                    Tag::String("opaque data is not a pot record".into()),
+                )]),
+            ),
+        ]),
+    ));
+    let canonical = Tag::Compound(fields);
+    let mut bytes = Vec::new();
+    mc_nbt::write_network(&mut bytes, &canonical).unwrap();
+    restored.block_entities.insert(pos, bytes);
+    restored.set_world_journal_lsn(2);
+    store
+        .apply_snapshots(
+            &[NativeChunkSnapshot {
+                dimension: 0,
+                base: &baseline,
+                effective: &restored,
+                dirty_sections: None,
+            }],
+            &blocks,
+            &items,
+        )
+        .unwrap();
+    drop(store);
+    let store = NativeStore::open(&path, [9; 32]).unwrap();
+    let restored = store
+        .compose(
+            0,
+            &baseline,
+            &blocks,
+            &items,
+            &mc_data::loot::chest_26_1_2::ChestLootCatalog::new(),
+        )
+        .unwrap();
+    assert_eq!(
+        mc_nbt::read_network(&mut restored.block_entities[&pos].as_slice()).unwrap(),
+        canonical,
+        "canonical template count, components, opaque custom data and stored contents survive another save/reopen"
+    );
+}
+
+#[test]
 fn failed_participant_rolls_back_every_overlay_and_watermark() {
     let temp = tempfile::tempdir().unwrap();
     let blocks = BlockRegistry::from_report(&solaris_required_blocks_report()).unwrap();

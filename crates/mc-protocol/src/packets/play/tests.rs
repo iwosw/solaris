@@ -213,6 +213,47 @@ fn block_entity_data_id_and_layout_match_protocol_dump() {
 }
 
 #[test]
+fn decorated_pot_26_3_update_migrates_legacy_sherd_list() {
+    let packet = ClientboundBlockEntityData {
+        position: pack_block_pos(1, 64, 2),
+        block_entity_type: mc_data::block_entity_kinds::BlockEntityKind::DecoratedPot.protocol_id()
+            as i32,
+        nbt: Tag::Compound(vec![(
+            "sherds".into(),
+            Tag::List(mc_nbt::ListTag {
+                element_type: mc_nbt::tag_type::STRING,
+                elements: vec![Tag::String("minecraft:archer_pottery_sherd".into())],
+            }),
+        )]),
+    };
+    let mut body = Vec::new();
+    packet.encode(&mut body).unwrap();
+    let mut input = body.as_slice();
+    let decoded = ClientboundBlockEntityData::decode(&mut input).unwrap();
+    assert!(input.is_empty());
+    let Tag::Compound(fields) = decoded.nbt else {
+        panic!()
+    };
+    let Some(Tag::Compound(sides)) = mc_data::item_nbt::field(&fields, "sherds") else {
+        panic!("26.3 update must carry the PotDecorations record, not an identifier list")
+    };
+    let Some(Tag::Compound(back)) = mc_data::item_nbt::field(sides, "back") else {
+        panic!()
+    };
+    assert_eq!(
+        mc_data::item_nbt::field(back, "id"),
+        Some(&Tag::String("minecraft:archer_pottery_sherd".into()))
+    );
+    let Tag::Compound(source) = packet.nbt else {
+        panic!()
+    };
+    assert!(matches!(
+        mc_data::item_nbt::field(&source, "sherds"),
+        Some(Tag::List(_))
+    ));
+}
+
+#[test]
 fn block_event_id_and_layout_match_local_vanilla_codec() {
     assert_eq!(ClientboundBlockEvent::ID, 0x07);
     let packet = ClientboundBlockEvent {

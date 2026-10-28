@@ -466,9 +466,24 @@ fn chunk_from_nbt_with_items_impl(
                     .map_err(ChunkNbtError::InvalidStorageBlockEntity)?;
             }
 
-            // Round-trip the entry verbatim by re-encoding it through
-            // the network NBT path ([type][payload], no name). Read
-            // back via read_network when needed.
+            // Opaque payloads otherwise round-trip verbatim. Old native pots
+            // predate the named 26.3 item-template record: migrate on admission,
+            // before the same owner bytes feed checkpoints and client updates.
+            let mut migrated;
+            let be = if block_entity_id.is_some_and(|id| id == "minecraft:decorated_pot")
+                && matches!(mc_data::item_nbt::field(cmp, "sherds"), Some(Tag::List(_)))
+            {
+                migrated = be.clone();
+                let Tag::Compound(fields) = &mut migrated else {
+                    unreachable!()
+                };
+                let (_, sherds) = fields.iter_mut().find(|(key, _)| key == "sherds").unwrap();
+                mc_data::item_nbt::upgrade_pot_decorations(sherds)
+                    .map_err(|error| ChunkNbtError::InvalidStorageBlockEntity(error.to_string()))?;
+                &migrated
+            } else {
+                be
+            };
             let mut buf = Vec::with_capacity(64);
             mc_nbt::write_network(&mut buf, be)?;
             chunk.block_entities.insert(

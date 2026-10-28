@@ -894,3 +894,66 @@ fn block_palette_stays_indirect_for_small_palettes() {
         buf[0],
     );
 }
+
+#[test]
+fn decorated_pot_26_3_chunk_projects_old_sherds_as_named_templates() {
+    let mut chunk = empty_chunk();
+    let pos = BlockPos { x: 1, y: 64, z: 1 };
+    let tag = Tag::Compound(vec![
+        ("id".into(), Tag::String("minecraft:decorated_pot".into())),
+        (
+            "sherds".into(),
+            Tag::List(mc_nbt::ListTag {
+                element_type: mc_nbt::tag_type::STRING,
+                elements: vec![Tag::String("minecraft:angler_pottery_sherd".into())],
+            }),
+        ),
+        (
+            "item".into(),
+            Tag::Compound(vec![
+                ("id".into(), Tag::String("minecraft:stone".into())),
+                ("count".into(), Tag::Int(3)),
+            ]),
+        ),
+    ]);
+    let mut bytes = Vec::new();
+    mc_nbt::write_network(&mut bytes, &tag).unwrap();
+    chunk.block_entities.insert(pos, bytes.clone());
+    let records = client_block_entities(&chunk, &air_chest_registry(), &item_registry());
+    let pot = records.iter().find(|record| record.pos == pos).unwrap();
+    let Tag::Compound(fields) = &pot.nbt else {
+        panic!()
+    };
+    let sherds = mc_data::item_nbt::field(fields, "sherds").unwrap();
+    let Tag::Compound(sides) = sherds else {
+        panic!("26.3 pot sherds must be a map of named item templates, got {sherds:?}")
+    };
+    for (side, item) in [
+        ("back", "minecraft:angler_pottery_sherd"),
+        ("left", "minecraft:brick"),
+        ("right", "minecraft:brick"),
+        ("front", "minecraft:brick"),
+    ] {
+        let Some(Tag::Compound(template)) = mc_data::item_nbt::field(sides, side) else {
+            panic!()
+        };
+        assert_eq!(
+            mc_data::item_nbt::field(template, "id"),
+            Some(&Tag::String(item.into()))
+        );
+    }
+    assert_eq!(
+        mc_data::item_nbt::field(fields, "item"),
+        mc_data::item_nbt::field(
+            match &tag {
+                Tag::Compound(fields) => fields,
+                _ => unreachable!(),
+            },
+            "item"
+        )
+    );
+    assert_eq!(
+        chunk.block_entities[&pos], bytes,
+        "wire projection cannot mutate native custody"
+    );
+}
