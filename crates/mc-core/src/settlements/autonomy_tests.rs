@@ -234,6 +234,22 @@ fn adopt(state: &mut TickState, chunks: &[ChunkPos]) -> ChangeSet {
     changes
 }
 
+fn settle_natural_proofs(state: &mut TickState, kinds: &[BuildingKind]) {
+    let id = state.settlements.records().next().expect("adopted").id;
+    for _ in 0..512 {
+        if kinds.iter().all(|kind| has_kind(state, id, *kind)) {
+            return;
+        }
+        state.tick += 20;
+        state.tick_budget.reset(state.tick);
+        tick(state, &mut ChangeSet::default());
+    }
+    panic!(
+        "reachable natural zones did not certify: {:?}",
+        state.settlements.get(id)
+    );
+}
+
 fn villagers_of(state: &TickState) -> Vec<(crate::boundary::EntityId, Option<SettlementId>)> {
     state
         .entities
@@ -476,7 +492,7 @@ fn generated_chunk_load_order_does_not_change_identity() {
 }
 
 #[test]
-fn natural_lumber_and_mine_zones_certify_at_founding() {
+fn natural_lumber_and_mine_zones_certify_after_deferred_route_proofs() {
     // Grove west of the bell (x in [-15,-1] band style, local columns) and a
     // stone band below the surface for the quarry box.
     let logs: Vec<[i32; 2]> = (-14..=-9)
@@ -495,6 +511,46 @@ fn natural_lumber_and_mine_zones_certify_at_founding() {
         logs,
     );
     adopt(&mut state, &chunks);
+    assert!(
+        state
+            .settlements
+            .records()
+            .next()
+            .unwrap()
+            .buildings
+            .values()
+            .all(|building| !building.natural_zone),
+        "chunk adoption must only queue candidates, never run route proof"
+    );
+    let before = state
+        .tick_budget
+        .remaining(crate::tick_budget::Kind::PathNode);
+    // Even another adoption call in the same tick cannot prove queued routes.
+    tick(&mut state, &mut ChangeSet::default());
+    assert_eq!(
+        state
+            .tick_budget
+            .remaining(crate::tick_budget::Kind::PathNode),
+        before
+    );
+    state.tick += 20;
+    state.tick_budget.reset(state.tick);
+    state
+        .tick_budget
+        .exhaust_for_test(crate::tick_budget::Kind::PathNode);
+    tick(&mut state, &mut ChangeSet::default());
+    assert!(
+        state
+            .settlements
+            .records()
+            .next()
+            .unwrap()
+            .buildings
+            .values()
+            .all(|building| !building.natural_zone),
+        "budget refusal must defer the candidate, not install a job"
+    );
+    settle_natural_proofs(&mut state, &[BuildingKind::Mine, BuildingKind::LumberCamp]);
     let record = state
         .settlements
         .records()
@@ -527,6 +583,73 @@ fn natural_lumber_and_mine_zones_certify_at_founding() {
         mine.bounds.min[2] + 1,
         "the entrance leaves enough branch rows to fund storage and a house"
     );
+    let existing = record.buildings.clone();
+    let id = record.id;
+    let [x, y, z] = mine.work_points[0];
+    state.world.set_block(x, y, z, state.registry.states.stone);
+    state.tick += 20;
+    state.tick_budget.reset(state.tick);
+    tick(&mut state, &mut ChangeSet::default());
+    assert_eq!(
+        state.settlements.get(id).unwrap().buildings,
+        existing,
+        "route proof gates new adoption only; existing certificates are not revoked"
+    );
+}
+
+#[test]
+fn natural_quarry_skips_an_isolated_plateau_for_a_reachable_work_point() {
+    let start = [6.5, 202.0, 6.5];
+    let (mut state, chunks) = fixture(
+        vec![BELL],
+        vec![(
+            generated_claim(
+                "minecraft:village/plains/houses/plains_house_1",
+                [0, 201, 0],
+            ),
+            start,
+            "none".into(),
+        )],
+        vec![],
+    );
+    // The first quarry probe is a valid stone deposit with an open entrance,
+    // but its nine-block cliff cannot be climbed by an ordinary villager.
+    // Flat stone remains available at later probes outside the house pieces.
+    for x in 17..=31 {
+        for z in 6..=20 {
+            for y in 202..=210 {
+                state.world.set_block(x, y, z, state.registry.states.stone);
+            }
+        }
+    }
+    adopt(&mut state, &chunks);
+    settle_natural_proofs(&mut state, &[BuildingKind::Mine]);
+    state.tick += 1;
+    state.tick_budget.reset(state.tick);
+    let mine = state
+        .settlements
+        .records()
+        .next()
+        .unwrap()
+        .buildings
+        .values()
+        .find(|building| building.kind == BuildingKind::Mine)
+        .expect("nearby accessible stone must still supply a quarry");
+    let [x, y, z] = mine.work_points[0];
+    let mut cache = crate::settlements::allocator::PoiCache::default();
+    let mut path = Vec::new();
+    assert!(
+        crate::settlements::allocator::find_path(
+            &mut state,
+            &mut cache,
+            start,
+            crate::boundary::BlockPos { x, y, z },
+            0.3,
+            1.95,
+            &mut path,
+        ),
+        "adoption certified an unreachable quarry entrance at {x},{y},{z}; path={path:?}"
+    );
 }
 
 #[test]
@@ -543,8 +666,9 @@ fn treeless_village_leaves_queue_after_bounded_natural_zone_sweeps() {
     adopt(&mut state, &chunks);
     let radius = state.settlements.records().next().expect("adopted").radius;
     let passes = zone_probe_limit(radius).div_ceil(ZONE_PROBES_PER_PASS);
-    for _ in 0..=passes + 4 {
+    for _ in 0..=passes * 4 + 8 {
         state.tick += 20;
+        state.tick_budget.reset(state.tick);
         tick(&mut state, &mut ChangeSet::default());
     }
 
@@ -575,9 +699,10 @@ fn dense_village_finds_natural_zones_beyond_generated_footprints() {
         .flat_map(|x| (20..=23).map(move |z| [x, z]))
         .collect();
     let (mut state, chunks) = fixture(vec![BELL], villagers, logs);
-    let outside = [(-4, 0), (-4, 1), (3, 0), (3, 1), (4, 0), (4, 1)]
-        .into_iter()
-        .map(|(x, z)| (ChunkPos { x, z }, 0))
+    // Load the intervening streets as well as the resource chunks: an
+    // isolated loaded island is not an ordinary worker-accessible zone.
+    let outside = (-4..=4)
+        .flat_map(|x| (-1..=2).map(move |z| (ChunkPos { x, z }, 0)))
         .collect();
     state.world.ensure_blocking(&outside);
     adopt(&mut state, &chunks);
@@ -587,8 +712,19 @@ fn dense_village_finds_natural_zones_beyond_generated_footprints() {
         .world
         .village_sites_in_region((0, 0), (0, 0))
         .remove(0);
+    let residents = state
+        .entities
+        .slots()
+        .map(|slot| state.entities.row(slot).uuid)
+        .collect();
+    let mut candidates = VecDeque::new();
     for cursor in 0..1024 {
-        natural_zones(&mut state, id, BELL, &site, cursor);
+        natural_zones(&mut state, id, BELL, &site, cursor, &mut candidates);
+        while !candidates.is_empty() {
+            state.tick += 20;
+            state.tick_budget.reset(state.tick);
+            prove_natural(&mut state, id, &residents, &mut candidates);
+        }
         if has_kind(&state, id, BuildingKind::Mine)
             && has_kind(&state, id, BuildingKind::LumberCamp)
         {
@@ -644,7 +780,19 @@ fn natural_quarry_uses_local_entrance_height_instead_of_bell_height() {
             }
         }
     }
+    // A real ascending approach preserves the high local entrance case;
+    // the separate cliff regression intentionally has no such route.
+    for step in 0..=8 {
+        for z in 6..=8 {
+            for y in 202..=202 + step {
+                state
+                    .world
+                    .set_block(8 + step, y, z, state.registry.states.stone);
+            }
+        }
+    }
     adopt(&mut state, &chunks);
+    settle_natural_proofs(&mut state, &[BuildingKind::Mine]);
     let mine = state
         .settlements
         .records()
@@ -689,13 +837,18 @@ fn natural_quarry_never_undermines_a_generated_piece_at_another_height() {
         bounds: Some((min, max)),
     });
     let bounds = ScriptWorldBounds::new([17, 188, 6], [31, 203, 20]).unwrap();
-    certify_natural(
-        &mut state,
-        id,
+    let mut candidates = VecDeque::new();
+    queue_natural(
         &site,
         BuildingKind::Mine,
         bounds,
         [17, 202, 7],
+        state.tick,
+        &mut candidates,
+    );
+    assert!(
+        candidates.is_empty(),
+        "protected footprints are not even queued"
     );
     assert!(
         !has_kind(&state, id, BuildingKind::Mine),

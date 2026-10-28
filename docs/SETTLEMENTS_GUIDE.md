@@ -47,6 +47,8 @@ Generated vanilla villages become ownerless settlements when the meeting bell in
 
 The single empty founding chest is an explicit infrastructure exemption, like the village bell: its block may be placed during adoption without consuming a chest item. Its contents are empty; all later building blocks, equipment and supplies must come from real work/storage.
 
+Natural mine and lumber-camp candidates become jobs only after an ordinary unemployed bound adult villager has a proven route to their entrance. Chunk adoption queues candidates without path searches; later 20-tick planner passes attempt one resident/candidate through the shared pathfinder budget. An isolated cliff-top resource does not permanently occupy the village's only production zone. Existing certified zones are not retroactively revoked.
+
 Numeric settlement IDs use the same monotonic sequence for founded towns and adopted villages. Adoption first looks up the saved worldgen source, so claiming, renaming and restarting do not create a second settlement.
 
 Stand inside the village radius and use `/settlement claim` or **Claim settlement** in `/settlement`. The first successful claim saves your authenticated UUID as owner; another player cannot claim it again. Claiming does not replace the villagers, move the anchor or reset construction. Normal owned settlements keep their existing owner/operator rules.
@@ -60,6 +62,8 @@ The autonomy harness keeps the primary player non-operator and disables spawn pr
 Сгенерированная ванильная деревня становится поселением без владельца при загрузке колокола в её настоящем worldgen-здании центра. Идентичность задают измерение и стартовый чанк структуры, а не произвольные колокола рядом. Настоящие сгенерированные жители привязываются при загрузке их чанков; погибшие или ещё не загруженные жители не стирают деревню. Нативные строки, колонки жителей и сохранённые отметки генерации не допускают дубликатов после загрузки/перезапуска. Один поставленный игроком колокол не создаёт поселение. Используется ближайший контейнер либо рядом с колоколом появляется пустой стартовый сундук; запасы не создаются из воздуха.
 
 Один пустой сундук при принятии деревни — явное инфраструктурное исключение, как колокол: для размещения этого блока не списывается предмет сундука. Содержимое пустое; все последующие стройматериалы, снаряжение и запасы берутся только из настоящей работы/склада.
+
+Естественная шахта и лесозаготовка становятся рабочими местами только после доказанного обычного пути взрослого безработного привязанного жителя ко входу. Принятие чанка лишь ставит кандидатов в очередь; последующие проходы планировщика раз в 20 тиков проверяют одного жителя/кандидата в общем бюджете поиска пути. Изолированный ресурс на непроходимом обрыве не занимает навсегда единственную производственную зону деревни. Уже выданные сертификаты задним числом не отзываются.
 
 Числовые ID основанных поселений и принятых деревень выдаются одной возрастающей последовательностью. Сначала принятие ищет сохранённый worldgen-источник: присвоение, переименование и перезапуск не создают второе поселение.
 
