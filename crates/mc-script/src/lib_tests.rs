@@ -218,7 +218,15 @@ fn script_event_queue_errors_stay_below_the_result_size_threshold() {
 fn event_dtos_are_stable_snapshots_without_host_handles() {
     let event = ScriptEvent::player_joined_with_context(
         ScriptPlayerId::new(42),
-        ScriptPlayerContext::new("player-42", "kaiser", false, 0.0, 64.0, 0.0),
+        ScriptPlayerContext::new(
+            "player-42",
+            "kaiser",
+            false,
+            "minecraft:overworld",
+            0.0,
+            64.0,
+            0.0,
+        ),
     );
 
     assert!(matches!(
@@ -239,6 +247,7 @@ fn player_block_broken_event_is_a_validated_post_commit_snapshot() {
         "123e4567-e89b-12d3-a456-426614174000",
         "kaiser",
         true,
+        "minecraft:overworld",
         12.25,
         70.0,
         -4.5,
@@ -280,7 +289,15 @@ fn player_block_broken_event_is_a_validated_post_commit_snapshot() {
 
 #[test]
 fn player_block_broken_rejects_invalid_resource_identifiers() {
-    let context = ScriptPlayerContext::new("player-42", "kaiser", false, 0.0, 64.0, 0.0);
+    let context = ScriptPlayerContext::new(
+        "player-42",
+        "kaiser",
+        false,
+        "minecraft:overworld",
+        0.0,
+        64.0,
+        0.0,
+    );
     let oversized_block_id = format!("minecraft:{}", "a".repeat(MAX_SCRIPT_RESOURCE_ID_BYTES));
     for (dimension, block_id) in [
         ("overworld", "minecraft:stone"),
@@ -309,6 +326,7 @@ fn player_block_placed_event_is_a_validated_snapshot() {
         "123e4567-e89b-12d3-a456-426614174000",
         "kaiser",
         true,
+        "minecraft:overworld",
         12.25,
         70.0,
         -4.5,
@@ -350,7 +368,15 @@ fn player_block_placed_event_is_a_validated_snapshot() {
 
 #[test]
 fn player_block_placed_rejects_invalid_resource_identifiers() {
-    let context = ScriptPlayerContext::new("player-42", "kaiser", false, 0.0, 64.0, 0.0);
+    let context = ScriptPlayerContext::new(
+        "player-42",
+        "kaiser",
+        false,
+        "minecraft:overworld",
+        0.0,
+        64.0,
+        0.0,
+    );
     let oversized_block_id = format!("minecraft:{}", "a".repeat(MAX_SCRIPT_RESOURCE_ID_BYTES));
     for (dimension, block_id) in [
         ("overworld", "minecraft:stone"),
@@ -386,6 +412,7 @@ fn player_item_crafted_event_is_a_validated_snapshot_without_integer_caps() {
         "123e4567-e89b-12d3-a456-426614174000",
         "kaiser",
         true,
+        "minecraft:overworld",
         12.25,
         70.0,
         -4.5,
@@ -429,7 +456,15 @@ fn player_item_crafted_event_is_a_validated_snapshot_without_integer_caps() {
 
 #[test]
 fn player_item_crafted_rejects_invalid_ids_and_zero_counts() {
-    let context = ScriptPlayerContext::new("player-42", "kaiser", false, 0.0, 64.0, 0.0);
+    let context = ScriptPlayerContext::new(
+        "player-42",
+        "kaiser",
+        false,
+        "minecraft:overworld",
+        0.0,
+        64.0,
+        0.0,
+    );
     for (dimension, item_id, count, craft_count) in [
         ("overworld", "minecraft:stick", 1, 1),
         ("minecraft:overworld", "minecraft:Stick", 1, 1),
@@ -473,6 +508,7 @@ fn queued_player_context_keeps_the_pose_observed_at_publication() {
                 "123e4567-e89b-12d3-a456-426614174000",
                 "kaiser",
                 true,
+                "minecraft:overworld",
                 latest_accepted_pose.0,
                 latest_accepted_pose.1,
                 latest_accepted_pose.2,
@@ -778,7 +814,15 @@ fn player_command_event_is_an_immutable_targeted_snapshot() {
     let event = ScriptEvent::try_player_command_with_context(
         "greetings",
         ScriptPlayerId::new(42),
-        ScriptPlayerContext::new("player-42", "Alex", false, 0.0, 64.0, 0.0),
+        ScriptPlayerContext::new(
+            "player-42",
+            "Alex",
+            false,
+            "minecraft:overworld",
+            0.0,
+            64.0,
+            0.0,
+        ),
         "hello",
         "one  two ",
     )
@@ -815,7 +859,15 @@ fn prepared_player_command_uses_no_capacity_and_commits_after_earlier_observatio
     .unwrap();
     endpoint.register_plugin_routes(&manifest).unwrap();
     let player = ScriptPlayerId::new(7);
-    let context = ScriptPlayerContext::new("player-7", "Alex", false, 1.0, 64.0, 2.0);
+    let context = ScriptPlayerContext::new(
+        "player-7",
+        "Alex",
+        false,
+        "minecraft:overworld",
+        1.0,
+        64.0,
+        2.0,
+    );
     let joined = ScriptEvent::player_joined_with_context(player, context.clone());
     boundary.try_enqueue_event(joined.clone()).unwrap();
     let PreparedPlayerCommand::Event(command) = boundary
@@ -862,7 +914,15 @@ fn prepared_player_commands_validate_authority_and_bounds_before_capacity() {
         .try_enqueue_event(ScriptEvent::server_started())
         .unwrap();
     let player = ScriptPlayerId::new(7);
-    let context = ScriptPlayerContext::new("player-7", "Alex", false, 0.0, 64.0, 0.0);
+    let context = ScriptPlayerContext::new(
+        "player-7",
+        "Alex",
+        false,
+        "minecraft:overworld",
+        0.0,
+        64.0,
+        0.0,
+    );
     assert_eq!(
         boundary.prepare_player_command_with_context(player, context.clone(), "missing"),
         Ok(PreparedPlayerCommand::NotOwned)
@@ -911,7 +971,17 @@ fn preparing_a_command_after_host_close_clears_the_dead_routes() {
             .unwrap();
     endpoint.register_plugin_routes(&manifest).unwrap();
     let player = ScriptPlayerId::new(7);
-    let context = || ScriptPlayerContext::new("player-7", "Alex", false, 0.0, 64.0, 0.0);
+    let context = || {
+        ScriptPlayerContext::new(
+            "player-7",
+            "Alex",
+            false,
+            "minecraft:overworld",
+            0.0,
+            64.0,
+            0.0,
+        )
+    };
     assert!(matches!(
         boundary.prepare_player_command_with_context(player, context(), "owned"),
         Ok(PreparedPlayerCommand::Event(_))
@@ -944,7 +1014,17 @@ fn player_command_boundary_reports_full_and_closed_without_retaining_events() {
     endpoint.register_plugin_routes(&manifest).unwrap();
 
     assert_eq!(boundary.player_command_roots(), vec!["hello".to_owned()]);
-    let context = || ScriptPlayerContext::new("player-7", "Alex", false, 0.0, 64.0, 0.0);
+    let context = || {
+        ScriptPlayerContext::new(
+            "player-7",
+            "Alex",
+            false,
+            "minecraft:overworld",
+            0.0,
+            64.0,
+            0.0,
+        )
+    };
     assert_eq!(
         boundary.try_enqueue_player_command_with_context(
             ScriptPlayerId::new(7),
@@ -1004,7 +1084,16 @@ fn owned_player_command_arguments_are_bounded_without_panicking_or_queuing_rejec
             .validate()
             .unwrap();
     endpoint.register_plugin_routes(&manifest).unwrap();
-    let context = ScriptPlayerContext::try_new("player-7", "Alex", false, 0.0, 64.0, 0.0).unwrap();
+    let context = ScriptPlayerContext::try_new(
+        "player-7",
+        "Alex",
+        false,
+        "minecraft:overworld",
+        0.0,
+        64.0,
+        0.0,
+    )
+    .unwrap();
 
     let accepted = format!("owned {}", "a".repeat(MAX_SCRIPT_CHAT_MESSAGE_BYTES));
     assert_eq!(
@@ -1094,7 +1183,15 @@ fn operator_player_commands_require_verified_context_and_are_denied_before_a_ful
     assert_eq!(
         boundary.try_enqueue_player_command_with_context(
             ScriptPlayerId::new(7),
-            ScriptPlayerContext::new("player-7", "Alex", false, 0.0, 64.0, 0.0),
+            ScriptPlayerContext::new(
+                "player-7",
+                "Alex",
+                false,
+                "minecraft:overworld",
+                0.0,
+                64.0,
+                0.0
+            ),
             "adminday",
         ),
         Ok(PlayerCommandAdmission::PermissionDenied)
@@ -1107,7 +1204,15 @@ fn operator_player_commands_require_verified_context_and_are_denied_before_a_ful
     assert_eq!(
         boundary.try_enqueue_player_command_with_context(
             ScriptPlayerId::new(7),
-            ScriptPlayerContext::new("verified-id", "Alex", true, 0.0, 0.0, 0.0),
+            ScriptPlayerContext::new(
+                "verified-id",
+                "Alex",
+                true,
+                "minecraft:overworld",
+                0.0,
+                0.0,
+                0.0
+            ),
             "adminday",
         ),
         Ok(PlayerCommandAdmission::Enqueued)
@@ -1344,7 +1449,15 @@ fn runtime_contract_accepts_event_reference_and_returns_bounded_batch() {
     let event = ScriptEvent::player_chat_with_context(
         ScriptPlayerId::new(7),
         "hello",
-        ScriptPlayerContext::new("player-7", "Alex", false, 0.0, 64.0, 0.0),
+        ScriptPlayerContext::new(
+            "player-7",
+            "Alex",
+            false,
+            "minecraft:overworld",
+            0.0,
+            64.0,
+            0.0,
+        ),
     );
 
     let commands = EchoRuntime
@@ -2191,6 +2304,7 @@ fn player_context_rejects_oversized_identity_and_nonfinite_coordinates() {
             "x".repeat(MAX_SCRIPT_PLAYER_UUID_BYTES + 1),
             "Alex",
             false,
+            "minecraft:overworld",
             0.0,
             64.0,
             0.0,
@@ -2201,7 +2315,15 @@ fn player_context_rejects_oversized_identity_and_nonfinite_coordinates() {
         })
     ));
     assert!(matches!(
-        ScriptPlayerContext::try_new("uuid", "Alex", false, f64::NAN, 64.0, 0.0),
+        ScriptPlayerContext::try_new(
+            "uuid",
+            "Alex",
+            false,
+            "minecraft:overworld",
+            f64::NAN,
+            64.0,
+            0.0
+        ),
         Err(ScriptDtoError::InvalidBounds)
     ));
 }
@@ -2260,7 +2382,16 @@ fn declared_command_node_gates_admission_through_the_provider_table() {
     .unwrap();
     let player = ScriptPlayerId::new(1);
     let context = |operator: bool| {
-        ScriptPlayerContext::try_new(PLAYER, "Alex", operator, 0.0, 64.0, 0.0).unwrap()
+        ScriptPlayerContext::try_new(
+            PLAYER,
+            "Alex",
+            operator,
+            "minecraft:overworld",
+            0.0,
+            64.0,
+            0.0,
+        )
+        .unwrap()
     };
     let admit = |command: &str, operator: bool| {
         boundary.prepare_player_command_with_context(player, context(operator), command)
@@ -2286,6 +2417,25 @@ fn declared_command_node_gates_admission_through_the_provider_table() {
     assert!(matches!(
         admit("home", true),
         Ok(PreparedPlayerCommand::Event(_))
+    ));
+
+    // An explicitly assigned empty group must suppress even a wildcard default.
+    boundary
+        .command_permissions()
+        .publish(&["* *".to_owned(), PLAYER.to_owned()])
+        .unwrap();
+    assert!(
+        !boundary
+            .command_permissions()
+            .allows(PLAYER, "solaris.essentials.manage")
+    );
+    assert!(matches!(
+        admit("delwarp x", false),
+        Ok(PreparedPlayerCommand::PermissionDenied)
+    ));
+    assert!(boundary.command_permissions().allows(
+        "00000000-0000-0000-0000-000000000001",
+        "solaris.essentials.manage"
     ));
 
     boundary

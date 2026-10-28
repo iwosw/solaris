@@ -220,6 +220,7 @@ async fn queued_save_requests_keep_one_capture_in_flight_and_both_receive_durabl
     let (_input_tx, input_rx) = mpsc_channel(16);
     let (_spawn_tx, spawn_rx) = mpsc_channel(16);
     let (_ticket_tx, ticket_rx) = mpsc_channel(16);
+    let (_moderation_selector_tx, moderation_selector_rx) = mpsc_channel(16);
     let (tick_broadcast, mut ticks) = broadcast::channel(16);
     let (timing_broadcast, _) = broadcast::channel(16);
     let (work_tx, work_rx) = crate::core::journal_work_channel();
@@ -272,6 +273,7 @@ async fn queued_save_requests_keep_one_capture_in_flight_and_both_receive_durabl
                 input_rx,
                 spawn_rx,
                 ticket_rx,
+                moderation_selector_rx,
                 outbox: outbox_tx,
                 tick_broadcast,
                 timing_broadcast,

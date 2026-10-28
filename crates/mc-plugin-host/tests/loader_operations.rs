@@ -199,8 +199,16 @@ fn start_recording(
 }
 
 fn context() -> ScriptPlayerContext {
-    ScriptPlayerContext::try_new(PLAYER, "GateFabric", false, 0.0, 64.0, 0.0)
-        .expect("the gate's own context is bounded")
+    ScriptPlayerContext::try_new(
+        PLAYER,
+        "GateFabric",
+        false,
+        "minecraft:overworld",
+        0.0,
+        64.0,
+        0.0,
+    )
+    .expect("the gate's own context is bounded")
 }
 
 fn joined(session: u64) -> ScriptEvent {

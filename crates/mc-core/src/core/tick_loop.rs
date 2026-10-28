@@ -13,6 +13,7 @@ pub(super) struct TickChannels {
     pub(super) input_rx: Receiver<PlayerInput>,
     pub(super) spawn_rx: Receiver<SpawnRequest>,
     pub(super) ticket_rx: Receiver<RemoteTicket>,
+    pub(super) moderation_selector_rx: Receiver<moderation_selector::Request>,
     /// Reliable FIFO handoff; only the tick owns the sender.
     pub(super) outbox: std::sync::mpsc::Sender<OutboxBatch>,
     pub(super) tick_broadcast: broadcast::Sender<TickOutput>,
@@ -97,6 +98,9 @@ pub(super) fn tick_loop(mut state: TickState, mut channels: TickChannels) {
             inputs.push(input);
         }
         let mut activity = !inputs.is_empty();
+        while let Ok(request) = channels.moderation_selector_rx.try_recv() {
+            moderation_selector::answer(&state, request);
+        }
         // Debug/test spawns drain here (bench + tests only).
         let logging = channels.input_log.is_some();
         let mut logged_spawns = Vec::new();

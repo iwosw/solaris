@@ -375,6 +375,7 @@ fn teleport_of_connected_dead_player_refuses_without_native_side_effects() {
     let request = mc_script::ScriptPlayerTeleportRequest::try_new(
         "dead-teleport",
         mc_script::ScriptPlayerId::new(1),
+        "minecraft:overworld",
         mc_script::ScriptPosition::try_new(20.0, 80.0, 20.0).unwrap(),
     )
     .unwrap();
@@ -472,6 +473,73 @@ async fn restored_clock_and_owned_command_follow_native_committed_event_fifo() {
     assert!(
         matches!(command.kind(), ScriptEventKind::PlayerCommand { root, arguments, .. }
         if root == "owned" && arguments == "keep order")
+    );
+}
+
+#[test]
+fn console_msg_uses_native_path_despite_player_plugin_reservation() {
+    let mut state = fixture();
+    join_native_player(&mut state);
+    let capacity = std::num::NonZeroUsize::new(4).unwrap();
+    let (boundary, endpoint) = mc_script::script_boundary_pair(capacity, capacity);
+    let manifest = mc_script::ScriptPluginManifest::new(
+        "owner",
+        "Owner",
+        "0.1.0",
+        mc_script::COMPONENT_PLUGIN_API_VERSION,
+    )
+    .declare_player_command_root("msg")
+    .validate()
+    .unwrap();
+    endpoint.register_plugin_routes(&manifest).unwrap();
+    state.plugin_runtime = Some(crate::plugin::PluginRuntime::with_test_boundary(boundary));
+    let (command, mut completed) =
+        crate::command_console::ConsoleCommand::new("msg NativePlayer console-message".into());
+    let (_, deliveries, _) = crate::tick::run_tick(
+        &mut state,
+        &[crate::boundary::PlayerInput::ConsoleCommand(command)],
+    );
+    assert!(completed.try_recv().is_ok());
+    assert!(
+        deliveries.iter().any(|(connection, changes)| {
+            *connection == crate::boundary::ConnectionId(1)
+                && changes.iter().any(|change| {
+                    matches!(
+                        change,
+                        crate::boundary::PlayerChange::StyledChat {
+                            content: mc_nbt::Tag::Compound(fields),
+                        } if fields.iter().any(|(name, value)| {
+                            name == "translate"
+                                && matches!(value, mc_nbt::Tag::String(key)
+                                    if key == "commands.message.display.incoming")
+                        }) && fields.iter().any(|(name, value)| {
+                            name == "with"
+                                && matches!(value, mc_nbt::Tag::List(arguments)
+                                    if arguments.elements.iter().any(|argument| {
+                                        matches!(argument, mc_nbt::Tag::Compound(text)
+                                            if text.iter().any(|(name, value)| {
+                                                name == "text"
+                                                    && matches!(value, mc_nbt::Tag::String(message)
+                                                        if message == "console-message")
+                                            }))
+                                    }))
+                        })
+                    )
+                })
+        }),
+        "{deliveries:?}"
+    );
+    assert!(
+        state
+            .plugin_runtime
+            .as_ref()
+            .unwrap()
+            .pending_events
+            .iter()
+            .all(|event| !matches!(
+                event.kind(),
+                mc_script::ScriptEventKind::PlayerCommand { .. }
+            ))
     );
 }
 
@@ -1252,6 +1320,7 @@ async fn observation_shedding_is_per_plugin_fair_and_never_halts_authority() {
         uuid::Uuid::from_u128(1).to_string(),
         "Player",
         false,
+        "minecraft:overworld",
         0.0,
         64.0,
         0.0,
@@ -1509,4 +1578,34 @@ fn join_observations_do_not_poison_full_required_callback_capacity() {
     );
     assert_eq!(boundary.observation_events_dropped("owner"), 0);
     crate::plugin::seal_events(&mut state, 1).unwrap();
+}
+
+#[test]
+fn plugin_teleport_dimension_rejects_mismatch_without_moving() {
+    let mut state = fixture();
+    let entity = join_native_player(&mut state);
+    let slot = state.entities.slot_of(entity).unwrap();
+    let original = state.entities.pos(slot);
+    let target = mc_script::ScriptPosition::try_new(20.0, 80.0, 20.0).unwrap();
+    let wrong = mc_script::ScriptPlayerTeleportRequest::try_new(
+        "wrong-dimension",
+        mc_script::ScriptPlayerId::new(1),
+        "minecraft:the_nether",
+        target,
+    )
+    .unwrap();
+    assert_eq!(
+        crate::plugin::teleport_player(&mut state, &wrong),
+        Some(mc_script::ScriptPlayerTeleportFailure::DimensionMismatch)
+    );
+    assert_eq!(state.entities.pos(slot), original);
+    let correct = mc_script::ScriptPlayerTeleportRequest::try_new(
+        "correct-dimension",
+        mc_script::ScriptPlayerId::new(1),
+        state.dimension.name(),
+        target,
+    )
+    .unwrap();
+    assert_eq!(crate::plugin::teleport_player(&mut state, &correct), None);
+    assert_eq!(state.entities.pos(slot), [20.0, 80.0, 20.0]);
 }

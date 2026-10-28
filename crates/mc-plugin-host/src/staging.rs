@@ -108,9 +108,9 @@ fn command_text_bytes(command: &Command) -> usize {
         // A query carries no text of its own: only the correlation id, which the
         // contract bounds at 64 bytes.
         Command::ListOnlinePlayers(query) => query.request.len(),
-        // A teleport carries no text either: the correlation id is its only
-        // string and the coordinates are numbers.
-        Command::TeleportPlayer(teleport) => teleport.request.len(),
+        // Teleports carry the correlation id and destination dimension; their
+        // coordinates are numbers.
+        Command::TeleportPlayer(teleport) => teleport.request.len().max(teleport.dimension.len()),
         Command::SpawnEntity(spawn) => spawn.request.len().max(spawn.entity_type.len()),
         // A batch carries many strings rather than one, and the DTO already bounds
         // every one of them: at most 16 keys of 128 bytes and 16 values of 4096, so
@@ -276,4 +276,32 @@ fn view_model_text_bytes(model: &ViewModel) -> usize {
         }
     }
     longest
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::bindings::solaris::plugin::{commands::TeleportPlayer, types::Position};
+
+    #[test]
+    fn teleport_dimension_counts_against_text_limit() {
+        let limits = PluginLimits {
+            text_bytes: 8,
+            ..PluginLimits::default()
+        };
+        let command = Command::TeleportPlayer(TeleportPlayer {
+            request: "one".into(),
+            session: 1,
+            dimension: "minecraft:overworld".into(),
+            position: Position {
+                x: 0.0,
+                y: 64.0,
+                z: 0.0,
+            },
+        });
+        assert_eq!(
+            CommandBatch::new().push(command, &limits),
+            Err(StagingError::TextTooLong)
+        );
+    }
 }

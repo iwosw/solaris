@@ -987,7 +987,16 @@ pub(crate) fn player_context(
     let uuid = state.connections.uuid_of(connection)?;
     let name = state.connections.name_of(entity)?;
     let [x, y, z] = state.entities.pos(slot);
-    mc_script::ScriptPlayerContext::try_new(uuid.to_string(), name, operator, x, y, z).ok()
+    mc_script::ScriptPlayerContext::try_new(
+        uuid.to_string(),
+        name,
+        operator,
+        state.dimension.name(),
+        x,
+        y,
+        z,
+    )
+    .ok()
 }
 
 /// A command's identity and pose come from the native connection/entity owner,
@@ -1088,6 +1097,9 @@ pub(crate) fn teleport_player(
     let Some(slot) = world.entities.slot_of(entity) else {
         return Some(mc_script::ScriptPlayerTeleportFailure::PlayerUnavailable);
     };
+    if world.dimension.name() != request.dimension() {
+        return Some(mc_script::ScriptPlayerTeleportFailure::DimensionMismatch);
+    }
     let destination = request.position();
     let position = [destination.x(), destination.y(), destination.z()];
     crate::mounts::dismount(world, entity);

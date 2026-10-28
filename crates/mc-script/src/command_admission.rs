@@ -984,6 +984,7 @@ impl ScriptCommand {
             Self::TeleportPlayer { request } => ScriptPlayerTeleportRequest::try_new(
                 request.request_id(),
                 request.player_id(),
+                request.dimension(),
                 request.position(),
             )
             .map(drop),

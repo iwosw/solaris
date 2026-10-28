@@ -121,6 +121,43 @@ fn signed_message_commands_reach_the_same_authority_as_unsigned_commands() {
 }
 
 #[test]
+fn decoded_private_and_team_messages_share_mute_admission() {
+    for command in [
+        "reply hello",
+        "/reply hello",
+        "msg Bob hello",
+        "tell Bob hello",
+        "w Bob hello",
+        "me waves",
+        "teammsg hello",
+        "tm hello",
+    ] {
+        let inputs = decode(
+            ServerboundChatCommand::ID,
+            body(&ServerboundChatCommand {
+                command: command.into(),
+            }),
+            &mut state(),
+        )
+        .unwrap();
+        assert_eq!(inputs.len(), 1);
+        assert!(
+            inputs[0].is_communication(),
+            "decoded command must reach the mute gate: {command}"
+        );
+    }
+    let inputs = decode(
+        ServerboundChatCommand::ID,
+        body(&ServerboundChatCommand {
+            command: "home base".into(),
+        }),
+        &mut state(),
+    )
+    .unwrap();
+    assert!(!inputs[0].is_communication());
+}
+
+#[test]
 fn legal_long_commands_are_not_subject_to_chat_length_limit() {
     let command = format!("tellraw @s {{\"text\":\"{}\"}}", "x".repeat(300));
     let inputs = decode(

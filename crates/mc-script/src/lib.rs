@@ -471,17 +471,20 @@ pub struct ScriptPlayerTeleportRequest {
     request_id: String,
     player_id: ScriptPlayerId,
     position: ScriptPosition,
+    dimension: String,
 }
 
 impl ScriptPlayerTeleportRequest {
     pub fn try_new(
         request_id: impl AsRef<str>,
         player_id: ScriptPlayerId,
+        dimension: impl AsRef<str>,
         position: ScriptPosition,
     ) -> Result<Self, ScriptDtoError> {
         Ok(Self {
             request_id: validate_script_id(request_id.as_ref())?,
             player_id,
+            dimension: validate_contract_resource_id(dimension.as_ref())?,
             position,
         })
     }
@@ -494,6 +497,10 @@ impl ScriptPlayerTeleportRequest {
         self.player_id
     }
 
+    pub fn dimension(&self) -> &str {
+        &self.dimension
+    }
+
     pub const fn position(&self) -> ScriptPosition {
         self.position
     }
@@ -504,6 +511,7 @@ impl ScriptPlayerTeleportRequest {
 #[non_exhaustive]
 pub enum ScriptPlayerTeleportFailure {
     PlayerUnavailable,
+    DimensionMismatch,
     RuntimeUnavailable,
 }
 
@@ -511,6 +519,7 @@ impl ScriptPlayerTeleportFailure {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::PlayerUnavailable => "player_unavailable",
+            Self::DimensionMismatch => "dimension_mismatch",
             Self::RuntimeUnavailable => "runtime_unavailable",
         }
     }
@@ -752,6 +761,7 @@ struct ScriptPlayerContextSnapshot {
     uuid: String,
     username: String,
     operator: bool,
+    dimension: String,
     x_bits: u64,
     y_bits: u64,
     z_bits: u64,
@@ -762,6 +772,7 @@ impl ScriptPlayerContext {
         uuid: impl AsRef<str>,
         username: impl AsRef<str>,
         operator: bool,
+        dimension: impl AsRef<str>,
         x: f64,
         y: f64,
         z: f64,
@@ -776,6 +787,7 @@ impl ScriptPlayerContext {
             snapshot: Box::new(ScriptPlayerContextSnapshot {
                 uuid: uuid.to_owned(),
                 username: username.to_owned(),
+                dimension: validate_contract_resource_id(dimension.as_ref())?,
                 operator,
                 x_bits: position.x_bits,
                 y_bits: position.y_bits,
@@ -789,11 +801,12 @@ impl ScriptPlayerContext {
         uuid: impl AsRef<str>,
         username: impl AsRef<str>,
         operator: bool,
+        dimension: impl AsRef<str>,
         x: f64,
         y: f64,
         z: f64,
     ) -> Self {
-        Self::try_new(uuid, username, operator, x, y, z)
+        Self::try_new(uuid, username, operator, dimension, x, y, z)
             .expect("server-authored script player context must be bounded")
     }
 
@@ -810,6 +823,11 @@ impl ScriptPlayerContext {
     #[must_use]
     pub fn operator(&self) -> bool {
         self.snapshot.operator
+    }
+
+    #[must_use]
+    pub fn dimension(&self) -> &str {
+        &self.snapshot.dimension
     }
 
     #[must_use]
@@ -835,6 +853,7 @@ impl ScriptPlayerContext {
             MAX_SCRIPT_PLAYER_NAME_BYTES,
         )?;
         validate_player_identity(self.uuid(), self.username())?;
+        check_contract_resource_id(self.dimension())?;
         ScriptPosition::try_new(self.x(), self.y(), self.z())
             .ok_or(ScriptDtoError::InvalidBounds)
             .map(drop)

@@ -68,7 +68,16 @@ fn start(root: &Path, ids: &[&str]) -> PluginHost {
 }
 
 fn join() -> ScriptEvent {
-    let player = ScriptPlayerContext::try_new(PLAYER_UUID, "Ada", false, 0.0, 64.0, 0.0).unwrap();
+    let player = ScriptPlayerContext::try_new(
+        PLAYER_UUID,
+        "Ada",
+        false,
+        "minecraft:overworld",
+        0.0,
+        64.0,
+        0.0,
+    )
+    .unwrap();
     ScriptEvent::player_joined_with_context(ScriptPlayerId::new(SESSION), player)
 }
 

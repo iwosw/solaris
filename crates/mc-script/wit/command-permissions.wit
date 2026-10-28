@@ -9,10 +9,12 @@ interface command-permissions {
     ///
     /// Only the package the deployment designates as its permission provider is
     /// handed a live instance; every other guest that imports this interface is
-    /// answered `false`. Each entry is `"<identity> <node>"`, where `identity` is
-    /// a dashed or compact lower-case UUID, or `*` for the default row that
-    /// applies to a player the table has no explicit row for, and a node of `*`
-    /// grants every node. The publication is all-or-nothing: an invalid or
+    /// answered `false`. Each entry is `"<identity> <node>"` or an identity
+    /// alone. An identity is a dashed or compact lower-case UUID, or `*` for
+    /// the default applied only to players without an explicit identity row.
+    /// An identity-only row declares an empty set; node rows for that identity
+    /// add grants, and a node of `*` grants every node. Identity-only rows count
+    /// towards the entry limit. Publication is all-or-nothing: an invalid or
     /// over-bound list is refused and the previous table stays in force.
     /// Synchronous, host-local, and refused during a pre-commit hook.
     publish: func(entries: list<string>) -> bool;

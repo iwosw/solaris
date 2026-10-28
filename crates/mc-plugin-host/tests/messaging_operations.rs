@@ -68,7 +68,8 @@ fn start(reason_bytes: usize, commands: usize) -> (tempfile::TempDir, PluginHost
 fn join(session: u64) -> ScriptEvent {
     ScriptEvent::player_joined_with_context(
         ScriptPlayerId::new(session),
-        ScriptPlayerContext::try_new(PLAYER, "Ada", false, 0.0, 64.0, 0.0).unwrap(),
+        ScriptPlayerContext::try_new(PLAYER, "Ada", false, "minecraft:overworld", 0.0, 64.0, 0.0)
+            .unwrap(),
     )
 }
 
