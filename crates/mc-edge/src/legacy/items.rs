@@ -18,7 +18,7 @@ pub enum To {
     Canonical,
 }
 
-/// Payload shape of a data component (same in 26.1.2 and 26.3 for these).
+/// Traversal shape; native-only components use the authoritative 26.3 codec.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Payload {
     Empty,
@@ -45,11 +45,13 @@ pub enum Payload {
     Fireworks,
     Profile,
     Bees,
+    NativeOnly(i32),
 }
 
 /// Known payload shapes by component name (namespace stripped).
 pub fn payload(name: &str) -> Option<Payload> {
     use Payload::*;
+    use mc_data::data_component_types_26_1_2 as ids;
     Some(match name.strip_prefix("minecraft:").unwrap_or(name) {
         "unbreakable" | "creative_slot_lock" | "intangible_projectile" | "glider" => Empty,
         "max_stack_size"
@@ -83,6 +85,22 @@ pub fn payload(name: &str) -> Option<Payload> {
         "fireworks" => Fireworks,
         "profile" => Profile,
         "bees" => Bees,
+        // None of these components has a 26.1.2 registry entry. Consume the
+        // complete native payload before patch() omits the unmapped component.
+        "attack_animation" => NativeOnly(ids::ATTACK_ANIMATION),
+        "interact_animation" => NativeOnly(ids::INTERACT_ANIMATION),
+        "block_transformer" => NativeOnly(ids::BLOCK_TRANSFORMER),
+        "villager_food" => NativeOnly(ids::VILLAGER_FOOD),
+        "sulfur_cube_content" => NativeOnly(ids::SULFUR_CUBE_CONTENT),
+        "compostable" => NativeOnly(ids::COMPOSTABLE),
+        "cooking_fuel" => NativeOnly(ids::COOKING_FUEL),
+        "brewing_fuel" => NativeOnly(ids::BREWING_FUEL),
+        "mob_visibility" => NativeOnly(ids::MOB_VISIBILITY),
+        "provides_pottery_pattern" => NativeOnly(ids::PROVIDES_POTTERY_PATTERN),
+        "sign_text_front" => NativeOnly(ids::SIGN_TEXT_FRONT),
+        "sign_text_back" => NativeOnly(ids::SIGN_TEXT_BACK),
+        "waxed" => NativeOnly(ids::WAXED),
+        "cushion/color" => NativeOnly(ids::CUSHION_COLOR),
         _ => return None,
     })
 }
@@ -202,6 +220,10 @@ fn copy_payload(
     depth: usize,
 ) -> Result<()> {
     match shape {
+        Payload::NativeOnly(id) => {
+            ensure!(to == To::Legacy, "native-only component on legacy ingress");
+            mc_protocol::packets::play::skip_native_item_component(r, id, depth)?;
+        }
         Payload::Empty => {}
         Payload::VarInt => w.write_varint(r.read_varint()?),
         Payload::Bool => w.write_bool(r.read_bool()?),

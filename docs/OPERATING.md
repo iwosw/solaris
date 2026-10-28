@@ -60,6 +60,13 @@ on an unsupported protocol receives vanilla's
 close. Sessions of the previous release (26.1.2, protocol 775) are translated
 at the edge as described in ADR 0015.
 
+Native block-entity identities follow the 26.3 registry, not the legacy
+client's ids: 49 types cover 191 block variants. Beds no longer have block
+entities and use vanilla's popped-on-piston-push reaction. Poplar signs,
+hanging signs and shelves, plus potent sulfur, use their 26.3 identities.
+Other inventory/opaque block entities retain Solaris's conservative piston
+refusal rather than risking their contents.
+
 ### Retaining 26.1.2 clients after upgrading to 26.3
 
 Protocol 775 clients need a **separate, intact 26.1.2 content cache**. Keep
@@ -96,6 +103,12 @@ items and entity types are shown as named 26.1.2 substitutes (for example,
 cinnabar as granite and a sulfur cube as a slime), not their shifted numeric
 ids. This is protocol compatibility, not identical rendering or mechanics for
 new content; see [ADR 0015](decisions/0015-multiversion-protocol-translation.md).
+
+The 14 new 26.3 item components have no 26.1.2 registry entries. For legacy
+viewers their complete, validated payloads are consumed and omitted, including
+nested item patches; native inventory custody is unchanged. Shared components
+and the following stacks remain translated normally. Unknown or malformed
+payloads still fail closed rather than desynchronizing the rest of the packet.
 
 ## Supported configuration
 

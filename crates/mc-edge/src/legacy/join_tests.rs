@@ -204,6 +204,9 @@ impl Client {
     async fn play_until<T>(&mut self, mut stop: impl FnMut(&Self, &RawFrame) -> Option<T>) -> T {
         loop {
             let frame = self.recv().await;
+            if frame.id == self.id("play", true, "minecraft:update_advancements") {
+                validate_legacy_advancement_icons(&self.profile.tables, &frame.body);
+            }
             if frame.id == self.id("play", true, "minecraft:player_position") {
                 let id = (&frame.body[..]).read_varint().unwrap();
                 let mut accept = Vec::new();
@@ -296,6 +299,75 @@ fn container(
         }
     });
     (value, &r[words * 8..])
+}
+
+/// Rebuild the canonical envelope from the old layout, walking every legacy
+/// icon through its real component schemas. The canonical decoder then rejects
+/// duplicate/contradictory component patches instead of accepting a bare frame.
+fn validate_legacy_advancement_icons(tables: &super::tables::Tables, body: &[u8]) {
+    use mc_protocol::packets::play::ClientboundUpdateAdvancements;
+    let mut input = body;
+    let mut canonical = Vec::new();
+    canonical.write_bool(input.read_bool().unwrap());
+    let added = input.read_varint().unwrap();
+    canonical.write_varint(added);
+    for _ in 0..added {
+        let id = input.read_string(32767).unwrap();
+        canonical.write_string(&id, 32767).unwrap();
+        let parent = input.read_bool().unwrap();
+        canonical.write_bool(parent);
+        if parent {
+            canonical
+                .write_string(&input.read_string(32767).unwrap(), 32767)
+                .unwrap();
+        }
+        let display = input.read_bool().unwrap();
+        canonical.write_bool(display);
+        let mut coordinates = [0.0; 2];
+        if display {
+            super::items::copy_nbt(&mut input, &mut canonical).unwrap();
+            super::items::copy_nbt(&mut input, &mut canonical).unwrap();
+            super::items::template(
+                tables,
+                super::items::To::Canonical,
+                &mut input,
+                &mut canonical,
+            )
+            .unwrap_or_else(|error| panic!("advancement {id} legacy icon: {error:#}"));
+            canonical.write_varint(input.read_varint().unwrap());
+            let flags = input.read_i32().unwrap();
+            canonical.write_i32(flags);
+            if flags & 1 != 0 {
+                canonical
+                    .write_string(&input.read_string(32767).unwrap(), 32767)
+                    .unwrap();
+            }
+            coordinates = [input.read_f32().unwrap(), input.read_f32().unwrap()];
+        }
+        let requirements = input.read_varint().unwrap();
+        canonical.write_varint(requirements);
+        for _ in 0..requirements {
+            let count = input.read_varint().unwrap();
+            canonical.write_varint(count);
+            for _ in 0..count {
+                canonical
+                    .write_string(&input.read_string(32767).unwrap(), 32767)
+                    .unwrap();
+            }
+        }
+        canonical.write_bool(input.read_bool().unwrap());
+        for coordinate in coordinates {
+            canonical.write_f32(coordinate);
+        }
+    }
+    canonical.extend_from_slice(input);
+    let mut remaining = canonical.as_slice();
+    ClientboundUpdateAdvancements::decode(&mut remaining)
+        .expect("legacy advancement icons have valid, unique component patches");
+    assert!(
+        remaining.is_empty(),
+        "legacy advancement envelope fully consumed"
+    );
 }
 
 #[ignore = "requires local 26.3 and 26.1.2 content caches"]

@@ -577,6 +577,24 @@ fn sign_extend_12(v: i32) -> i32 {
 /// Java Edition wire encoding/decoding.
 pub use mc_data::item_stack::ItemStack;
 
+/// Consume a canonical preserved component when the receiving protocol has no
+/// corresponding component. Reuse the native codec, including nested-patch
+/// validation and depth limits; unsupported payloads must still fail closed.
+pub fn skip_native_item_component<B: Buf>(
+    buf: &mut B,
+    component_id: i32,
+    depth: usize,
+) -> Result<(), CodecError> {
+    if depth > copied_components::MAX_ITEM_COMPONENT_DEPTH {
+        return Err(CodecError::NotSupported("nested item component depth"));
+    }
+    copied_components::decode(buf, component_id, depth)?
+        .map(|_| ())
+        .ok_or(CodecError::NotSupported(
+            "unsupported native item component",
+        ))
+}
+
 pub(super) trait ItemStackWireCodec: Sized {
     fn encode<B: BufMut>(&self, buf: &mut B) -> Result<(), CodecError>;
     fn encode_at_depth<B: BufMut>(&self, buf: &mut B, depth: usize) -> Result<(), CodecError>;
