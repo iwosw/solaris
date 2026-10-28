@@ -3235,8 +3235,20 @@ local target orchestration. It still uses `Player::apply_command` and the
 existing tick-owned `apply_player_effects` path, without moving inventory,
 commit, world-custody or protocol authority. Shared selector/name/delivery
 helpers remain in `command_execution.rs`; other families are not migrated.
-Current permission admission and command-result/store behavior are preserved,
-including the separately characterized nested-tick and difficulty-query gaps.
+The pilot retained permission admission and command-result/store behavior.
+
+Native permission hardening shares the unchanged root-level policy in
+`commands::ROOTS` between edge advertisement/admission and native execution.
+`command_context::native` checks each leaf against its inherited numeric
+`Context.permission` before parsing, cross-world dispatch or handler mutation;
+execute admission uses the same policy. In particular, `tick` and `co` require
+level three even through execute/function continuations. Boolean parser
+permissions still control the existing selector/syntax behavior, not final
+numeric authorization. Plugin-owned roots retain their first routing and
+retirement reservation. Functions inherit the invoking Context, while command
+blocks and load/tick/scheduled functions retain their existing level-two source;
+the trusted console remains level four. This changes neither budgets nor
+execution/commit ordering. The difficulty-query/store gap remains unchanged.
 
 `/advancement grant|revoke <targets>` supports `everything`, `only <id>
 [criterion]`, `from <id>`, `through <id>` and `until <id>`. `from` selects the

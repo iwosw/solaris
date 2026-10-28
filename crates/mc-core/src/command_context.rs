@@ -366,7 +366,7 @@ pub(crate) fn run(state: &mut TickState, text: &str, context: Context, changes: 
                     CommandResult::Unavailable => Err("Command has no execute-store result".into()),
                 };
             }
-            if context.permission < 2 {
+            if !crate::commands::root_permitted("execute", context.permission) {
                 return Err(crate::commands::CommandError::Unknown.message());
             }
             if !continuation {
@@ -588,18 +588,22 @@ pub(crate) fn native(
     changes: &mut ChangeSet,
     require_result: bool,
 ) -> Result<crate::command_execution::CommandResult, String> {
+    let root = text
+        .split_whitespace()
+        .next()
+        .ok_or_else(|| crate::commands::CommandError::Unknown.message())?;
+    if !crate::commands::root_permitted(root, context.permission) {
+        return Err(crate::commands::CommandError::Unknown.message());
+    }
     if context.dimension != state.dimension {
         return crate::dimensions::travel::execute_context(state, text, context, require_result);
     }
     state.command_context.current = Some(context);
     if matches!(
-        text.split_whitespace().next(),
-        Some("function" | "schedule" | "reload" | "datapack" | "data")
+        root,
+        "function" | "schedule" | "reload" | "datapack" | "data"
     ) {
-        if context.permission < 2 {
-            return Err(crate::commands::CommandError::Unknown.message());
-        }
-        if require_result && !matches!(text.split_whitespace().next(), Some("data" | "datapack")) {
+        if require_result && !matches!(root, "data" | "datapack") {
             return Err("Command does not support execute store".into());
         }
         return Ok(crate::datapacks::command(
@@ -649,3 +653,7 @@ pub(crate) fn native(
 #[cfg(test)]
 #[path = "command_context_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "command_permission_tests.rs"]
+mod permission_tests;

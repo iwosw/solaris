@@ -15,9 +15,9 @@ fn fixture() -> (TickState, Context) {
 }
 
 #[test]
-fn nested_tick_freeze_keeps_current_level_two_native_admission() {
+fn nested_tick_freeze_requires_level_three_native_admission() {
     let (mut state, context) = fixture();
-    for permission in [0, 1] {
+    for permission in [0, 1, 2] {
         run(
             &mut state,
             "execute run tick freeze",
@@ -31,12 +31,14 @@ fn nested_tick_freeze_keeps_current_level_two_native_admission() {
     }
     state.outbox.clear();
 
-    // The edge requires level 3 for a direct `tick` root, but the current
-    // nested native path only requires level 2. Fix that policy separately.
+    // Permission hardening intentionally closes the old level2 nested bypass.
     run(
         &mut state,
         "execute run tick freeze",
-        context,
+        Context {
+            permission: 3,
+            ..context
+        },
         &mut ChangeSet::default(),
     );
     assert!(state.tick_control.frozen());
