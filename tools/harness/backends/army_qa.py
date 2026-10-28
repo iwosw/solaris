@@ -72,6 +72,21 @@ def _villagers(steps: ProbeSteps) -> list[dict[str, Any]]:
     return _entities(steps, "minecraft:villager")
 
 
+def _prepare_guard_lure(probe: ProbeSteps, soldiers: set[str],
+                        post: tuple[float, float, float]) -> tuple[float, float, float]:
+    """Settle the guard fixture before a lure that requires a real excursion."""
+    def at_post(_state: dict[str, Any]) -> bool:
+        rows = {str(row.get("entity_uuid")): row for row in _villagers(probe)}
+        return all(uid in rows and math.dist(
+            (float(rows[uid]["x"]), float(rows[uid]["z"])), (post[0], post[2])) < 2.5
+                   for uid in soldiers)
+
+    _bwait(probe, at_post, "guard_lure_post_settled", timeout=90.0)
+    # At seven blocks, an approaching zombie can meet a guard before the
+    # required four-block excursion. Eleven stays inside the twelve-block tether.
+    return post[0] + 11.0, post[1], post[2]
+
+
 def _tick(steps: ProbeSteps, n: int = 4) -> None:
     # minecraft_wait_ticks needs an unfrozen client clock: while a dialog is
     # open (the whole middle of this scenario) it burns its 30s reply bound
@@ -1349,7 +1364,7 @@ def _scenario(probe: ProbeSteps, detail: dict[str, Any], ctx: ProfileContext,
     detail["adversarial_live_soldiers"] = sorted(live_adv)
     adv_post = probe.observe()["player"]
     adv_xyz = (float(adv_post["x"]), float(adv_post["y"]), float(adv_post["z"]))
-    # lure: summon one zombie 5 blocks away, let soldiers engage, then kill check return.
+    # Lure a settled guard away from its post, then verify its return.
     # If combat already killed every soldier there is nothing to lure with:
     # record the skip (combat proved engagement) and continue to refill.
     if not live_adv:
@@ -1359,13 +1374,14 @@ def _scenario(probe: ProbeSteps, detail: dict[str, Any], ctx: ProfileContext,
         detail["lure_skipped_no_live_soldiers"] = True
     else:
         # Tightened oracle: track ONE soldier UUID end-to-end (the live
-        # recruit nearest the post at order time). Summon the lure ~7
+        # recruit nearest the settled post). Summon the lure 11
         # blocks from the post (outside 2-block melee reach, inside the
         # 12-block tether). Require: (a) that soldier's distance from post
         # > 4 at some sample (left post toward the lure), (b) lure dies,
         # (c) the SAME soldier back within 2.5 blocks of post.
         # Night is set HERE (not at combat aftermath): the lure needs
         # darkness to survive until the soldiers engage it.
+        lure_xyz = _prepare_guard_lure(probe, live_adv, adv_xyz)
         tracked = min(sorted(live_adv),
                       key=lambda u: next((math.dist((float(r["x"]), float(r["z"])),
                                                     (adv_xyz[0], adv_xyz[2]))
@@ -1377,7 +1393,6 @@ def _scenario(probe: ProbeSteps, detail: dict[str, Any], ctx: ProfileContext,
         detail["guard_tracked_start"] = [round(tpost[0], 1), round(tpost[1], 1)]
         fixture("gamerule spawn_mobs true")
         fixture("time set 18000")
-        lure_xyz = (adv_xyz[0] + 7.0, adv_xyz[1], adv_xyz[2])
         fixture(f"summon minecraft:zombie {lure_xyz[0]:.1f} {lure_xyz[1]:.1f} {lure_xyz[2]:.1f}")
         settled("lure_summoned")
         lure_deadline = _time.monotonic() + 150.0
@@ -1423,7 +1438,7 @@ def _scenario(probe: ProbeSteps, detail: dict[str, Any], ctx: ProfileContext,
                 _tick(probe)
         if lure_uuid is None:
             _verdict(detail, "guard_returns_after_combat", "FAIL", "lure zombie never visible",
-                     "Guard here (all); summon zombie 7 blocks out")
+                     "Guard here (all); summon zombie 11 blocks out")
             raise RuntimeError("army-qa FAIL: guard_returns_after_combat (lure never visible)")
         back_ok = False
         back_deadline = _time.monotonic() + 150.0
@@ -1438,7 +1453,7 @@ def _scenario(probe: ProbeSteps, detail: dict[str, Any], ctx: ProfileContext,
         detail["guard_tracked_back"] = back_ok
         _verdict(detail, "guard_returns_after_combat", "PASS" if (lure_dead and left_post and back_ok) else "FAIL",
                  f"tracked={tracked[:8]} left_post={left_post} max_dist={left_post_max:.1f} lure_killed={lure_dead} back={back_ok} post={adv_xyz}",
-                 "Guard here (all); summon zombie 7 blocks out; tracked soldier leaves post, lure dies, same soldier returns <2.5")
+                 "Guard here (all); summon zombie 11 blocks out; tracked soldier leaves post, lure dies, same soldier returns <2.5")
         if not (lure_dead and left_post and back_ok):
             detail["continued_after_fail"] = True  # record S1 + continue for full evidence
             # raise RuntimeError("army-qa FAIL: guard_returns_after_combat")  # DEFERRED

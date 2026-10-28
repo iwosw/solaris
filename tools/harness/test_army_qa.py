@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import re
 import unittest
+from unittest.mock import Mock, patch
 
 from .backends import army_qa
 
@@ -30,6 +31,31 @@ class ArmyQaPadTests(unittest.TestCase):
         want = {(x, y, z) for x in range(ox - half, ox + half + 1)
                 for y in range(y0, y0 + 9) for z in range(oz - half, oz + half + 1)}
         self.assertEqual(want - cleared, set(), "air above the pad must be fully cleared")
+
+
+class GuardLureTests(unittest.TestCase):
+    def test_lure_waits_for_all_guards_and_leaves_room_for_excursion(self) -> None:
+        post = (176.5, 77.0, -445.5)
+        near = {"entity_uuid": "guard-a", "x": 177.5, "z": -445.5}
+        far = {"entity_uuid": "guard-b", "x": 192.5, "z": -445.5}
+        arrived = {**far, "x": 175.5}
+        probe = Mock()
+
+        def wait(_probe, predicate, label, timeout):
+            self.assertEqual(label, "guard_lure_post_settled")
+            with patch.object(army_qa, "_villagers", return_value=[near, far]):
+                self.assertFalse(predicate({}), "returning guards must settle first")
+            with patch.object(army_qa, "_villagers", return_value=[near]):
+                self.assertFalse(predicate({}), "missing guards are not settled")
+            with patch.object(army_qa, "_villagers", return_value=[near, arrived]):
+                self.assertTrue(predicate({}))
+
+        with patch.object(army_qa, "_bwait", side_effect=wait) as settled:
+            lure = army_qa._prepare_guard_lure(probe, {"guard-a", "guard-b"}, post)
+        settled.assert_called_once()
+        self.assertEqual(lure, (187.5, 77.0, -445.5))
+        self.assertGreater(lure[0] - post[0], 2 * 4.0 + 2.0)
+        self.assertLess(lure[0] - post[0], 12.0)
 
 
 class WatchdogTests(unittest.TestCase):
