@@ -657,7 +657,31 @@ impl Packet for ClientboundBlockEntityData {
     fn encode<B: BufMut>(&self, buf: &mut B) -> Result<(), CodecError> {
         buf.write_i64(self.position);
         buf.write_varint(self.block_entity_type);
-        mc_nbt::write_network(buf, &self.nbt)?;
+        let mut migrated;
+        let nbt = if self.block_entity_type
+            == mc_data::block_entity_kinds::BlockEntityKind::DecoratedPot.protocol_id() as i32
+            && let Tag::Compound(fields) = &self.nbt
+            && matches!(
+                mc_data::item_nbt::field(fields, "sherds"),
+                Some(Tag::List(_))
+            ) {
+            migrated = self.nbt.clone();
+            let Tag::Compound(fields) = &mut migrated else {
+                unreachable!()
+            };
+            mc_data::item_nbt::upgrade_pot_decorations(
+                &mut fields
+                    .iter_mut()
+                    .find(|(key, _)| key == "sherds")
+                    .unwrap()
+                    .1,
+            )
+            .map_err(|_| CodecError::NotSupported("invalid decorated pot sherds"))?;
+            &migrated
+        } else {
+            &self.nbt
+        };
+        mc_nbt::write_network(buf, nbt)?;
         Ok(())
     }
 

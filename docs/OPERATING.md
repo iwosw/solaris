@@ -110,6 +110,14 @@ nested item patches; native inventory custody is unchanged. Shared components
 and the following stacks remain translated normally. Unknown or malformed
 payloads still fail closed rather than desynchronizing the rest of the packet.
 
+Decorated-pot block entities use 26.3's named `sherds` record: optional
+`back`, `left`, `right` and `front` item templates, rather than a list of
+item identifiers. Existing native worlds migrate the older list on read;
+stored contents and template components are preserved. Chunk and individual
+block-entity updates use the native record. Only the 775 presentation boundary
+converts decorations back to its ordered identifier list (missing sides render
+as brick); this does not rewrite native custody.
+
 ## Supported configuration
 
 ```toml

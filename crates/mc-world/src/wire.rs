@@ -132,12 +132,19 @@ pub fn client_block_entities(
     opaque_entries.sort_by_key(|(pos, _)| (pos.x, pos.y, pos.z));
     for (pos, bytes) in opaque_entries {
         let mut cur = Cursor::new(bytes.as_slice());
-        let Ok(tag) = mc_nbt::read_network(&mut cur) else {
+        let Ok(mut tag) = mc_nbt::read_network(&mut cur) else {
             continue;
         };
         let Some(type_name) = block_entity_type_name(&tag) else {
             continue;
         };
+        if type_name.as_str() == "minecraft:decorated_pot"
+            && let Tag::Compound(fields) = &mut tag
+            && let Some((_, sherds)) = fields.iter_mut().find(|(key, _)| key == "sherds")
+            && mc_data::item_nbt::upgrade_pot_decorations(sherds).is_err()
+        {
+            continue;
+        }
         let nbt = match type_name.as_str() {
             "minecraft:trial_spawner" => {
                 let active = chunk

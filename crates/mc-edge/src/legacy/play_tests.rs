@@ -309,6 +309,103 @@ fn block_entity_payload_and_respawn_tail_are_consumed() {
 }
 
 #[test]
+fn decorated_pot_26_3_update_and_chunk_downgrade_named_templates() {
+    use mc_nbt::Tag;
+    let native_kind =
+        mc_data::block_entity_kinds::BlockEntityKind::DecoratedPot.protocol_id() as i32;
+    let mut s = test_session(Tables {
+        block_entities: IdMap::by_name(
+            [("decorated_pot", native_kind as u32)],
+            [("decorated_pot", 42)],
+            |_| None,
+        ),
+        ..Tables::default()
+    });
+    let tag = Tag::Compound(vec![
+        (
+            "sherds".into(),
+            Tag::Compound(vec![
+                (
+                    "back".into(),
+                    Tag::Compound(vec![
+                        (
+                            "id".into(),
+                            Tag::String("minecraft:angler_pottery_sherd".into()),
+                        ),
+                        (
+                            "components".into(),
+                            Tag::Compound(vec![(
+                                "minecraft:rarity".into(),
+                                Tag::String("rare".into()),
+                            )]),
+                        ),
+                    ]),
+                ),
+                (
+                    "front".into(),
+                    Tag::Compound(vec![(
+                        "id".into(),
+                        Tag::String("minecraft:archer_pottery_sherd".into()),
+                    )]),
+                ),
+            ]),
+        ),
+        (
+            "item".into(),
+            Tag::Compound(vec![
+                ("id".into(), Tag::String("minecraft:stone".into())),
+                ("count".into(), Tag::Int(3)),
+            ]),
+        ),
+    ]);
+    let mut encoded = Vec::new();
+    mc_nbt::write_network(&mut encoded, &tag).unwrap();
+    let mut update = Vec::new();
+    update.write_i64(123);
+    update.write_varint(native_kind);
+    update.extend_from_slice(&encoded);
+    let mut chunk = vec![0; 8]; // x,z
+    chunk.extend([0, 0, 1, 0x11, 0, 64]); // heightmaps, sections, one BE, xz,y
+    chunk.write_varint(native_kind);
+    chunk.extend_from_slice(&encoded);
+    chunk.extend([0; 6]); // four light masks and two update lists
+    for (name, body, header) in [
+        ("minecraft:block_entity_data", update, 9),
+        ("minecraft:level_chunk_with_light", chunk, 15),
+    ] {
+        let output = clientbound(&mut s, name, &body).unwrap().unwrap();
+        let mut input = &output[header..];
+        let Tag::Compound(fields) = mc_nbt::read_network(&mut input).unwrap() else {
+            panic!()
+        };
+        let expected = Tag::List(mc_nbt::ListTag {
+            element_type: mc_nbt::tag_type::STRING,
+            elements: [
+                "minecraft:angler_pottery_sherd",
+                "minecraft:brick",
+                "minecraft:brick",
+                "minecraft:archer_pottery_sherd",
+            ]
+            .map(|name| Tag::String(name.into()))
+            .to_vec(),
+        });
+        assert_eq!(
+            mc_data::item_nbt::field(&fields, "sherds"),
+            Some(&expected),
+            "{name}"
+        );
+        let Tag::Compound(source) = &tag else {
+            unreachable!()
+        };
+        assert_eq!(
+            mc_data::item_nbt::field(&fields, "item"),
+            mc_data::item_nbt::field(source, "item")
+        );
+        assert_eq!(input, if header == 9 { &[][..] } else { &[0; 6][..] });
+    }
+}
+
+#[test]
 fn new_cube_spawns_as_slime_with_legacy_size_metadata() {
     let tables = Tables {
         entities: IdMap::by_name([("sulfur_cube", 150)], [("slime", 80)], |_| {
