@@ -581,7 +581,74 @@ impl Click<'_, '_> {
         self.drop_manually(stack);
     }
 
+    /// Vanilla `tryItemClickBehaviourOverride`: `BundleItem.overrideStackedOnOther` for a
+    /// bundle on the cursor, then `overrideOtherStackedOnMe` for a bundle in the slot.
+    fn bundle_click(&mut self, index: usize, primary: bool) -> bool {
+        use super::bundle;
+        if self.is_result(index) || !self.may_take(index) {
+            return false;
+        }
+        let rules = self.rules;
+        if bundle::is_bundle(rules, self.carried) {
+            let slot_empty = self.get(index).is_empty();
+            if primary && !slot_empty {
+                let Some(mut contents) = bundle::read(rules, self.carried) else {
+                    return false;
+                };
+                let amount = bundle::room(rules, &contents, self.get(index));
+                if amount > 0 {
+                    let mut taken = self.take_from_slot(index, amount);
+                    bundle::insert(rules, &mut contents, &mut taken);
+                    bundle::write(rules, self.carried, &contents);
+                }
+                return true;
+            }
+            if !primary && slot_empty {
+                let Some(mut contents) = bundle::read(rules, self.carried) else {
+                    return false;
+                };
+                let Some(mut removed) = bundle::remove_first(&mut contents) else {
+                    return false;
+                };
+                if self.may_place(index, &removed) {
+                    let placed = removed.count.min(self.max_size(index, &removed));
+                    let mut put = removed.clone();
+                    put.count = placed;
+                    self.set(index, put);
+                    removed.count -= placed;
+                }
+                if !removed.is_empty() {
+                    bundle::insert(rules, &mut contents, &mut removed);
+                }
+                bundle::write(rules, self.carried, &contents);
+                return true;
+            }
+        }
+        if bundle::is_bundle(rules, self.get(index)) {
+            let Some(mut contents) = bundle::read(rules, self.get(index)) else {
+                return false;
+            };
+            if primary && !self.carried.is_empty() {
+                bundle::insert(rules, &mut contents, self.carried);
+                bundle::write(rules, self.get_mut(index), &contents);
+                return true;
+            }
+            if !primary
+                && self.carried.is_empty()
+                && let Some(removed) = bundle::remove_first(&mut contents)
+            {
+                *self.carried = removed;
+                bundle::write(rules, self.get_mut(index), &contents);
+                return true;
+            }
+        }
+        false
+    }
+
     fn pickup(&mut self, index: usize, primary: bool) {
+        if self.bundle_click(index, primary) {
+            return;
+        }
         if !self.may_take(index) {
             return;
         }

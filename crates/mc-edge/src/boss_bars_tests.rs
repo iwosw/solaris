@@ -153,3 +153,21 @@ fn raids_bar_add_health_victory_remove_and_reentry_are_snapshot_reliable() {
     baseline.sync_raids(connection, [0.0; 3], &[], &mut packets);
     assert_eq!(decode(&packets[0]), BossOperation::Remove);
 }
+
+#[test]
+fn clear_removes_every_shown_bar_and_resets_the_baseline() {
+    let mut baseline = BossBaseline::default();
+    let connection = ConnectionId(1);
+    let mut packets = Vec::new();
+    let entity = wither(100.0, 0);
+    baseline.sync(connection, std::iter::once(&entity), &mut packets);
+    packets.clear();
+    baseline.clear(connection, &mut packets);
+    assert_eq!(packets.len(), 1);
+    assert_eq!(decode(&packets[0]), BossOperation::Remove);
+    packets.clear();
+    baseline.clear(connection, &mut packets);
+    assert!(packets.is_empty());
+    baseline.sync(connection, std::iter::once(&entity), &mut packets);
+    assert!(matches!(decode(&packets[0]), BossOperation::Add { .. }));
+}

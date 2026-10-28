@@ -205,15 +205,7 @@ pub(crate) fn use_on(
         1.0,
     );
     let slot = state.entities.slot_of(id).expect("painting spawned");
-    let row = state.entities.row_mut(slot);
-    row.persistent = true;
-    let appearance = Arc::make_mut(&mut row.appearance);
-    appearance.spawn_data = i32::from(face);
-    appearance.extra = vec![
-        (8, EntityDataValue::Direction(face)),
-        (9, EntityDataValue::PaintingVariant(variant as u32)),
-    ];
-    restore(state, slot);
+    set(state, slot, face, variant as u32);
     state.hostile.spawned.push(id);
     let player = state.players.get_mut(&actor).expect("painting placer");
     let connection = player.connection;
@@ -222,6 +214,19 @@ pub(crate) fn use_on(
         state.push_player(connection, change);
     }
     true
+}
+/// Give a freshly spawned painting its journaled direction (`face` is the
+/// `Direction.get3DDataValue` 2..=5, also the `add_entity` data) and variant.
+pub(crate) fn set(state: &mut TickState, slot: EntitySlot, face: u8, variant: u32) {
+    let row = state.entities.row_mut(slot);
+    row.persistent = true;
+    let appearance = Arc::make_mut(&mut row.appearance);
+    appearance.spawn_data = i32::from(face);
+    appearance.extra = vec![
+        (8, EntityDataValue::Direction(face)),
+        (9, EntityDataValue::PaintingVariant(variant)),
+    ];
+    restore(state, slot);
 }
 pub(crate) fn restore(state: &mut TickState, slot: EntitySlot) {
     if !is_painting(state, slot) {
@@ -375,19 +380,22 @@ pub(crate) fn capture(
         }
     }
 }
-pub(crate) fn native_appearance(
+/// Vanilla `Painting` default when the summon NBT omits `variant`.
+pub(crate) const DEFAULT_VARIANT: &str = "minecraft:kebab";
+/// Vanilla `Painting.facing` byte (0 south, 1 west, 2 north, 3 east) to its
+/// direction 3D data value, which is also the `add_entity` data.
+const FACING_FACE: [u8; 4] = [3, 4, 2, 5];
+
+/// Direction (2..=5) and registry index of a native painting record.
+pub(crate) fn face_and_variant(
     record: &mc_data::entity_nbt::VanillaEntity,
-    image: &mut crate::journal::EntityAppearanceImage,
     registry: &crate::registry::CoreRegistry,
-) -> Result<(), crate::CoreError> {
-    if record.id != "minecraft:painting" {
-        return Ok(());
-    }
+) -> Result<(u8, u32), crate::CoreError> {
     use mc_data::item_nbt::field;
     use mc_nbt::Tag;
     let invalid = || crate::CoreError::Storage("invalid painting facing/variant".into());
     let face = match field(&record.extra_fields, "facing") {
-        Some(Tag::Byte(value)) if (0..4).contains(value) => [3, 4, 2, 5][*value as usize],
+        Some(Tag::Byte(value)) if (0..4).contains(value) => FACING_FACE[*value as usize],
         _ => return Err(invalid()),
     };
     let Some(Tag::String(name)) = field(&record.extra_fields, "variant") else {
@@ -398,14 +406,24 @@ pub(crate) fn native_appearance(
         .iter()
         .position(|v| v.name.as_str() == name)
         .ok_or_else(invalid)?;
-    image.spawn_data = face;
-    image.extra.push((
-        8,
-        crate::journal::EntityDataValueImage::Direction(face as u8),
-    ));
+    Ok((face, variant as u32))
+}
+pub(crate) fn native_appearance(
+    record: &mc_data::entity_nbt::VanillaEntity,
+    image: &mut crate::journal::EntityAppearanceImage,
+    registry: &crate::registry::CoreRegistry,
+) -> Result<(), crate::CoreError> {
+    if record.id != "minecraft:painting" {
+        return Ok(());
+    }
+    let (face, variant) = face_and_variant(record, registry)?;
+    image.spawn_data = i32::from(face);
+    image
+        .extra
+        .push((8, crate::journal::EntityDataValueImage::Direction(face)));
     image.extra.push((
         9,
-        crate::journal::EntityDataValueImage::PaintingVariant(variant as u32),
+        crate::journal::EntityDataValueImage::PaintingVariant(variant),
     ));
     Ok(())
 }

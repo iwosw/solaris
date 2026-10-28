@@ -12,6 +12,26 @@ pub(crate) struct BossBaseline {
     raids: FxHashMap<Uuid, (f32, &'static str)>,
 }
 impl BossBaseline {
+    /// The client keeps boss overlays across a dimension change: remove every
+    /// bar it was shown, then start from an empty baseline in the new level.
+    pub(crate) fn clear(&mut self, connection: ConnectionId, packets: &mut Vec<PlannedPacket>) {
+        for uuid in self
+            .known
+            .drain()
+            .map(|(uuid, _)| uuid)
+            .chain(self.raids.drain().map(|(uuid, _)| uuid))
+        {
+            push_reliable(
+                packets,
+                connection,
+                &ClientboundBossEvent {
+                    uuid,
+                    operation: BossOperation::Remove,
+                },
+            );
+        }
+    }
+
     pub(crate) fn sync<'a>(
         &mut self,
         connection: ConnectionId,

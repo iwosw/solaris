@@ -15,6 +15,8 @@ pub(crate) struct Image {
     equipment: Option<[Option<mc_data::ItemStack>; 6]>,
     /// The command supplied `UUID`; otherwise the spawn's derived uuid stands.
     uuid_authored: bool,
+    /// Painting direction (`add_entity` data 2..=5) and variant registry index.
+    painting: Option<(u8, u32)>,
 }
 fn error(text: impl Into<String>) -> CommandError {
     CommandError::Message(text.into())
@@ -223,6 +225,7 @@ pub(crate) fn prepare(
             "Small" | "ShowArms" | "NoBasePlate" | "Marker" | "Invisible" | "DisabledSlots"
             | "Pose" => name == "minecraft:armor_stand",
             "Size" => matches!(name, "minecraft:slime" | "minecraft:magma_cube"),
+            "facing" | "variant" => name == "minecraft:painting",
             "CustomName" | "CustomNameVisible" | "Invulnerable" | "Motion" | "Rotation"
             | "OnGround" | "Fire" | "FallDistance" | "UUID" | "id" | "Pos" => true,
             _ => {
@@ -271,6 +274,26 @@ pub(crate) fn prepare(
             "Age" => Tag::Int(number(value, key)?.clamp(i32::MIN as f64, i32::MAX as f64) as i32),
             // Vanilla Slime.setSize clamps the stored zero-based Size to 0..=126.
             "Size" => Tag::Int(number(value, key)?.clamp(0.0, 126.0) as i32),
+            "facing" => {
+                let v = number(value, key)?;
+                if v.fract() != 0.0 || !(0.0..=3.0).contains(&v) {
+                    return Err(error(
+                        "Invalid painting facing: expected 0 (south), 1 (west), 2 (north) or 3 (east)",
+                    ));
+                }
+                Tag::Byte(v as i8)
+            }
+            "variant" => {
+                let Tag::String(raw) = value else {
+                    return Err(error("Invalid variant: expected string"));
+                };
+                let id = mc_data::Identifier::parse(raw.clone())
+                    .map_err(|_| error(format!("Invalid painting variant {raw}")))?;
+                if !state.registry.paintings.iter().any(|v| v.name == id) {
+                    return Err(error(format!("Unknown painting variant {raw}")));
+                }
+                Tag::String(id.as_str().into())
+            }
             "DisabledSlots" => {
                 Tag::Int(number(value, key)?.clamp(i32::MIN as f64, i32::MAX as f64) as i32)
             }
@@ -465,6 +488,18 @@ pub(crate) fn prepare(
         };
         fields.push((key.clone(), value));
     }
+    if name == "minecraft:painting" {
+        // Vanilla Painting defaults: facing south, the default variant.
+        if !fields.iter().any(|(key, _)| key == "facing") {
+            fields.push(("facing".into(), Tag::Byte(0)));
+        }
+        if !fields.iter().any(|(key, _)| key == "variant") {
+            fields.push((
+                "variant".into(),
+                Tag::String(crate::painting::DEFAULT_VARIANT.into()),
+            ));
+        }
+    }
     let uuid_authored = fields.iter().any(|(key, _)| key == "UUID");
     let base = VanillaEntity {
         id: name.into(),
@@ -478,6 +513,14 @@ pub(crate) fn prepare(
     };
     let native = mc_data::entity_nbt::entity_from_fields(&state.registry.items, base, &fields)
         .map_err(|e| error(e.to_string()))?;
+    let painting = if name == "minecraft:painting" {
+        Some(
+            crate::painting::face_and_variant(&native, &state.registry)
+                .map_err(|e| error(e.to_string()))?,
+        )
+    } else {
+        None
+    };
     let image = EntityStateImage::from_record(&state.registry, &native)
         .map_err(|e| error(e.to_string()))?;
     let equipment = if authored.iter().any(|(key, _)| key == "equipment") {
@@ -512,6 +555,7 @@ pub(crate) fn prepare(
         villager,
         equipment,
         uuid_authored,
+        painting,
     })
 }
 pub(crate) fn apply(state: &mut TickState, id: EntityId, mut image: Image) {
@@ -630,6 +674,9 @@ pub(crate) fn apply(state: &mut TickState, id: EntityId, mut image: Image) {
     }
     crate::entity_loot::restore(state, slot);
     crate::armor_stand::restore(state, slot);
+    if let Some((face, variant)) = image.painting {
+        crate::painting::set(state, slot, face, variant);
+    }
     crate::taming::sync(state, slot);
     crate::villager::sync_appearance(state, slot);
     state.appearance_changed.push(id);
@@ -642,3 +689,7 @@ mod tests;
 #[cfg(test)]
 #[path = "command_summon_age_tests.rs"]
 mod age_tests;
+
+#[cfg(test)]
+#[path = "command_summon_hanging_tests.rs"]
+mod hanging_tests;

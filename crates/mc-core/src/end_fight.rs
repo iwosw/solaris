@@ -354,6 +354,7 @@ pub(crate) fn run(state: &mut TickState, intents: &mut Vec<Intent>, changes: &mu
 
 pub(crate) fn commit(state: &mut TickState, changes: &mut ChangeSet) {
     if state.dimension != crate::dimensions::Dimension::End {
+        lone_death_tick(state, changes);
         return;
     }
     if let Some(uuid) = state.end_fight.flame_cloud {
@@ -455,24 +456,12 @@ fn sync_crystals(state: &mut TickState) {
 fn death_tick(state: &mut TickState, changes: &mut ChangeSet, slot: EntitySlot) {
     state.end_fight.death_ticks += 1;
     let time = state.end_fight.death_ticks;
-    let mut at = state.entities.pos(slot);
-    at[1] += 0.1;
-    state.entities.set_pos(slot, at);
-    metadata(state, slot, 16, EntityDataValue::VarInt(9));
     let xp = if state.end_fight.previously_killed {
         500
     } else {
         12000
     };
-    if crate::command_rules::boolean(state, crate::command_rules::BoolRule::MOB_DROPS) {
-        if time > 150 && time.is_multiple_of(5) {
-            crate::experience_orbs::award(state, at, xp * 8 / 100, &mut changes.entities_spawned);
-        }
-        if time == 200 {
-            crate::experience_orbs::award(state, at, xp * 20 / 100, &mut changes.entities_spawned);
-        }
-    }
-    if time != 200 {
+    if !animate_death(state, changes, slot, time, xp) {
         return;
     }
     let id = state.entities.body(slot).id;
@@ -489,6 +478,56 @@ fn death_tick(state: &mut TickState, changes: &mut ChangeSet, slot: EntitySlot) 
     state.end_fight.dragon_killed = true;
     state.end_fight.previously_killed = true;
     state.end_fight.healing_crystal = None;
+}
+
+/// Vanilla `EnderDragon.tickDeath` outside the End: no fight owns the death, so the
+/// same 200-tick animation (500 xp, no portal, egg or gateway) removes the dragon.
+fn lone_death_tick(state: &mut TickState, changes: &mut ChangeSet) {
+    let dragon = type_id(state, "minecraft:ender_dragon");
+    let dying: Vec<EntitySlot> = state
+        .entities
+        .mob_slots(dragon)
+        .filter(|&slot| state.entities.row(slot).health <= 0.0)
+        .collect();
+    if dying.is_empty() {
+        return;
+    }
+    state.end_fight.death_ticks += 1;
+    let time = state.end_fight.death_ticks;
+    for slot in dying {
+        if animate_death(state, changes, slot, time, 500) {
+            let id = state.entities.body(slot).id;
+            state.remove_entity(slot);
+            changes.entities_removed.push(id);
+        }
+    }
+    if time == 200 {
+        state.end_fight.death_ticks = 0;
+        state.end_fight.phase(Phase::Circling);
+    }
+}
+
+/// One tick of the dragon death animation; true on the final tick (the caller removes it).
+fn animate_death(
+    state: &mut TickState,
+    changes: &mut ChangeSet,
+    slot: EntitySlot,
+    time: u16,
+    xp: i32,
+) -> bool {
+    let mut at = state.entities.pos(slot);
+    at[1] += 0.1;
+    state.entities.set_pos(slot, at);
+    metadata(state, slot, 16, EntityDataValue::VarInt(9));
+    if crate::command_rules::boolean(state, crate::command_rules::BoolRule::MOB_DROPS) {
+        if time > 150 && time.is_multiple_of(5) {
+            crate::experience_orbs::award(state, at, xp * 8 / 100, &mut changes.entities_spawned);
+        }
+        if time == 200 {
+            crate::experience_orbs::award(state, at, xp * 20 / 100, &mut changes.entities_spawned);
+        }
+    }
+    time == 200
 }
 
 fn try_respawn(state: &mut TickState, changes: &mut ChangeSet) {

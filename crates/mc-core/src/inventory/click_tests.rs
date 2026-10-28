@@ -21,6 +21,7 @@ pub(super) const COAL: u32 = 8;
 pub(super) const LAVA_BUCKET: u32 = 9;
 pub(super) const RAW_IRON: u32 = 10;
 pub(super) const IRON_INGOT: u32 = 11;
+pub(super) const BUNDLE: u32 = 12;
 
 fn id(name: &str) -> Identifier {
     Identifier::parse(format!("minecraft:{name}")).unwrap()
@@ -47,6 +48,7 @@ impl Data {
             (LAVA_BUCKET, "lava_bucket"),
             (RAW_IRON, "raw_iron"),
             (IRON_INGOT, "iron_ingot"),
+            (BUNDLE, "bundle"),
         ];
         let items = ItemRegistry::from_report(
             &names
@@ -69,6 +71,7 @@ impl Data {
             (id("coal"), stackable(64)),
             (id("raw_iron"), stackable(64)),
             (id("iron_ingot"), stackable(64)),
+            (id("bundle"), stackable(1)),
             (id("bucket"), stackable(16)),
             (id("water_bucket"), stackable(1)),
             (id("lava_bucket"), stackable(1)),

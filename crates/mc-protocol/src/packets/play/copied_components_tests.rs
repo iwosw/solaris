@@ -435,7 +435,6 @@ const UNSUPPORTED: &[&str] = &[
     "minecraft:llama/variant",
     "minecraft:lodestone_tracker",
     "minecraft:map_decorations",
-    "minecraft:map_id",
     "minecraft:map_post_processing",
     "minecraft:max_stack_size",
     "minecraft:minimum_attack_charge",
@@ -644,4 +643,11 @@ fn crafted_dyed_leather_boots_reach_the_client_with_the_blended_component() {
         mc_data::item_nbt::field(components, "minecraft:dyed_color"),
         Some(&Tag::Int(0x9d22d4))
     );
+}
+
+#[test]
+fn map_id_is_a_varint_so_a_filled_map_can_reach_the_client() {
+    // MapId.STREAM_CODEC is a VarInt; 300 needs two bytes.
+    fixture("minecraft:map_id", Tag::Int(300), vec![0xac, 0x02]);
+    fixture("minecraft:map_id", Tag::Int(0), vec![0]);
 }

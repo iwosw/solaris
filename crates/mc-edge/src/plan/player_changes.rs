@@ -900,7 +900,7 @@ fn plan_respawn(respawn: &Respawn, viewer: &mut ViewerState, out: &mut Vec<Plann
         viewer.block_entity_updates.clear();
         viewer.light_baseline = Default::default();
         viewer.weather_baseline = Default::default();
-        viewer.boss_baseline = Default::default();
+        viewer.boss_baseline.clear(conn, out);
         viewer.border_baseline = None;
         viewer.center_sent = None;
         viewer.forget_all = false;

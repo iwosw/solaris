@@ -276,3 +276,42 @@ fn command_copper_family_transforms_preserve_existing_custody_like_world_writes(
         assert_eq!(state.block_entities[&(8, 201, 8)].slots[26], diamond);
     }
 }
+
+#[test]
+fn setblock_with_nbt_sends_the_block_entity_to_connected_viewers() {
+    let (mut state, actor) = fixture(None);
+    let pos = BlockPos { x: 8, y: 201, z: 8 };
+    command(
+        &mut state,
+        actor,
+        "setblock 8 201 8 oak_sign{front_text:{messages:[\"Hello\",\"\",\"\",\"\"]}}",
+    );
+    let writes = state.merge_block_writes.clone();
+    assert_eq!(writes.len(), 1);
+    for &(pos, id) in &writes {
+        state.world.set_block(pos.x, pos.y, pos.z, id);
+    }
+    state.world.fold_overlay();
+    state.outbox.clear();
+    state.commit_merge_effects();
+    let sent: Vec<_> = state
+        .outbox
+        .values()
+        .flatten()
+        .filter_map(|change| match change {
+            crate::boundary::PlayerChange::BlockEntityData {
+                position,
+                block_entity_type,
+                nbt,
+            } if *position == pos => Some((*block_entity_type, nbt.clone())),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(sent.len(), 1, "one BlockEntityData for the viewer");
+    assert_eq!(sent[0].0, BlockEntityKind::Sign.protocol_id());
+    let Tag::Compound(fields) = &sent[0].1 else {
+        panic!("update tag is a compound");
+    };
+    assert!(mc_data::item_nbt::field(fields, "front_text").is_some());
+    assert!(mc_data::item_nbt::field(fields, "x").is_none());
+}
