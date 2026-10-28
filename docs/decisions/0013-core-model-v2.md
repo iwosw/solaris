@@ -3227,6 +3227,17 @@ Block edits use the existing commit/journal/container paths and reject fills
 above `max_block_modifications` (32,768 by default) before mutation. Forced spawn points and world spawn rotation
 survive checkpoint/recovery. Command feedback uses vanilla translatable components.
 
+The limited command-locality pilot keeps the closed `Command` enum and static
+dispatcher. `command_feedback.rs` only builds neutral text/translatable NBT;
+callers retain styling, translation keys, argument order and delivery. The
+existing `command_enchant.rs` owns enchant parsing, held-item validation and
+local target orchestration. It still uses `Player::apply_command` and the
+existing tick-owned `apply_player_effects` path, without moving inventory,
+commit, world-custody or protocol authority. Shared selector/name/delivery
+helpers remain in `command_execution.rs`; other families are not migrated.
+Current permission admission and command-result/store behavior are preserved,
+including the separately characterized nested-tick and difficulty-query gaps.
+
 `/advancement grant|revoke <targets>` supports `everything`, `only <id>
 [criterion]`, `from <id>`, `through <id>` and `until <id>`. `from` selects the
 named node and descendants, `until` its ancestors and itself, and `through`

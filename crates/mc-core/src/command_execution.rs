@@ -66,7 +66,7 @@ pub(crate) fn feedback(
     );
 }
 
-fn error(state: &mut TickState, connection: ConnectionId, message: impl Into<String>) {
+pub(crate) fn error(state: &mut TickState, connection: ConnectionId, message: impl Into<String>) {
     state.push_player(
         connection,
         PlayerChange::Chat {
@@ -159,7 +159,7 @@ pub(crate) fn entity_name(state: &TickState, entity: EntityId) -> Tag {
     translated(format!("entity.{name}"), Vec::new())
 }
 
-fn targets_label(state: &TickState, targets: &[EntityId]) -> Tag {
+pub(crate) fn targets_label(state: &TickState, targets: &[EntityId]) -> Tag {
     if targets.len() == 1 {
         entity_name(state, targets[0])
     } else {
@@ -452,78 +452,14 @@ pub(crate) fn execute(
             return Success(amount);
         }
         Command::Enchant(enchant_command) => {
-            let targets = resolve_target(state, executor, &enchant_command.target);
-            if targets.is_empty() {
-                feedback(
-                    state,
-                    connection,
-                    "argument.entity.notfound.entity",
-                    Vec::new(),
-                );
-                return Failed;
-            }
-            let single = targets.len() == 1;
-            let mut successful = Vec::new();
-            for target in targets {
-                let Some(player) = state.players.get(&target) else {
-                    if single {
-                        feedback(
-                            state,
-                            connection,
-                            "commands.enchant.failed.itemless",
-                            vec![entity_name(state, target)],
-                        );
-                        return Failed;
-                    }
-                    continue;
-                };
-                if let Err(message) = crate::command_enchant::validate(
-                    &state.registry.item_rules(),
-                    &player.inventory,
-                    enchant_command,
-                ) {
-                    if single {
-                        error(state, connection, message);
-                    }
-                    continue;
-                }
-                let effects = state
-                    .players
-                    .get_mut(&target)
-                    .expect("checked player exists")
-                    .apply_command(&state.registry.item_rules(), command);
-                if let Some(target_connection) = state.connections.entity_connection(target) {
-                    crate::tick::apply_player_effects(
-                        state,
-                        target_connection,
-                        target,
-                        effects,
-                        changes,
-                    );
-                }
-                successful.push(target);
-            }
-            if !successful.is_empty() {
-                let enchantment = translated(
-                    format!(
-                        "enchantment.{}",
-                        enchant_command.enchantment.as_str().replace(':', ".")
-                    ),
-                    Vec::new(),
-                );
-                feedback(
-                    state,
-                    connection,
-                    if successful.len() == 1 {
-                        "commands.enchant.success.single"
-                    } else {
-                        "commands.enchant.success.multiple"
-                    },
-                    vec![enchantment, targets_label(state, &successful)],
-                );
-            } else if !single {
-                feedback(state, connection, "commands.enchant.failed", Vec::new());
-            }
+            return crate::command_enchant::execute(
+                state,
+                connection,
+                executor,
+                command,
+                enchant_command,
+                changes,
+            );
         }
         Command::DebugGive {
             item,
