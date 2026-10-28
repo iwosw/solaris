@@ -1,4 +1,4 @@
-use crate::boundary::{ConnectionId, EntityId, PlayerInput};
+use crate::boundary::{ConnectionId, EntityDataValue, EntityId, PlayerInput};
 use crate::entities::EntityKind;
 use crate::entity_loot::*;
 use crate::intent::DamageSource;
@@ -1056,6 +1056,19 @@ fn slime_sizes_scale_health_attack_hitboxes_and_spawn_only_vanilla_sizes() {
                 .unwrap();
             assert_eq!(body.half_width, bp.half_width * f64::from(size));
             assert_eq!(body.height, bp.height * f64::from(size));
+            assert!(
+                row.appearance
+                    .extra
+                    .contains(&(18, EntityDataValue::VarInt(i32::from(size))))
+            );
+            assert!(
+                !row.appearance
+                    .extra
+                    .iter()
+                    .any(|(index, value)| *index == 16
+                        && matches!(value, EntityDataValue::VarInt(_))),
+                "slime size must not overwrite AgeableMob's baby Boolean at index 16"
+            );
             assert!(
                 to_fields(&row.loot)
                     .contains(&("Size".into(), mc_nbt::Tag::Int(i32::from(size) - 1)))

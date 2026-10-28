@@ -8,11 +8,12 @@
 //! publication, leaving the previous cache untouched on derivation failure.
 //!
 //! A cache joins two bundles. The target release supplies every protocol
-//! identity: `version.json`, the datagen reports, the per-state extractor
-//! reports and the captured RegistryData. The gameplay data pack (worldgen,
-//! loot, recipes, advancements, tags, structures, registry definitions) comes
-//! from [`GAMEPLAY_DATAPACK_RELEASE`], whose JSON grammar Solaris's loaders
-//! read; its `version.json` is kept as `gameplay_version.json`.
+//! identity: `version.json`, the datagen reports, the per-state extractor,
+//! captured `RegistryData`, and client block plus structural block-as-item
+//! tags. The gameplay data pack (worldgen, loot, recipes, advancements,
+//! remaining tags, structures, registry definitions) comes from
+//! [`GAMEPLAY_DATAPACK_RELEASE`], whose JSON grammar Solaris's loaders read;
+//! its `version.json` is kept as `gameplay_version.json`.
 //!
 //! Nothing here reads a repo shell script and nothing rewrites existing content
 //! in place: the installer is the only writer, and it writes a staging tree
@@ -305,6 +306,7 @@ async fn derive_into(request: &ImportRequest, staging: &Path) -> Result<ImportRe
     let bundle = unpack_bundle(&jar, &identity_work)?;
     let gameplay = unpack_bundle(&gameplay_jar, &gameplay_work)?;
     copy_data_subset(&gameplay.inner_jar, staging)?;
+    copy_client_tag_subset(&bundle.inner_jar, staging)?;
     run_datagen(&java, &jar, &identity_work, staging)?;
     run_java_extractors(
         &java,
@@ -696,6 +698,20 @@ fn install_version_json(jar: &Path, expected: &str, version_file: &Path) -> Resu
 }
 
 fn copy_data_subset(inner_jar: &Path, staging: &Path) -> Result<()> {
+    copy_data_entries(inner_jar, staging, wanted_data_entry)
+}
+
+/// Overwrite block tags and the structural item tags the client treats as
+/// block-as-item classifications. All gameplay item tags remain from 26.1.2.
+fn copy_client_tag_subset(inner_jar: &Path, staging: &Path) -> Result<()> {
+    copy_data_entries(inner_jar, staging, wanted_client_tag_entry)
+}
+
+fn copy_data_entries(
+    inner_jar: &Path,
+    staging: &Path,
+    wanted: fn(&str) -> Option<PathBuf>,
+) -> Result<()> {
     let minecraft = staging.join("data").join("minecraft");
     fs::create_dir_all(&minecraft).with_context(|| format!("create {}", minecraft.display()))?;
     let mut archive = zip::ZipArchive::new(
@@ -708,7 +724,7 @@ fn copy_data_subset(inner_jar: &Path, staging: &Path) -> Result<()> {
             .by_index(index)
             .with_context(|| format!("read entry {index} of {}", inner_jar.display()))?;
         let name = entry.name().to_owned();
-        let Some(relative) = wanted_data_entry(&name) else {
+        let Some(relative) = wanted(&name) else {
             continue;
         };
         let dest = minecraft.join(relative);
@@ -747,6 +763,41 @@ fn wanted_data_entry(name: &str) -> Option<PathBuf> {
                 .nth(1)
                 .is_some_and(|dir| WORLDGEN_DIRS.contains(&dir)));
     keep.then(|| PathBuf::from(relative))
+}
+
+/// Target-release block tags and structural block-as-item classifications.
+/// Other item tags remain with the 26.1.2 gameplay data pack so fuel, recipes,
+/// loot, and worldgen retain the pinned gameplay semantics.
+fn wanted_client_tag_entry(name: &str) -> Option<PathBuf> {
+    let relative = name.strip_prefix("data/minecraft/")?;
+    let path = Path::new(relative);
+    if path
+        .components()
+        .any(|component| !matches!(component, std::path::Component::Normal(_)))
+    {
+        return None;
+    }
+    let mut components = path.components();
+    if components.next()?.as_os_str() != "tags" {
+        return None;
+    }
+    match components.next()?.as_os_str().to_str()? {
+        "block" => Some(PathBuf::from(relative)),
+        "item" => matches!(
+            components.next()?.as_os_str().to_str()?,
+            "slabs.json"
+                | "stairs.json"
+                | "walls.json"
+                | "wool.json"
+                | "concrete.json"
+                | "wool_slabs.json"
+                | "concrete_slabs.json"
+                | "wool_stairs.json"
+                | "concrete_stairs.json"
+        )
+        .then(|| PathBuf::from(relative)),
+        _ => None,
+    }
 }
 
 fn run_datagen(java: &OsStr, jar: &Path, work: &Path, staging: &Path) -> Result<()> {

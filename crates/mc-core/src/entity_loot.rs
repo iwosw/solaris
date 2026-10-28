@@ -602,10 +602,10 @@ pub(crate) fn restore(state: &mut TickState, slot: EntitySlot) {
         row.loot.slime_size = Some(size);
         body.height = height * f64::from(size);
         let appearance = std::sync::Arc::make_mut(&mut row.appearance);
-        appearance.extra.retain(|(index, _)| *index != 16);
+        appearance.extra.retain(|(index, _)| *index != 18);
         appearance
             .extra
-            .push((16, EntityDataValue::VarInt(i32::from(size))));
+            .push((18, EntityDataValue::VarInt(i32::from(size))));
     }
     let rules = state.registry.item_rules();
     row.speed = (effective_attribute(&rules, row, "movement_speed", speed) * 10.0) as f32;

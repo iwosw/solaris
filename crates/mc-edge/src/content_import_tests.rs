@@ -3,9 +3,9 @@ use std::path::Path;
 
 use super::{
     ContentSource, GAMEPLAY_DATAPACK_RELEASE, GAMEPLAY_VERSION_FILE, ImportReport, ImportRequest,
-    finish_import, import_content, install_version_json, manifest_version_entry,
-    parse_version_metadata, publish, require_target_version, stage_local_jar, staging_dir,
-    wanted_data_entry,
+    copy_client_tag_subset, finish_import, import_content, install_version_json,
+    manifest_version_entry, parse_version_metadata, publish, require_target_version,
+    stage_local_jar, staging_dir, wanted_data_entry,
 };
 use crate::content_cache::tests::write_valid_cache;
 
@@ -268,6 +268,32 @@ fn extraction_selects_consumed_content_and_rejects_path_traversal() {
     assert!(wanted_data_entry("data/minecraft/lang/en_us.json").is_none());
     assert!(wanted_data_entry("data/minecraft/tags/../../escape.json").is_none());
     assert!(wanted_data_entry("../data/minecraft/recipe/stick.json").is_none());
+}
+
+#[test]
+fn identity_tag_extraction_overrides_only_client_block_and_item_tags() {
+    let source = tempfile::tempdir().unwrap();
+    let jar = source.path().join("identity.jar");
+    let file = std::fs::File::create(&jar).unwrap();
+    let mut archive = zip::ZipWriter::new(file);
+    for name in [
+        "data/minecraft/tags/block/mineable/pickaxe.json",
+        "data/minecraft/tags/item/slabs.json",
+        "data/minecraft/tags/worldgen/biome/is_overworld.json",
+    ] {
+        archive
+            .start_file(name, zip::write::SimpleFileOptions::default())
+            .unwrap();
+        archive.write_all(br#"{"values":[]}"#).unwrap();
+    }
+    archive.finish().unwrap();
+
+    let staging = tempfile::tempdir().unwrap();
+    copy_client_tag_subset(&jar, staging.path()).unwrap();
+    let minecraft = staging.path().join("data/minecraft/tags");
+    assert!(minecraft.join("block/mineable/pickaxe.json").is_file());
+    assert!(minecraft.join("item/slabs.json").is_file());
+    assert!(!minecraft.join("worldgen/biome/is_overworld.json").exists());
 }
 
 #[test]
