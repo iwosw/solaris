@@ -1,0 +1,59 @@
+{
+  "parity_commit": "85df594b",
+  "execution_head": "db0ba531c84c1daeea873ab8d22614968d3eae23",
+  "provenance_note": "Final release executable was built from the revision-30 changes, committed after this comparison was launched. execution_head is the launch-time checkout HEAD, not the compiled-source identity.",
+  "final_server_sha256": "a2ca60290a7c3c7b560125c7d2ee23bcd28ccb5781f14775e26a689616326375",
+  "seeds": {
+    "0": {
+      "baseline_exact_pct": 90.133,
+      "revision30_exact_pct": 91.267,
+      "improvement_percentage_points_rounded": 1.134,
+      "baseline_nonair_pct": 71.483,
+      "revision30_nonair_pct": 74.763,
+      "unchanged": {
+        "surface_height": true,
+        "biome_match_pct": true,
+        "biome_confusion_top": true,
+        "structures": true,
+        "shape": true
+      },
+      "deepslate_to_stone_confusion_before": 1578103,
+      "deepslate_to_stone_confusion_after": 218606,
+      "final_exact_state_mismatch_cells": 8790792
+    },
+    "81": {
+      "baseline_exact_pct": 90.169,
+      "revision30_exact_pct": 91.238,
+      "improvement_percentage_points_rounded": 1.069,
+      "baseline_nonair_pct": 69.172,
+      "revision30_nonair_pct": 72.527,
+      "unchanged": {
+        "surface_height": true,
+        "biome_match_pct": true,
+        "biome_confusion_top": true,
+        "structures": true,
+        "shape": true
+      },
+      "deepslate_to_stone_confusion_before": 1498976,
+      "deepslate_to_stone_confusion_after": 211032,
+      "final_exact_state_mismatch_cells": 8820414
+    },
+    "497625": {
+      "baseline_exact_pct": 90.115,
+      "revision30_exact_pct": 91.104,
+      "improvement_percentage_points_rounded": 0.989,
+      "baseline_nonair_pct": 70.775,
+      "revision30_nonair_pct": 73.699,
+      "unchanged": {
+        "surface_height": true,
+        "biome_match_pct": true,
+        "biome_confusion_top": true,
+        "structures": true,
+        "shape": true
+      },
+      "deepslate_to_stone_confusion_before": 1392862,
+      "deepslate_to_stone_confusion_after": 199373,
+      "final_exact_state_mismatch_cells": 8955361
+    }
+  }
+}

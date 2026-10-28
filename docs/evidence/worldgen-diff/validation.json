@@ -1,0 +1,101 @@
+{
+  "worldgen_revision": 30,
+  "checks": [
+    {
+      "name": "worldgen-tests",
+      "command": [
+        "/home/kaiserroman/solaris/.analysis/tools/mem-run.sh",
+        "-m",
+        "6G",
+        "env",
+        "RUSTC_WRAPPER=",
+        "CARGO_TARGET_DIR=/run/media/kaiserroman/games/solaris-work/targets/worldgen",
+        "env",
+        "SOLARIS_LOD_PROGRAM_FIXTURE=/run/media/kaiserroman/games/solaris-work/wt/worldgen/.analysis/worldgen-diff/revision30-far-fixture.zlib",
+        "cargo",
+        "test",
+        "--release",
+        "-p",
+        "mc-worldgen",
+        "--lib",
+        "--",
+        "--test-threads=2"
+      ],
+      "exit": 0,
+      "log": "/run/media/kaiserroman/games/solaris-work/wt/worldgen/.analysis/worldgen-diff/worldgen-tests.log"
+    },
+    {
+      "name": "upgrade29-30",
+      "command": [
+        "/home/kaiserroman/solaris/.analysis/tools/mem-run.sh",
+        "-m",
+        "6G",
+        "env",
+        "RUSTC_WRAPPER=",
+        "CARGO_TARGET_DIR=/run/media/kaiserroman/games/solaris-work/targets/worldgen",
+        "cargo",
+        "test",
+        "--release",
+        "-p",
+        "mc-core",
+        "--lib",
+        "older_revision_world_is_refused_then_upgraded_and_opens",
+        "--",
+        "--nocapture"
+      ],
+      "exit": 0,
+      "log": "/run/media/kaiserroman/games/solaris-work/wt/worldgen/.analysis/worldgen-diff/upgrade29-30.log"
+    },
+    {
+      "name": "worldgen-clippy",
+      "command": [
+        "/home/kaiserroman/solaris/.analysis/tools/mem-run.sh",
+        "-m",
+        "6G",
+        "env",
+        "RUSTC_WRAPPER=",
+        "CARGO_TARGET_DIR=/run/media/kaiserroman/games/solaris-work/targets/worldgen",
+        "cargo",
+        "clippy",
+        "--release",
+        "-p",
+        "mc-worldgen",
+        "--all-targets",
+        "--no-deps",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "exit": 0,
+      "log": "/run/media/kaiserroman/games/solaris-work/wt/worldgen/.analysis/worldgen-diff/worldgen-clippy.log"
+    },
+    {
+      "name": "server-build",
+      "command": [
+        "/home/kaiserroman/solaris/.analysis/tools/mem-run.sh",
+        "-m",
+        "6G",
+        "env",
+        "RUSTC_WRAPPER=",
+        "CARGO_TARGET_DIR=/run/media/kaiserroman/games/solaris-work/targets/worldgen",
+        "cargo",
+        "build",
+        "--release",
+        "-p",
+        "mc-edge",
+        "--bin",
+        "solaris-v2"
+      ],
+      "exit": 0,
+      "log": "/run/media/kaiserroman/games/solaris-work/wt/worldgen/.analysis/worldgen-diff/server-build.log"
+    }
+  ],
+  "client_far_fixture": {
+    "path": "/run/media/kaiserroman/games/solaris-work/wt/client-input/tests/fixtures/far-program-seed81.zlib",
+    "primary_checkout_fixture_missing": true,
+    "decompressed_bytes": 180401,
+    "new_sha256": "910bb02370cd868fe4c235898c8e374e3a99eb3aa044568527e73f45648d8d02",
+    "pinned_fixture_sha256": "910bb02370cd868fe4c235898c8e374e3a99eb3aa044568527e73f45648d8d02",
+    "unchanged": true
+  }
+}

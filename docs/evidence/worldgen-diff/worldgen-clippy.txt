@@ -1,0 +1,59 @@
+mem-run: scope -p MemoryMax=6G -p MemorySwapMax=1G -p CPUQuota=600% -p CPUWeight=50 nice=19 exclusive=0 perf=0 cpus=all slice=solaris-heavy.slice target=/run/media/kaiserroman/games/solaris-work/targets/worldgen expect=4096MiB key='cargo clippy --release -p mc-worldgen --all-targets --no-deps -- -D warnings'
+    Checking serde_core v1.0.228
+    Checking serde v1.0.228
+    Checking typenum v1.20.0
+    Checking generic-array v0.14.7
+    Checking bytemuck v1.25.1
+    Checking once_cell v1.21.4
+    Checking cfg-if v1.0.4
+    Checking thiserror v2.0.18
+    Checking zmij v1.0.21
+    Checking tracing-core v0.1.36
+    Checking zstd-sys v2.0.16+zstd.1.5.7
+    Checking block-buffer v0.10.4
+    Checking crypto-common v0.1.7
+    Checking bytes v1.11.1
+    Checking itoa v1.0.18
+    Checking hashbrown v0.17.1
+    Checking equivalent v1.0.2
+    Checking memchr v2.8.0
+    Checking pin-project-lite v0.2.17
+    Checking tracing v0.1.44
+    Checking serde_json v1.0.149
+    Checking indexmap v2.14.0
+    Checking mc-nbt v0.0.8 (/run/media/kaiserroman/games/solaris-work/wt/worldgen/crates/mc-nbt)
+    Checking digest v0.10.7
+    Checking zstd-safe v7.2.4
+    Checking safe_arch v1.0.0
+    Checking toml_datetime v0.6.11
+    Checking serde_spanned v0.6.9
+    Checking uuid v1.23.1
+    Checking twox-hash v2.1.2
+    Checking winnow v0.7.15
+    Checking toml_write v0.1.2
+    Checking mc-domain v0.0.8 (/run/media/kaiserroman/games/solaris-work/wt/worldgen/crates/mc-domain)
+    Checking zlib-rs v0.6.6
+    Checking same-file v1.0.6
+    Checking mc-data v0.0.8 (/run/media/kaiserroman/games/solaris-work/wt/worldgen/crates/mc-data)
+    Checking flate2 v1.1.9
+    Checking toml_edit v0.22.27
+    Checking lz4_flex v0.11.6
+    Checking wide v1.5.0
+    Checking zstd v0.13.3
+    Checking redb v3.1.0
+    Checking rustc-hash v2.1.3
+    Checking cpufeatures v0.2.17
+    Checking sha2 v0.10.9
+    Checking toml v0.8.23
+    Checking anyhow v1.0.104
+    Checking mc-world v0.0.8 (/run/media/kaiserroman/games/solaris-work/wt/worldgen/crates/mc-world)
+    Checking md-5 v0.10.6
+    Checking libc v0.2.186
+    Checking bitflags v2.11.1
+    Checking linux-raw-sys v0.12.1
+    Checking rustix v1.1.4
+    Checking getrandom v0.4.2
+    Checking fastrand v2.4.1
+    Checking tempfile v3.27.0
+    Checking mc-worldgen v0.0.8 (/run/media/kaiserroman/games/solaris-work/wt/worldgen/crates/mc-worldgen)
+    Finished `release` profile [optimized] target(s) in 57.22s

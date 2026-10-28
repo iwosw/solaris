@@ -1,0 +1,2158 @@
+{
+  "command": "/usr/bin/python3 -m tools.worldgen_diff --server-bin /run/media/kaiserroman/games/solaris-work/targets/worldgen/release/solaris-v2 --vanilla-jar /home/kaiserroman/solaris/.analysis/server.jar --data-dir /run/media/kaiserroman/games/solaris-work/wt/worldgen/data/vanilla --out .analysis/worldgen-diff/full-final",
+  "created_utc": "2026-10-28T06:02:17Z",
+  "solaris_head": "db0ba531c84c1daeea873ab8d22614968d3eae23",
+  "server_bin": "/run/media/kaiserroman/games/solaris-work/targets/worldgen/release/solaris-v2",
+  "server_bin_sha256": "a2ca60290a7c3c7b560125c7d2ee23bcd28ccb5781f14775e26a689616326375",
+  "vanilla_bundle": "/home/kaiserroman/solaris/.analysis/server.jar",
+  "vanilla_bundle_sha256": "cd47e7c38328f64768fd17af8fcd8b22496b40b63d4ffee81e71ae059fedcb42",
+  "chunks": 1024,
+  "seeds": {
+    "0": {
+      "chunk_min": [
+        -18,
+        -16
+      ],
+      "chunk_max": [
+        13,
+        15
+      ],
+      "vanilla": {
+        "engine": "vanilla",
+        "seed": 0,
+        "world": "/run/media/kaiserroman/games/solaris-work/wt/worldgen/.analysis/worldgen-diff/vanilla-cache/vanilla-0--18_-16-13_15/world",
+        "bundle": "/home/kaiserroman/solaris/.analysis/server.jar",
+        "bundle_sha256": "cd47e7c38328f64768fd17af8fcd8b22496b40b63d4ffee81e71ae059fedcb42",
+        "spawn": {
+          "pos": [
+            -32,
+            69,
+            0
+          ],
+          "pitch": 0.0,
+          "dimension": "minecraft:overworld",
+          "yaw": 0.0
+        },
+        "heap": "3G",
+        "startup_s": 27.596,
+        "generate_s": 63.671,
+        "save_s": 22.885,
+        "readiness_checks": 63,
+        "requested_chunks": 1024,
+        "note": "tick-frozen; forceload also generates a FULL halo beyond the requested chunks, so requested chunks/s understates raw generator throughput",
+        "cached": true
+      },
+      "solaris": {
+        "engine": "solaris",
+        "seed": 0,
+        "world": "/run/media/kaiserroman/games/solaris-work/wt/worldgen/.analysis/worldgen-diff/full-final/solaris-0/anvil",
+        "server_bin": "/run/media/kaiserroman/games/solaris-work/targets/worldgen/release/solaris-v2",
+        "pregenerate_wall_s": 39.228,
+        "setup_s": 9.1,
+        "generate_s": 26.8,
+        "pregenerate_summary": "pregenerate complete: chunks [-18,-16]..[13,15] around block (-40,-8), 1024 chunks, 1024 generated, 0 already stored, 35.9s",
+        "requested_chunks": 1024,
+        "chunks_per_s": 38.21
+      },
+      "diff": {
+        "chunk_min": [
+          -18,
+          -16
+        ],
+        "chunk_max": [
+          13,
+          15
+        ],
+        "chunks_compared": 1024,
+        "chunks_missing": {
+          "vanilla": [],
+          "solaris": []
+        },
+        "vanilla_not_full": [],
+        "cells": 100663296,
+        "exact_state_mismatch_cells": 8790792,
+        "exact_state_match_pct": 91.267,
+        "exact_state_match_nonair_pct": 74.763,
+        "metrics": {
+          "name": {
+            "match_pct": 91.275,
+            "match_nonair_pct": 74.777,
+            "nonair_either_cells": 34821579
+          },
+          "no_decor": {
+            "match_pct": 91.373,
+            "match_nonair_pct": 74.991,
+            "nonair_either_cells": 34724677
+          },
+          "no_decor_state": {
+            "match_pct": 91.368,
+            "match_nonair_pct": 74.977,
+            "nonair_either_cells": 34724677
+          },
+          "terrain": {
+            "match_pct": 91.698,
+            "match_nonair_pct": 75.7,
+            "nonair_either_cells": 34391159
+          },
+          "shape": {
+            "match_pct": 98.933,
+            "match_nonair_pct": 96.876,
+            "nonair_either_cells": 34391159
+          }
+        },
+        "layers": [
+          {
+            "y_min": -64,
+            "y_max": -49,
+            "name_pct": 76.533,
+            "terrain_pct": 76.533,
+            "shape_pct": 98.08
+          },
+          {
+            "y_min": -48,
+            "y_max": -33,
+            "name_pct": 85.962,
+            "terrain_pct": 85.966,
+            "shape_pct": 96.614
+          },
+          {
+            "y_min": -32,
+            "y_max": -17,
+            "name_pct": 86.867,
+            "terrain_pct": 86.873,
+            "shape_pct": 96.9
+          },
+          {
+            "y_min": -16,
+            "y_max": -1,
+            "name_pct": 84.336,
+            "terrain_pct": 84.341,
+            "shape_pct": 97.137
+          },
+          {
+            "y_min": 0,
+            "y_max": 15,
+            "name_pct": 60.244,
+            "terrain_pct": 60.252,
+            "shape_pct": 96.348
+          },
+          {
+            "y_min": 16,
+            "y_max": 31,
+            "name_pct": 70.874,
+            "terrain_pct": 70.883,
+            "shape_pct": 96.328
+          },
+          {
+            "y_min": 32,
+            "y_max": 47,
+            "name_pct": 69.593,
+            "terrain_pct": 69.599,
+            "shape_pct": 96.625
+          },
+          {
+            "y_min": 48,
+            "y_max": 63,
+            "name_pct": 72.868,
+            "terrain_pct": 73.147,
+            "shape_pct": 97.066
+          },
+          {
+            "y_min": 64,
+            "y_max": 79,
+            "name_pct": 88.875,
+            "terrain_pct": 95.158,
+            "shape_pct": 99.524
+          },
+          {
+            "y_min": 80,
+            "y_max": 95,
+            "name_pct": 95.284,
+            "terrain_pct": 98.107,
+            "shape_pct": 99.764
+          },
+          {
+            "y_min": 96,
+            "y_max": 111,
+            "name_pct": 99.157,
+            "terrain_pct": 99.892,
+            "shape_pct": 99.995
+          },
+          {
+            "y_min": 112,
+            "y_max": 127,
+            "name_pct": 100.0,
+            "terrain_pct": 100.0,
+            "shape_pct": 100.0
+          },
+          {
+            "y_min": 128,
+            "y_max": 143,
+            "name_pct": 100.0,
+            "terrain_pct": 100.0,
+            "shape_pct": 100.0
+          },
+          {
+            "y_min": 144,
+            "y_max": 159,
+            "name_pct": 100.0,
+            "terrain_pct": 100.0,
+            "shape_pct": 100.0
+          },
+          {
+            "y_min": 160,
+            "y_max": 175,
+            "name_pct": 100.0,
+            "terrain_pct": 100.0,
+            "shape_pct": 100.0
+          },
+          {
+            "y_min": 176,
+            "y_max": 191,
+            "name_pct": 100.0,
+            "terrain_pct": 100.0,
+            "shape_pct": 100.0
+          },
+          {
+            "y_min": 192,
+            "y_max": 207,
+            "name_pct": 100.0,
+            "terrain_pct": 100.0,
+            "shape_pct": 100.0
+          },
+          {
+            "y_min": 208,
+            "y_max": 223,
+            "name_pct": 100.0,
+            "terrain_pct": 100.0,
+            "shape_pct": 100.0
+          },
+          {
+            "y_min": 224,
+            "y_max": 239,
+            "name_pct": 100.0,
+            "terrain_pct": 100.0,
+            "shape_pct": 100.0
+          },
+          {
+            "y_min": 240,
+            "y_max": 255,
+            "name_pct": 100.0,
+            "terrain_pct": 100.0,
+            "shape_pct": 100.0
+          },
+          {
+            "y_min": 256,
+            "y_max": 271,
+            "name_pct": 100.0,
+            "terrain_pct": 100.0,
+            "shape_pct": 100.0
+          },
+          {
+            "y_min": 272,
+            "y_max": 287,
+            "name_pct": 100.0,
+            "terrain_pct": 100.0,
+            "shape_pct": 100.0
+          },
+          {
+            "y_min": 288,
+            "y_max": 303,
+            "name_pct": 100.0,
+            "terrain_pct": 100.0,
+            "shape_pct": 100.0
+          },
+          {
+            "y_min": 304,
+            "y_max": 319,
+            "name_pct": 100.0,
+            "terrain_pct": 100.0,
+            "shape_pct": 100.0
+          }
+        ],
+        "shape_confusion": {
+          "classes": [
+            "air",
+            "water",
+            "lava",
+            "solid"
+          ],
+          "rows_vanilla_cols_solaris": [
+            [
+              66272137,
+              25397,
+              1011,
+              783742
+            ],
+            [
+              95179,
+              185919,
+              0,
+              93836
+            ],
+            [
+              1754,
+              0,
+              1252,
+              35311
+            ],
+            [
+              36181,
+              2129,
+              0,
+              33129448
+            ]
+          ]
+        },
+        "surface_height": {
+          "columns": 262144,
+          "mean_abs": 0.178,
+          "mean_signed_solaris_minus_vanilla": 0.093,
+          "rmse": 2.029,
+          "p50_abs": 0,
+          "p95_abs": 0,
+          "max_abs": 81,
+          "exact_pct": 97.752,
+          "within_1_pct": 98.301,
+          "within_4_pct": 99.086
+        },
+        "top_nonair_height": {
+          "columns": 262144,
+          "mean_abs": 2.245,
+          "mean_signed_solaris_minus_vanilla": -1.337,
+          "rmse": 3.88,
+          "p50_abs": 1,
+          "p95_abs": 7,
+          "max_abs": 86,
+          "exact_pct": 46.174,
+          "within_1_pct": 60.956,
+          "within_4_pct": 76.789
+        },
+        "name_mismatch_cells": 8783148,
+        "confusion_top": [
+          {
+            "vanilla": "minecraft:tuff",
+            "solaris": "minecraft:deepslate",
+            "cells": 1156942,
+            "pct_of_mismatches": 13.172
+          },
+          {
+            "vanilla": "minecraft:andesite",
+            "solaris": "minecraft:stone",
+            "cells": 992735,
+            "pct_of_mismatches": 11.303
+          },
+          {
+            "vanilla": "minecraft:diorite",
+            "solaris": "minecraft:stone",
+            "cells": 951180,
+            "pct_of_mismatches": 10.83
+          },
+          {
+            "vanilla": "minecraft:granite",
+            "solaris": "minecraft:stone",
+            "cells": 901050,
+            "pct_of_mismatches": 10.259
+          },
+          {
+            "vanilla": "minecraft:bedrock",
+            "solaris": "minecraft:deepslate",
+            "cells": 519683,
+            "pct_of_mismatches": 5.917
+          },
+          {
+            "vanilla": "minecraft:air",
+            "solaris": "minecraft:deepslate",
+            "cells": 432759,
+            "pct_of_mismatches": 4.927
+          },
+          {
+            "vanilla": "minecraft:dirt",
+            "solaris": "minecraft:stone",
+            "cells": 334502,
+            "pct_of_mismatches": 3.808
+          },
+          {
+            "vanilla": "minecraft:air",
+            "solaris": "minecraft:stone",
+            "cells": 324029,
+            "pct_of_mismatches": 3.689
+          },
+          {
+            "vanilla": "minecraft:gravel",
+            "solaris": "minecraft:deepslate",
+            "cells": 251990,
+            "pct_of_mismatches": 2.869
+          },
+          {
+            "vanilla": "minecraft:gravel",
+            "solaris": "minecraft:stone",
+            "cells": 240523,
+            "pct_of_mismatches": 2.738
+          },
+          {
+            "vanilla": "minecraft:deepslate",
+            "solaris": "minecraft:stone",
+            "cells": 218606,
+            "pct_of_mismatches": 2.489
+          },
+          {
+            "vanilla": "minecraft:stone",
+            "solaris": "minecraft:deepslate",
+            "cells": 217569,
+            "pct_of_mismatches": 2.477
+          },
+          {
+            "vanilla": "minecraft:oak_leaves",
+            "solaris": "minecraft:air",
+            "cells": 162213,
+            "pct_of_mismatches": 1.847
+          },
+          {
+            "vanilla": "minecraft:stone",
+            "solaris": "minecraft:dirt",
+            "cells": 123064,
+            "pct_of_mismatches": 1.401
+          },
+          {
+            "vanilla": "minecraft:granite",
+            "solaris": "minecraft:deepslate",
+            "cells": 111685,
+            "pct_of_mismatches": 1.272
+          },
+          {
+            "vanilla": "minecraft:andesite",
+            "solaris": "minecraft:deepslate",
+            "cells": 110863,
+            "pct_of_mismatches": 1.262
+          },
+          {
+            "vanilla": "minecraft:coal_ore",
+            "solaris": "minecraft:stone",
+            "cells": 104080,
+            "pct_of_mismatches": 1.185
+          },
+          {
+            "vanilla": "minecraft:diorite",
+            "solaris": "minecraft:deepslate",
+            "cells": 100933,
+            "pct_of_mismatches": 1.149
+          },
+          {
+            "vanilla": "minecraft:water",
+            "solaris": "minecraft:air",
+            "cells": 94774,
+            "pct_of_mismatches": 1.079
+          },
+          {
+            "vanilla": "minecraft:stone",
+            "solaris": "minecraft:coal_ore",
+            "cells": 88590,
+            "pct_of_mismatches": 1.009
+          },
+          {
+            "vanilla": "minecraft:copper_ore",
+            "solaris": "minecraft:stone",
+            "cells": 84587,
+            "pct_of_mismatches": 0.963
+          },
+          {
+            "vanilla": "minecraft:water",
+            "solaris": "minecraft:stone",
+            "cells": 75464,
+            "pct_of_mismatches": 0.859
+          },
+          {
+            "vanilla": "minecraft:leaf_litter",
+            "solaris": "minecraft:air",
+            "cells": 68527,
+            "pct_of_mismatches": 0.78
+          },
+          {
+            "vanilla": "minecraft:birch_leaves",
+            "solaris": "minecraft:air",
+            "cells": 65737,
+            "pct_of_mismatches": 0.748
+          },
+          {
+            "vanilla": "minecraft:stone",
+            "solaris": "minecraft:copper_ore",
+            "cells": 64935,
+            "pct_of_mismatches": 0.739
+          }
+        ],
+        "block_counts_top_diff": [
+          {
+            "block": "minecraft:stone",
+            "vanilla": 11688708,
+            "solaris": 15460220
+          },
+          {
+            "block": "minecraft:deepslate",
+            "vanilla": 14013524,
+            "solaris": 16785177
+          },
+          {
+            "block": "minecraft:tuff",
+            "vanilla": 1169135,
+            "solaris": 0
+          },
+          {
+            "block": "minecraft:andesite",
+            "vanilla": 1128464,
+            "solaris": 0
+          },
+          {
+            "block": "minecraft:diorite",
+            "vanilla": 1076391,
+            "solaris": 0
+          },
+          {
+            "block": "minecraft:granite",
+            "vanilla": 1034725,
+            "solaris": 0
+          },
+          {
+            "block": "minecraft:bedrock",
+            "vanilla": 787262,
+            "solaris": 262144
+          },
+          {
+            "block": "minecraft:gravel",
+            "vanilla": 511700,
+            "solaris": 7772
+          },
+          {
+            "block": "minecraft:dirt",
+            "vanilla": 944478,
+            "solaris": 704256
+          },
+          {
+            "block": "minecraft:oak_leaves",
+            "vanilla": 176194,
+            "solaris": 1476
+          },
+          {
+            "block": "minecraft:water",
+            "vanilla": 371188,
+            "solaris": 213445
+          },
+          {
+            "block": "minecraft:leaf_litter",
+            "vanilla": 74230,
+            "solaris": 0
+          },
+          {
+            "block": "minecraft:lava",
+            "vanilla": 38317,
+            "solaris": 2263
+          },
+          {
+            "block": "minecraft:sandstone",
+            "vanilla": 30825,
+            "solaris": 0
+          },
+          {
+            "block": "minecraft:sand",
+            "vanilla": 70642,
+            "solaris": 101250
+          },
+          {
+            "block": "minecraft:grass_block",
+            "vanilla": 214166,
+            "solaris": 234752
+          },
+          {
+            "block": "minecraft:oak_log",
+            "vanilla": 15627,
+            "solaris": 143
+          },
+          {
+            "block": "minecraft:amethyst_block",
+            "vanilla": 12855,
+            "solaris": 4497
+          },
+          {
+            "block": "minecraft:coal_ore",
+            "vanilla": 108475,
+            "solaris": 116261
+          },
+          {
+            "block": "minecraft:calcite",
+            "vanilla": 16705,
+            "solaris": 9832
+          },
+          {
+            "block": "minecraft:smooth_basalt",
+            "vanilla": 21294,
+            "solaris": 15732
+          },
+          {
+            "block": "minecraft:short_grass",
+            "vanilla": 12478,
+            "solaris": 8097
+          },
+          {
+            "block": "minecraft:deepslate_redstone_ore",
+            "vanilla": 34051,
+            "solaris": 38034
+          },
+          {
+            "block": "minecraft:oak_planks",
+            "vanilla": 4299,
+            "solaris": 1029
+          },
+          {
+            "block": "minecraft:glow_lichen",
+            "vanilla": 2966,
+            "solaris": 0
+          }
+        ],
+        "biome_cells": 1572864,
+        "biome_mismatch_cells": 496,
+        "biome_match_pct": 99.968,
+        "biome_confusion_top": [
+          {
+            "vanilla": "minecraft:birch_forest",
+            "solaris": "minecraft:forest",
+            "cells": 287
+          },
+          {
+            "vanilla": "minecraft:forest",
+            "solaris": "minecraft:beach",
+            "cells": 192
+          },
+          {
+            "vanilla": "minecraft:forest",
+            "solaris": "minecraft:plains",
+            "cells": 17
+          }
+        ],
+        "structures": {
+          "vanilla_starts": 4,
+          "solaris_starts": 1,
+          "same_type_same_chunk": 0,
+          "by_type": {
+            "minecraft:mineshaft": {
+              "vanilla": 4,
+              "solaris": 1,
+              "same_chunk": 0
+            }
+          },
+          "vanilla": [
+            [
+              "minecraft:mineshaft",
+              -13,
+              -7
+            ],
+            [
+              "minecraft:mineshaft",
+              -12,
+              13
+            ],
+            [
+              "minecraft:mineshaft",
+              12,
+              -13
+            ],
+            [
+              "minecraft:mineshaft",
+              13,
+              7
+            ]
+          ],
+          "solaris": [
+            [
+              "minecraft:mineshaft",
+              0,
+              0
+            ]
+          ]
+        }
+      },
+      "images": [
+        "map-0.png",
+        "height-0.png"
+      ]
+    },
+    "81": {
+      "chunk_min": [
+        -52,
+        11
+      ],
+      "chunk_max": [
+        -21,
+        42
+      ],
+      "vanilla": {
+        "engine": "vanilla",
+        "seed": 81,
+        "world": "/run/media/kaiserroman/games/solaris-work/wt/worldgen/.analysis/worldgen-diff/vanilla-cache/vanilla-81--52_11--21_42/world",
+        "bundle": "/home/kaiserroman/solaris/.analysis/server.jar",
+        "bundle_sha256": "cd47e7c38328f64768fd17af8fcd8b22496b40b63d4ffee81e71ae059fedcb42",
+        "spawn": {
+          "pos": [
+            -576,
+            68,
+            432
+          ],
+          "pitch": 0.0,
+          "dimension": "minecraft:overworld",
+          "yaw": 0.0
+        },
+        "heap": "3G",
+        "startup_s": 19.856,
+        "generate_s": 44.689,
+        "save_s": 7.085,
+        "readiness_checks": 28,
+        "requested_chunks": 1024,
+        "note": "tick-frozen; forceload also generates a FULL halo beyond the requested chunks, so requested chunks/s understates raw generator throughput",
+        "cached": true
+      },
+      "solaris": {
+        "engine": "solaris",
+        "seed": 81,
+        "world": "/run/media/kaiserroman/games/solaris-work/wt/worldgen/.analysis/worldgen-diff/full-final/solaris-81/anvil",
+        "server_bin": "/run/media/kaiserroman/games/solaris-work/targets/worldgen/release/solaris-v2",
+        "pregenerate_wall_s": 30.305,
+        "setup_s": 7.0,
+        "generate_s": 22.4,
+        "pregenerate_summary": "pregenerate complete: chunks [-52,11]..[-21,42] around block (-584,424), 1024 chunks, 1024 generated, 0 already stored, 29.4s",
+        "requested_chunks": 1024,
+        "chunks_per_s": 45.71
+      },
+      "diff": {
+        "chunk_min": [
+          -52,
+          11
+        ],
+        "chunk_max": [
+          -21,
+          42
+        ],
+        "chunks_compared": 1024,
+        "chunks_missing": {
+          "vanilla": [],
+          "solaris": []
+        },
+        "vanilla_not_full": [],
+        "cells": 100663296,
+        "exact_state_mismatch_cells": 8820414,
+        "exact_state_match_pct": 91.238,
+        "exact_state_match_nonair_pct": 72.527,
+        "metrics": {
+          "name": {
+            "match_pct": 91.244,
+            "match_nonair_pct": 72.528,
+            "nonair_either_cells": 32084692
+          },
+          "no_decor": {
+            "match_pct": 91.396,
+            "match_nonair_pct": 72.95,
+            "nonair_either_cells": 32020388
+          },
+          "no_decor_state": {
+            "match_pct": 91.395,
+            "match_nonair_pct": 72.949,
+            "nonair_either_cells": 32020388
+          },
+          "terrain": {
+            "match_pct": 91.416,
+            "match_nonair_pct": 72.996,
+            "nonair_either_cells": 31999521
+          },
+          "shape": {
+            "match_pct": 98.245,
+            "match_nonair_pct": 94.479,
+            "nonair_either_cells": 31999521
+          }
+        },
+        "layers": [
+          {
+            "y_min": -64,
+            "y_max": -49,
+            "name_pct": 77.753,
+            "terrain_pct": 77.753,
+            "shape_pct": 98.757
+          },
+          {
+            "y_min": -48,
+            "y_max": -33,
+            "name_pct": 86.5,
+            "terrain_pct": 86.508,
+            "shape_pct": 97.191
+          },
+          {
+            "y_min": -32,
+            "y_max": -17,
+            "name_pct": 86.505,
+            "terrain_pct": 86.533,
+            "shape_pct": 96.758
+          },
+          {
+            "y_min": -16,
+            "y_max": -1,
+            "name_pct": 83.854,
+            "terrain_pct": 83.914,
+            "shape_pct": 96.051
+          },
+          {
+            "y_min": 0,
+            "y_max": 15,
+            "name_pct": 56.941,
+            "terrain_pct": 56.964,
+            "shape_pct": 91.65
+          },
+          {
+            "y_min": 16,
+            "y_max": 31,
+            "name_pct": 65.429,
+            "terrain_pct": 65.442,
+            "shape_pct": 90.03
+          },
+          {
+            "y_min": 32,
+            "y_max": 47,
+            "name_pct": 61.709,
+            "terrain_pct": 61.913,
+            "shape_pct": 91.855
+          },
+          {
+            "y_min": 48,
+            "y_max": 63,
+            "name_pct": 75.373,
+            "terrain_pct": 77.438,
+            "shape_pct": 96.195
+          },
+          {
+            "y_min": 64,
+            "y_max": 79,
+            "name_pct": 95.87,
+            "terrain_pct": 97.57,
+            "shape_pct": 99.451
+          },
+          {
+            "y_min": 80,
+            "y_max": 95,
+            "name_pct": 99.92,
+            "terrain_pct": 99.943,
+            "shape_pct": 99.943
+          },
+          {
+            "y_min": 96,
+            "y_max": 111,
+            "name_pct": 100.0,
+            "terrain_pct": 100.0,
+            "shape_pct": 100.0
+          },
+          {
+            "y_min": 112,
+            "y_max": 127,
+            "name_pct": 100.0,
+            "terrain_pct": 100.0,
+            "shape_pct": 100.0
+          },
+          {
+            "y_min": 128,
+            "y_max": 143,
+            "name_pct": 100.0,
+            "terrain_pct": 100.0,
+            "shape_pct": 100.0
+          },
+          {
+            "y_min": 144,
+            "y_max": 159,
+            "name_pct": 100.0,
+            "terrain_pct": 100.0,
+            "shape_pct": 100.0
+          },
+          {
+            "y_min": 160,
+            "y_max": 175,
+            "name_pct": 100.0,
+            "terrain_pct": 100.0,
+            "shape_pct": 100.0
+          },
+          {
+            "y_min": 176,
+            "y_max": 191,
+            "name_pct": 100.0,
+            "terrain_pct": 100.0,
+            "shape_pct": 100.0
+          },
+          {
+            "y_min": 192,
+            "y_max": 207,
+            "name_pct": 100.0,
+            "terrain_pct": 100.0,
+            "shape_pct": 100.0
+          },
+          {
+            "y_min": 208,
+            "y_max": 223,
+            "name_pct": 100.0,
+            "terrain_pct": 100.0,
+            "shape_pct": 100.0
+          },
+          {
+            "y_min": 224,
+            "y_max": 239,
+            "name_pct": 100.0,
+            "terrain_pct": 100.0,
+            "shape_pct": 100.0
+          },
+          {
+            "y_min": 240,
+            "y_max": 255,
+            "name_pct": 100.0,
+            "terrain_pct": 100.0,
+            "shape_pct": 100.0
+          },
+          {
+            "y_min": 256,
+            "y_max": 271,
+            "name_pct": 100.0,
+            "terrain_pct": 100.0,
+            "shape_pct": 100.0
+          },
+          {
+            "y_min": 272,
+            "y_max": 287,
+            "name_pct": 100.0,
+            "terrain_pct": 100.0,
+            "shape_pct": 100.0
+          },
+          {
+            "y_min": 288,
+            "y_max": 303,
+            "name_pct": 100.0,
+            "terrain_pct": 100.0,
+            "shape_pct": 100.0
+          },
+          {
+            "y_min": 304,
+            "y_max": 319,
+            "name_pct": 100.0,
+            "terrain_pct": 100.0,
+            "shape_pct": 100.0
+          }
+        ],
+        "shape_confusion": {
+          "classes": [
+            "air",
+            "water",
+            "lava",
+            "solid"
+          ],
+          "rows_vanilla_cols_solaris": [
+            [
+              68663775,
+              60736,
+              5348,
+              521293
+            ],
+            [
+              621249,
+              1991304,
+              0,
+              277988
+            ],
+            [
+              12279,
+              1,
+              12820,
+              24903
+            ],
+            [
+              177412,
+              65390,
+              0,
+              28228798
+            ]
+          ]
+        },
+        "surface_height": {
+          "columns": 262144,
+          "mean_abs": 1.492,
+          "mean_signed_solaris_minus_vanilla": -1.155,
+          "rmse": 5.459,
+          "p50_abs": 0,
+          "p95_abs": 12,
+          "max_abs": 73,
+          "exact_pct": 85.188,
+          "within_1_pct": 87.229,
+          "within_4_pct": 90.48
+        },
+        "top_nonair_height": {
+          "columns": 262144,
+          "mean_abs": 0.584,
+          "mean_signed_solaris_minus_vanilla": -0.312,
+          "rmse": 2.485,
+          "p50_abs": 0,
+          "p95_abs": 1,
+          "max_abs": 60,
+          "exact_pct": 75.301,
+          "within_1_pct": 95.435,
+          "within_4_pct": 96.8
+        },
+        "name_mismatch_cells": 8814203,
+        "confusion_top": [
+          {
+            "vanilla": "minecraft:tuff",
+            "solaris": "minecraft:deepslate",
+            "cells": 1116194,
+            "pct_of_mismatches": 12.664
+          },
+          {
+            "vanilla": "minecraft:andesite",
+            "solaris": "minecraft:stone",
+            "cells": 813116,
+            "pct_of_mismatches": 9.225
+          },
+          {
+            "vanilla": "minecraft:diorite",
+            "solaris": "minecraft:stone",
+            "cells": 777528,
+            "pct_of_mismatches": 8.821
+          },
+          {
+            "vanilla": "minecraft:granite",
+            "solaris": "minecraft:stone",
+            "cells": 732710,
+            "pct_of_mismatches": 8.313
+          },
+          {
+            "vanilla": "minecraft:water",
+            "solaris": "minecraft:air",
+            "cells": 617907,
+            "pct_of_mismatches": 7.01
+          },
+          {
+            "vanilla": "minecraft:bedrock",
+            "solaris": "minecraft:deepslate",
+            "cells": 518138,
+            "pct_of_mismatches": 5.878
+          },
+          {
+            "vanilla": "minecraft:air",
+            "solaris": "minecraft:deepslate",
+            "cells": 336161,
+            "pct_of_mismatches": 3.814
+          },
+          {
+            "vanilla": "minecraft:stone",
+            "solaris": "minecraft:sand",
+            "cells": 250960,
+            "pct_of_mismatches": 2.847
+          },
+          {
+            "vanilla": "minecraft:gravel",
+            "solaris": "minecraft:deepslate",
+            "cells": 241963,
+            "pct_of_mismatches": 2.745
+          },
+          {
+            "vanilla": "minecraft:dirt",
+            "solaris": "minecraft:stone",
+            "cells": 226982,
+            "pct_of_mismatches": 2.575
+          },
+          {
+            "vanilla": "minecraft:water",
+            "solaris": "minecraft:stone",
+            "cells": 223804,
+            "pct_of_mismatches": 2.539
+          },
+          {
+            "vanilla": "minecraft:stone",
+            "solaris": "minecraft:deepslate",
+            "cells": 211710,
+            "pct_of_mismatches": 2.402
+          },
+          {
+            "vanilla": "minecraft:deepslate",
+            "solaris": "minecraft:stone",
+            "cells": 211032,
+            "pct_of_mismatches": 2.394
+          },
+          {
+            "vanilla": "minecraft:gravel",
+            "solaris": "minecraft:stone",
+            "cells": 174955,
+            "pct_of_mismatches": 1.985
+          },
+          {
+            "vanilla": "minecraft:air",
+            "solaris": "minecraft:stone",
+            "cells": 166447,
+            "pct_of_mismatches": 1.888
+          },
+          {
+            "vanilla": "minecraft:gravel",
+            "solaris": "minecraft:sand",
+            "cells": 120105,
+            "pct_of_mismatches": 1.363
+          },
+          {
+            "vanilla": "minecraft:diorite",
+            "solaris": "minecraft:deepslate",
+            "cells": 101002,
+            "pct_of_mismatches": 1.146
+          },
+          {
+            "vanilla": "minecraft:andesite",
+            "solaris": "minecraft:deepslate",
+            "cells": 95826,
+            "pct_of_mismatches": 1.087
+          },
+          {
+            "vanilla": "minecraft:granite",
+            "solaris": "minecraft:deepslate",
+            "cells": 94289,
+            "pct_of_mismatches": 1.07
+          },
+          {
+            "vanilla": "minecraft:dirt",
+            "solaris": "minecraft:sand",
+            "cells": 86017,
+            "pct_of_mismatches": 0.976
+          },
+          {
+            "vanilla": "minecraft:stone",
+            "solaris": "minecraft:air",
+            "cells": 62761,
+            "pct_of_mismatches": 0.712
+          },
+          {
+            "vanilla": "minecraft:copper_ore",
+            "solaris": "minecraft:stone",
+            "cells": 61169,
+            "pct_of_mismatches": 0.694
+          },
+          {
+            "vanilla": "minecraft:coal_ore",
+            "solaris": "minecraft:stone",
+            "cells": 60291,
+            "pct_of_mismatches": 0.684
+          },
+          {
+            "vanilla": "minecraft:air",
+            "solaris": "minecraft:water",
+            "cells": 59055,
+            "pct_of_mismatches": 0.67
+          },
+          {
+            "vanilla": "minecraft:snow",
+            "solaris": "minecraft:air",
+            "cells": 54111,
+            "pct_of_mismatches": 0.614
+          }
+        ],
+        "block_counts_top_diff": [
+          {
+            "block": "minecraft:stone",
+            "vanilla": 8428318,
+            "solaris": 11284322
+          },
+          {
+            "block": "minecraft:deepslate",
+            "vanilla": 13484100,
+            "solaris": 16081500
+          },
+          {
+            "block": "minecraft:tuff",
+            "vanilla": 1130126,
+            "solaris": 0
+          },
+          {
+            "block": "minecraft:andesite",
+            "vanilla": 960787,
+            "solaris": 0
+          },
+          {
+            "block": "minecraft:diorite",
+            "vanilla": 929607,
+            "solaris": 0
+          },
+          {
+            "block": "minecraft:granite",
+            "vanilla": 880719,
+            "solaris": 0
+          },
+          {
+            "block": "minecraft:water",
+            "vanilla": 2814641,
+            "solaris": 2093394
+          },
+          {
+            "block": "minecraft:sand",
+            "vanilla": 141105,
+            "solaris": 701780
+          },
+          {
+            "block": "minecraft:gravel",
+            "vanilla": 554959,
+            "solaris": 7512
+          },
+          {
+            "block": "minecraft:bedrock",
+            "vanilla": 786020,
+            "solaris": 262144
+          },
+          {
+            "block": "minecraft:dirt",
+            "vanilla": 525252,
+            "solaris": 252774
+          },
+          {
+            "block": "minecraft:snow_block",
+            "vanilla": 495,
+            "solaris": 69312
+          },
+          {
+            "block": "minecraft:sandstone",
+            "vanilla": 57348,
+            "solaris": 0
+          },
+          {
+            "block": "minecraft:snow",
+            "vanilla": 56717,
+            "solaris": 0
+          },
+          {
+            "block": "minecraft:grass_block",
+            "vanilla": 68496,
+            "solaris": 14946
+          },
+          {
+            "block": "minecraft:packed_ice",
+            "vanilla": 47976,
+            "solaris": 0
+          },
+          {
+            "block": "minecraft:lava",
+            "vanilla": 50003,
+            "solaris": 18168
+          },
+          {
+            "block": "minecraft:kelp_plant",
+            "vanilla": 43891,
+            "solaris": 12560
+          },
+          {
+            "block": "minecraft:clay",
+            "vanilla": 31861,
+            "solaris": 2288
+          },
+          {
+            "block": "minecraft:ice",
+            "vanilla": 27843,
+            "solaris": 0
+          },
+          {
+            "block": "minecraft:spruce_leaves",
+            "vanilla": 13462,
+            "solaris": 3112
+          },
+          {
+            "block": "minecraft:moss_block",
+            "vanilla": 9243,
+            "solaris": 0
+          },
+          {
+            "block": "minecraft:amethyst_block",
+            "vanilla": 13776,
+            "solaris": 4829
+          },
+          {
+            "block": "minecraft:tall_seagrass",
+            "vanilla": 8384,
+            "solaris": 0
+          },
+          {
+            "block": "minecraft:calcite",
+            "vanilla": 18550,
+            "solaris": 10544
+          }
+        ],
+        "biome_cells": 1572864,
+        "biome_mismatch_cells": 865,
+        "biome_match_pct": 99.945,
+        "biome_confusion_top": [
+          {
+            "vanilla": "minecraft:snowy_plains",
+            "solaris": "minecraft:frozen_ocean",
+            "cells": 192
+          },
+          {
+            "vanilla": "minecraft:beach",
+            "solaris": "minecraft:snowy_beach",
+            "cells": 192
+          },
+          {
+            "vanilla": "minecraft:cold_ocean",
+            "solaris": "minecraft:river",
+            "cells": 190
+          },
+          {
+            "vanilla": "minecraft:plains",
+            "solaris": "minecraft:forest",
+            "cells": 96
+          },
+          {
+            "vanilla": "minecraft:snowy_plains",
+            "solaris": "minecraft:frozen_river",
+            "cells": 96
+          },
+          {
+            "vanilla": "minecraft:snowy_plains",
+            "solaris": "minecraft:plains",
+            "cells": 94
+          },
+          {
+            "vanilla": "minecraft:cold_ocean",
+            "solaris": "minecraft:lush_caves",
+            "cells": 3
+          },
+          {
+            "vanilla": "minecraft:snowy_taiga",
+            "solaris": "minecraft:lush_caves",
+            "cells": 2
+          }
+        ],
+        "structures": {
+          "vanilla_starts": 7,
+          "solaris_starts": 7,
+          "same_type_same_chunk": 3,
+          "by_type": {
+            "minecraft:mineshaft": {
+              "vanilla": 4,
+              "solaris": 4,
+              "same_chunk": 0
+            },
+            "minecraft:ocean_ruin_cold": {
+              "vanilla": 1,
+              "solaris": 1,
+              "same_chunk": 1
+            },
+            "minecraft:ruined_portal_ocean": {
+              "vanilla": 1,
+              "solaris": 1,
+              "same_chunk": 1
+            },
+            "minecraft:shipwreck": {
+              "vanilla": 1,
+              "solaris": 1,
+              "same_chunk": 1
+            }
+          },
+          "vanilla": [
+            [
+              "minecraft:mineshaft",
+              -35,
+              23
+            ],
+            [
+              "minecraft:mineshaft",
+              -29,
+              40
+            ],
+            [
+              "minecraft:mineshaft",
+              -24,
+              15
+            ],
+            [
+              "minecraft:mineshaft",
+              -24,
+              36
+            ],
+            [
+              "minecraft:ocean_ruin_cold",
+              -50,
+              30
+            ],
+            [
+              "minecraft:ruined_portal_ocean",
+              -22,
+              14
+            ],
+            [
+              "minecraft:shipwreck",
+              -33,
+              19
+            ]
+          ],
+          "solaris": [
+            [
+              "minecraft:mineshaft",
+              -52,
+              42
+            ],
+            [
+              "minecraft:mineshaft",
+              -50,
+              40
+            ],
+            [
+              "minecraft:mineshaft",
+              -45,
+              35
+            ],
+            [
+              "minecraft:mineshaft",
+              -34,
+              15
+            ],
+            [
+              "minecraft:ocean_ruin_cold",
+              -50,
+              30
+            ],
+            [
+              "minecraft:ruined_portal_ocean",
+              -22,
+              14
+            ],
+            [
+              "minecraft:shipwreck",
+              -33,
+              19
+            ]
+          ]
+        }
+      },
+      "images": [
+        "map-81.png",
+        "height-81.png"
+      ]
+    },
+    "497625": {
+      "chunk_min": [
+        -18,
+        -13
+      ],
+      "chunk_max": [
+        13,
+        18
+      ],
+      "vanilla": {
+        "engine": "vanilla",
+        "seed": 497625,
+        "world": "/run/media/kaiserroman/games/solaris-work/wt/worldgen/.analysis/worldgen-diff/vanilla-cache/vanilla-497625--18_-13-13_18/world",
+        "bundle": "/home/kaiserroman/solaris/.analysis/server.jar",
+        "bundle_sha256": "cd47e7c38328f64768fd17af8fcd8b22496b40b63d4ffee81e71ae059fedcb42",
+        "spawn": {
+          "pos": [
+            -32,
+            79,
+            48
+          ],
+          "pitch": 0.0,
+          "dimension": "minecraft:overworld",
+          "yaw": 0.0
+        },
+        "heap": "3G",
+        "startup_s": 21.308,
+        "generate_s": 48.535,
+        "save_s": 6.861,
+        "readiness_checks": 55,
+        "requested_chunks": 1024,
+        "note": "tick-frozen; forceload also generates a FULL halo beyond the requested chunks, so requested chunks/s understates raw generator throughput",
+        "cached": true
+      },
+      "solaris": {
+        "engine": "solaris",
+        "seed": 497625,
+        "world": "/run/media/kaiserroman/games/solaris-work/wt/worldgen/.analysis/worldgen-diff/full-final/solaris-497625/anvil",
+        "server_bin": "/run/media/kaiserroman/games/solaris-work/targets/worldgen/release/solaris-v2",
+        "pregenerate_wall_s": 35.429,
+        "setup_s": 7.4,
+        "generate_s": 26.8,
+        "pregenerate_summary": "pregenerate complete: chunks [-18,-13]..[13,18] around block (-40,40), 1024 chunks, 1024 generated, 0 already stored, 34.2s",
+        "requested_chunks": 1024,
+        "chunks_per_s": 38.21
+      },
+      "diff": {
+        "chunk_min": [
+          -18,
+          -13
+        ],
+        "chunk_max": [
+          13,
+          18
+        ],
+        "chunks_compared": 1024,
+        "chunks_missing": {
+          "vanilla": [],
+          "solaris": []
+        },
+        "vanilla_not_full": [],
+        "cells": 100663296,
+        "exact_state_mismatch_cells": 8955361,
+        "exact_state_match_pct": 91.104,
+        "exact_state_match_nonair_pct": 73.699,
+        "metrics": {
+          "name": {
+            "match_pct": 91.113,
+            "match_nonair_pct": 73.716,
+            "nonair_either_cells": 34037701
+          },
+          "no_decor": {
+            "match_pct": 91.235,
+            "match_nonair_pct": 74.03,
+            "nonair_either_cells": 33972228
+          },
+          "no_decor_state": {
+            "match_pct": 91.23,
+            "match_nonair_pct": 74.013,
+            "nonair_either_cells": 33972228
+          },
+          "terrain": {
+            "match_pct": 91.517,
+            "match_nonair_pct": 74.646,
+            "nonair_either_cells": 33681525
+          },
+          "shape": {
+            "match_pct": 98.273,
+            "match_nonair_pct": 94.838,
+            "nonair_either_cells": 33681525
+          }
+        },
+        "layers": [
+          {
+            "y_min": -64,
+            "y_max": -49,
+            "name_pct": 77.166,
+            "terrain_pct": 77.167,
+            "shape_pct": 98.421
+          },
+          {
+            "y_min": -48,
+            "y_max": -33,
+            "name_pct": 86.321,
+            "terrain_pct": 86.326,
+            "shape_pct": 96.843
+          },
+          {
+            "y_min": -32,
+            "y_max": -17,
+            "name_pct": 86.545,
+            "terrain_pct": 86.556,
+            "shape_pct": 96.728
+          },
+          {
+            "y_min": -16,
+            "y_max": -1,
+            "name_pct": 83.58,
+            "terrain_pct": 83.591,
+            "shape_pct": 94.667
+          },
+          {
+            "y_min": 0,
+            "y_max": 15,
+            "name_pct": 57.293,
+            "terrain_pct": 57.299,
+            "shape_pct": 89.183
+          },
+          {
+            "y_min": 16,
+            "y_max": 31,
+            "name_pct": 68.227,
+            "terrain_pct": 68.237,
+            "shape_pct": 92.201
+          },
+          {
+            "y_min": 32,
+            "y_max": 47,
+            "name_pct": 65.152,
+            "terrain_pct": 65.644,
+            "shape_pct": 94.217
+          },
+          {
+            "y_min": 48,
+            "y_max": 63,
+            "name_pct": 79.415,
+            "terrain_pct": 80.351,
+            "shape_pct": 97.759
+          },
+          {
+            "y_min": 64,
+            "y_max": 79,
+            "name_pct": 90.414,
+            "terrain_pct": 93.871,
+            "shape_pct": 99.009
+          },
+          {
+            "y_min": 80,
+            "y_max": 95,
+            "name_pct": 94.52,
+            "terrain_pct": 97.809,
+            "shape_pct": 99.612
+          },
+          {
+            "y_min": 96,
+            "y_max": 111,
+            "name_pct": 98.194,
+            "terrain_pct": 99.549,
+            "shape_pct": 99.907
+          },
+          {
+            "y_min": 112,
+            "y_max": 127,
+            "name_pct": 99.877,
+            "terrain_pct": 99.997,
+            "shape_pct": 99.999
+          },
+          {
+            "y_min": 128,
+            "y_max": 143,
+            "name_pct": 99.997,
+            "terrain_pct": 100.0,
+            "shape_pct": 100.0
+          },
+          {
+            "y_min": 144,
+            "y_max": 159,
+            "name_pct": 100.0,
+            "terrain_pct": 100.0,
+            "shape_pct": 100.0
+          },
+          {
+            "y_min": 160,
+            "y_max": 175,
+            "name_pct": 100.0,
+            "terrain_pct": 100.0,
+            "shape_pct": 100.0
+          },
+          {
+            "y_min": 176,
+            "y_max": 191,
+            "name_pct": 100.0,
+            "terrain_pct": 100.0,
+            "shape_pct": 100.0
+          },
+          {
+            "y_min": 192,
+            "y_max": 207,
+            "name_pct": 100.0,
+            "terrain_pct": 100.0,
+            "shape_pct": 100.0
+          },
+          {
+            "y_min": 208,
+            "y_max": 223,
+            "name_pct": 100.0,
+            "terrain_pct": 100.0,
+            "shape_pct": 100.0
+          },
+          {
+            "y_min": 224,
+            "y_max": 239,
+            "name_pct": 100.0,
+            "terrain_pct": 100.0,
+            "shape_pct": 100.0
+          },
+          {
+            "y_min": 240,
+            "y_max": 255,
+            "name_pct": 100.0,
+            "terrain_pct": 100.0,
+            "shape_pct": 100.0
+          },
+          {
+            "y_min": 256,
+            "y_max": 271,
+            "name_pct": 100.0,
+            "terrain_pct": 100.0,
+            "shape_pct": 100.0
+          },
+          {
+            "y_min": 272,
+            "y_max": 287,
+            "name_pct": 100.0,
+            "terrain_pct": 100.0,
+            "shape_pct": 100.0
+          },
+          {
+            "y_min": 288,
+            "y_max": 303,
+            "name_pct": 100.0,
+            "terrain_pct": 100.0,
+            "shape_pct": 100.0
+          },
+          {
+            "y_min": 304,
+            "y_max": 319,
+            "name_pct": 100.0,
+            "terrain_pct": 100.0,
+            "shape_pct": 100.0
+          }
+        ],
+        "shape_confusion": {
+          "classes": [
+            "air",
+            "water",
+            "lava",
+            "solid"
+          ],
+          "rows_vanilla_cols_solaris": [
+            [
+              66981771,
+              15107,
+              8859,
+              734933
+            ],
+            [
+              587317,
+              1423943,
+              0,
+              158954
+            ],
+            [
+              1358,
+              0,
+              19081,
+              18636
+            ],
+            [
+              212109,
+              1342,
+              22,
+              30499864
+            ]
+          ]
+        },
+        "surface_height": {
+          "columns": 262144,
+          "mean_abs": 0.304,
+          "mean_signed_solaris_minus_vanilla": 0.266,
+          "rmse": 2.328,
+          "p50_abs": 0,
+          "p95_abs": 0,
+          "max_abs": 64,
+          "exact_pct": 96.625,
+          "within_1_pct": 97.07,
+          "within_4_pct": 98.068
+        },
+        "top_nonair_height": {
+          "columns": 262144,
+          "mean_abs": 1.98,
+          "mean_signed_solaris_minus_vanilla": -1.266,
+          "rmse": 3.669,
+          "p50_abs": 0,
+          "p95_abs": 7,
+          "max_abs": 52,
+          "exact_pct": 57.054,
+          "within_1_pct": 65.995,
+          "within_4_pct": 78.244
+        },
+        "name_mismatch_cells": 8946356,
+        "confusion_top": [
+          {
+            "vanilla": "minecraft:tuff",
+            "solaris": "minecraft:deepslate",
+            "cells": 1092423,
+            "pct_of_mismatches": 12.211
+          },
+          {
+            "vanilla": "minecraft:andesite",
+            "solaris": "minecraft:stone",
+            "cells": 857375,
+            "pct_of_mismatches": 9.584
+          },
+          {
+            "vanilla": "minecraft:diorite",
+            "solaris": "minecraft:stone",
+            "cells": 812538,
+            "pct_of_mismatches": 9.082
+          },
+          {
+            "vanilla": "minecraft:granite",
+            "solaris": "minecraft:stone",
+            "cells": 786103,
+            "pct_of_mismatches": 8.787
+          },
+          {
+            "vanilla": "minecraft:water",
+            "solaris": "minecraft:air",
+            "cells": 583223,
+            "pct_of_mismatches": 6.519
+          },
+          {
+            "vanilla": "minecraft:bedrock",
+            "solaris": "minecraft:deepslate",
+            "cells": 519923,
+            "pct_of_mismatches": 5.812
+          },
+          {
+            "vanilla": "minecraft:air",
+            "solaris": "minecraft:deepslate",
+            "cells": 403863,
+            "pct_of_mismatches": 4.514
+          },
+          {
+            "vanilla": "minecraft:dirt",
+            "solaris": "minecraft:stone",
+            "cells": 300808,
+            "pct_of_mismatches": 3.362
+          },
+          {
+            "vanilla": "minecraft:air",
+            "solaris": "minecraft:stone",
+            "cells": 300697,
+            "pct_of_mismatches": 3.361
+          },
+          {
+            "vanilla": "minecraft:gravel",
+            "solaris": "minecraft:deepslate",
+            "cells": 232881,
+            "pct_of_mismatches": 2.603
+          },
+          {
+            "vanilla": "minecraft:gravel",
+            "solaris": "minecraft:stone",
+            "cells": 211068,
+            "pct_of_mismatches": 2.359
+          },
+          {
+            "vanilla": "minecraft:deepslate",
+            "solaris": "minecraft:stone",
+            "cells": 199373,
+            "pct_of_mismatches": 2.229
+          },
+          {
+            "vanilla": "minecraft:stone",
+            "solaris": "minecraft:deepslate",
+            "cells": 198041,
+            "pct_of_mismatches": 2.214
+          },
+          {
+            "vanilla": "minecraft:stone",
+            "solaris": "minecraft:sand",
+            "cells": 153466,
+            "pct_of_mismatches": 1.715
+          },
+          {
+            "vanilla": "minecraft:water",
+            "solaris": "minecraft:stone",
+            "cells": 119061,
+            "pct_of_mismatches": 1.331
+          },
+          {
+            "vanilla": "minecraft:oak_leaves",
+            "solaris": "minecraft:air",
+            "cells": 115813,
+            "pct_of_mismatches": 1.295
+          },
+          {
+            "vanilla": "minecraft:coal_ore",
+            "solaris": "minecraft:stone",
+            "cells": 94810,
+            "pct_of_mismatches": 1.06
+          },
+          {
+            "vanilla": "minecraft:stone",
+            "solaris": "minecraft:dirt",
+            "cells": 94612,
+            "pct_of_mismatches": 1.058
+          },
+          {
+            "vanilla": "minecraft:deepslate",
+            "solaris": "minecraft:air",
+            "cells": 94325,
+            "pct_of_mismatches": 1.054
+          },
+          {
+            "vanilla": "minecraft:andesite",
+            "solaris": "minecraft:deepslate",
+            "cells": 92324,
+            "pct_of_mismatches": 1.032
+          },
+          {
+            "vanilla": "minecraft:diorite",
+            "solaris": "minecraft:deepslate",
+            "cells": 90604,
+            "pct_of_mismatches": 1.013
+          },
+          {
+            "vanilla": "minecraft:birch_leaves",
+            "solaris": "minecraft:air",
+            "cells": 89304,
+            "pct_of_mismatches": 0.998
+          },
+          {
+            "vanilla": "minecraft:granite",
+            "solaris": "minecraft:deepslate",
+            "cells": 84556,
+            "pct_of_mismatches": 0.945
+          },
+          {
+            "vanilla": "minecraft:stone",
+            "solaris": "minecraft:coal_ore",
+            "cells": 81632,
+            "pct_of_mismatches": 0.912
+          },
+          {
+            "vanilla": "minecraft:copper_ore",
+            "solaris": "minecraft:stone",
+            "cells": 77579,
+            "pct_of_mismatches": 0.867
+          }
+        ],
+        "block_counts_top_diff": [
+          {
+            "block": "minecraft:stone",
+            "vanilla": 10861143,
+            "solaris": 14004020
+          },
+          {
+            "block": "minecraft:deepslate",
+            "vanilla": 13007794,
+            "solaris": 15561877
+          },
+          {
+            "block": "minecraft:tuff",
+            "vanilla": 1108204,
+            "solaris": 0
+          },
+          {
+            "block": "minecraft:andesite",
+            "vanilla": 996199,
+            "solaris": 0
+          },
+          {
+            "block": "minecraft:diorite",
+            "vanilla": 946800,
+            "solaris": 0
+          },
+          {
+            "block": "minecraft:granite",
+            "vanilla": 916583,
+            "solaris": 0
+          },
+          {
+            "block": "minecraft:water",
+            "vanilla": 2116093,
+            "solaris": 1425522
+          },
+          {
+            "block": "minecraft:gravel",
+            "vanilla": 533810,
+            "solaris": 5192
+          },
+          {
+            "block": "minecraft:bedrock",
+            "vanilla": 787292,
+            "solaris": 262144
+          },
+          {
+            "block": "minecraft:sand",
+            "vanilla": 21068,
+            "solaris": 337109
+          },
+          {
+            "block": "minecraft:dirt",
+            "vanilla": 763870,
+            "solaris": 526850
+          },
+          {
+            "block": "minecraft:oak_leaves",
+            "vanilla": 124079,
+            "solaris": 50
+          },
+          {
+            "block": "minecraft:leaf_litter",
+            "vanilla": 48836,
+            "solaris": 0
+          },
+          {
+            "block": "minecraft:birch_leaves",
+            "vanilla": 97602,
+            "solaris": 57088
+          },
+          {
+            "block": "minecraft:kelp_plant",
+            "vanilla": 26763,
+            "solaris": 7748
+          },
+          {
+            "block": "minecraft:amethyst_block",
+            "vanilla": 17993,
+            "solaris": 5149
+          },
+          {
+            "block": "minecraft:calcite",
+            "vanilla": 23288,
+            "solaris": 11251
+          },
+          {
+            "block": "minecraft:lava",
+            "vanilla": 39075,
+            "solaris": 27962
+          },
+          {
+            "block": "minecraft:smooth_basalt",
+            "vanilla": 29053,
+            "solaris": 18059
+          },
+          {
+            "block": "minecraft:oak_log",
+            "vanilla": 10900,
+            "solaris": 6
+          },
+          {
+            "block": "minecraft:clay",
+            "vanilla": 10973,
+            "solaris": 202
+          },
+          {
+            "block": "minecraft:tall_seagrass",
+            "vanilla": 10678,
+            "solaris": 0
+          },
+          {
+            "block": "minecraft:deepslate_iron_ore",
+            "vanilla": 33695,
+            "solaris": 25041
+          },
+          {
+            "block": "minecraft:grass_block",
+            "vanilla": 168330,
+            "solaris": 175616
+          },
+          {
+            "block": "minecraft:coal_ore",
+            "vanilla": 100472,
+            "solaris": 106396
+          }
+        ],
+        "biome_cells": 1572864,
+        "biome_mismatch_cells": 659,
+        "biome_match_pct": 99.958,
+        "biome_confusion_top": [
+          {
+            "vanilla": "minecraft:birch_forest",
+            "solaris": "minecraft:forest",
+            "cells": 286
+          },
+          {
+            "vanilla": "minecraft:ocean",
+            "solaris": "minecraft:river",
+            "cells": 96
+          },
+          {
+            "vanilla": "minecraft:forest",
+            "solaris": "minecraft:river",
+            "cells": 96
+          },
+          {
+            "vanilla": "minecraft:deep_ocean",
+            "solaris": "minecraft:ocean",
+            "cells": 95
+          },
+          {
+            "vanilla": "minecraft:ocean",
+            "solaris": "minecraft:lukewarm_ocean",
+            "cells": 82
+          },
+          {
+            "vanilla": "minecraft:deep_ocean",
+            "solaris": "minecraft:lush_caves",
+            "cells": 3
+          },
+          {
+            "vanilla": "minecraft:ocean",
+            "solaris": "minecraft:lush_caves",
+            "cells": 1
+          }
+        ],
+        "structures": {
+          "vanilla_starts": 7,
+          "solaris_starts": 5,
+          "same_type_same_chunk": 2,
+          "by_type": {
+            "minecraft:mineshaft": {
+              "vanilla": 5,
+              "solaris": 3,
+              "same_chunk": 0
+            },
+            "minecraft:trial_chambers": {
+              "vanilla": 2,
+              "solaris": 2,
+              "same_chunk": 2
+            }
+          },
+          "vanilla": [
+            [
+              "minecraft:mineshaft",
+              -17,
+              -8
+            ],
+            [
+              "minecraft:mineshaft",
+              -16,
+              4
+            ],
+            [
+              "minecraft:mineshaft",
+              -4,
+              10
+            ],
+            [
+              "minecraft:mineshaft",
+              3,
+              -12
+            ],
+            [
+              "minecraft:mineshaft",
+              10,
+              17
+            ],
+            [
+              "minecraft:trial_chambers",
+              -16,
+              11
+            ],
+            [
+              "minecraft:trial_chambers",
+              6,
+              16
+            ]
+          ],
+          "solaris": [
+            [
+              "minecraft:mineshaft",
+              -16,
+              -2
+            ],
+            [
+              "minecraft:mineshaft",
+              -15,
+              11
+            ],
+            [
+              "minecraft:mineshaft",
+              -8,
+              2
+            ],
+            [
+              "minecraft:trial_chambers",
+              -16,
+              11
+            ],
+            [
+              "minecraft:trial_chambers",
+              6,
+              16
+            ]
+          ]
+        }
+      },
+      "images": [
+        "map-497625.png",
+        "height-497625.png"
+      ]
+    }
+  }
+}
