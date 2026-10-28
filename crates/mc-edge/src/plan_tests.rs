@@ -14,6 +14,9 @@ use std::sync::Arc;
 #[path = "plan/chunk_delta_tests.rs"]
 mod chunk_delta_tests;
 
+#[path = "plan/section_blocks_tests.rs"]
+mod section_blocks_tests;
+
 #[path = "plan_index_tests.rs"]
 mod index_tests;
 
@@ -167,10 +170,10 @@ fn one_shot_explosions_precede_resumable_world_work_with_bounded_credit() {
                         resumed
                             .iter()
                             .filter(|packet| {
-                                packet.id == mc_protocol::packets::play::BlockUpdate::ID
+                                packet.id == mc_protocol::packets::play::SectionBlocksUpdate::ID
                             })
                             .count(),
-                        256
+                        1
                     );
                     assert!(viewer.pending_blocks.is_empty());
                     assert!(!viewer.chunk_repairs.contains(&(0, 0)));

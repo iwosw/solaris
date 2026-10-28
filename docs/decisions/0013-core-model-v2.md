@@ -795,7 +795,13 @@ Tick `t -> t+1`:
    revisions because enclosure is judged across chunk borders. Reveal rides
    the block-update path: once per publish the tick index lists the hideable
    ores a block change just un-enclosed (keyed by the ore's own chunk), and
-   each viewer holding that chunk gets their real `BlockUpdate`. World packets are planned within each
+   each viewer holding that chunk gets the real state through block updates.
+   One changed block uses `BlockUpdate`; multiple changed blocks in one section
+   share a `SectionBlocksUpdate`, including bulk `/fill` edits. A section consumes
+   one world-queue credit; if credit is exhausted, its positions remain owed and
+   are encoded together from the newest snapshot on a later publish. This avoids
+   burying connection liveness behind tens of thousands of per-block frames.
+   World packets are planned within each
    connection's credit, the free slots of its world queue read before the
    publish (only the pump sends there, so nothing planned is ever dropped):
    forgets, block updates, chunks, removals, spawns (nearest first), then

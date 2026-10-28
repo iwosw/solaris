@@ -372,6 +372,10 @@ def run(ctx: ProfileContext) -> dict[str, Any]:
     config = artifact / "village-autonomy-qa.toml"
     source = (runtime.REPO_ROOT / "playable.toml").read_text()
     replacements = (
+        # The peer needs teleport permission, but its op entry would enable
+        # vanilla spawn protection around seed 100's founding chest. Keep the
+        # primary a non-operator while allowing this isolated fixture's use.
+        ("[server]", "[server]\nspawn_protection = 0"),
         ("port = 25565", f"port = {server_port}"),
         (
             'world_dir = ".analysis/test-world-v12"',
@@ -605,9 +609,7 @@ def _walk_to(
             break
         waypoint = _nearest_loaded_waypoint(probe, target)
         if waypoint is None:
-            _compass_step(probe, target)
-            probe.call("minecraft_wait_ticks", {"ticks": 40})
-            continue
+            waypoint = tuple(int(value) for value in target)
         hops.append(list(waypoint))
         try:
             probe.call("minecraft_navigate_to_block",
@@ -615,9 +617,7 @@ def _walk_to(
                  "timeout_seconds": 110.0})
         except Exception as exc:
             detail[f"{label}_leg_error"] = str(exc)
-            _compass_step(probe, target)
-            probe.call("minecraft_wait_ticks", {"ticks": 100})
-            continue
+            raise
         probe.call("minecraft_wait_ticks", {"ticks": 40})
     detail[f"{label}_waypoints"] = hops
     state = probe.observe()

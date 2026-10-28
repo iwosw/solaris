@@ -61,7 +61,8 @@ use mc_protocol::packets::play::{
     ITEM_ENTITY_DATA_ITEM_INDEX, LIVING_ENTITY_DATA_EFFECT_AMBIENCE_INDEX,
     LIVING_ENTITY_DATA_EFFECT_PARTICLES_INDEX, LIVING_ENTITY_DATA_HEALTH_INDEX_26_1_2,
     MoveEntityPos, MoveEntityPosRot, MoveEntityRot, PLAYER_DATA_ABSORPTION_INDEX,
-    PositionMoveRotation, RemoveEntities, RotateHead, SetCenterChunk, SetChunkCacheRadius,
+    PositionMoveRotation, RemoveEntities, RotateHead, SectionBlockChange, SectionBlocksUpdate,
+    SetCenterChunk, SetChunkCacheRadius, pack_section_pos, pack_section_relative_pos,
 };
 
 /// Entity's fourth defineId call uses BOOLEAN (26.1.2 javap Entity static ctor).
@@ -405,8 +406,8 @@ pub struct ViewerState {
     /// Last evaluated snapshot tick, for reconciling a due phase skipped by the pump.
     entity_tick: Option<u64>,
     entity_interest: entity_interest::EntityInterest,
-    /// Positions whose `BlockUpdate` is still owed (no credit when the
-    /// change happened): sent by a later plan with the newest state.
+    /// Positions whose block update is still owed (no credit when the
+    /// change happened): batched by section later with the newest state.
     pending_blocks: HashSet<mc_world::chunk::BlockPos>,
     pub center_sent: Option<(i32, i32)>,
     radius_sent: Option<i32>,
@@ -910,37 +911,75 @@ fn plan_viewer_inner(
         chunk_stat!(stats.probes += viewer.light_baseline.len());
         viewer.light_baseline.retain_held(&viewer.loaded_chunks);
     }
-    // Owed block updates with the newest snapshot state; one in a chunk
-    // the client no longer holds is void (that chunk's packet carries it).
-    // Sorted: the owed set has no order of its own, and the delta and full
-    // walks fill it in different orders.
+    // Owed block updates use the newest snapshot state. Like vanilla, one
+    // block uses BlockUpdate; multiple blocks in a section share one packet
+    // and one queue credit. A full repair already covers its chunk's debt.
+    let section_of = |position: &mc_world::chunk::BlockPos| {
+        (
+            position.x.div_euclid(16),
+            position.y.div_euclid(16),
+            position.z.div_euclid(16),
+        )
+    };
     scratch.blocks.clear();
     scratch.blocks.extend(viewer.pending_blocks.drain());
-    scratch
-        .blocks
-        .sort_unstable_by_key(|position| (position.x, position.y, position.z));
-    for &position in &scratch.blocks {
-        chunk_stat!(stats.visited += 1);
+    scratch.blocks.sort_unstable_by_key(|position| {
+        (section_of(position), position.x, position.y, position.z)
+    });
+    let mut update = SectionBlocksUpdate {
+        section_pos: 0,
+        changes: std::mem::take(&mut scratch.section_blocks),
+    };
+    let mut start = 0;
+    while start < scratch.blocks.len() {
+        let section = section_of(&scratch.blocks[start]);
+        let mut end = start + 1;
+        while end < scratch.blocks.len() && section_of(&scratch.blocks[end]) == section {
+            end += 1;
+        }
+        let positions = &scratch.blocks[start..end];
+        start = end;
+        chunk_stat!(stats.visited += positions.len() as u64);
         chunk_stat!(stats.probes += 3);
-        let chunk = (position.x.div_euclid(16), position.z.div_euclid(16));
+        let chunk = (section.0, section.2);
         if !viewer.loaded_chunks.contains_key(&chunk) || viewer.chunk_repairs.contains(&chunk) {
             continue;
         }
-        let Some(state) = find_chunk(&snapshot.chunks, chunk).and_then(|resident| {
-            resident.chunk.get_block(
+        if credit == 0 {
+            viewer.pending_blocks.extend(positions.iter().copied());
+            continue;
+        }
+        let Some(resident) = find_chunk(&snapshot.chunks, chunk) else {
+            continue;
+        };
+        update.section_pos = pack_section_pos(section.0, section.1, section.2);
+        update.changes.clear();
+        for position in positions {
+            if let Some(state) = resident.chunk.get_block(
                 position.x.rem_euclid(16) as u8,
                 position.y,
                 position.z.rem_euclid(16) as u8,
-            )
-        }) else {
+            ) {
+                update.changes.push(SectionBlockChange {
+                    relative_pos: pack_section_relative_pos(position.x, position.y, position.z),
+                    state_id: state.0 as i32,
+                });
+            }
+        }
+        if update.changes.is_empty() {
             continue;
-        };
+        }
         if !try_push(&mut out, &mut credit, |out| {
-            push_block_update(out, conn, position, state.0);
+            if positions.len() == 1 {
+                push_block_update(out, conn, positions[0], update.changes[0].state_id as u32);
+            } else {
+                push_best_effort(out, conn, &update);
+            }
         }) {
-            viewer.pending_blocks.insert(position);
+            viewer.pending_blocks.extend(positions.iter().copied());
         }
     }
+    scratch.section_blocks = update.changes;
     // A full repair covers its own newest baked light. Other light debt
     // survives exhausted credit without replacing a chunk admission. Light
     // moves only with a chunk revision, so the delta names every candidate.

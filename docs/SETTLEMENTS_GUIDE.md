@@ -55,6 +55,8 @@ Stand inside the village radius and use `/settlement claim` or **Claim settlemen
 
 **Graphical autonomy acceptance:** `village-autonomy-qa` requires Storage L1, at least one further autonomously chosen building, and a planner-initiated upgrade while the settlement is still unowned, all without player-supplied items. House is expected only when the village has a real wool source. Claim through the dialog, a second player's refusal, an owner order and actual restart/resume follow.
 
+The autonomy harness keeps the primary player non-operator and disables spawn protection only in its isolated QA world: the second player's teleport-only operator fixture would otherwise protect seed 100's founding chest from the primary player. The final approach uses the same ordinary client path planner as longer legs, not blind forward/jump input through buildings.
+
 Сгенерированная ванильная деревня становится поселением без владельца при загрузке колокола в её настоящем worldgen-здании центра. Идентичность задают измерение и стартовый чанк структуры, а не произвольные колокола рядом. Настоящие сгенерированные жители привязываются при загрузке их чанков; погибшие или ещё не загруженные жители не стирают деревню. Нативные строки, колонки жителей и сохранённые отметки генерации не допускают дубликатов после загрузки/перезапуска. Один поставленный игроком колокол не создаёт поселение. Используется ближайший контейнер либо рядом с колоколом появляется пустой стартовый сундук; запасы не создаются из воздуха.
 
 Один пустой сундук при принятии деревни — явное инфраструктурное исключение, как колокол: для размещения этого блока не списывается предмет сундука. Содержимое пустое; все последующие стройматериалы, снаряжение и запасы берутся только из настоящей работы/склада.
@@ -66,6 +68,8 @@ Stand inside the village radius and use `/settlement claim` or **Claim settlemen
 **Только загруженные чанки:** автономные и принадлежащие игрокам поселения используют один планировщик и настоящие материалы склада. Строительство, развитие, набор войск и бои за кадром в этом прототипе **не симулируются**; работа ждёт загрузки нужных чанков. Абстрактной «догоняющей» симуляции нет.
 
 **Графическая проверка автономности:** `village-autonomy-qa` требует склад L1, ещё хотя бы одно самостоятельно выбранное здание и инициированное планировщиком улучшение до присвоения поселения, без предметов от игрока. Дом ожидается только при настоящем источнике шерсти. Затем проверяются присвоение кнопкой, отказ второму игроку, заказ владельца и настоящий перезапуск с продолжением стройки.
+
+Проверка автономности оставляет основного игрока без прав оператора и отключает защиту спавна только в изолированном QA-мире: операторские права второго игрока, нужные исключительно для телепортации, иначе закрывают основному игроку стартовый сундук в seed 100. Финальный подход использует тот же обычный клиентский планировщик пути, что и дальние участки, вместо слепого движения вперёд с прыжками сквозь здания.
 
 ## Automatic construction / Автоматическое строительство
 
