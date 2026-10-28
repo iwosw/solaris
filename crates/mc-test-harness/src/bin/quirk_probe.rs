@@ -23,10 +23,10 @@ use mc_protocol::packets::login::{LoginAcknowledged, LoginStart, LoginSuccess};
 use mc_protocol::packets::play::{
     AddEntity, ClientboundContainerSetContent, ClientboundContainerSetSlot, ClientboundDamageEvent,
     ClientboundKeepAlive, ClientboundSetEntityData, ClientboundSetHealth, ConfirmTeleportation,
-    EntityDataValue, InteractionHand, LoginPlay, MoveEntityPosRot, MovePlayerFlags, PlayerInput,
-    RemoveEntities, ServerboundAttack, ServerboundClientTickEnd, ServerboundKeepAlive,
-    ServerboundMovePlayerPosRot, ServerboundPlayerInput, ServerboundPlayerLoaded,
-    ServerboundSetCarriedItem, ServerboundSwing, SetEntityMotion, SynchronizePlayerPosition,
+    EntityDataValue, LoginPlay, MoveEntityPosRot, MovePlayerFlags, PlayerInput, RemoveEntities,
+    ServerboundAttack, ServerboundClientTickEnd, ServerboundKeepAlive, ServerboundMovePlayerPosRot,
+    ServerboundPlayerInput, ServerboundPlayerLoaded, ServerboundPunch, ServerboundSetCarriedItem,
+    SetEntityMotion, SynchronizePlayerPosition,
 };
 use serde_json::json;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -94,10 +94,8 @@ impl Probe {
                             .await?;
                     } else if frame.id == SynchronizePlayerPosition::ID {
                         let sync = SynchronizePlayerPosition::decode(&mut frame.body.clone())?;
-                        self.write_packet(&ConfirmTeleportation {
-                            teleport_id: sync.teleport_id,
-                        })
-                        .await?;
+                        self.write_packet(&ConfirmTeleportation::accepting(&sync))
+                            .await?;
                     }
                     seen.push(frame);
                 }
@@ -200,9 +198,7 @@ async fn drive_to_play(cli: &Cli) -> Result<(Probe, i32, SynchronizePlayerPositi
         if frame.id == SynchronizePlayerPosition::ID {
             let sync = SynchronizePlayerPosition::decode(&mut frame.body.clone())?;
             probe
-                .write_packet(&ConfirmTeleportation {
-                    teleport_id: sync.teleport_id,
-                })
+                .write_packet(&ConfirmTeleportation::accepting(&sync))
                 .await?;
             break sync;
         }
@@ -323,9 +319,7 @@ async fn wait_server_ticks(probe: &mut Probe, seen: &mut Vec<RawFrame>, ticks: u
                 } else if frame.id == SynchronizePlayerPosition::ID {
                     let sync = SynchronizePlayerPosition::decode(&mut frame.body.clone())?;
                     probe
-                        .write_packet(&ConfirmTeleportation {
-                            teleport_id: sync.teleport_id,
-                        })
+                        .write_packet(&ConfirmTeleportation::accepting(&sync))
                         .await?;
                 }
                 if frame.id == mc_protocol::packets::play::ClientboundSetTime::ID
@@ -381,9 +375,7 @@ async fn scenario_attribute_swap(
         if frame.id == SynchronizePlayerPosition::ID {
             let sync = SynchronizePlayerPosition::decode(&mut frame.body.clone())?;
             probe
-                .write_packet(&ConfirmTeleportation {
-                    teleport_id: sync.teleport_id,
-                })
+                .write_packet(&ConfirmTeleportation::accepting(&sync))
                 .await?;
             seen.push(frame);
             continue;
@@ -463,9 +455,7 @@ async fn scenario_attribute_swap(
         if frame.id == SynchronizePlayerPosition::ID {
             let sync = SynchronizePlayerPosition::decode(&mut frame.body.clone())?;
             probe
-                .write_packet(&ConfirmTeleportation {
-                    teleport_id: sync.teleport_id,
-                })
+                .write_packet(&ConfirmTeleportation::accepting(&sync))
                 .await?;
             seen.push(frame);
             continue;
@@ -580,11 +570,7 @@ async fn scenario_attribute_swap(
                 entity_id: candidate,
             })
             .await?;
-        probe
-            .write_packet(&ServerboundSwing {
-                hand: InteractionHand::MainHand,
-            })
-            .await?;
+        probe.write_packet(&ServerboundPunch).await?;
         wait_server_ticks(probe, seen, 16).await?;
         // Learn about zombies that appeared mid-run (later setup rounds).
         let fresh: Vec<(i32, i32, [f64; 3])> = seen
@@ -626,11 +612,7 @@ async fn scenario_attribute_swap(
     probe
         .write_packet(&ServerboundAttack { entity_id: victim })
         .await?;
-    probe
-        .write_packet(&ServerboundSwing {
-            hand: InteractionHand::MainHand,
-        })
-        .await?;
+    probe.write_packet(&ServerboundPunch).await?;
     wait_server_ticks(probe, seen, 16).await?;
     let ha = last_health(seen);
     let dmg_b = match (hb, ha) {
@@ -654,11 +636,7 @@ async fn scenario_attribute_swap(
     both.extend_from_slice(&f1);
     both.extend_from_slice(&f2);
     probe.stream.write_all(&both).await?;
-    probe
-        .write_packet(&ServerboundSwing {
-            hand: InteractionHand::MainHand,
-        })
-        .await?;
+    probe.write_packet(&ServerboundPunch).await?;
     wait_server_ticks(probe, seen, 16).await?;
     let ha = last_health(seen);
     let dmg_c = match (hb, ha) {
@@ -682,11 +660,7 @@ async fn scenario_attribute_swap(
     both.extend_from_slice(&f1);
     both.extend_from_slice(&f2);
     probe.stream.write_all(&both).await?;
-    probe
-        .write_packet(&ServerboundSwing {
-            hand: InteractionHand::MainHand,
-        })
-        .await?;
+    probe.write_packet(&ServerboundPunch).await?;
     wait_server_ticks(probe, seen, 16).await?;
     let ha = last_health(seen);
     let dmg_d = match (hb, ha) {
@@ -816,9 +790,7 @@ async fn step_and_sync(
                 } else if frame.id == SynchronizePlayerPosition::ID {
                     let sync = SynchronizePlayerPosition::decode(&mut frame.body.clone())?;
                     probe
-                        .write_packet(&ConfirmTeleportation {
-                            teleport_id: sync.teleport_id,
-                        })
+                        .write_packet(&ConfirmTeleportation::accepting(&sync))
                         .await?;
                 }
                 seen.push(frame);

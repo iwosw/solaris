@@ -213,14 +213,14 @@ mod tests {
         );
         assert_eq!(
             reg.id_of(&Identifier::parse("minecraft:birch_log").unwrap()),
-            Some(136)
+            Some(165)
         );
         assert_eq!(
             reg.id_of(&Identifier::parse("minecraft:birch_planks").unwrap()),
-            Some(38)
+            Some(65)
         );
         assert_eq!(
-            reg.name_of(947).map(Identifier::as_str),
+            reg.name_of(1060).map(Identifier::as_str),
             Some("minecraft:stick")
         );
     }

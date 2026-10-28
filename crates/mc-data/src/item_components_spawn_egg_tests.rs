@@ -1,7 +1,7 @@
 use super::*;
 
 #[test]
-fn spawn_egg_embedded_defaults_match_all_87_vanilla_reports() {
+fn spawn_egg_embedded_defaults_match_all_88_vanilla_reports() {
     let reports = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../data/vanilla/reports/minecraft/components/item");
     let full = load_item_facts(reports).unwrap();
@@ -17,7 +17,8 @@ fn spawn_egg_embedded_defaults_match_all_87_vanilla_reports() {
         assert_eq!(fallback.max_stack_size, facts.max_stack_size, "{item}");
         eggs += 1;
     }
-    assert_eq!(eggs, 87);
+    // 26.3 adds sulfur_cube_spawn_egg to 26.1.2's 87.
+    assert_eq!(eggs, 88);
 }
 
 #[test]

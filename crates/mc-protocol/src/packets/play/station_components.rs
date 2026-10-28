@@ -2,6 +2,7 @@ use super::{item_stack_template, read_bounded_vec, write_count};
 use crate::codec::{ReadMc, WriteMc};
 use crate::error::CodecError;
 use bytes::{Buf, BufMut};
+use mc_data::data_component_types_26_1_2 as ids;
 use mc_data::item_stack::{
     ArmorTrim, BannerPattern, ExtendedItemComponents, FireworkExplosion, Fireworks,
 };
@@ -102,11 +103,11 @@ pub(super) fn encode<B: BufMut>(
 ) -> Result<(), CodecError> {
     use super::copied_components::contains;
     if c.repair_cost != 0 && !contains(overrides, 19) {
-        buf.write_varint(19);
+        buf.write_varint(ids::REPAIR_COST);
         buf.write_varint(c.repair_cost);
     }
     if !c.stored_enchantments.is_empty() && !contains(overrides, 42) {
-        buf.write_varint(42);
+        buf.write_varint(ids::STORED_ENCHANTMENTS);
         write_count(buf, c.stored_enchantments.len())?;
         for e in &c.stored_enchantments {
             let raw = mc_data::required_registry_entry_id("enchantment", &e.id)
@@ -116,7 +117,7 @@ pub(super) fn encode<B: BufMut>(
         }
     }
     if !c.charged_projectiles.is_empty() && !contains(overrides, 49) {
-        buf.write_varint(49);
+        buf.write_varint(ids::CHARGED_PROJECTILES);
         write_count(buf, c.charged_projectiles.len())?;
         for stack in &c.charged_projectiles {
             item_stack_template::encode(buf, stack, depth + 1)?;
@@ -129,7 +130,7 @@ pub(super) fn encode<B: BufMut>(
                 max: MAX_POTION_CUSTOM_EFFECTS,
             });
         }
-        buf.write_varint(51);
+        buf.write_varint(ids::POTION_CONTENTS);
         buf.write_bool(c.potion.is_some());
         if let Some(potion) = &c.potion {
             let raw = mc_data::stations::potion_id(potion)
@@ -155,12 +156,12 @@ pub(super) fn encode<B: BufMut>(
     if let Some(trim) = &c.trim
         && !contains(overrides, 56)
     {
-        buf.write_varint(56);
+        buf.write_varint(ids::TRIM);
         write_holder(buf, "trim_material", &trim.material)?;
         write_holder(buf, "trim_pattern", &trim.pattern)?;
     }
     if !c.banner_patterns.is_empty() && !contains(overrides, 72) {
-        buf.write_varint(72);
+        buf.write_varint(ids::BANNER_PATTERNS);
         write_count(buf, c.banner_patterns.len())?;
         for layer in &c.banner_patterns {
             write_holder(buf, "banner_pattern", &layer.pattern)?;
@@ -173,7 +174,7 @@ pub(super) fn encode<B: BufMut>(
         if !(0..=4).contains(&amplifier) {
             return Err(CodecError::NotSupported("invalid ominous bottle amplifier"));
         }
-        buf.write_varint(63);
+        buf.write_varint(ids::OMINOUS_BOTTLE_AMPLIFIER);
         buf.write_varint(amplifier);
     }
     if let Some(fireworks) = &c.fireworks
@@ -182,7 +183,7 @@ pub(super) fn encode<B: BufMut>(
         if !(0..=255).contains(&fireworks.flight_duration) || fireworks.explosions.len() > 256 {
             return Err(CodecError::NotSupported("invalid fireworks"));
         }
-        buf.write_varint(69);
+        buf.write_varint(ids::FIREWORKS);
         buf.write_varint(fireworks.flight_duration);
         write_count(buf, fireworks.explosions.len())?;
         for explosion in &fireworks.explosions {
@@ -212,10 +213,10 @@ pub(super) fn decode<B: Buf>(
     depth: usize,
 ) -> Result<bool, CodecError> {
     match id {
-        19 => {
+        ids::REPAIR_COST => {
             c.repair_cost = buf.read_varint()?.max(0);
         }
-        42 => {
+        ids::STORED_ENCHANTMENTS => {
             c.stored_enchantments = read_bounded_vec(buf, 256, 2, |buf| {
                 let raw = buf.read_varint()?;
                 let id = u32::try_from(raw)
@@ -229,14 +230,14 @@ pub(super) fn decode<B: Buf>(
                 Ok(ItemEnchantment { id, level })
             })?;
         }
-        49 => {
+        ids::CHARGED_PROJECTILES => {
             if depth >= super::copied_components::MAX_ITEM_COMPONENT_DEPTH {
                 return Err(CodecError::NotSupported("nested item component depth"));
             }
             c.charged_projectiles =
                 read_bounded_vec(buf, 3, 4, |buf| item_stack_template::decode(buf, depth + 1))?;
         }
-        51 => {
+        ids::POTION_CONTENTS => {
             if buf.read_bool()? {
                 let raw = buf.read_varint()?;
                 c.potion = Some(
@@ -269,13 +270,13 @@ pub(super) fn decode<B: Buf>(
                 None
             };
         }
-        56 => {
+        ids::TRIM => {
             c.trim = Some(ArmorTrim {
                 material: read_holder(buf, "trim_material")?,
                 pattern: read_holder(buf, "trim_pattern")?,
             });
         }
-        72 => {
+        ids::BANNER_PATTERNS => {
             c.banner_patterns = read_bounded_vec(buf, 20, 2, |buf| {
                 let pattern = read_holder(buf, "banner_pattern")?;
                 let color = buf.read_varint()?;
@@ -285,14 +286,14 @@ pub(super) fn decode<B: Buf>(
                 Ok(BannerPattern { pattern, color })
             })?;
         }
-        63 => {
+        ids::OMINOUS_BOTTLE_AMPLIFIER => {
             let amplifier = buf.read_varint()?;
             if !(0..=4).contains(&amplifier) {
                 return Err(CodecError::NotSupported("invalid ominous bottle amplifier"));
             }
             c.ominous_bottle_amplifier = Some(amplifier);
         }
-        69 => {
+        ids::FIREWORKS => {
             let flight_duration = buf.read_varint()?;
             if !(0..=255).contains(&flight_duration) {
                 return Err(CodecError::NotSupported("invalid firework flight duration"));

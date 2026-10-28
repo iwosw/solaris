@@ -138,10 +138,38 @@ pub fn client_block_entities(
         let Some(type_name) = block_entity_type_name(&tag) else {
             continue;
         };
+        let nbt = match type_name.as_str() {
+            "minecraft:trial_spawner" => {
+                let active = chunk
+                    .get_block(
+                        pos.x.rem_euclid(16) as u8,
+                        pos.y,
+                        pos.z.rem_euclid(16) as u8,
+                    )
+                    .and_then(|id| registry.by_id(id))
+                    .is_some_and(|state| {
+                        state
+                            .properties
+                            .iter()
+                            .any(|(key, value)| key == "trial_spawner_state" && value == "active")
+                    });
+                let Tag::Compound(fields) = tag else { continue };
+                trial_spawner_update_tag(&fields, active)
+            }
+            "minecraft:vault" => {
+                let Tag::Compound(fields) = tag else { continue };
+                let shared = fields
+                    .into_iter()
+                    .find(|(key, _)| key == "shared_data")
+                    .map_or_else(|| Tag::Compound(Vec::new()), |(_, value)| value);
+                Tag::Compound(vec![("shared_data".into(), shared)])
+            }
+            _ => strip_persistent_block_entity_fields(tag),
+        };
         records.push(BlockEntityWireRecord {
             pos: *pos,
             type_name,
-            nbt: strip_persistent_block_entity_fields(tag),
+            nbt,
         });
     }
 
@@ -190,6 +218,32 @@ pub fn client_block_entities(
     }
 
     records
+}
+
+/// Vanilla TrialSpawnerStateData.getUpdateTag: the timer is sent only while
+/// active; spawn_data is optional. Saved configuration never goes to clients.
+#[must_use]
+pub fn trial_spawner_update_tag(fields: &[(String, Tag)], active: bool) -> Tag {
+    let mut output = Vec::new();
+    if active {
+        let timer = fields
+            .iter()
+            .find_map(|(name, value)| {
+                if name == "next_mob_spawns_at"
+                    && let Tag::Long(value) = value
+                {
+                    Some(*value)
+                } else {
+                    None
+                }
+            })
+            .unwrap_or(0);
+        output.push(("next_mob_spawns_at".into(), Tag::Long(timer)));
+    }
+    if let Some((_, spawn)) = fields.iter().find(|(name, _)| name == "spawn_data") {
+        output.push(("spawn_data".into(), spawn.clone()));
+    }
+    Tag::Compound(output)
 }
 
 /// Build the CLIENT-usage heightmaps from a chunk in the order

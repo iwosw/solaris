@@ -1,5 +1,6 @@
 use super::*;
 use std::fs;
+use std::path::{Path, PathBuf};
 use tempfile::TempDir;
 
 fn make_tiny_sidecar() -> TempDir {
@@ -240,20 +241,26 @@ fn solaris_required_item_tags_cover_recipe_baseline() {
         item_tags
             .get(&Identifier::parse("minecraft:birch_logs").unwrap())
             .unwrap(),
-        &[136, 173, 150, 161]
+        &[165, 205, 180, 192]
     );
+    let birch_log = items
+        .id_of(&Identifier::parse("minecraft:birch_log").unwrap())
+        .expect("birch log is in the required item registry") as i32;
     assert!(
         item_tags
             .get(&Identifier::parse("minecraft:logs_that_burn").unwrap())
             .unwrap()
-            .contains(&136),
+            .contains(&birch_log),
         "generated birch logs must satisfy the vanilla logs_that_burn tag used by charcoal smelting"
     );
+    let oak_planks = items
+        .id_of(&Identifier::parse("minecraft:oak_planks").unwrap())
+        .expect("oak planks are in the required item registry") as i32;
     assert!(
         item_tags
             .get(&Identifier::parse("minecraft:planks").unwrap())
             .unwrap()
-            .contains(&38)
+            .contains(&oak_planks)
     );
     let egg_id = items
         .id_of(&Identifier::parse("minecraft:egg").unwrap())
@@ -629,19 +636,39 @@ fn solaris_required_client_tags_bind_common_survival_tools() {
         .registries
         .get(&Identifier::parse("minecraft:block").unwrap())
         .expect("block tag registry present");
+    let mut blocks_in_raw_id_order: Vec<_> = blocks.iter().collect();
+    blocks_in_raw_id_order.sort_by_key(|block| {
+        block
+            .states
+            .iter()
+            .map(|state| state.id)
+            .min()
+            .expect("embedded block has at least one state")
+    });
 
-    for (tag, block_ids) in [
-        ("minecraft:mineable/axe", &[13, 49, 51, 206][..]),
-        ("minecraft:mineable/shovel", &[8, 9, 11, 37, 40][..]),
-        ("minecraft:mineable/hoe", &[88, 94, 537][..]),
+    for (tag, block_names) in [
+        (
+            "minecraft:mineable/axe",
+            &["minecraft:oak_planks", "minecraft:oak_log"][..],
+        ),
+        (
+            "minecraft:mineable/shovel",
+            &["minecraft:grass_block", "minecraft:dirt"][..],
+        ),
+        ("minecraft:mineable/hoe", &["minecraft:oak_leaves"][..]),
     ] {
         let entries = block_tags
             .get(&Identifier::parse(tag).unwrap())
             .unwrap_or_else(|| panic!("{tag} tag present"));
-        for block_id in block_ids {
+        for block_name in block_names {
+            let raw_id = blocks_in_raw_id_order
+                .iter()
+                .position(|block| block.id.as_str() == *block_name)
+                .and_then(|raw_id| i32::try_from(raw_id).ok())
+                .unwrap_or_else(|| panic!("embedded block {block_name} missing"));
             assert!(
-                entries.contains(block_id),
-                "{tag} must contain block raw id {block_id}"
+                entries.contains(&raw_id),
+                "{tag} must contain {block_name} (raw id {raw_id})"
             );
         }
     }
@@ -685,4 +712,30 @@ fn solaris_required_client_tags_bind_complete_axe_oracle_membership() {
             .unwrap_or_else(|| panic!("embedded block {block_name} missing"));
         assert!(axe.contains(&raw_id), "axe tag must contain {block_name}");
     }
+}
+
+#[test]
+fn real_cache_263_block_tags_include_cinnabar_when_present() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(Path::parent)
+        .unwrap()
+        .join("data/vanilla");
+    let pickaxe_tag = root.join("data/minecraft/tags/block/mineable/pickaxe.json");
+    if !pickaxe_tag.is_file() {
+        eprintln!(
+            "SKIP real_cache_263_block_tags_include_cinnabar_when_present: missing {}",
+            pickaxe_tag.display()
+        );
+        return;
+    }
+
+    let data = crate::load(&root).expect("real cache registry data loads");
+    let tags = load(&root, &data).expect("real cache tags resolve");
+    let cinnabar = load_vanilla_id_index(&root).expect("real cache block registry ids load")["minecraft:block"]
+        ["minecraft:cinnabar"];
+    assert!(
+        tags.contains_raw_id("minecraft:block", "minecraft:mineable/pickaxe", cinnabar),
+        "26.3 cinnabar must be in minecraft:mineable/pickaxe"
+    );
 }

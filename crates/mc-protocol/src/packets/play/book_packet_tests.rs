@@ -24,7 +24,7 @@ fn edit_book_wire_and_bounds_match_local_codec() {
 }
 #[test]
 fn open_book_carries_only_hand_enum() {
-    assert_eq!(ClientboundOpenBook::ID, 58);
+    assert_eq!(ClientboundOpenBook::ID, 59);
     let packet = ClientboundOpenBook {
         hand: InteractionHand::OffHand,
     };

@@ -3,7 +3,7 @@
 **A Minecraft Java Edition server written from scratch in Rust.**
 
 Solaris is a replacement for the vanilla server (and Paper/Spigot-style servers).
-Players join with the normal, unmodified Minecraft **Java 26.1.2** client; there
+Players join with the normal, unmodified Minecraft **Java 26.3** client; there
 are no client mods to install. Solaris reimplements the game itself: world
 generation, mobs, redstone, villages, combat and inventories. It is built for two
 things the vanilla server is bad at:
@@ -170,11 +170,11 @@ Solaris does not ship any Mojang files. Before the first start, download the
 official server once and let Solaris derive its game data from it:
 
 ```sh
-solaris content import --version 26.1.2 --download
+solaris content import --version 26.3 --download
 solaris --config example.toml
 ```
 
-Then connect a Minecraft Java 26.1.2 client to `127.0.0.1:25565`.
+Then connect a Minecraft Java 26.3 client to `127.0.0.1:25565`.
 
 > The example config listens on all interfaces with **offline authentication**.
 > For anything beyond local testing, set `[auth].online_mode = true` and review
@@ -198,12 +198,13 @@ and JDK 25. Linux x86-64 builds use Clang and mold, as configured in
 
 ```sh
 cargo build -p mc-edge --bin solaris-v2
-cargo run -p mc-edge --bin solaris-v2 -- content import --version 26.1.2 --download
+cargo run -p mc-edge --bin solaris-v2 -- content import --version 26.3 --download
 cargo run -p mc-edge --bin solaris-v2 -- --config example.toml
 ```
 
-To use a server jar you already have, replace `--download` with
-`--from /path/to/server.jar`.
+To use server jars you already have, replace `--download` with
+`--from /path/to/26.3/server.jar --gameplay-from /path/to/26.1.2/server.jar`
+(see [the content cache](docs/OPERATING.md#vanilla-content-cache)).
 
 ## Contributing
 

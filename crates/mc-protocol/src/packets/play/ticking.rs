@@ -11,7 +11,7 @@ pub struct ClientboundTickingState {
 impl Packet for ClientboundTickingState {
     // GameProtocols.CLIENTBOUND_TEMPLATE: TICKING_STATE at 128 (wire id 0x7F),
     // right after TEST_INSTANCE_BLOCK_STATUS and before TICKING_STEP.
-    const ID: i32 = 0x7F;
+    const ID: i32 = 0x82;
     fn encode<B: BufMut>(&self, buf: &mut B) -> Result<(), CodecError> {
         buf.write_f32(self.tick_rate);
         buf.write_bool(self.frozen);
@@ -32,7 +32,7 @@ pub struct ClientboundTickingStep {
 impl Packet for ClientboundTickingStep {
     // GameProtocols.CLIENTBOUND_TEMPLATE: TICKING_STEP at 129, right after
     // TICKING_STATE (0x7F) and before the common TRANSFER packet.
-    const ID: i32 = 0x80;
+    const ID: i32 = 0x83;
     fn encode<B: BufMut>(&self, buf: &mut B) -> Result<(), CodecError> {
         buf.write_varint(self.tick_steps);
         Ok(())

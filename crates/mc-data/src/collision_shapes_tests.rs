@@ -93,8 +93,8 @@ fn oracle_table_has_exact_farmland_shape_for_every_moisture_state() {
 fn oracle_table_covers_the_complete_vanilla_state_registry() {
     let table = vanilla_collision_shapes();
 
-    assert_eq!(table.version(), "26.1.2");
-    assert_eq!(table.covered_state_count(), 29_873);
+    assert_eq!(table.version(), "26.3");
+    assert_eq!(table.covered_state_count(), 35_723);
 }
 
 #[test]

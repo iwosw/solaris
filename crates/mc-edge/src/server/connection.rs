@@ -242,6 +242,7 @@ async fn run_connection(
             server.admin.level(outcome.uuid)
         },
         plugin_commands: server.hub.plugin_commands(),
+        online_mode: server.cfg.auth.online_mode,
     })
     .await
     {

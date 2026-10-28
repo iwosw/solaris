@@ -1,6 +1,8 @@
-//! Vanilla 26.1.2 advancement codecs, derived from local server javap.
+//! Vanilla 26.3 advancement codecs, derived from local server decompilation.
 //! DisplayInfo uses ItemStackTemplate (raw item id, count, component patch),
 //! not the optional inventory Slot codec. Criteria/rewards are not on the wire.
+//! Each added advancement is a `PositionedAdvancement`: holder, then the tree
+//! node's x/y floats (no longer inside DisplayInfo).
 use super::*;
 use std::collections::BTreeMap;
 
@@ -55,8 +57,8 @@ fn read_id_option<B: Buf>(buf: &mut B) -> Result<Option<Identifier>, CodecError>
     }
 }
 impl Packet for ClientboundUpdateAdvancements {
-    // GameProtocols CLIENTBOUND_TEMPLATE ordinal 130, including common/cookie/ping.
-    const ID: i32 = 0x82;
+    // 26.3 `packets.json` play clientbound `minecraft:update_advancements`.
+    const ID: i32 = 0x85;
     fn encode<B: BufMut>(&self, buf: &mut B) -> Result<(), CodecError> {
         buf.write_bool(self.reset);
         buf.write_varint(self.added.len() as i32);
@@ -81,8 +83,6 @@ impl Packet for ClientboundUpdateAdvancements {
                 if let Some(background) = &display.background {
                     buf.write_identifier(background)?;
                 }
-                buf.write_f32(display.x);
-                buf.write_f32(display.y);
             }
             buf.write_varint(definition.requirements.len() as i32);
             for group in &definition.requirements {
@@ -92,6 +92,12 @@ impl Packet for ClientboundUpdateAdvancements {
                 }
             }
             buf.write_bool(definition.sends_telemetry);
+            let (x, y) = definition
+                .display
+                .as_ref()
+                .map_or((0.0, 0.0), |display| (display.x, display.y));
+            buf.write_f32(x);
+            buf.write_f32(y);
         }
         buf.write_varint(self.removed.len() as i32);
         for id in &self.removed {
@@ -141,8 +147,8 @@ impl Packet for ClientboundUpdateAdvancements {
                     background,
                     show_toast: flags & 2 != 0,
                     hidden: flags & 4 != 0,
-                    x: buf.read_f32()?,
-                    y: buf.read_f32()?,
+                    x: 0.0,
+                    y: 0.0,
                 })
             } else {
                 None
@@ -150,12 +156,16 @@ impl Packet for ClientboundUpdateAdvancements {
             let requirements = read_bounded_vec(buf, 1024, 1, |buf| {
                 read_bounded_vec(buf, 1024, 1, |buf| buf.read_string(DEFAULT_MAX_STRING_LEN))
             })?;
+            let sends_telemetry = buf.read_bool()?;
+            let x = buf.read_f32()?;
+            let y = buf.read_f32()?;
+            let display = display.map(|display| AdvancementDisplay { x, y, ..display });
             Ok(AdvancementDefinition {
                 id,
                 parent,
                 display,
                 requirements,
-                sends_telemetry: buf.read_bool()?,
+                sends_telemetry,
             })
         })?;
         let removed = read_bounded_vec(buf, 8192, 1, |buf| buf.read_identifier())?;
@@ -192,7 +202,7 @@ pub enum ServerboundSeenAdvancements {
 }
 impl Packet for ServerboundSeenAdvancements {
     // GameProtocols SERVERBOUND_TEMPLATE ordinal 50, including common/cookie/ping.
-    const ID: i32 = 0x32;
+    const ID: i32 = 0x33;
     fn encode<B: BufMut>(&self, buf: &mut B) -> Result<(), CodecError> {
         match self {
             Self::OpenedTab(id) => {
@@ -217,7 +227,7 @@ pub struct ClientboundSelectAdvancementsTab {
 }
 impl Packet for ClientboundSelectAdvancementsTab {
     // GameProtocols CLIENTBOUND_TEMPLATE ordinal 85, including common/cookie/ping.
-    const ID: i32 = 0x55;
+    const ID: i32 = 0x57;
     fn encode<B: BufMut>(&self, buf: &mut B) -> Result<(), CodecError> {
         write_id_option(buf, &self.tab)
     }

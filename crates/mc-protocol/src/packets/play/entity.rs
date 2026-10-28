@@ -17,32 +17,6 @@ impl EntityVec3 {
     };
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct PositionMoveRotation {
-    pub position: EntityVec3,
-    pub delta_movement: EntityVec3,
-    pub yaw: f32,
-    pub pitch: f32,
-}
-
-impl PositionMoveRotation {
-    fn encode<B: BufMut>(&self, buf: &mut B) {
-        write_vec3(buf, self.position);
-        write_vec3(buf, self.delta_movement);
-        buf.write_f32(self.yaw);
-        buf.write_f32(self.pitch);
-    }
-
-    fn decode<B: Buf>(buf: &mut B) -> Result<Self, CodecError> {
-        Ok(Self {
-            position: read_vec3(buf)?,
-            delta_movement: read_vec3(buf)?,
-            yaw: buf.read_f32()?,
-            pitch: buf.read_f32()?,
-        })
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PlayerInfoActions(pub(super) u8);
 
@@ -95,7 +69,7 @@ impl Packet for PlayerInfoUpdate {
     // Verified via `.analysis/protocol-dump.txt`: CLIENTBOUND_PLAYER_INFO_UPDATE
     // sits at game-CB index 70 = wire id 0x46. `javap` shows an 8-bit fixed
     // EnumSet, then a VarInt-counted entry list keyed by profile UUID.
-    const ID: i32 = 0x46;
+    const ID: i32 = 0x47;
 
     fn encode<B: BufMut>(&self, buf: &mut B) -> Result<(), CodecError> {
         buf.write_u8(self.actions.0);
@@ -226,7 +200,7 @@ pub struct PlayerInfoRemove {
 impl Packet for PlayerInfoRemove {
     // Verified via `.analysis/protocol-dump.txt`: CLIENTBOUND_PLAYER_INFO_REMOVE
     // sits at game-CB index 69 = wire id 0x45. Body is a VarInt-counted UUID list.
-    const ID: i32 = 0x45;
+    const ID: i32 = 0x46;
 
     fn encode<B: BufMut>(&self, buf: &mut B) -> Result<(), CodecError> {
         write_count(buf, self.profile_ids.len())?;
@@ -296,11 +270,11 @@ impl Packet for AddEntity {
     }
 }
 
+/// 26.3 `ClientboundAnimatePacket` actions: arm swings moved to
+/// [`ClientboundSwingAnimation`], leaving wake-up and the two critical hits.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EntityAnimationAction {
-    SwingMainHand,
     WakeUp,
-    SwingOffHand,
     CriticalHit,
     MagicCriticalHit,
     Raw(u8),
@@ -310,11 +284,9 @@ impl EntityAnimationAction {
     #[must_use]
     pub const fn as_u8(self) -> u8 {
         match self {
-            Self::SwingMainHand => 0,
-            Self::WakeUp => 2,
-            Self::SwingOffHand => 3,
-            Self::CriticalHit => 4,
-            Self::MagicCriticalHit => 5,
+            Self::WakeUp => 0,
+            Self::CriticalHit => 1,
+            Self::MagicCriticalHit => 2,
             Self::Raw(value) => value,
         }
     }
@@ -322,11 +294,9 @@ impl EntityAnimationAction {
     #[must_use]
     pub const fn from_u8(value: u8) -> Self {
         match value {
-            0 => Self::SwingMainHand,
-            2 => Self::WakeUp,
-            3 => Self::SwingOffHand,
-            4 => Self::CriticalHit,
-            5 => Self::MagicCriticalHit,
+            0 => Self::WakeUp,
+            1 => Self::CriticalHit,
+            2 => Self::MagicCriticalHit,
             other => Self::Raw(other),
         }
     }
@@ -339,10 +309,8 @@ pub struct EntityAnimation {
 }
 
 impl Packet for EntityAnimation {
-    // Verified via inner `.analysis/server.jar` 26.1.2 server jar:
-    // CLIENTBOUND_ANIMATE is game-CB index 2 = wire id 0x02.
-    // `javap -p -c ClientboundAnimatePacket` shows VarInt entity id
-    // followed by one unsigned byte action.
+    // 26.3 `ClientboundAnimatePacket`: VarInt entity id followed by one
+    // unsigned byte action (0 wake up, 1 critical hit, 2 magic critical hit).
     const ID: i32 = 0x02;
 
     fn encode<B: BufMut>(&self, buf: &mut B) -> Result<(), CodecError> {
@@ -355,6 +323,92 @@ impl Packet for EntityAnimation {
         Ok(Self {
             entity_id: buf.read_varint()?,
             action: EntityAnimationAction::from_u8(buf.read_u8()?),
+        })
+    }
+}
+
+/// `SwingAnimationType` wire ids (26.3 `ByIdMap`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SwingAnimationType {
+    None,
+    Whack,
+    Stab,
+}
+
+impl SwingAnimationType {
+    const fn wire_id(self) -> i32 {
+        match self {
+            Self::None => 0,
+            Self::Whack => 1,
+            Self::Stab => 2,
+        }
+    }
+
+    fn from_wire(value: i32) -> Result<Self, CodecError> {
+        Ok(match value {
+            0 => Self::None,
+            1 => Self::Whack,
+            2 => Self::Stab,
+            _ => return Err(CodecError::NotSupported("unknown swing animation type")),
+        })
+    }
+}
+
+/// 26.3 `ClientboundSwingAnimationPacket`: VarInt entity id, VarInt hand
+/// (0 main, 1 off), then `SwingAnimation` = VarInt type + VarInt duration.
+/// Vanilla's default item animation is whack for 6 ticks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ClientboundSwingAnimation {
+    pub entity_id: i32,
+    pub off_hand: bool,
+    pub animation: SwingAnimationType,
+    pub duration: i32,
+}
+
+impl ClientboundSwingAnimation {
+    /// `SwingAnimation.DEFAULT` (whack, 6 ticks).
+    #[must_use]
+    pub const fn default_swing(entity_id: i32, off_hand: bool) -> Self {
+        Self {
+            entity_id,
+            off_hand,
+            animation: SwingAnimationType::Whack,
+            duration: 6,
+        }
+    }
+}
+
+impl Packet for ClientboundSwingAnimation {
+    const ID: i32 = 0x7B;
+
+    fn encode<B: BufMut>(&self, buf: &mut B) -> Result<(), CodecError> {
+        if self.duration < 0 {
+            return Err(CodecError::NotSupported("negative swing duration"));
+        }
+        buf.write_varint(self.entity_id);
+        buf.write_varint(i32::from(self.off_hand));
+        buf.write_varint(self.animation.wire_id());
+        buf.write_varint(self.duration);
+        Ok(())
+    }
+
+    fn decode<B: Buf>(buf: &mut B) -> Result<Self, CodecError> {
+        let entity_id = buf.read_varint()?;
+        let off_hand = match buf.read_varint()? {
+            0 => false,
+            1 => true,
+            _ => return Err(CodecError::NotSupported("unknown interaction hand")),
+        };
+        let animation = SwingAnimationType::from_wire(buf.read_varint()?)?;
+        let duration = buf.read_varint()?;
+        if duration < 0 {
+            return Err(CodecError::NotSupported("negative swing duration"));
+        }
+        Ok(Self {
+            entity_id,
+            off_hand,
+            animation,
+            duration,
         })
     }
 }
@@ -386,6 +440,21 @@ impl Packet for EntityEvent {
     }
 }
 
+/// 26.3 `ClientboundMoveEntityPacket` properties VarInt:
+/// `onGround | stepCount << 1`. Solaris always sends linear deltas
+/// (`stepCount` 0), i.e. three i16 deltas follow.
+fn write_linear_move_properties<B: BufMut>(buf: &mut B, on_ground: bool) {
+    buf.write_varint(i32::from(on_ground));
+}
+
+fn read_linear_move_properties<B: Buf>(buf: &mut B) -> Result<bool, CodecError> {
+    let properties = buf.read_varint()?;
+    if properties >> 1 != 0 {
+        return Err(CodecError::NotSupported("stepped entity movement delta"));
+    }
+    Ok(properties & 1 != 0)
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MoveEntityPos {
     pub entity_id: i32,
@@ -403,28 +472,28 @@ impl MoveEntityPos {
 }
 
 impl Packet for MoveEntityPos {
-    // Verified via `.analysis/protocol-dump.txt`: CLIENTBOUND_MOVE_ENTITY_POS
-    // immediately precedes CLIENTBOUND_MOVE_ENTITY_POS_ROT, so its game-CB
-    // index is 53 = wire id 0x35. `ClientboundMoveEntityPacket$Pos` carries
-    // VarInt id, three i16 relative deltas, then onGround bool.
-    const ID: i32 = 0x35;
+    // 26.3 `ClientboundMoveEntityPacket$Pos`: VarInt id, VarInt properties
+    // (`onGround | stepCount << 1`), then the linear `VecDelta` (three i16).
+    const ID: i32 = 0x36;
 
     fn encode<B: BufMut>(&self, buf: &mut B) -> Result<(), CodecError> {
         buf.write_varint(self.entity_id);
+        write_linear_move_properties(buf, self.on_ground);
         buf.write_i16(self.delta_x);
         buf.write_i16(self.delta_y);
         buf.write_i16(self.delta_z);
-        buf.write_bool(self.on_ground);
         Ok(())
     }
 
     fn decode<B: Buf>(buf: &mut B) -> Result<Self, CodecError> {
+        let entity_id = buf.read_varint()?;
+        let on_ground = read_linear_move_properties(buf)?;
         Ok(Self {
-            entity_id: buf.read_varint()?,
+            entity_id,
             delta_x: buf.read_i16()?,
             delta_y: buf.read_i16()?,
             delta_z: buf.read_i16()?,
-            on_ground: buf.read_bool()?,
+            on_ground,
         })
     }
 }
@@ -453,33 +522,32 @@ impl MoveEntityPosRot {
 }
 
 impl Packet for MoveEntityPosRot {
-    // Verified via inner `.analysis/server.jar` 26.1.2 server jar:
-    // CLIENTBOUND_MOVE_ENTITY_POS_ROT is game-CB index 54 = wire id 0x36.
-    // `javap -p -c ClientboundMoveEntityPacket$PosRot` shows VarInt id,
-    // three i16 relative deltas, packed yRot byte, packed xRot byte,
-    // then onGround bool.
-    const ID: i32 = 0x36;
+    // 26.3 `ClientboundMoveEntityPacket$PosRot`: VarInt id, VarInt
+    // properties, linear `VecDelta` (three i16), packed yRot, packed xRot.
+    const ID: i32 = 0x37;
 
     fn encode<B: BufMut>(&self, buf: &mut B) -> Result<(), CodecError> {
         buf.write_varint(self.entity_id);
+        write_linear_move_properties(buf, self.on_ground);
         buf.write_i16(self.delta_x);
         buf.write_i16(self.delta_y);
         buf.write_i16(self.delta_z);
         buf.write_u8(self.yaw);
         buf.write_u8(self.pitch);
-        buf.write_bool(self.on_ground);
         Ok(())
     }
 
     fn decode<B: Buf>(buf: &mut B) -> Result<Self, CodecError> {
+        let entity_id = buf.read_varint()?;
+        let on_ground = read_linear_move_properties(buf)?;
         Ok(Self {
-            entity_id: buf.read_varint()?,
+            entity_id,
             delta_x: buf.read_i16()?,
             delta_y: buf.read_i16()?,
             delta_z: buf.read_i16()?,
             yaw: buf.read_u8()?,
             pitch: buf.read_u8()?,
-            on_ground: buf.read_bool()?,
+            on_ground,
         })
     }
 }
@@ -493,54 +561,68 @@ pub struct MoveEntityRot {
 }
 
 impl Packet for MoveEntityRot {
-    // `.analysis/protocol-dump.txt`: MOVE_ENTITY_ROT follows the inserted
-    // MOVE_MINECART_ALONG_TRACK packet at game-CB index 56 (wire id 0x38).
-    // 26.1.2 `ClientboundMoveEntityPacket$Rot` javap shows VarInt id, packed
-    // y/x rotation bytes, then onGround.
-    const ID: i32 = 0x38;
+    // 26.3 `ClientboundMoveEntityPacket$Rot`: VarInt id, onGround, then the
+    // packed y/x rotation bytes.
+    const ID: i32 = 0x39;
 
     fn encode<B: BufMut>(&self, buf: &mut B) -> Result<(), CodecError> {
         buf.write_varint(self.entity_id);
+        buf.write_bool(self.on_ground);
         buf.write_u8(self.yaw);
         buf.write_u8(self.pitch);
-        buf.write_bool(self.on_ground);
         Ok(())
     }
 
     fn decode<B: Buf>(buf: &mut B) -> Result<Self, CodecError> {
+        let entity_id = buf.read_varint()?;
+        let on_ground = buf.read_bool()?;
         Ok(Self {
-            entity_id: buf.read_varint()?,
+            entity_id,
             yaw: buf.read_u8()?,
             pitch: buf.read_u8()?,
-            on_ground: buf.read_bool()?,
+            on_ground,
         })
     }
 }
 
+/// 26.3 `ClientboundEntityPositionSyncPacket` with a linear `PositionPath`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct EntityPositionSync {
     pub entity_id: i32,
-    pub values: PositionMoveRotation,
+    pub position: EntityVec3,
+    pub yaw: f32,
+    pub pitch: f32,
     pub on_ground: bool,
 }
 
+/// `PositionPath.Type.LINEAR` ordinal.
+const POSITION_PATH_LINEAR: i32 = 0;
+
 impl Packet for EntityPositionSync {
-    // Verified via `.analysis/protocol-dump.txt`: CLIENTBOUND_ENTITY_POSITION_SYNC
-    // is game-CB index 35 = wire id 0x23. Body is VarInt id,
-    // `PositionMoveRotation.STREAM_CODEC`, then onGround bool.
+    // 26.3 body: VarInt id, `PositionPath` (VarInt type 0 = linear + Vec3),
+    // f32 yRot, f32 xRot, then onGround bool. The 26.1.2 delta Vec3 is gone.
     const ID: i32 = 0x23;
 
     fn encode<B: BufMut>(&self, buf: &mut B) -> Result<(), CodecError> {
         buf.write_varint(self.entity_id);
-        self.values.encode(buf);
+        buf.write_varint(POSITION_PATH_LINEAR);
+        write_vec3(buf, self.position);
+        buf.write_f32(self.yaw);
+        buf.write_f32(self.pitch);
         buf.write_bool(self.on_ground);
         Ok(())
     }
 
     fn decode<B: Buf>(buf: &mut B) -> Result<Self, CodecError> {
+        let entity_id = buf.read_varint()?;
+        if buf.read_varint()? != POSITION_PATH_LINEAR {
+            return Err(CodecError::NotSupported("stepped entity position path"));
+        }
         Ok(Self {
-            entity_id: buf.read_varint()?,
-            values: PositionMoveRotation::decode(buf)?,
+            entity_id,
+            position: read_vec3(buf)?,
+            yaw: buf.read_f32()?,
+            pitch: buf.read_f32()?,
             on_ground: buf.read_bool()?,
         })
     }
@@ -557,7 +639,7 @@ impl Packet for SetEntityMotion {
     // CLIENTBOUND_SET_ENTITY_MOTION is game-CB index 101 = wire id 0x65.
     // `javap -p -c ClientboundSetEntityMotionPacket` shows VarInt id plus
     // `Vec3.LP_STREAM_CODEC` movement.
-    const ID: i32 = 0x65;
+    const ID: i32 = 0x67;
 
     fn encode<B: BufMut>(&self, buf: &mut B) -> Result<(), CodecError> {
         buf.write_varint(self.entity_id);
@@ -1323,7 +1405,7 @@ impl Packet for ClientboundSetEntityData {
     // game-CB index 99 = wire id 0x63. `javap -p -c` shows VarInt entity id,
     // repeated DataValue entries, then EOF marker byte 255. DataValue writes one
     // unsigned-byte metadata index, VarInt serializer id, then serializer payload.
-    const ID: i32 = 0x63;
+    const ID: i32 = 0x65;
 
     fn encode<B: BufMut>(&self, buf: &mut B) -> Result<(), CodecError> {
         if self.values.len() > MAX_ENTITY_DATA_VALUES {
@@ -1399,7 +1481,7 @@ impl Packet for ClientboundTakeItemEntity {
     // Verified via `.analysis/protocol-dump.txt`: CLIENTBOUND_TAKE_ITEM_ENTITY is
     // game-CB index 124 = wire id 0x7C. `javap -p -c` shows three VarInts:
     // item entity id, player entity id, and picked-up amount.
-    const ID: i32 = 0x7C;
+    const ID: i32 = 0x7F;
 
     fn encode<B: BufMut>(&self, buf: &mut B) -> Result<(), CodecError> {
         buf.write_varint(self.item_entity_id);
@@ -1425,7 +1507,7 @@ pub struct RemoveEntities {
 impl Packet for RemoveEntities {
     // Verified via `.analysis/protocol-dump.txt`: CLIENTBOUND_REMOVE_ENTITIES
     // is game-CB index 77 = wire id 0x4D. Body is FriendlyByteBuf.writeIntIdList.
-    const ID: i32 = 0x4D;
+    const ID: i32 = 0x4E;
 
     fn encode<B: BufMut>(&self, buf: &mut B) -> Result<(), CodecError> {
         write_count(buf, self.entity_ids.len())?;
@@ -1453,7 +1535,7 @@ impl Packet for ClientboundSetPassengers {
     // Verified via `.analysis/protocol-dump.txt`: CLIENTBOUND_SET_PASSENGERS
     // is game-CB index 107 = wire id 0x6B. Body is a vehicle VarInt followed
     // by a VarInt-length-prefixed array of passenger entity VarInts.
-    const ID: i32 = 0x6B;
+    const ID: i32 = 0x6D;
 
     fn encode<B: BufMut>(&self, buf: &mut B) -> Result<(), CodecError> {
         buf.write_varint(self.vehicle_id);
@@ -1483,7 +1565,7 @@ pub struct RotateHead {
 impl Packet for RotateHead {
     // Verified via `.analysis/protocol-dump.txt`: CLIENTBOUND_ROTATE_HEAD is
     // game-CB index 83 = wire id 0x53. Body is VarInt entity id and packed yaw.
-    const ID: i32 = 0x53;
+    const ID: i32 = 0x55;
 
     fn encode<B: BufMut>(&self, buf: &mut B) -> Result<(), CodecError> {
         buf.write_varint(self.entity_id);

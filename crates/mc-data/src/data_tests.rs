@@ -87,6 +87,35 @@ fn load_indexes_every_captured_network_nbt_payload() {
     );
 }
 
+/// 26.3 `block_transformer` is synchronized but absent from the gameplay data
+/// pack; its captured list-rooted payloads are the whole registry.
+#[test]
+fn load_indexes_wire_only_registry_with_list_payload() {
+    let dir = make_minimal_layout();
+    write_captured_payloads(dir.path());
+    let registry = Identifier::parse("minecraft:block_transformer").unwrap();
+    let entry = Identifier::parse("minecraft:axe").unwrap();
+    let tag = mc_nbt::Tag::List(mc_nbt::ListTag {
+        element_type: 8,
+        elements: vec![mc_nbt::Tag::String("minecraft:oak_log".into())],
+    });
+    let mut payload = Vec::new();
+    mc_nbt::write_network_value(&mut payload, &tag).unwrap();
+    let path = network_registry_payload_path(dir.path(), &registry, &entry).unwrap();
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(path, &payload).unwrap();
+
+    let data = load(dir.path()).unwrap();
+    assert_eq!(data.registry_count(), KNOWN_REGISTRIES.len() + 1);
+    assert!(data.has_full_registry_payloads());
+    let loaded = data.registry("block_transformer").unwrap();
+    assert_eq!(loaded.entries, vec![entry.clone()]);
+    assert_eq!(
+        data.registry_entry_payload(&registry, &entry).as_deref(),
+        Some(payload.as_slice())
+    );
+}
+
 #[cfg(unix)]
 #[test]
 fn load_rejects_symlinked_registry_entry() {
@@ -147,11 +176,17 @@ fn captured_registry_payload_rejects_symlink_escape() {
     fs::write(&outside_path, payload).unwrap();
     symlink(&outside_path, &path).unwrap();
 
+    // The hybrid loader walks the payload tree to index the wire registry, and
+    // that walk rejects the symlinked file before any payload is opened.
     let error = load(dir.path()).expect_err("payload symlink must stay below data root");
-    assert!(matches!(
-        error,
-        DataError::ResourcePath(ResourcePathError::EscapesRoot { .. })
-    ));
+    assert!(
+        matches!(
+            &error,
+            DataError::Io { path: rejected, source }
+                if *rejected == path && source.kind() == std::io::ErrorKind::InvalidData
+        ),
+        "{error:?}"
+    );
 }
 
 #[test]

@@ -1,4 +1,5 @@
 use super::*;
+use mc_data::data_component_types_26_1_2 as ids;
 use mc_data::item_stack::ExtendedItemComponents;
 use mc_nbt::{ListTag, tag_type};
 
@@ -54,16 +55,21 @@ fn item_admission_holder_minimum_varint_returns_codec_error_without_overflow() {
     let trim = varints(&[i32::MIN]);
     let mut components = ExtendedItemComponents::default();
     assert!(matches!(
-        station_components::decode(&mut trim.as_slice(), 56, &mut components, 0),
+        station_components::decode(&mut trim.as_slice(), ids::TRIM, &mut components, 0),
         Err(CodecError::NotSupported("unknown station registry holder"))
     ));
     let banner = varints(&[1, i32::MIN, 0]);
     assert!(matches!(
-        station_components::decode(&mut banner.as_slice(), 72, &mut components, 0),
+        station_components::decode(
+            &mut banner.as_slice(),
+            ids::BANNER_PATTERNS,
+            &mut components,
+            0
+        ),
         Err(CodecError::NotSupported("unknown station registry holder"))
     ));
     assert!(matches!(
-        copied_components::decode(&mut banner.as_slice(), 72, 0),
+        copied_components::decode(&mut banner.as_slice(), ids::BANNER_PATTERNS, 0),
         Err(CodecError::NotSupported(_))
     ));
 }
@@ -100,7 +106,7 @@ fn item_admission_bundle_sixty_four_roundtrips_and_sixty_five_encode_fails() {
 #[test]
 fn item_admission_bundle_rejects_oversized_count_before_entries() {
     for count in [65, i32::MAX] {
-        let bytes = varints(&[1, 896, 1, 0, 50, count]);
+        let bytes = varints(&[1, 896, 1, 0, ids::BUNDLE_CONTENTS, count]);
         assert!(matches!(
             ItemStack::decode(&mut bytes.as_slice()),
             Err(CodecError::StringTooLong { max: 64, .. })

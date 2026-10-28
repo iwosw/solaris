@@ -47,23 +47,26 @@ pub struct LoginPlay {
     pub dimension_type_id: i32,
     pub dimension_name: Identifier,
     pub hashed_seed: i64,
-    /// 0 = Survival, 1 = Creative, 2 = Adventure, 3 = Spectator.
+    /// 0 = Survival, 1 = Creative, 2 = Adventure, 3 = Spectator
+    /// (`GameType.STREAM_CODEC`, a VarInt id).
     pub game_mode: u8,
-    /// -1 = none, otherwise same encoding as `game_mode`.
+    /// -1 = none, otherwise same encoding as `game_mode`. 26.3 encodes it as
+    /// `GameType.OPTIONAL_STREAM_CODEC` (VarInt 0 = none, id + 1 otherwise).
     pub previous_game_mode: i8,
     pub is_debug: bool,
     pub is_flat: bool,
     pub death_location: Option<(Identifier, i64)>,
     pub portal_cooldown: i32,
     pub sea_level: i32,
+    /// 26.3 `ClientboundLoginPacket.onlineMode` (`server.usesAuthentication()`).
+    pub online_mode: bool,
     pub enforces_secure_chat: bool,
 }
 
 impl Packet for LoginPlay {
-    // Verified against vanilla 26.1.2 wire capture via `wire-probe`:
-    // server-bound LoginPlay arrives as id 0x31, body 108 bytes,
-    // matching our field layout exactly.
-    const ID: i32 = 0x31;
+    // 26.3 `ClientboundLoginPacket.STREAM_CODEC`: CommonPlayerSpawnInfo, then
+    // `onlineMode`, then `enforcesSecureChat`.
+    const ID: i32 = 0x32;
 
     fn encode<B: BufMut>(&self, buf: &mut B) -> Result<(), CodecError> {
         if self.dimension_names.len() > MAX_DIMENSION_NAMES {
@@ -92,8 +95,7 @@ impl Packet for LoginPlay {
         buf.write_varint(self.dimension_type_id);
         buf.write_identifier(&self.dimension_name)?;
         buf.write_i64(self.hashed_seed);
-        buf.write_u8(self.game_mode);
-        buf.write_i8(self.previous_game_mode);
+        write_spawn_game_modes(buf, self.game_mode, self.previous_game_mode);
         buf.write_bool(self.is_debug);
         buf.write_bool(self.is_flat);
         match &self.death_location {
@@ -106,6 +108,7 @@ impl Packet for LoginPlay {
         }
         buf.write_varint(self.portal_cooldown);
         buf.write_varint(self.sea_level);
+        buf.write_bool(self.online_mode);
         buf.write_bool(self.enforces_secure_chat);
         Ok(())
     }
@@ -124,8 +127,7 @@ impl Packet for LoginPlay {
         let dimension_type_id = buf.read_varint()?;
         let dimension_name = buf.read_identifier()?;
         let hashed_seed = buf.read_i64()?;
-        let game_mode = buf.read_u8()?;
-        let previous_game_mode = buf.read_i8()?;
+        let (game_mode, previous_game_mode) = read_spawn_game_modes(buf)?;
         let is_debug = buf.read_bool()?;
         let is_flat = buf.read_bool()?;
         let death_location = if buf.read_bool()? {
@@ -137,6 +139,7 @@ impl Packet for LoginPlay {
         };
         let portal_cooldown = buf.read_varint()?;
         let sea_level = buf.read_varint()?;
+        let online_mode = buf.read_bool()?;
         let enforces_secure_chat = buf.read_bool()?;
         Ok(Self {
             entity_id,
@@ -158,9 +161,35 @@ impl Packet for LoginPlay {
             death_location,
             portal_cooldown,
             sea_level,
+            online_mode,
             enforces_secure_chat,
         })
     }
+}
+
+/// `CommonPlayerSpawnInfo` game modes (26.3): `GameType.STREAM_CODEC` VarInt,
+/// then `GameType.OPTIONAL_STREAM_CODEC` (`OPTIONAL_VAR_INT`: 0 = none, id + 1).
+fn write_spawn_game_modes<B: BufMut>(buf: &mut B, game_mode: u8, previous_game_mode: i8) {
+    buf.write_varint(i32::from(game_mode));
+    buf.write_varint(if previous_game_mode < 0 {
+        0
+    } else {
+        i32::from(previous_game_mode) + 1
+    });
+}
+
+fn read_spawn_game_modes<B: Buf>(buf: &mut B) -> Result<(u8, i8), CodecError> {
+    let game_mode = u8::try_from(buf.read_varint()?)
+        .ok()
+        .filter(|mode| *mode <= 3)
+        .ok_or(CodecError::NotSupported("unknown game mode"))?;
+    let previous = buf.read_varint()?;
+    let previous_game_mode = match previous {
+        0 => -1,
+        1..=4 => i8::try_from(previous - 1).expect("bounded game mode"),
+        _ => return Err(CodecError::NotSupported("unknown previous game mode")),
+    };
+    Ok((game_mode, previous_game_mode))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -179,17 +208,15 @@ pub struct ClientboundRespawn {
 }
 
 impl Packet for ClientboundRespawn {
-    // CLIENTBOUND_RESPAWN is game-CB index 82 = wire id 0x52 in the
-    // local 26.1.2 GameProtocols dump. Its body is CommonPlayerSpawnInfo
+    // 26.3 `ClientboundRespawnPacket.STREAM_CODEC`: CommonPlayerSpawnInfo
     // followed by one byte of keep flags.
-    const ID: i32 = 0x52;
+    const ID: i32 = 0x54;
 
     fn encode<B: BufMut>(&self, buf: &mut B) -> Result<(), CodecError> {
         buf.write_varint(self.dimension_type_id);
         buf.write_identifier(&self.dimension_name)?;
         buf.write_i64(self.hashed_seed);
-        buf.write_u8(self.game_mode);
-        buf.write_i8(self.previous_game_mode);
+        write_spawn_game_modes(buf, self.game_mode, self.previous_game_mode);
         buf.write_bool(self.is_debug);
         buf.write_bool(self.is_flat);
         match &self.death_location {
@@ -210,8 +237,7 @@ impl Packet for ClientboundRespawn {
         let dimension_type_id = buf.read_varint()?;
         let dimension_name = buf.read_identifier()?;
         let hashed_seed = buf.read_i64()?;
-        let game_mode = buf.read_u8()?;
-        let previous_game_mode = buf.read_i8()?;
+        let (game_mode, previous_game_mode) = read_spawn_game_modes(buf)?;
         let is_debug = buf.read_bool()?;
         let is_flat = buf.read_bool()?;
         let death_location = if buf.read_bool()? {
@@ -259,7 +285,7 @@ impl Packet for SetDefaultSpawnPosition {
     // Verified via `javap` of vanilla 26.1.2's GameProtocols:
     // CLIENTBOUND_SET_DEFAULT_SPAWN_POSITION sits at game-CB index 96
     // (skipping `CLIENTBOUND_BUNDLE` at index 0) = wire id 0x61.
-    const ID: i32 = 0x61;
+    const ID: i32 = 0x63;
 
     fn encode<B: BufMut>(&self, buf: &mut B) -> Result<(), CodecError> {
         buf.write_identifier(&self.dimension)?;
@@ -305,7 +331,7 @@ impl Packet for SynchronizePlayerPosition {
     // Verified against vanilla 26.1.2 wire capture: id 0x48, body 61
     // bytes — varint teleport_id + 6×f64 (xyz + delta) + 2×f32 (yaw,
     // pitch) + i32 relative_flags. Matches our field layout exactly.
-    const ID: i32 = 0x48;
+    const ID: i32 = 0x49;
 
     fn encode<B: BufMut>(&self, buf: &mut B) -> Result<(), CodecError> {
         buf.write_varint(self.teleport_id);
@@ -347,7 +373,7 @@ pub struct ClientboundKeepAlive {
 impl Packet for ClientboundKeepAlive {
     // Verified via `javap` of vanilla 26.1.2's GameProtocols:
     // CLIENTBOUND_KEEP_ALIVE at game-CB index 44 = wire id 0x2C.
-    const ID: i32 = 0x2C;
+    const ID: i32 = 0x2D;
 
     fn encode<B: BufMut>(&self, buf: &mut B) -> Result<(), CodecError> {
         buf.write_i64(self.id);
@@ -406,7 +432,7 @@ pub struct ClientboundTransfer {
 impl Packet for ClientboundTransfer {
     // Verified via `javap` of vanilla 26.1.2's GameProtocols:
     // CLIENTBOUND_TRANSFER at game-CB index 129 = wire id 0x81.
-    const ID: i32 = 0x81;
+    const ID: i32 = 0x84;
 
     fn encode<B: BufMut>(&self, buf: &mut B) -> Result<(), CodecError> {
         buf.write_string(&self.host, 32_767)?;

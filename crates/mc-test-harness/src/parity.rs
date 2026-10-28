@@ -496,9 +496,7 @@ pub async fn observe_core_action_sequence(
         id: SetCenterChunk::ID,
     });
     client
-        .write_packet(&ConfirmTeleportation {
-            teleport_id: sync.teleport_id,
-        })
+        .write_packet(&ConfirmTeleportation::accepting(&sync))
         .await?;
     client.write_packet(&ServerboundPlayerLoaded).await?;
 

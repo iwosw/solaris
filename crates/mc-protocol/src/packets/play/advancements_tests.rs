@@ -7,9 +7,9 @@ fn id(value: &str) -> Identifier {
 #[test]
 fn vanilla_registration_ids_and_empty_reset_layout() {
     // Local 26.1.2 GameProtocols javap registration ordinals.
-    assert_eq!(ClientboundUpdateAdvancements::ID, 0x82);
-    assert_eq!(ClientboundSelectAdvancementsTab::ID, 0x55);
-    assert_eq!(ServerboundSeenAdvancements::ID, 0x32);
+    assert_eq!(ClientboundUpdateAdvancements::ID, 0x85);
+    assert_eq!(ClientboundSelectAdvancementsTab::ID, 0x57);
+    assert_eq!(ServerboundSeenAdvancements::ID, 0x33);
     let packet = ClientboundUpdateAdvancements {
         reset: true,
         added: Vec::new(),
@@ -102,9 +102,13 @@ fn display_template_flags_requirements_and_telemetry_follow_javap_order() {
     assert_eq!(input.read_varint().unwrap(), 1); // CHALLENGE ordinal
     assert_eq!(input.read_i32().unwrap(), 7);
     assert_eq!(input.read_identifier().unwrap(), id("a:g"));
+    // 26.3 PositionedAdvancement: x and y follow the whole holder.
+    let (requirements, rest) = input.split_at(10);
+    assert_eq!(requirements, [2, 2, 1, b'x', 1, b'y', 1, 1, b'z', 1]);
+    input = rest;
     assert_eq!(input.read_f32().unwrap(), 2.0);
     assert_eq!(input.read_f32().unwrap(), -1.0);
-    assert_eq!(input, &[2, 2, 1, b'x', 1, b'y', 1, 1, b'z', 1, 0, 0, 1]);
+    assert_eq!(input, &[0, 0, 1]);
     assert_eq!(
         ClientboundUpdateAdvancements::decode(&mut bytes.as_slice()).unwrap(),
         packet

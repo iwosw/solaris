@@ -2002,9 +2002,10 @@ fn primary_explosion_rows_preserve_unique_blasts_under_observer_fanout() -> Resu
             radius: 4.0,
             block_count: 0,
             knockback: None,
-            explosion_particle_id: 22,
-            sound_reference_id: 697,
+            explosion_particle_id: 29,
+            sound_reference_id: 703,
             block_particles: Vec::new(),
+            play_sound: true,
         })?;
         for observer in 0..100 {
             bot.index = observer;

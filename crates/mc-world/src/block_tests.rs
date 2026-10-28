@@ -112,7 +112,7 @@ fn round_trip_real_blocks_report() {
     let reg = BlockRegistry::from_report(&report).unwrap();
 
     // Cardinals pinned to 26.1.2.
-    assert_eq!(reg.len(), 29873);
+    assert_eq!(reg.len(), 35723);
     let air = Identifier::parse("minecraft:air").unwrap();
     assert_eq!(reg.block(&air).unwrap().default, BlockStateId(0));
 

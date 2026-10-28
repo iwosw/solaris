@@ -271,15 +271,19 @@ fn copied_banner_pattern_is_reference_holder_plus_color() {
     );
 }
 #[test]
-fn copied_pot_decorations_are_four_direct_item_registry_ids() {
-    let mut expected = vec![4];
+fn copied_pot_decorations_are_four_optional_item_templates() {
+    // 26.3 PotDecorations: back, left, right, front, each an optional
+    // ItemStackTemplate (item, count, empty patch).
+    let mut expected = Vec::new();
     for name in [
         "minecraft:angler_pottery_sherd",
         "minecraft:brick",
         "minecraft:brick",
         "minecraft:brick",
     ] {
+        expected.push(1);
         expected.write_varint(registry_id("item", name).unwrap());
+        expected.extend([1, 0, 0]);
     }
     fixture(
         "minecraft:pot_decorations",
@@ -379,13 +383,16 @@ fn duplicate_preserved_component_fails_loud_even_when_typed_projection_collapses
 // preserved-component wire path. It is retained durably, but sending it must fail.
 const UNSUPPORTED: &[&str] = &[
     "minecraft:additional_trade_cost",
+    "minecraft:attack_animation",
     "minecraft:attack_range",
     "minecraft:attribute_modifiers",
     "minecraft:axolotl/variant",
     "minecraft:base_color",
     "minecraft:block_entity_data",
+    "minecraft:block_transformer",
     "minecraft:blocks_attacks",
     "minecraft:break_sound",
+    "minecraft:brewing_fuel",
     "minecraft:bucket_entity_data",
     "minecraft:can_break",
     "minecraft:can_place_on",
@@ -394,10 +401,13 @@ const UNSUPPORTED: &[&str] = &[
     "minecraft:cat/variant",
     "minecraft:chicken/sound_variant",
     "minecraft:chicken/variant",
+    "minecraft:compostable",
     "minecraft:consumable",
+    "minecraft:cooking_fuel",
     "minecraft:cow/sound_variant",
     "minecraft:cow/variant",
     "minecraft:creative_slot_lock",
+    "minecraft:cushion/color",
     "minecraft:custom_model_data",
     "minecraft:damage_resistant",
     "minecraft:damage_type",
@@ -414,16 +424,17 @@ const UNSUPPORTED: &[&str] = &[
     "minecraft:horse/variant",
     "minecraft:instrument",
     "minecraft:intangible_projectile",
+    "minecraft:interact_animation",
     "minecraft:jukebox_playable",
     "minecraft:kinetic_weapon",
     "minecraft:llama/variant",
     "minecraft:lodestone_tracker",
-    "minecraft:map_color",
     "minecraft:map_decorations",
     "minecraft:map_id",
     "minecraft:map_post_processing",
     "minecraft:max_stack_size",
     "minecraft:minimum_attack_charge",
+    "minecraft:mob_visibility",
     "minecraft:mooshroom/variant",
     "minecraft:painting/variant",
     "minecraft:parrot/variant",
@@ -432,6 +443,7 @@ const UNSUPPORTED: &[&str] = &[
     "minecraft:pig/variant",
     "minecraft:potion_duration_scale",
     "minecraft:provides_banner_patterns",
+    "minecraft:provides_pottery_pattern",
     "minecraft:provides_trim_material",
     "minecraft:rabbit/variant",
     "minecraft:recipes",
@@ -439,7 +451,9 @@ const UNSUPPORTED: &[&str] = &[
     "minecraft:salmon/size",
     "minecraft:sheep/color",
     "minecraft:shulker/color",
-    "minecraft:swing_animation",
+    "minecraft:sign_text_back",
+    "minecraft:sign_text_front",
+    "minecraft:sulfur_cube_content",
     "minecraft:tool",
     "minecraft:tooltip_style",
     "minecraft:tropical_fish/base_color",
@@ -449,6 +463,8 @@ const UNSUPPORTED: &[&str] = &[
     "minecraft:use_cooldown",
     "minecraft:use_effects",
     "minecraft:villager/variant",
+    "minecraft:villager_food",
+    "minecraft:waxed",
     "minecraft:weapon",
     "minecraft:wolf/collar",
     "minecraft:wolf/sound_variant",
@@ -457,7 +473,10 @@ const UNSUPPORTED: &[&str] = &[
 ];
 #[test]
 fn all_explicitly_unsupported_preserved_components_fail_loud_instead_of_disappearing() {
-    assert_eq!(ITEM_COMPONENT_CODECS.len() + UNSUPPORTED.len(), 110);
+    assert_eq!(
+        ITEM_COMPONENT_CODECS.len() + UNSUPPORTED.len(),
+        mc_data::data_component_types_26_1_2::COUNT
+    );
     for name in UNSUPPORTED {
         assert!(
             !ITEM_COMPONENT_CODECS
@@ -509,7 +528,14 @@ fn explicit_component_removals_use_native_added_then_removed_patch_bytes() {
     .unwrap();
     let mut expected = vec![1];
     expected.write_varint(registry_id("item", "minecraft:stone").unwrap());
-    expected.extend([1, 2, 3, 7, 6, 51]);
+    expected.extend([
+        1,
+        2,
+        mc_data::data_component_types_26_1_2::DAMAGE as u8,
+        7,
+        mc_data::data_component_types_26_1_2::CUSTOM_NAME as u8,
+        mc_data::data_component_types_26_1_2::POTION_CONTENTS as u8,
+    ]);
     let mut bytes = Vec::new();
     value.encode(&mut bytes).unwrap();
     assert_eq!(bytes, expected);
@@ -547,7 +573,10 @@ fn duplicate_and_unknown_removed_components_fail_closed() {
     for (patch, expected) in [
         (vec![0, 2, 6, 6], "duplicate item component"),
         (vec![1, 1, 3, 7, 3], "duplicate item component"),
-        (vec![0, 1, 110], "unknown removed item component"),
+        (
+            vec![0, 1, mc_data::data_component_types_26_1_2::COUNT as u8],
+            "unknown removed item component",
+        ),
     ] {
         let mut bytes = vec![1];
         bytes.write_varint(registry_id("item", "minecraft:stone").unwrap());
@@ -602,7 +631,10 @@ fn crafted_dyed_leather_boots_reach_the_client_with_the_blended_component() {
     assert_eq!(cursor.read_varint().unwrap(), output.item_id as i32);
     assert_eq!(cursor.read_varint().unwrap(), 1); // Added component count.
     assert_eq!(cursor.read_varint().unwrap(), 0); // Removed component count.
-    assert_eq!(cursor.read_varint().unwrap(), 44);
+    assert_eq!(
+        cursor.read_varint().unwrap(),
+        mc_data::data_component_types_26_1_2::DYED_COLOR
+    );
     assert_eq!(cursor.read_i32().unwrap(), 0x9d22d4);
     assert!(cursor.is_empty());
     let decoded = ItemStack::decode(&mut bytes.as_slice()).unwrap();

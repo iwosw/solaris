@@ -19,14 +19,25 @@ enabled unless `--no-console` is supplied.
 ## Vanilla content cache
 
 Solaris does not distribute Minecraft data. Derive a complete cache from your
-licensed 26.1.2 server bundle with JDK 25 (`JAVA`/`JAVAC` may select it):
+licensed server bundles with JDK 25 (`JAVA`/`JAVAC` may select it). A cache
+joins two releases: the 26.3 bundle supplies every protocol identity (block
+states, items, entities, the per-state light/mining/explosion/map-colour
+reports and the exact RegistryData the client receives); the 26.1.2 bundle
+supplies the gameplay data pack (worldgen, loot, recipes, advancements, tags,
+structures), whose JSON grammar Solaris's loaders read. 26.3 rewrote those
+grammars; every name in the 26.1.2 pack exists in 26.3.
 
 ```sh
-solaris-v2 content import --from /path/to/server.jar --cache /path/to/cache
-# Alternative: download Mojang's pinned artifact, verifying size and SHA-1.
-solaris-v2 content import --version 26.1.2 --download --cache /path/to/cache
+solaris-v2 content import --from /path/to/26.3/server.jar \
+  --gameplay-from /path/to/26.1.2/server.jar --cache /path/to/cache
+# Alternative: download both pinned artifacts, verifying size and SHA-1.
+solaris-v2 content import --version 26.3 --download --cache /path/to/cache
 solaris-v2 content verify --cache /path/to/cache
 ```
+
+Either `--from` or `--gameplay-from` may be omitted; that bundle is then
+downloaded. The 26.1.2 bundle's `version.json` is kept as
+`gameplay_version.json` and checked at startup.
 
 Import stages, validates and publishes the cache; a failed derivation preserves
 the previous cache. Verify is offline and checks the same content used by
@@ -34,20 +45,20 @@ startup, not the complete server/plugin deployment. Serving never downloads
 implicitly. Missing or incomplete content fails before world/listener startup.
 
 Selection order: `[data].vanilla_data_dir`, `SOLARIS_CONTENT_CACHE`,
-`$XDG_DATA_HOME/solaris/content/26.1.2` (otherwise
-`~/.local/share/solaris/content/26.1.2`), then `data/vanilla` in the working
+`$XDG_DATA_HOME/solaris/content/26.3` (otherwise
+`~/.local/share/solaris/content/26.3`), then `data/vanilla` in the working
 directory and checkout ancestors. An explicit invalid override fails without
 silently choosing another source. `--cache` affects only that offline command.
 
 ## Client protocol compatibility
 
-Solaris currently serves Minecraft Java 26.1.2, protocol 775. Any client may
-send a Status ping: the reply advertises the supported release name and protocol
-so its server-list entry is shown as incompatible when appropriate. A Login
-handshake on any other protocol receives vanilla's
+Solaris serves Minecraft Java 26.3, protocol 777. Any client may send a Status
+ping: the reply advertises the supported release name and protocol so its
+server-list entry is shown as incompatible when appropriate. A Login handshake
+on an unsupported protocol receives vanilla's
 `multiplayer.disconnect.incompatible` disconnect rather than a silent TCP
-close. Do not point newer clients at a 26.1.2 deployment expecting a partial
-join; 26.3 translation is proposed but not implemented (ADR 0015).
+close. Sessions of the previous release (26.1.2, protocol 775) are translated
+at the edge as described in ADR 0015.
 
 ## Supported configuration
 

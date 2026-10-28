@@ -20,7 +20,7 @@ use crate::startup_data::{validate_startup_data, validate_vanilla_sidecar_versio
 pub const CONTENT_CACHE_ENV: &str = "SOLARIS_CONTENT_CACHE";
 
 /// The command an operator runs to produce a cache by hand.
-pub const IMPORT_COMMAND: &str = "solaris-v2 content import --version 26.1.2 --download";
+pub const IMPORT_COMMAND: &str = "solaris-v2 content import --version 26.3 --download";
 
 /// User-level cache root: `$XDG_DATA_HOME` (or `~/.local/share`), then
 /// `solaris/content/<target release>`.
@@ -40,6 +40,7 @@ const WORKING_CACHE_ANCESTORS: usize = 4;
 /// `RegistryData` payloads — is rejected by name instead of being used.
 pub const REQUIRED_FILES: &[&str] = &[
     "version.json",
+    crate::content_import::GAMEPLAY_VERSION_FILE,
     "data/minecraft/tags",
     "data/minecraft/worldgen/structure_set",
     "data/minecraft/worldgen/structure",

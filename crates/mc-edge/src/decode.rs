@@ -27,10 +27,10 @@ use mc_protocol::packets::play::{
     ServerboundMovePlayerRot, ServerboundMovePlayerStatusOnly, ServerboundMoveVehicle,
     ServerboundPickItemFromBlock, ServerboundPickItemFromEntity, ServerboundPlaceRecipe,
     ServerboundPlayerAction, ServerboundPlayerCommand, ServerboundPlayerInput,
-    ServerboundPlayerLoaded, ServerboundRenameItem, ServerboundResourcePack,
+    ServerboundPlayerLoaded, ServerboundPunch, ServerboundRenameItem, ServerboundResourcePack,
     ServerboundSeenAdvancements, ServerboundSelectTrade, ServerboundSetBeacon,
     ServerboundSetCarriedItem, ServerboundSetCreativeModeSlot, ServerboundSignUpdate,
-    ServerboundSwing, ServerboundUseItem, ServerboundUseItemOn, unpack_block_pos,
+    ServerboundUseItem, ServerboundUseItemOn, unpack_block_pos,
 };
 
 /// Rotation of the last rotation-bearing movement frame, for position-only
@@ -55,6 +55,18 @@ pub fn decode_play_frame(
             out.push(PlayerInput::ConfirmTeleport {
                 connection: conn,
                 teleport_id: p.teleport_id,
+            });
+            // 26.3 folds the post-teleport position echo into the accept
+            // packet (the 26.1.2 client sent a separate PosRot with
+            // onGround=false); vanilla handles it as that same movement.
+            state.last_yaw = p.yaw;
+            state.last_pitch = p.pitch;
+            out.push(PlayerInput::Move {
+                connection: conn,
+                position: p.position,
+                yaw: p.yaw,
+                pitch: p.pitch,
+                on_ground: false,
             });
         }
         ServerboundSeenAdvancements::ID => {
@@ -136,6 +148,8 @@ pub fn decode_play_frame(
                 }
                 // Used-while-sneaking marker: no gameplay mapping.
                 PlayerActionKind::Stab => return Ok(()),
+                // 26.3 mining-face change while holding attack: no mapping.
+                PlayerActionKind::ChangeDestroyDirection => return Ok(()),
             });
         }
         ServerboundUseItemOn::ID => {
@@ -399,7 +413,7 @@ pub fn decode_play_frame(
         // Unsigned system-chat mode: bound the session envelope without ever
         // advertising an unverified key to another client as a trusted session.
         ServerboundChatSessionUpdate::ID => validate::<ServerboundChatSessionUpdate>(body)?,
-        ServerboundSwing::ID => validate::<ServerboundSwing>(body)?,
+        ServerboundPunch::ID => validate::<ServerboundPunch>(body)?,
         ServerboundKeepAlive::ID => validate::<ServerboundKeepAlive>(body)?,
         ServerboundClientTickEnd::ID => validate::<ServerboundClientTickEnd>(body)?,
         ServerboundPlayerLoaded::ID => validate::<ServerboundPlayerLoaded>(body)?,

@@ -7,7 +7,7 @@ fn set_beacon_id_matches_vanilla_registration_index() {
     // is the 53rd serverbound game addPacket call = wire id 0x34 (0x33 is
     // SERVERBOUND_SELECT_TRADE, 0x35 is SERVERBOUND_SET_CARRIED_ITEM, both
     // pinned by existing packets).
-    assert_eq!(ServerboundSetBeacon::ID, 0x34);
+    assert_eq!(ServerboundSetBeacon::ID, 0x35);
 }
 
 #[test]

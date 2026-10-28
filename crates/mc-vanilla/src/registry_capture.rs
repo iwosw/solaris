@@ -55,7 +55,7 @@
 //! | [`RegistryCaptureError::PayloadMissing`] | vanilla omitted a payload after Known Packs was declined |
 //! | [`RegistryCaptureError::DuplicateData`] | a registry or entry was sent twice |
 //! | [`RegistryCaptureError::PayloadPath`] | a captured identifier has no valid payload path |
-//! | [`RegistryCaptureError::IndexMismatch`] | captured registries differ from the staged content index |
+//! | [`RegistryCaptureError::IndexMismatch`] | the capture misses a staged registry or entry, or adds an unknown registry |
 //! | [`RegistryCaptureError::InstalledPayloadsIncomplete`] | the published payload set does not cover the index |
 //! | [`RegistryCaptureError::Io`] | staging, publish or scratch I/O failed |
 
@@ -548,50 +548,57 @@ fn expected_registry_index(
         .collect())
 }
 
-/// The captured bytes must describe exactly the staged registries; anything else
-/// would make the payload set incomplete or unreachable for a real client.
+/// The capture must cover the staged registries, mirroring `mc_data::load`: the
+/// captured payloads are the wire registry, and the gameplay definitions (an
+/// older data pack) must name a subset of each. A staged registry or entry the
+/// capture lacks would be unreachable for a real client; a captured registry
+/// the staged content does not know is only accepted from
+/// [`mc_data::WIRE_ONLY_REGISTRIES`].
 fn verify_index(
     root: &Path,
     expected: &BTreeMap<String, BTreeSet<String>>,
     captured: &BTreeMap<String, BTreeSet<String>>,
 ) -> Result<(), RegistryCaptureError> {
-    if expected == captured {
-        return Ok(());
-    }
+    let wire_only = |registry: &str| {
+        registry
+            .strip_prefix("minecraft:")
+            .is_some_and(|path| mc_data::WIRE_ONLY_REGISTRIES.contains(&path))
+    };
     let mut detail = String::new();
     for (registry, expected_entries) in expected {
         let Some(captured_entries) = captured.get(registry) else {
             let _ = writeln!(detail, "registry {registry} was not captured");
             continue;
         };
-        if captured_entries == expected_entries {
-            continue;
-        }
         let missing = expected_entries.difference(captured_entries).count();
-        let unexpected = captured_entries.difference(expected_entries).count();
-        let _ = writeln!(
-            detail,
-            "registry {registry}: {missing} staged entries missing from the capture, {unexpected} captured entries not in the staged content"
-        );
+        if missing > 0 {
+            let _ = writeln!(
+                detail,
+                "registry {registry}: {missing} staged entries missing from the capture"
+            );
+        }
     }
     for registry in captured.keys() {
-        if !expected.contains_key(registry) {
+        if !expected.contains_key(registry) && !wire_only(registry) {
             let _ = writeln!(
                 detail,
                 "registry {registry} is not part of the staged content"
             );
         }
     }
-    let detail = detail.trim_end().to_string();
-    let detail = if detail.is_empty() {
-        format!(
+    if expected.is_empty() {
+        let _ = writeln!(
+            detail,
             "the staged content at {} has no registry index",
             root.display()
-        )
-    } else {
-        detail
-    };
-    Err(RegistryCaptureError::IndexMismatch { detail })
+        );
+    }
+    if detail.is_empty() {
+        return Ok(());
+    }
+    Err(RegistryCaptureError::IndexMismatch {
+        detail: detail.trim_end().to_string(),
+    })
 }
 
 /// Publish the staged payload tree into the content root. The staged tree is a
@@ -712,6 +719,54 @@ mod tests {
         );
         assert!(!staged_payloads.exists(), "the staged tree must be moved");
         Ok(())
+    }
+
+    /// The real 26.3 capture over the 26.1.2 data pack: new entries in known
+    /// registries and new wire-only registries are accepted; a staged entry or
+    /// registry the capture lacks, or an unknown registry, is not.
+    #[test]
+    fn index_accepts_a_newer_capture_over_older_definitions() {
+        let index = |pairs: &[(&str, &[&str])]| -> BTreeMap<String, BTreeSet<String>> {
+            pairs
+                .iter()
+                .map(|(registry, entries)| {
+                    (
+                        (*registry).to_string(),
+                        entries.iter().map(|entry| (*entry).to_string()).collect(),
+                    )
+                })
+                .collect()
+        };
+        let root = Path::new("/staged");
+        let staged = index(&[("minecraft:jukebox_song", &["minecraft:cat"][..])]);
+        let newer = index(&[
+            (
+                "minecraft:jukebox_song",
+                &["minecraft:cat", "minecraft:new_disc"][..],
+            ),
+            ("minecraft:block_transformer", &["minecraft:axe"][..]),
+        ]);
+        verify_index(root, &staged, &newer).expect("a newer capture covers the staged index");
+
+        let missing_entry = index(&[("minecraft:jukebox_song", &["minecraft:new_disc"][..])]);
+        let unknown = index(&[
+            ("minecraft:jukebox_song", &["minecraft:cat"][..]),
+            ("minecraft:not_synced", &["minecraft:x"][..]),
+        ]);
+        for (captured, needle) in [
+            (&missing_entry, "1 staged entries missing"),
+            (&BTreeMap::new(), "minecraft:jukebox_song was not captured"),
+            (
+                &unknown,
+                "minecraft:not_synced is not part of the staged content",
+            ),
+        ] {
+            let error = verify_index(root, &staged, captured).unwrap_err();
+            assert!(
+                matches!(&error, RegistryCaptureError::IndexMismatch { detail } if detail.contains(needle)),
+                "{error}"
+            );
+        }
     }
 
     #[tokio::test]
@@ -905,6 +960,7 @@ mod tests {
                 uuid: Uuid::nil(),
                 name: "RegistryCapture".into(),
                 properties: Vec::new(),
+                session_id: Uuid::nil(),
             },
         )
         .await?;
@@ -915,7 +971,7 @@ mod tests {
                 packs: vec![KnownPackEntry {
                     namespace: "minecraft".into(),
                     id: "core".into(),
-                    version: "26.1.2".into(),
+                    version: mc_protocol::TARGET_RELEASE.into(),
                 }],
             },
         )

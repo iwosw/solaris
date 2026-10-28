@@ -147,7 +147,7 @@ pub struct ClientboundMerchantOffers {
 
 impl Packet for ClientboundMerchantOffers {
     // `.analysis/protocol-dump.txt`: clientbound game registration index 52.
-    const ID: i32 = 0x34;
+    const ID: i32 = 0x35;
 
     fn encode<B: BufMut>(&self, buf: &mut B) -> Result<(), CodecError> {
         if self.container_id < 0 || self.villager_level <= 0 || self.villager_xp < 0 {
@@ -204,7 +204,7 @@ pub struct ServerboundSelectTrade {
 
 impl Packet for ServerboundSelectTrade {
     // `.analysis/protocol-dump.txt`: serverbound game registration index 51.
-    const ID: i32 = 0x33;
+    const ID: i32 = 0x34;
 
     fn encode<B: BufMut>(&self, buf: &mut B) -> Result<(), CodecError> {
         if self.offer_index < 0 {

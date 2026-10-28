@@ -38,6 +38,7 @@ fn login_play_round_trip_minimum() {
         portal_cooldown: 0,
         sea_level: 63,
         enforces_secure_chat: false,
+        online_mode: true,
     });
 }
 
@@ -68,6 +69,7 @@ fn login_play_round_trip_with_death_location() {
         portal_cooldown: 100,
         sea_level: 0,
         enforces_secure_chat: true,
+        online_mode: false,
     });
 }
 
@@ -110,6 +112,7 @@ fn login_play_encode_rejects_dimension_count_over_decode_cap() {
         portal_cooldown: 0,
         sea_level: 63,
         enforces_secure_chat: false,
+        online_mode: true,
     };
     let mut body = Vec::new();
 
@@ -151,7 +154,7 @@ fn clientbound_custom_payload_id_and_layout_match_local_decompiled_sources() {
 
 #[test]
 fn clientbound_respawn_id_and_layout_match_javap() {
-    assert_eq!(ClientboundRespawn::ID, 0x52);
+    assert_eq!(ClientboundRespawn::ID, 0x54);
     let packet = ClientboundRespawn {
         dimension_type_id: 0,
         dimension_name: sample_identifier("overworld"),
@@ -173,7 +176,7 @@ fn clientbound_respawn_id_and_layout_match_javap() {
             0x00, // dimension type id
             0x13, b'm', b'i', b'n', b'e', b'c', b'r', b'a', b'f', b't', b':', b'o', b'v', b'e',
             b'r', b'w', b'o', b'r', b'l', b'd', 0, 0, 0, 0, 0, 0, 0, 0, 0,    // game mode
-            0xFF, // previous game mode
+            0x00, // previous game mode: optional varint, 0 = none
             0, 0,  // debug/flat
             0,  // no death location
             0,  // portal cooldown
@@ -235,7 +238,7 @@ fn block_event_id_and_layout_match_local_vanilla_codec() {
 
 #[test]
 fn open_sign_editor_id_and_layout_match_protocol_dump() {
-    assert_eq!(ClientboundOpenSignEditor::ID, 0x3C);
+    assert_eq!(ClientboundOpenSignEditor::ID, 0x3D);
     let packet = ClientboundOpenSignEditor {
         position: pack_block_pos(-1, 64, 2),
         is_front_text: true,
@@ -282,7 +285,7 @@ fn block_destruction_id_and_layout_match_local_vanilla_codec() {
 
 #[test]
 fn serverbound_sign_update_id_and_layout_match_vanilla_stream_codec() {
-    assert_eq!(ServerboundSignUpdate::ID, 0x3D);
+    assert_eq!(ServerboundSignUpdate::ID, 0x3E);
     let packet = ServerboundSignUpdate {
         position: pack_block_pos(1, 65, -2),
         lines: vec!["one".into(), "two".into(), "three".into(), "four".into()],
@@ -291,13 +294,14 @@ fn serverbound_sign_update_id_and_layout_match_vanilla_stream_codec() {
     let mut buf = Vec::new();
     packet.encode(&mut buf).unwrap();
 
+    // 26.3: position, four lines, then the SignTextSlot varint (0 = back).
     let mut expected = Vec::new();
     expected.write_i64(packet.position);
-    expected.write_bool(false);
     expected.write_string("one", MAX_SIGN_LINE_LEN).unwrap();
     expected.write_string("two", MAX_SIGN_LINE_LEN).unwrap();
     expected.write_string("three", MAX_SIGN_LINE_LEN).unwrap();
     expected.write_string("four", MAX_SIGN_LINE_LEN).unwrap();
+    expected.write_varint(0);
     assert_eq!(buf, expected);
 
     let mut cursor: &[u8] = &buf;
@@ -395,7 +399,12 @@ fn move_player_flags_use_low_two_bits() {
 
 #[test]
 fn confirm_teleportation_round_trip() {
-    round_trip(ConfirmTeleportation { teleport_id: 1 });
+    round_trip(ConfirmTeleportation {
+        teleport_id: 1,
+        position: [1.5, 64.0, -2.25],
+        yaw: 90.0,
+        pitch: -10.0,
+    });
 }
 
 #[test]
@@ -408,7 +417,7 @@ fn play_disconnect_carries_opaque_nbt_bytes() {
 
 #[test]
 fn forget_level_chunk_id_matches_javap() {
-    assert_eq!(ForgetLevelChunk::ID, 0x25);
+    assert_eq!(ForgetLevelChunk::ID, 0x26);
 }
 
 #[test]
@@ -442,7 +451,7 @@ fn game_event_round_trip() {
 
 #[test]
 fn initialize_border_id_and_layout_match_javap() {
-    assert_eq!(ClientboundInitializeBorder::ID, 0x2B);
+    assert_eq!(ClientboundInitializeBorder::ID, 0x2C);
     let packet = ClientboundInitializeBorder {
         center_x: 0.0,
         center_z: 0.0,
@@ -472,13 +481,13 @@ fn initialize_border_id_and_layout_match_javap() {
 fn player_visible_packet_ids_match_javap() {
     assert_eq!(AddEntity::ID, 0x01);
     assert_eq!(EntityPositionSync::ID, 0x23);
-    assert_eq!(PlayerInfoRemove::ID, 0x45);
-    assert_eq!(PlayerInfoUpdate::ID, 0x46);
-    assert_eq!(RemoveEntities::ID, 0x4D);
-    assert_eq!(RotateHead::ID, 0x53);
-    assert_eq!(ClientboundSetEntityData::ID, 0x63);
-    assert_eq!(ClientboundTakeItemEntity::ID, 0x7C);
-    assert_eq!(ClientboundTabList::ID, 0x7A);
+    assert_eq!(PlayerInfoRemove::ID, 0x46);
+    assert_eq!(PlayerInfoUpdate::ID, 0x47);
+    assert_eq!(RemoveEntities::ID, 0x4E);
+    assert_eq!(RotateHead::ID, 0x55);
+    assert_eq!(ClientboundSetEntityData::ID, 0x65);
+    assert_eq!(ClientboundTakeItemEntity::ID, 0x7F);
+    assert_eq!(ClientboundTabList::ID, 0x7D);
 }
 
 #[test]
@@ -623,16 +632,13 @@ fn add_player_entity_zero_motion_round_trips() {
 fn entity_position_sync_round_trips() {
     round_trip(EntityPositionSync {
         entity_id: 42,
-        values: PositionMoveRotation {
-            position: EntityVec3 {
-                x: 1.0,
-                y: 2.0,
-                z: 3.0,
-            },
-            delta_movement: EntityVec3::ZERO,
-            yaw: 90.0,
-            pitch: -15.0,
+        position: EntityVec3 {
+            x: 1.0,
+            y: 2.0,
+            z: 3.0,
         },
+        yaw: 90.0,
+        pitch: -15.0,
         on_ground: true,
     });
 }
@@ -762,18 +768,17 @@ fn take_item_entity_layout_matches_javap() {
 }
 
 #[test]
-fn serverbound_swing_layout_matches_javap() {
-    assert_eq!(ServerboundSwing::ID, 0x3F);
-    let packet = ServerboundSwing {
-        hand: InteractionHand::MainHand,
-    };
+fn serverbound_punch_layout_matches_packets_report() {
+    assert_eq!(ServerboundPunch::ID, 0x2E);
     let mut buf = Vec::new();
-    packet.encode(&mut buf).unwrap();
-    assert_eq!(buf, vec![0]);
+    ServerboundPunch.encode(&mut buf).unwrap();
+    assert!(buf.is_empty());
 
     let mut cursor: &[u8] = &buf;
-    assert_eq!(ServerboundSwing::decode(&mut cursor).unwrap(), packet);
-    assert!(cursor.is_empty());
+    assert_eq!(
+        ServerboundPunch::decode(&mut cursor).unwrap(),
+        ServerboundPunch
+    );
 }
 
 #[test]
@@ -781,14 +786,30 @@ fn entity_animation_id_and_wire_layout_match_server_javap() {
     assert_eq!(EntityAnimation::ID, 0x02);
     let packet = EntityAnimation {
         entity_id: 300,
-        action: EntityAnimationAction::SwingMainHand,
+        action: EntityAnimationAction::CriticalHit,
     };
     let mut buf = Vec::new();
     packet.encode(&mut buf).unwrap();
-    assert_eq!(buf, vec![0xAC, 0x02, 0x00]);
+    assert_eq!(buf, vec![0xAC, 0x02, 0x01]);
 
     let mut cursor: &[u8] = &buf;
     assert_eq!(EntityAnimation::decode(&mut cursor).unwrap(), packet);
+    assert!(cursor.is_empty());
+}
+
+#[test]
+fn swing_animation_id_and_wire_layout_match_packets_report() {
+    assert_eq!(ClientboundSwingAnimation::ID, 0x7B);
+    let packet = ClientboundSwingAnimation::default_swing(300, true);
+    let mut buf = Vec::new();
+    packet.encode(&mut buf).unwrap();
+    assert_eq!(buf, vec![0xAC, 0x02, 0x01, 0x01, 0x06]);
+
+    let mut cursor: &[u8] = &buf;
+    assert_eq!(
+        ClientboundSwingAnimation::decode(&mut cursor).unwrap(),
+        packet
+    );
     assert!(cursor.is_empty());
 }
 
@@ -810,7 +831,7 @@ fn entity_event_id_and_wire_layout_match_server_javap() {
 
 #[test]
 fn move_entity_pos_id_and_wire_layout_match_server_javap() {
-    assert_eq!(MoveEntityPos::ID, 0x35);
+    assert_eq!(MoveEntityPos::ID, 0x36);
     let packet = MoveEntityPos {
         entity_id: 300,
         delta_x: 4,
@@ -820,9 +841,10 @@ fn move_entity_pos_id_and_wire_layout_match_server_javap() {
     };
     let mut buf = Vec::new();
     packet.encode(&mut buf).unwrap();
+    // 26.3: varint props (onGround | stepCount << 1) precede the deltas.
     assert_eq!(
         buf,
-        vec![0xAC, 0x02, 0x00, 0x04, 0xFF, 0xF8, 0x00, 0x0C, 0x01]
+        vec![0xAC, 0x02, 0x01, 0x00, 0x04, 0xFF, 0xF8, 0x00, 0x0C]
     );
 
     let mut cursor: &[u8] = &buf;
@@ -832,7 +854,7 @@ fn move_entity_pos_id_and_wire_layout_match_server_javap() {
 
 #[test]
 fn move_entity_pos_rot_id_and_wire_layout_match_server_javap() {
-    assert_eq!(MoveEntityPosRot::ID, 0x36);
+    assert_eq!(MoveEntityPosRot::ID, 0x37);
     let packet = MoveEntityPosRot {
         entity_id: 300,
         delta_x: 4,
@@ -847,7 +869,7 @@ fn move_entity_pos_rot_id_and_wire_layout_match_server_javap() {
     assert_eq!(
         buf,
         vec![
-            0xAC, 0x02, 0x00, 0x04, 0xFF, 0xF8, 0x00, 0x0C, 0x40, 0xFA, 0x01
+            0xAC, 0x02, 0x01, 0x00, 0x04, 0xFF, 0xF8, 0x00, 0x0C, 0x40, 0xFA
         ]
     );
 
@@ -858,7 +880,7 @@ fn move_entity_pos_rot_id_and_wire_layout_match_server_javap() {
 
 #[test]
 fn move_entity_rot_id_and_wire_layout_match_server_javap() {
-    assert_eq!(MoveEntityRot::ID, 0x38);
+    assert_eq!(MoveEntityRot::ID, 0x39);
     let packet = MoveEntityRot {
         entity_id: 300,
         yaw: 64,
@@ -867,7 +889,8 @@ fn move_entity_rot_id_and_wire_layout_match_server_javap() {
     };
     let mut buf = Vec::new();
     packet.encode(&mut buf).unwrap();
-    assert_eq!(buf, vec![0xAC, 0x02, 0x40, 0xFA, 0x01]);
+    // 26.3: onGround precedes yaw and pitch.
+    assert_eq!(buf, vec![0xAC, 0x02, 0x01, 0x40, 0xFA]);
 
     let mut cursor: &[u8] = &buf;
     assert_eq!(MoveEntityRot::decode(&mut cursor).unwrap(), packet);
@@ -883,7 +906,7 @@ fn move_entity_delta_scales_to_vanilla_short_units() {
 
 #[test]
 fn set_entity_motion_id_and_zero_motion_layout_match_server_javap() {
-    assert_eq!(SetEntityMotion::ID, 0x65);
+    assert_eq!(SetEntityMotion::ID, 0x67);
     let packet = SetEntityMotion {
         entity_id: 5,
         movement: EntityVec3::ZERO,
@@ -954,7 +977,7 @@ fn clientbound_cooldown_id_and_layout_match_javap() {
 
 #[test]
 fn clientbound_set_time_id_and_overworld_clock_layout_match_javap() {
-    assert_eq!(ClientboundSetTime::ID, 0x71);
+    assert_eq!(ClientboundSetTime::ID, 0x73);
     let packet = ClientboundSetTime::overworld(12_345, 6_000, 1.0);
     let mut buf = Vec::new();
     packet.encode(&mut buf).unwrap();
@@ -1134,7 +1157,7 @@ fn assert_command_parser_wire(parser: CommandArgumentParser, parser_wire: &[u8])
 }
 
 #[test]
-fn command_argument_parser_ids_and_properties_match_vanilla_26_1_2() {
+fn command_argument_parser_ids_and_properties_match_vanilla_26_3() {
     use CommandArgumentParser as P;
     // ArgumentTypeInfos.bootstrap registration order and SingletonArgumentInfo.
     let singleton_cases = [
@@ -1148,7 +1171,7 @@ fn command_argument_parser_ids_and_properties_match_vanilla_26_1_2() {
         (P::BlockPredicate, 13),
         (P::ItemStack, 14),
         (P::ItemPredicate, 15),
-        (P::Color, 16),
+        (P::Color, 16), // 26.3 renamed minecraft:color to minecraft:team_color
         (P::HexColor, 17),
         (P::Component, 18),
         (P::Style, 19),
@@ -1167,7 +1190,7 @@ fn command_argument_parser_ids_and_properties_match_vanilla_26_1_2() {
         (P::ResourceLocation, 36),
         (P::EntityAnchor, 38),
         (P::GameMode, 42),
-        (P::Uuid, 56),
+        (P::Uuid, 61),
     ];
     for (parser, id) in singleton_cases {
         assert_command_parser_wire(parser, &[id]);
@@ -1436,7 +1459,7 @@ fn command_registry_properties_precede_custom_suggestions() {
 
 #[test]
 fn clientbound_system_chat_id_and_layout_match_local_decompiled_sources() {
-    assert_eq!(ClientboundSystemChat::ID, 0x79);
+    assert_eq!(ClientboundSystemChat::ID, 0x7C);
     let packet = ClientboundSystemChat {
         content_nbt: vec![0x0A, 0x00],
         overlay: false,
@@ -1492,7 +1515,7 @@ fn client_tick_chunk_batch_and_player_loaded_packets_match_local_decompiled_sour
 
 #[test]
 fn serverbound_resource_pack_id_and_layout_match_local_decompiled_sources() {
-    assert_eq!(ServerboundResourcePack::ID, 0x31);
+    assert_eq!(ServerboundResourcePack::ID, 0x32);
     let packet = ServerboundResourcePack {
         status: ResourcePackStatus {
             id: Uuid::from_u128(0x0011_2233_4455_6677_8899_aabb_ccdd_eeff),
@@ -1576,7 +1599,7 @@ fn serverbound_player_input_id_and_layout_match_javap() {
 
 #[test]
 fn player_abilities_id_and_wire_layout_match_javap() {
-    assert_eq!(ClientboundPlayerAbilities::ID, 0x40);
+    assert_eq!(ClientboundPlayerAbilities::ID, 0x41);
     let packet = ClientboundPlayerAbilities {
         invulnerable: true,
         flying: false,
@@ -1620,7 +1643,7 @@ fn change_difficulty_id_and_wire_layout_match_javap() {
 
 #[test]
 fn update_recipes_stonecutter_id_and_layout_match_local_vanilla_sources() {
-    assert_eq!(ClientboundUpdateRecipes::ID, 0x85);
+    assert_eq!(ClientboundUpdateRecipes::ID, 0x88);
     let packet = ClientboundUpdateRecipes {
         item_sets: vec![RecipePropertySet {
             key: Identifier::parse("x:y").unwrap(),
@@ -1656,7 +1679,7 @@ fn update_recipes_stonecutter_id_and_layout_match_local_vanilla_sources() {
 
 #[test]
 fn set_health_id_and_wire_layout_match_javap() {
-    assert_eq!(ClientboundSetHealth::ID, 0x68);
+    assert_eq!(ClientboundSetHealth::ID, 0x6A);
     let packet = ClientboundSetHealth {
         health: 20.0,
         food: 20,
@@ -1675,7 +1698,7 @@ fn set_health_id_and_wire_layout_match_javap() {
 
 #[test]
 fn set_experience_id_and_wire_layout_match_javap() {
-    assert_eq!(ClientboundSetExperience::ID, 0x67);
+    assert_eq!(ClientboundSetExperience::ID, 0x69);
     let packet = ClientboundSetExperience {
         experience_progress: 0.5,
         total_experience: 9,
@@ -1722,7 +1745,7 @@ fn remove_player_packets_round_trip() {
 
 #[test]
 fn set_center_chunk_id_matches_javap() {
-    assert_eq!(SetCenterChunk::ID, 0x5E);
+    assert_eq!(SetCenterChunk::ID, 0x60);
 }
 
 #[test]
@@ -1751,7 +1774,7 @@ fn minimal_chunk_packet() -> LevelChunkWithLight {
 #[test]
 fn level_chunk_with_light_id_matches_javap() {
     // 0x2D = game-CB index 45 (CLIENTBOUND_LEVEL_CHUNK_WITH_LIGHT).
-    assert_eq!(LevelChunkWithLight::ID, 0x2D);
+    assert_eq!(LevelChunkWithLight::ID, 0x2E);
 }
 
 #[test]
@@ -1888,7 +1911,7 @@ include!("tests/set_passengers.rs");
 
 #[test]
 fn transfer_packet_round_trip_and_wire_id() {
-    assert_eq!(ClientboundTransfer::ID, 0x81);
+    assert_eq!(ClientboundTransfer::ID, 0x84);
     round_trip(ClientboundTransfer {
         host: "lobby.example.com".into(),
         port: 25565,

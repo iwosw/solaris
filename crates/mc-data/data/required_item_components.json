@@ -274,6 +274,10 @@
     "max_stack_size": 64,
     "spawn_entity": "minecraft:strider"
   },
+  "minecraft:sulfur_cube_spawn_egg": {
+    "max_stack_size": 64,
+    "spawn_entity": "minecraft:sulfur_cube"
+  },
   "minecraft:tadpole_spawn_egg": {
     "max_stack_size": 64,
     "spawn_entity": "minecraft:tadpole"

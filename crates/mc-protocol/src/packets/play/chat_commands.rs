@@ -270,11 +270,10 @@ pub struct ServerboundSignUpdate {
 }
 
 impl Packet for ServerboundSignUpdate {
-    // Verified from `.analysis/protocol-dump.txt`: SERVERBOUND_SIGN_UPDATE is
-    // game-SB index 61 = wire id 0x3D. The vanilla 26.1.2 stream codec in
-    // `.analysis/decompiled/.../ServerboundSignUpdatePacket.java` writes
-    // BlockPos, front/back text boolean, then four UTF(384) lines.
-    const ID: i32 = 0x3D;
+    // 26.3 `ServerboundSignUpdatePacket.STREAM_CODEC`: BlockPos, four
+    // UTF(384) lines (`fixedSizeList(4)`), then `SignTextSlot` (VarInt
+    // 0 = back, 1 = front).
+    const ID: i32 = 0x3E;
 
     fn encode<B: BufMut>(&self, buf: &mut B) -> Result<(), CodecError> {
         if self.lines.len() != SIGN_LINE_COUNT {
@@ -292,20 +291,24 @@ impl Packet for ServerboundSignUpdate {
             }
         }
         buf.write_i64(self.position);
-        buf.write_bool(self.is_front_text);
         for line in &self.lines {
             buf.write_string(line, MAX_SIGN_LINE_LEN)?;
         }
+        buf.write_varint(i32::from(self.is_front_text));
         Ok(())
     }
 
     fn decode<B: Buf>(buf: &mut B) -> Result<Self, CodecError> {
         let position = buf.read_i64()?;
-        let is_front_text = buf.read_bool()?;
         let mut lines = Vec::with_capacity(SIGN_LINE_COUNT);
         for _ in 0..SIGN_LINE_COUNT {
             lines.push(buf.read_string(MAX_SIGN_LINE_LEN)?);
         }
+        let is_front_text = match buf.read_varint()? {
+            0 => false,
+            1 => true,
+            _ => return Err(CodecError::NotSupported("unknown sign text slot")),
+        };
         Ok(Self {
             position,
             lines,
@@ -368,7 +371,7 @@ pub struct ClientboundOpenBook {
 }
 impl Packet for ClientboundOpenBook {
     // Local reports/packets.json: open_book=58; javap writes InteractionHand enum.
-    const ID: i32 = 58;
+    const ID: i32 = 0x3B;
     fn encode<B: BufMut>(&self, buf: &mut B) -> Result<(), CodecError> {
         buf.write_varint(self.hand as i32);
         Ok(())
@@ -719,10 +722,12 @@ impl CommandNode {
 }
 
 impl CommandArgumentParser {
-    // ArgumentTypeInfos.bootstrap registers these ids in this exact order.
-    // SingletonArgumentInfo has no property payload. Numeric ArgumentInfos,
-    // EntityArgument.Info, ScoreHolderArgument.Info, TimeArgument.Info, and
-    // Resource[Key]Argument.Info define the property layouts below.
+    // 26.3 `minecraft:command_argument_type` registry order (registries.json).
+    // `minecraft:color` became `minecraft:team_color` at the same id 16 (both
+    // singletons); `minecraft:uuid` moved to 61. SingletonArgumentInfo has no
+    // property payload. Numeric ArgumentInfos, EntityArgument.Info,
+    // ScoreHolderArgument.Info, TimeArgument.Info, and Resource[Key]Argument.Info
+    // define the property layouts below.
     fn id(&self) -> i32 {
         match self {
             Self::Bool => 0,
@@ -767,7 +772,7 @@ impl CommandArgumentParser {
             Self::ResourceOrTagKey { .. } => 45,
             Self::Resource { .. } => 46,
             Self::ResourceKey { .. } => 47,
-            Self::Uuid => 56,
+            Self::Uuid => 61,
         }
     }
 
@@ -948,7 +953,7 @@ impl CommandArgumentParser {
             47 => Self::ResourceKey {
                 registry: buf.read_identifier()?,
             },
-            56 => Self::Uuid,
+            61 => Self::Uuid,
             _ => {
                 return Err(CodecError::NotSupported(
                     "unsupported command argument parser",
@@ -984,7 +989,7 @@ impl Packet for ClientboundSystemChat {
     // CLIENTBOUND_SYSTEM_CHAT is clientbound registration index 121, wire id
     // 0x79. `ClientboundSystemChatPacket` writes trusted Component NBT then a
     // bool overlay flag.
-    const ID: i32 = 0x79;
+    const ID: i32 = 0x7C;
 
     fn encode<B: BufMut>(&self, buf: &mut B) -> Result<(), CodecError> {
         buf.put_slice(&self.content_nbt);
@@ -1023,7 +1028,7 @@ impl Packet for ClientboundTabList {
     // 0x7A (between CLIENTBOUND_SYSTEM_CHAT at 0x79 and
     // CLIENTBOUND_TAG_QUERY), and `ClientboundTabListPacket` is a
     // record of two `Component`s written with the trusted NBT stream codec.
-    const ID: i32 = 0x7A;
+    const ID: i32 = 0x7D;
 
     fn encode<B: BufMut>(&self, buf: &mut B) -> Result<(), CodecError> {
         buf.put_slice(&self.header_nbt);

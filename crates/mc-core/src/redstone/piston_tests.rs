@@ -146,7 +146,7 @@ fn complete_26_1_2_registry_reactions_match_the_native_server_oracle() {
         }
         count += 1;
     }
-    assert_eq!(count, 1168);
+    assert_eq!(count, 1286);
 }
 
 #[test]

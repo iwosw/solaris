@@ -44,13 +44,13 @@ fn identifier(value: &str) -> Identifier {
 
 #[test]
 fn entity_sync_packet_ids_match_the_26_1_2_protocol_dump() {
-    assert_eq!(ClientboundSetEntityData::ID, 0x63);
-    assert_eq!(ClientboundSetEntityLeash::ID, 0x64);
-    assert_eq!(ClientboundSetEntityEquipment::ID, 0x66);
-    assert_eq!(ClientboundSetPassengers::ID, 0x6B);
-    assert_eq!(ClientboundRemoveEntityEffect::ID, 0x4E);
-    assert_eq!(ClientboundUpdateEntityAttributes::ID, 0x83);
-    assert_eq!(ClientboundUpdateEntityEffect::ID, 0x84);
+    assert_eq!(ClientboundSetEntityData::ID, 0x65);
+    assert_eq!(ClientboundSetEntityLeash::ID, 0x66);
+    assert_eq!(ClientboundSetEntityEquipment::ID, 0x68);
+    assert_eq!(ClientboundSetPassengers::ID, 0x6D);
+    assert_eq!(ClientboundRemoveEntityEffect::ID, 0x4F);
+    assert_eq!(ClientboundUpdateEntityAttributes::ID, 0x86);
+    assert_eq!(ClientboundUpdateEntityEffect::ID, 0x87);
 }
 
 #[test]
@@ -757,8 +757,9 @@ fn effect_particle_list_and_player_absorption_match_vanilla_accessors() {
             },
         ],
     };
+    // 26.3 particle_type ids: entity_effect 28, trial_omen 124, raid_omen 123.
     let expected = [
-        42, 10, 17, 3, 21, 0x26, 0x12, 0x34, 0x56, 114, 113, 11, 8, 1, 17, 3, 0x40, 0x80, 0, 0,
+        42, 10, 17, 3, 28, 0x26, 0x12, 0x34, 0x56, 124, 123, 11, 8, 1, 17, 3, 0x40, 0x80, 0, 0,
         0xff,
     ];
     assert_eq!(encode(&packet), expected);

@@ -340,10 +340,10 @@ fn real_table_matches_known_blocks() {
     let blocks = crate::blocks::load_blocks_report(&blocks_path).unwrap();
     let table = load(&light_path).unwrap();
     assert_eq!(
-        table.version, "26.1.2",
+        table.version, "26.3",
         "block_light.json version should track 26.1.2",
     );
-    assert_eq!(table.len(), 29873, "26.1.2 has 29873 block states");
+    assert_eq!(table.len(), 35723, "26.3 has 35723 block states");
 
     let default_state = |name: &str| -> u32 {
         blocks
@@ -410,5 +410,5 @@ fn local_loader_matches_checkout_report() {
     ))
     .expect("extracted vanilla report loads");
     assert!(!table.is_empty());
-    assert_eq!(table.version, "26.1.2");
+    assert_eq!(table.version, "26.3");
 }

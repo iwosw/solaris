@@ -1,4 +1,4 @@
-//! Vanilla 26.1.2 statistics. Registry order is derived from local `javap`
+//! Vanilla 26.3 statistics. Registry order is derived from local `javap`
 //! of `Stats` and `BuiltInRegistries`; custom hot counters never allocate.
 
 use std::collections::BTreeMap;
@@ -130,6 +130,7 @@ pub enum CustomStat {
     InteractWithCraftingTable,
     OpenChest,
     SleepInBed,
+    SleepInStrawBed,
     OpenShulkerBox,
     OpenBarrel,
     InteractWithBlastFurnace,
@@ -149,7 +150,7 @@ pub enum CustomStat {
 }
 
 impl CustomStat {
-    pub const COUNT: usize = 77;
+    pub const COUNT: usize = 78;
     pub const ALL: [Self; Self::COUNT] = [
         Self::LeaveGame,
         Self::PlayTime,
@@ -212,6 +213,7 @@ impl CustomStat {
         Self::InteractWithCraftingTable,
         Self::OpenChest,
         Self::SleepInBed,
+        Self::SleepInStrawBed,
         Self::OpenShulkerBox,
         Self::OpenBarrel,
         Self::InteractWithBlastFurnace,
@@ -304,6 +306,7 @@ impl CustomStat {
             Self::InteractWithCraftingTable => "minecraft:interact_with_crafting_table",
             Self::OpenChest => "minecraft:open_chest",
             Self::SleepInBed => "minecraft:sleep_in_bed",
+            Self::SleepInStrawBed => "minecraft:sleep_in_straw_bed",
             Self::OpenShulkerBox => "minecraft:open_shulker_box",
             Self::OpenBarrel => "minecraft:open_barrel",
             Self::InteractWithBlastFurnace => "minecraft:interact_with_blast_furnace",
@@ -344,21 +347,131 @@ const TIMED_STATS: [CustomStat; 5] = [
     CustomStat::SneakTime,
 ];
 
+/// Registry release that persisted `sparse` ids and `custom` slots index.
+pub const STATISTICS_RELEASE: &str = "26.3";
+
 /// Durable counters plus the original JSON envelope. Keeping the envelope
 /// preserves unknown root fields, categories, stat names and values, including
 /// `DataVersion`; only recognized counters are refreshed on vanilla export.
+/// Records written before the 26.3 bump carry no release and are migrated on
+/// load (see [`StoredStatistics`]).
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(try_from = "StoredStatistics")]
 pub struct PlayerStatistics {
-    #[serde(with = "custom_counters")]
+    #[serde(serialize_with = "serialize_custom")]
     custom: [i32; CustomStat::COUNT],
     custom_present: [u64; 2],
     sparse: BTreeMap<StatType, BTreeMap<u32, i32>>,
     retained: Value,
     #[serde(default)]
     timers: StatisticsTimers,
+    /// Always [`STATISTICS_RELEASE`] in memory; written so loads can tell.
+    registry_release: CurrentRelease,
     /// The current simulation tick is a read cursor, not a durable mutation.
     #[serde(skip)]
     current_tick: u64,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct CurrentRelease;
+
+impl Serialize for CurrentRelease {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(STATISTICS_RELEASE)
+    }
+}
+
+impl<'de> Deserialize<'de> for CurrentRelease {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let release = String::deserialize(deserializer)?;
+        if release == STATISTICS_RELEASE {
+            Ok(Self)
+        } else {
+            Err(serde::de::Error::custom(format!(
+                "statistics indexed by unsupported registry release {release:?}"
+            )))
+        }
+    }
+}
+
+/// The persisted shape. A missing `registry_release` marks a 26.1.2 record:
+/// its `sparse` ids name 26.1.2 registry entries and its `custom` array lacks
+/// `sleep_in_straw_bed`.
+#[derive(Deserialize)]
+struct StoredStatistics {
+    custom: Vec<i32>,
+    custom_present: [u64; 2],
+    sparse: BTreeMap<StatType, BTreeMap<u32, i32>>,
+    retained: Value,
+    #[serde(default)]
+    timers: StatisticsTimers,
+    #[serde(default)]
+    registry_release: Option<CurrentRelease>,
+}
+
+impl TryFrom<StoredStatistics> for PlayerStatistics {
+    type Error = String;
+
+    fn try_from(stored: StoredStatistics) -> Result<Self, Self::Error> {
+        let StoredStatistics {
+            mut custom,
+            mut custom_present,
+            mut sparse,
+            retained,
+            timers,
+            registry_release,
+        } = stored;
+        if registry_release.is_none() {
+            // 26.3 inserted `sleep_in_straw_bed` mid-registry: shift the
+            // counters and their presence bits from that slot up by one.
+            let inserted = CustomStat::SleepInStrawBed as usize;
+            if custom.len() != CustomStat::COUNT - 1 {
+                return Err(format!(
+                    "expected {} pre-26.3 custom counters, got {}",
+                    CustomStat::COUNT - 1,
+                    custom.len()
+                ));
+            }
+            custom.insert(inserted, 0);
+            let mut present = [0_u64; 2];
+            for old in 0..CustomStat::COUNT - 1 {
+                if custom_present[old / 64] & (1 << (old % 64)) != 0 {
+                    let new = if old >= inserted { old + 1 } else { old };
+                    present[new / 64] |= 1 << (new % 64);
+                }
+            }
+            custom_present = present;
+            sparse = sparse
+                .into_iter()
+                .map(|(kind, counters)| {
+                    let counters = counters
+                        .into_iter()
+                        .filter_map(|(id, value)| {
+                            crate::legacy_26_1_2::current_statistic_id(kind, id)
+                                .map(|id| (id, value))
+                        })
+                        .collect();
+                    (kind, counters)
+                })
+                .collect();
+        }
+        let custom = custom.try_into().map_err(|values: Vec<i32>| {
+            format!(
+                "expected {} custom counters, got {}",
+                CustomStat::COUNT,
+                values.len()
+            )
+        })?;
+        Ok(Self {
+            custom,
+            custom_present,
+            sparse,
+            retained,
+            timers,
+            registry_release: CurrentRelease,
+            current_tick: 0,
+        })
+    }
 }
 
 impl PartialEq for PlayerStatistics {
@@ -379,6 +492,7 @@ impl Default for PlayerStatistics {
             sparse: BTreeMap::new(),
             retained: Value::Null,
             timers: StatisticsTimers::default(),
+            registry_release: CurrentRelease,
             current_tick: 0,
         }
     }
@@ -676,29 +790,11 @@ impl PlayerStatistics {
     }
 }
 
-mod custom_counters {
-    use super::*;
-    use serde::{Deserializer, Serializer};
-
-    pub fn serialize<S: Serializer>(
-        value: &[i32; CustomStat::COUNT],
-        serializer: S,
-    ) -> Result<S::Ok, S::Error> {
-        value.as_slice().serialize(serializer)
-    }
-
-    pub fn deserialize<'de, D: Deserializer<'de>>(
-        deserializer: D,
-    ) -> Result<[i32; CustomStat::COUNT], D::Error> {
-        let values = Vec::<i32>::deserialize(deserializer)?;
-        values.try_into().map_err(|values: Vec<i32>| {
-            serde::de::Error::custom(format!(
-                "expected {} custom counters, got {}",
-                CustomStat::COUNT,
-                values.len()
-            ))
-        })
-    }
+fn serialize_custom<S: serde::Serializer>(
+    value: &[i32; CustomStat::COUNT],
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    value.as_slice().serialize(serializer)
 }
 
 #[cfg(test)]
@@ -708,7 +804,7 @@ mod tests {
     #[test]
     fn complete_vanilla_registry_and_saturating_counters() {
         assert_eq!(StatType::ALL.len(), 9);
-        assert_eq!(CustomStat::ALL.len(), 77);
+        assert_eq!(CustomStat::ALL.len(), 78);
         for (id, kind) in StatType::ALL.into_iter().enumerate() {
             assert_eq!(kind.id(), id as u32);
             assert_eq!(StatType::from_name(kind.name()), Some(kind));
@@ -719,7 +815,8 @@ mod tests {
         }
         assert_eq!(CustomStat::HappyGhastOneCm.id(), 17);
         assert_eq!(CustomStat::NautilusOneCm.id(), 22);
-        assert_eq!(CustomStat::InteractWithSmithingTable.id(), 76);
+        assert_eq!(CustomStat::SleepInStrawBed.id(), 61);
+        assert_eq!(CustomStat::InteractWithSmithingTable.id(), 77);
         let mut stats = PlayerStatistics::default();
         stats.set_custom(CustomStat::PlayTime, i32::MAX);
         stats.increment_custom(CustomStat::PlayTime, 1);
@@ -733,6 +830,47 @@ mod tests {
         );
         let decoded: PlayerStatistics =
             serde_json::from_slice(&serde_json::to_vec(&stats).unwrap()).unwrap();
+        assert_eq!(decoded, stats);
+    }
+
+    #[test]
+    fn pre_26_3_records_migrate_custom_slots_and_registry_ids() {
+        // 26.1.2 layout: 77 counters, `open_shulker_box` at slot 61, item
+        // stats keyed by 26.1.2 item ids.
+        let diamond = crate::Identifier::parse("minecraft:diamond").unwrap();
+        let legacy_diamond = (0..)
+            .find(|id| crate::legacy_26_1_2::item_name(*id) == Some(&diamond))
+            .unwrap();
+        let mut custom = vec![0; CustomStat::COUNT - 1];
+        custom[60] = 3; // sleep_in_bed
+        custom[61] = 7; // open_shulker_box
+        let legacy = serde_json::json!({
+            "custom": custom,
+            "custom_present": [(1_u64 << 60) | (1_u64 << 61), 0],
+            "sparse": {"Used": {legacy_diamond.to_string(): 5}},
+            "retained": null,
+        });
+        let stats: PlayerStatistics = serde_json::from_value(legacy).unwrap();
+        assert_eq!(stats.get_custom(CustomStat::SleepInBed), 3);
+        assert_eq!(stats.get_custom(CustomStat::SleepInStrawBed), 0);
+        assert_eq!(stats.get_custom(CustomStat::OpenShulkerBox), 7);
+        let current_diamond = crate::items::solaris_required_items()
+            .id_of(&diamond)
+            .unwrap();
+        assert_ne!(current_diamond, legacy_diamond);
+        assert_eq!(stats.get(StatType::Used, current_diamond), 5);
+        let wire = stats.wire_entries();
+        assert!(wire.contains(&(8, CustomStat::OpenShulkerBox.id() as i32, 7)));
+        assert!(
+            !wire
+                .iter()
+                .any(|entry| entry.1 == CustomStat::SleepInStrawBed.id() as i32 && entry.0 == 8)
+        );
+
+        // Current records round-trip unchanged and name their release.
+        let encoded = serde_json::to_value(&stats).unwrap();
+        assert_eq!(encoded["registry_release"], STATISTICS_RELEASE);
+        let decoded: PlayerStatistics = serde_json::from_value(encoded).unwrap();
         assert_eq!(decoded, stats);
     }
 

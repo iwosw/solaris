@@ -1,4 +1,4 @@
-//! Per-block-state explosion resistance extracted from vanilla 26.1.2.
+//! Per-block-state explosion resistance extracted from vanilla 26.3.
 
 use std::path::{Path, PathBuf};
 
@@ -7,9 +7,9 @@ use thiserror::Error;
 
 use crate::read_json_file;
 
-const EXPECTED_VERSION: &str = "26.1.2";
-const EXPECTED_MAX_STATE_ID: u32 = 29_872;
-const EXPECTED_STATE_COUNT: usize = 29_873;
+const EXPECTED_VERSION: &str = "26.3";
+const EXPECTED_MAX_STATE_ID: u32 = 35_722;
+const EXPECTED_STATE_COUNT: usize = 35_723;
 
 #[derive(Debug, Error)]
 pub enum BlockExplosionError {
@@ -27,9 +27,9 @@ pub enum BlockExplosionError {
         #[source]
         source: serde_json::Error,
     },
-    #[error("unsupported block explosion report version {version}; expected 26.1.2")]
+    #[error("unsupported block explosion report version {version}; expected 26.3")]
     UnsupportedVersion { version: String },
-    #[error("block explosion report max_state_id {actual} does not match 26.1.2 value {expected}")]
+    #[error("block explosion report max_state_id {actual} does not match 26.3 value {expected}")]
     UnexpectedMaxStateId { actual: u32, expected: u32 },
     #[error(
         "entries length {entries} does not match max_state_id {max_state_id} (expected {expected})"
@@ -173,7 +173,7 @@ mod tests {
         write_json(
             dir,
             &serde_json::json!({
-                "version": "26.1.2",
+                "version": "26.3",
                 "max_state_id": EXPECTED_MAX_STATE_ID,
                 "entries": entries,
             })
@@ -226,7 +226,7 @@ mod tests {
         let error = load_block_explosion_report(write_json(
             &dir,
             &serde_json::json!({
-                "version": "26.1.2",
+                "version": "26.3",
                 "max_state_id": EXPECTED_MAX_STATE_ID,
                 "entries": entries,
             })
@@ -242,7 +242,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let error = load_block_explosion_report(write_json(
             &dir,
-            r#"{"version":"26.1.2","max_state_id":0,"entries":[0.0]}"#,
+            r#"{"version":"26.3","max_state_id":0,"entries":[0.0]}"#,
         ))
         .unwrap_err();
 
@@ -321,7 +321,7 @@ mod tests {
 
         let table = load_block_explosion_report(explosion_path).unwrap();
         let blocks = crate::blocks::load_blocks_report(blocks_path).unwrap();
-        assert_eq!(table.len(), 29_873);
+        assert_eq!(table.len(), 35_723);
 
         let default_state = |name: &str| {
             blocks

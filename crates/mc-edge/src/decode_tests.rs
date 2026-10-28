@@ -151,13 +151,27 @@ fn elytra_start_command_reaches_authoritative_core() {
 #[test]
 fn teleport_confirmation_reaches_the_core_and_rejects_malformed_bodies() {
     use mc_protocol::packets::play::ConfirmTeleportation;
-    let packet = ConfirmTeleportation { teleport_id: 37 };
+    let packet = ConfirmTeleportation {
+        teleport_id: 37,
+        position: [1.5, 70.0, -3.25],
+        yaw: 45.0,
+        pitch: 10.0,
+    };
     assert_eq!(
         decode(ConfirmTeleportation::ID, body(&packet), &mut state()).unwrap(),
-        vec![PlayerInput::ConfirmTeleport {
-            connection: conn(),
-            teleport_id: 37,
-        }]
+        vec![
+            PlayerInput::ConfirmTeleport {
+                connection: conn(),
+                teleport_id: 37,
+            },
+            PlayerInput::Move {
+                connection: conn(),
+                position: [1.5, 70.0, -3.25],
+                yaw: 45.0,
+                pitch: 10.0,
+                on_ground: false,
+            },
+        ]
     );
     assert!(decode(ConfirmTeleportation::ID, Vec::new(), &mut state()).is_err());
     let mut trailing = body(&packet);
@@ -543,13 +557,11 @@ fn use_item_decodes() {
 }
 
 #[test]
-fn swing_emits_nothing() {
+fn punch_emits_nothing() {
     let mut s = state();
     let out = decode(
-        0x3F,
-        body(&mc_protocol::packets::play::ServerboundSwing {
-            hand: InteractionHand::MainHand,
-        }),
+        mc_protocol::packets::play::ServerboundPunch::ID,
+        body(&mc_protocol::packets::play::ServerboundPunch),
         &mut s,
     )
     .unwrap();
@@ -557,23 +569,21 @@ fn swing_emits_nothing() {
 }
 
 #[test]
-fn swing_before_or_after_attack_never_adds_a_second_attack_intent() {
-    for swing_first in [true, false] {
+fn punch_before_or_after_attack_never_adds_a_second_attack_intent() {
+    for punch_first in [true, false] {
         let mut s = state();
         let attack = (
             ServerboundAttack::ID,
             body(&ServerboundAttack { entity_id: 159 }),
         );
-        let swing = (
-            0x3F,
-            body(&mc_protocol::packets::play::ServerboundSwing {
-                hand: InteractionHand::MainHand,
-            }),
+        let punch = (
+            mc_protocol::packets::play::ServerboundPunch::ID,
+            body(&mc_protocol::packets::play::ServerboundPunch),
         );
-        let frames = if swing_first {
-            [swing, attack]
+        let frames = if punch_first {
+            [punch, attack]
         } else {
-            [attack, swing]
+            [attack, punch]
         };
         let mut inputs = Vec::new();
         for (id, frame) in frames {

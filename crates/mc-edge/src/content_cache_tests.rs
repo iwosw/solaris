@@ -34,6 +34,15 @@ pub(crate) fn write_valid_cache(root: &Path) {
             "protocol_version": mc_protocol::PROTOCOL_VERSION,
         }),
     );
+    write_json(
+        root,
+        crate::content_import::GAMEPLAY_VERSION_FILE,
+        &json!({
+            "id": crate::content_import::GAMEPLAY_DATAPACK_RELEASE,
+            "world_version": 4790,
+            "protocol_version": 775,
+        }),
+    );
     for (registry, directory) in mc_data::KNOWN_REGISTRIES {
         write_json(
             root,
@@ -101,8 +110,8 @@ pub(crate) fn write_valid_cache(root: &Path) {
         "reports/block_explosion.json",
         &json!({
             "version": mc_protocol::TARGET_RELEASE,
-            "max_state_id": 29_872,
-            "entries": vec![0.0; 29_873],
+            "max_state_id": state_count - 1,
+            "entries": vec![0.0; state_count],
         }),
     );
     write_json(

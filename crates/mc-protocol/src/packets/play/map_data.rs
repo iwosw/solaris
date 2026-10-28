@@ -41,7 +41,7 @@ impl ClientboundMapData {
 }
 impl Packet for ClientboundMapData {
     // reports/packets.json play/clientbound minecraft:map_item_data.
-    const ID: i32 = 51;
+    const ID: i32 = 0x34;
     fn encode<B: BufMut>(&self, buf: &mut B) -> Result<(), CodecError> {
         self.validate()?;
         buf.write_varint(self.id);
