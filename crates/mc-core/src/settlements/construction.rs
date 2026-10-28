@@ -111,8 +111,13 @@ pub(crate) fn request_build(
     let record = state.settlements.get(id).expect("claimed settlement");
     let (project, cursor) = site_project(state, record, blueprint, 0, u32::MAX);
     let mut project = project.ok_or("No free loaded construction site is available.")?;
+    let (bounds, cells) = planned_cells(state, &project).ok_or("Construction admission failed.")?;
+    let bill = cell_bill(state, &cells).ok_or("Construction admission failed.")?;
+    if let Some(error) = funding_error(state, id, &bill) {
+        return Err(error);
+    }
     project.ordered = true;
-    if !begin(state, project) {
+    if !begin_cells(state, project, bounds, cells) {
         return Err("Construction admission failed.".into());
     }
     state
@@ -290,6 +295,38 @@ fn clearable(state: &TickState, block: u32) -> bool {
         })
 }
 
+/// Only natural terrain can be excavated; buildings, paths and fluids are not
+/// site preparation materials.
+fn excavatable(state: &TickState, block: u32) -> bool {
+    state
+        .registry
+        .blocks
+        .by_id(mc_world::BlockStateId(block))
+        .is_some_and(|definition| {
+            !definition.has_fluid()
+                && matches!(
+                    definition.block.id.path(),
+                    "dirt"
+                        | "grass_block"
+                        | "coarse_dirt"
+                        | "rooted_dirt"
+                        | "podzol"
+                        | "mycelium"
+                        | "stone"
+                        | "granite"
+                        | "diorite"
+                        | "andesite"
+                        | "deepslate"
+                        | "sand"
+                        | "red_sand"
+                        | "gravel"
+                        | "clay"
+                )
+        })
+}
+
+const SITE_VARIANCE: i32 = 3;
+
 /// Check the whole future footprint, not merely this level's placed cells.
 /// One candidate per planning admission; never load chunks or clear paths.
 pub(super) fn site_free(
@@ -299,12 +336,8 @@ pub(super) fn site_free(
     size: [u8; 3],
 ) -> bool {
     let max: [i32; 3] = std::array::from_fn(|axis| origin[axis] + i32::from(size[axis]) - 1);
-    if executor::area_reserved(
-        state,
-        ScriptWorldBounds::new(origin, max).expect("blueprint bounds"),
-    ) {
-        return false;
-    }
+    let mut minimum = origin[1];
+    let mut maximum = origin[1];
     if record.buildings.values().any(|building| {
         [0, 2].into_iter().all(|axis| {
             origin[axis] <= building.bounds.max[axis] + 1
@@ -324,37 +357,45 @@ pub(super) fn site_free(
             {
                 return false;
             }
-            let Some(ground) = state.world.physics_block_at(x, origin[1], z) else {
+            let Some(height) = surface_y(state, record.anchor[1], x, z) else {
                 return false;
             };
+            minimum = minimum.min(height);
+            maximum = maximum.max(height);
+            if maximum - minimum > SITE_VARIANCE {
+                return false;
+            }
+            let ground = state
+                .world
+                .physics_block_at(x, height, z)
+                .expect("loaded surface");
             if state
                 .registry
-                .collision_boxes
-                .get(ground as usize)
-                .is_none_or(|boxes| boxes.is_empty())
-                || state
-                    .registry
-                    .blocks
-                    .by_id(mc_world::BlockStateId(ground))
-                    .is_some_and(|definition| {
-                        matches!(definition.block.id.path(), "dirt_path" | "farmland")
-                    })
-                || state.block_entities.contains_key(&(x, origin[1], z))
+                .blocks
+                .by_id(mc_world::BlockStateId(ground))
+                .is_some_and(|definition| {
+                    matches!(definition.block.id.path(), "dirt_path" | "farmland")
+                })
             {
                 return false;
             }
-            for y in origin[1] + 1..=max[1] {
-                if !state
-                    .world
-                    .physics_block_at(x, y, z)
-                    .is_some_and(|block| clearable(state, block))
+            for y in height.min(origin[1])..=max[1].max(height) {
+                let Some(block) = state.world.physics_block_at(x, y, z) else {
+                    return false;
+                };
+                if state.block_entities.contains_key(&(x, y, z))
+                    || (y > origin[1] && !clearable(state, block) && !excavatable(state, block))
+                    || (y > height && y <= origin[1] && !clearable(state, block))
                 {
                     return false;
                 }
             }
         }
     }
-    true
+    !executor::area_reserved(
+        state,
+        ScriptWorldBounds::new([origin[0], minimum, origin[2]], max).expect("blueprint bounds"),
+    )
 }
 
 fn planned_cells(
@@ -376,12 +417,45 @@ fn planned_cells(
         })
         .collect();
     let size = blueprint.footprint(Rotation::from_quarter_turns(project.rotation));
+    let mut bottom = project.origin[1];
+    if project.building.is_none() {
+        let dirt = state
+            .registry
+            .blocks
+            .block(&mc_data::Identifier::parse("minecraft:dirt").ok()?)?
+            .default
+            .0;
+        for x in project.origin[0]..project.origin[0] + i32::from(size[0]) {
+            for z in project.origin[2]..project.origin[2] + i32::from(size[2]) {
+                let ground = surface_y(state, project.origin[1], x, z)?;
+                for y in ground + 1..=project.origin[1] {
+                    // The authored floor already pays for its own cells.
+                    if y == project.origin[1]
+                        && rotated
+                            .blocks
+                            .iter()
+                            .any(|(offset, _)| rotated.world(project.origin, *offset) == [x, y, z])
+                    {
+                        continue;
+                    }
+                    bottom = bottom.min(y);
+                    cells.push(executor::PlannedCell {
+                        at: [x, y, z],
+                        state: dirt,
+                        resource: Some("minecraft:dirt".into()),
+                        quantity: 1,
+                    });
+                }
+            }
+        }
+    }
     for x in project.origin[0]..project.origin[0] + i32::from(size[0]) {
         for z in project.origin[2]..project.origin[2] + i32::from(size[2]) {
             for y in project.origin[1] + 1..project.origin[1] + i32::from(size[1]) {
                 let block = state.world.physics_block_at(x, y, z)?;
                 if block != state.registry.states.air
-                    && clearable(state, block)
+                    && (clearable(state, block)
+                        || (project.building.is_none() && excavatable(state, block)))
                     && !cells.iter().any(|cell| cell.at == [x, y, z])
                 {
                     cells.push(executor::PlannedCell {
@@ -421,17 +495,40 @@ fn planned_cells(
     // Include the whole placement extent (roof crowns/yards) in executor
     // interference fencing; certification uses the narrower authored bounds.
     let bounds = ScriptWorldBounds::new(
-        project.origin,
+        [project.origin[0], bottom, project.origin[2]],
         std::array::from_fn(|axis| project.origin[axis] + i32::from(size[axis]) - 1),
     )
     .ok()?;
     Some((bounds, cells))
 }
 
-fn begin(state: &mut TickState, mut project: Project) -> bool {
+fn cell_bill(state: &TickState, cells: &[executor::PlannedCell]) -> Option<Vec<(u32, u32)>> {
+    let mut bill = std::collections::BTreeMap::new();
+    for cell in cells {
+        if let Some(resource) = &cell.resource {
+            let item = state
+                .registry
+                .items
+                .id_of(&mc_data::Identifier::parse(resource).ok()?)?;
+            *bill.entry(item).or_insert(0) += cell.quantity;
+        }
+    }
+    Some(bill.into_iter().collect())
+}
+
+fn begin(state: &mut TickState, project: Project) -> bool {
     let Some((bounds, cells)) = planned_cells(state, &project) else {
         return false;
     };
+    begin_cells(state, project, bounds, cells)
+}
+
+fn begin_cells(
+    state: &mut TickState,
+    mut project: Project,
+    bounds: ScriptWorldBounds,
+    cells: Vec<executor::PlannedCell>,
+) -> bool {
     let Ok(handle) = executor::prepare(
         state,
         project.settlement,
@@ -637,8 +734,11 @@ fn plan(state: &mut TickState, id: SettlementId) {
     let record = state.settlements.get_mut(id).expect("planned settlement");
     record.construction_cursor = cursor;
     record.revision = record.revision.saturating_add(1);
-    if let Some(project) = project {
-        begin(state, project);
+    if let Some(project) = project
+        && let Some((bounds, cells)) = planned_cells(state, &project)
+        && cell_bill(state, &cells).is_some_and(|bill| executor::can_fund(state, id, &bill))
+    {
+        begin_cells(state, project, bounds, cells);
     }
 }
 
@@ -1039,6 +1139,13 @@ pub(crate) fn project_summary(state: &TickState, id: SettlementId) -> Vec<String
             project.origin[0], project.origin[1], project.origin[2]
         ),
     ];
+    lines.push("Remaining materials (including site preparation):".into());
+    lines.extend(
+        snapshot
+            .remaining
+            .iter()
+            .map(|material| format!("{}: {}", material.resource, material.quantity)),
+    );
     match executor::missing(state, id, &project.structure) {
         Ok(missing) if missing.is_empty() => {
             lines.push("Materials ready; builder collecting and placing.".into())

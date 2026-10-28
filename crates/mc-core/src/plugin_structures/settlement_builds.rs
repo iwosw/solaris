@@ -30,7 +30,7 @@ pub(crate) fn prepare(
             && record.snapshot.state != ScriptStructureState::Cancelled
             && bounds_of_structure(record).is_ok_and(|existing| overlaps(existing, bounds))
             && !(record.settlement == Some(settlement)
-                && record.snapshot.origin == bounds.min
+                && same_site(state, record, bounds.min)
                 && record
                     .snapshot
                     .blueprint_id
@@ -426,6 +426,29 @@ pub(crate) fn missing_stock(
     )
 }
 
+/// Foundation cells extend the bottom of the ledger box, never its top.
+/// Recover the exact authored floor from that top and the future footprint;
+/// do not treat arbitrary vertically overlapping buildings as the same site.
+fn same_site(state: &TickState, record: &Structure, origin: [i32; 3]) -> bool {
+    let Some(blueprint) = record
+        .snapshot
+        .blueprint_id
+        .strip_prefix("solaris-settlements:")
+        .and_then(|id| crate::settlements::blueprints::get(&state.registry, id))
+    else {
+        return false;
+    };
+    let size = blueprint.footprint(crate::settlements::blueprints::Rotation::from_quarter_turns(0));
+    bounds_of_structure(record).is_ok_and(|bounds| {
+        origin
+            == [
+                bounds.min[0],
+                bounds.max[1] - i32::from(size[1]) + 1,
+                bounds.min[2],
+            ]
+    })
+}
+
 pub(crate) fn built_at(
     state: &TickState,
     id: SettlementId,
@@ -440,7 +463,7 @@ pub(crate) fn built_at(
                     .blueprint_id
                     .strip_prefix("solaris-settlements:")
                     == Some(blueprint)
-                && record.snapshot.origin == origin
+                && same_site(state, record, origin)
                 && record.snapshot.state == ScriptStructureState::Committed
         })
     })

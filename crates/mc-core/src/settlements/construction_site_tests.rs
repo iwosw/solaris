@@ -213,3 +213,236 @@ fn reachable_or_off_shift_builder_keeps_the_slot() {
     assign_builder(&mut state, id);
     assert_eq!(profession(&state, builder), Profession::Builder);
 }
+
+/// Deterministic terrain, not an operator-built pad: every building-sized
+/// footprint crosses both low and high columns.
+#[test]
+fn hillside_village_prepares_and_builds_first_storage() {
+    use super::tests::complete;
+    use mc_data::ItemStack;
+    let (mut state, id, builder) = fixture();
+    state.settlements.get_mut(id).unwrap().anchor[0] = 10;
+    fund(&mut state, "storage", 1);
+    let dirt = crate::settlements::allocator::tests::block(&state, "minecraft:dirt", &[]);
+    for x in 0..16 {
+        for z in 0..16 {
+            let height = if (x, z) == (1, 1) { 200 } else { 198 + x % 4 };
+            for y in 197..=201 {
+                if (x, y, z) != (1, 201, 1) {
+                    let block = if y <= height {
+                        dirt
+                    } else {
+                        state.registry.states.air
+                    };
+                    state.world.set_block(x, y, z, block);
+                }
+            }
+        }
+    }
+    let dirt_item = state
+        .registry
+        .items
+        .id_of(&mc_data::Identifier::parse("minecraft:dirt").unwrap())
+        .unwrap();
+    state.block_entities.get_mut(&(1, 201, 1)).unwrap().slots[26] = ItemStack::new(dirt_item, 64);
+    state.world.fold_overlay();
+    for _ in 0..128 {
+        plan(&mut state, id);
+        if state.settlements.get(id).unwrap().project.is_some() {
+            break;
+        }
+    }
+    let project = state
+        .settlements
+        .get(id)
+        .unwrap()
+        .project
+        .clone()
+        .expect("hillside admits first storage");
+    assert!(!project.ordered);
+    let snapshot = executor::status(&state, id, &project.structure).unwrap();
+    let foundation = snapshot
+        .remaining
+        .iter()
+        .find(|m| m.resource == "minecraft:dirt")
+        .expect("paid foundation");
+    let bill = foundation.quantity;
+    assert!(
+        project_summary(&state, id)
+            .iter()
+            .any(|line| line == &format!("minecraft:dirt: {bill}"))
+    );
+    assert!(bill > 0);
+    let floor = project.origin[1];
+    let size = storage_size(&state);
+    // Real brain/navigation, no teleports, operator commands or terrain edits.
+    for now in 0..20_000 {
+        state.tick = now;
+        state.tick_budget.reset(now);
+        let mut changes = crate::boundary::ChangeSet::default();
+        let writes_before = state.plugin_block_writes.len();
+        crate::settlements::tick(&mut state, &mut changes);
+        assert!(
+            state.plugin_block_writes.len() - writes_before <= 1,
+            "preparation and building must use one-cell admissions"
+        );
+        if state.settlements.get(id).unwrap().project.is_none() {
+            break;
+        }
+        crate::villager::brain::tick(&mut state, &mut changes);
+        state.world.fold_overlay();
+    }
+    assert!(
+        state.settlements.get(id).unwrap().project.is_none(),
+        "hillside stalled: {:?}; builder={:?}; villager={:?}",
+        project_status(&state, id),
+        state.entities.pos(builder),
+        state.entities.row(builder).villager
+    );
+    println!(
+        "hillside storage completed at tick {}, origin {:?}, foundation dirt {}",
+        state.tick, project.origin, bill
+    );
+    assert!(
+        state
+            .settlements
+            .get(id)
+            .unwrap()
+            .buildings
+            .values()
+            .any(|b| b.kind == BuildingKind::Storage)
+    );
+    for x in project.origin[0]..project.origin[0] + i32::from(size[0]) {
+        for z in project.origin[2]..project.origin[2] + i32::from(size[2]) {
+            for y in floor + 1..floor + i32::from(size[1]) {
+                assert_ne!(
+                    state.world.physics_block_at(x, y, z),
+                    Some(dirt),
+                    "terrain above the floor must be excavated"
+                );
+            }
+            for y in (198 + x % 4 + 1)..floor {
+                assert_eq!(state.world.physics_block_at(x, y, z), Some(dirt));
+            }
+            assert!(
+                !state.registry.collision_boxes
+                    [state.world.physics_block_at(x, floor, z).unwrap() as usize]
+                    .is_empty()
+            );
+        }
+    }
+    let stored: i32 = state
+        .block_entities
+        .values()
+        .flat_map(|be| &be.slots)
+        .filter(|s| s.item_id == dirt_item)
+        .map(|s| s.count)
+        .sum();
+    let carried: i32 = state
+        .entities
+        .row(builder)
+        .villager
+        .as_ref()
+        .unwrap()
+        .inventory
+        .iter()
+        .flatten()
+        .filter(|s| s.item_id == dirt_item)
+        .map(|s| s.count)
+        .sum();
+    assert_eq!(stored + carried, 64 - bill as i32);
+    let building = state
+        .settlements
+        .get(id)
+        .unwrap()
+        .buildings
+        .values()
+        .find(|b| b.kind == BuildingKind::Storage)
+        .unwrap()
+        .id;
+    assert!(upgrade_available(&state, id, building));
+    fund(&mut state, "storage", 2);
+    request_upgrade(&mut state, id, building).unwrap();
+    complete(&mut state, id, builder);
+    assert_eq!(
+        state.settlements.get(id).unwrap().buildings[&building].level,
+        2
+    );
+}
+
+#[test]
+fn flat_site_keeps_bill_origin_and_same_site_upgrade() {
+    use super::tests::{complete, start};
+    let (mut state, id, builder) = fixture();
+    let materials = fund(&mut state, "storage", 1);
+    start(&mut state, id, "storage", 1, None);
+    let project = state.settlements.get(id).unwrap().project.clone().unwrap();
+    let snapshot = executor::status(&state, id, &project.structure).unwrap();
+    assert_eq!(snapshot.origin, project.origin);
+    assert_eq!(
+        cell_bill(&state, &planned_cells(&state, &project).unwrap().1)
+            .unwrap()
+            .into_iter()
+            .collect::<std::collections::BTreeMap<_, _>>(),
+        materials.into_iter().collect()
+    );
+    complete(&mut state, id, builder);
+    let building = state
+        .settlements
+        .get(id)
+        .unwrap()
+        .buildings
+        .values()
+        .find(|b| b.kind == BuildingKind::Storage)
+        .unwrap()
+        .id;
+    assert!(executor::built_at(&state, id, "storage", project.origin));
+    assert!(!executor::built_at(
+        &state,
+        id,
+        "storage",
+        [project.origin[0], project.origin[1] + 1, project.origin[2]]
+    ));
+    fund(&mut state, "storage", 2);
+    request_upgrade(&mut state, id, building).unwrap();
+    complete(&mut state, id, builder);
+    assert_eq!(
+        state.settlements.get(id).unwrap().buildings[&building].level,
+        2
+    );
+}
+
+#[test]
+fn terrain_preparation_rejects_four_block_variance_and_protected_cells() {
+    let (mut state, id, _) = fixture();
+    let origin = [5, 200, 5];
+    let size = [3, 5, 3];
+    for y in 201..=204 {
+        state.world.set_block(6, y, 6, state.registry.states.stone);
+    }
+    assert!(!site_free(
+        &state,
+        state.settlements.get(id).unwrap(),
+        origin,
+        size
+    ));
+    state.world.set_block(6, 204, 6, state.registry.states.air);
+    assert!(site_free(
+        &state,
+        state.settlements.get(id).unwrap(),
+        origin,
+        size
+    ));
+    for name in [
+        "minecraft:oak_planks",
+        "minecraft:dirt_path",
+        "minecraft:water",
+    ] {
+        let block = crate::settlements::allocator::tests::block(&state, name, &[]);
+        state.world.set_block(6, 203, 6, block);
+        assert!(
+            !site_free(&state, state.settlements.get(id).unwrap(), origin, size),
+            "{name}"
+        );
+    }
+}
