@@ -52,7 +52,9 @@ fn recipe_tag_slot_removes_native_holder_set_marker() {
     body.write_string("minecraft:birch_logs", 32767).unwrap();
     body.extend([0, 1]); // result empty, station any fuel
     let mut expected = vec![1, 0, 1, 10, 1, 6];
-    expected.write_string("minecraft:birch_logs", 32767).unwrap();
+    expected
+        .write_string("minecraft:birch_logs", 32767)
+        .unwrap();
     expected.extend([0, 1]);
     assert_eq!(translate("place_ghost_recipe", &body), expected);
 }
