@@ -421,16 +421,15 @@ fn light_update_round_trip_empty() {
 
 #[test]
 fn light_update_round_trip_with_layers() {
-    // Use the same shape as the existing LightData non-empty
-    // round-trip test in this module: one full-bright layer per
-    // section + an empty-mask-clearing zero across all 26 slots.
+    // One full-bright layer per section. BitSet.toByteArray() omits all
+    // trailing zero bytes, so empty masks round-trip as empty word vectors.
     let sky_layer = vec![0xFFu8; LightData::LIGHT_LAYER_BYTES];
     let block_layer = vec![0u8; LightData::LIGHT_LAYER_BYTES];
     let light = LightData {
         sky_y_mask: vec![(1 << 26) - 1],
         block_y_mask: vec![(1 << 26) - 1],
-        empty_sky_y_mask: vec![0],
-        empty_block_y_mask: vec![0],
+        empty_sky_y_mask: Vec::new(),
+        empty_block_y_mask: Vec::new(),
         sky_updates: vec![sky_layer; 26],
         block_updates: vec![block_layer; 26],
     };

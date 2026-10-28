@@ -138,7 +138,8 @@ field. It lives in `crates/mc-edge/src/legacy/` and follows points 1-5 above:
 - **Layouts.** Translated per the measured delta: `login_finished`
   (session UUID), `login`/`respawn` (spawn-info game modes, `onlineMode`),
   chunk sections (block/biome palettes; global palettes repacked from 16 to
-  15 bits), block updates/events/entities, entity movement
+  15 bits), chunk and incremental light masks (26.3 byte-array BitSets expand
+  back to 26.1.2 long-array BitSets), block updates/events/entities, entity movement
   (`move_entity_*` step lists, `entity_position_sync` position path),
   `animate`/`swing_animation`, particles and explosions, sounds (unknown
   sounds inline by name), attributes, damage events, teams, item stacks in
@@ -157,6 +158,11 @@ field. It lives in `crates/mc-edge/src/legacy/` and follows points 1-5 above:
   Nested item templates retain their item-first layout (not optional slot
   layout); pot decorations convert the new four optional templates into the
   legacy four-item list.
+  Local 26.3 `ClientboundLightUpdatePacketData.STREAM_CODEC` uses
+  `ByteBufCodecs.BIT_SET`; its `$15` codec writes `BitSet.toByteArray()`
+  (length-prefixed little-endian bytes, trailing zeros omitted). This differs
+  from 26.1.2 `FriendlyByteBuf.writeBitSet`'s long array, not from heightmaps'
+  unchanged long-array format.
 - **Failure policy.** Packets with malformed or untranslatable payloads fail
   the connection with context rather than silently discarding an inventory or
   world update. Explicitly new-only presentation packets (`post_effects`,

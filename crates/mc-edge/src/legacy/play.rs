@@ -43,6 +43,11 @@ pub(super) fn clientbound(
             r = &[];
         }
         "level_chunk_with_light" => chunk(t, &mut r, &mut w)?,
+        "light_update" => {
+            w.write_varint(r.read_varint()?);
+            w.write_varint(r.read_varint()?);
+            light_data(&mut r, &mut w)?;
+        }
         "chunks_biomes" => {
             let n = r.read_varint()?;
             w.write_varint(n);
@@ -604,6 +609,28 @@ fn chunk(t: &Tables, r: &mut &[u8], w: &mut Vec<u8>) -> Result<()> {
     }
     w.write_varint(kept);
     w.extend_from_slice(&out);
+    light_data(r, w)?;
+    Ok(())
+}
+
+/// 26.3 ByteBufCodecs.BIT_SET uses little-endian byte arrays; 26.1.2
+/// FriendlyByteBuf.writeBitSet uses a big-endian long array instead.
+fn light_data(r: &mut &[u8], w: &mut Vec<u8>) -> Result<()> {
+    for _ in 0..4 {
+        let len = r.read_varint()?;
+        ensure!((0..=32768).contains(&len), "light mask byte length {len}");
+        let len = len as usize;
+        ensure!(r.len() >= len, "truncated light mask");
+        let (mask, rest) = r.split_at(len);
+        *r = rest;
+        w.write_varint(len.div_ceil(8) as i32);
+        for bytes in mask.chunks(8) {
+            let mut word = [0; 8];
+            word[..bytes.len()].copy_from_slice(bytes);
+            w.write_i64(i64::from_le_bytes(word));
+        }
+    }
+    // Sky/block layer lists have the same count + byte-array layout.
     w.extend_from_slice(r);
     *r = &[];
     Ok(())

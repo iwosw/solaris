@@ -15,6 +15,35 @@ fn session() -> Session {
 }
 
 #[test]
+fn light_masks_expand_native_bytes_into_legacy_longs() {
+    let native = [
+        2, 0, 2, // sky: bit 9
+        8, 0, 0, 0, 0, 0, 0, 0, 0x80, // block: bit 63
+        9, 0, 0, 0, 0, 0, 0, 0, 0, 1, // empty sky: bit 64
+        0, // empty block
+        0, 0, // update lists
+    ];
+    let mut legacy = Vec::new();
+    for mask in [&[1 << 9][..], &[i64::MIN][..], &[0, 1][..], &[][..]] {
+        legacy.write_varint(mask.len() as i32);
+        for word in mask {
+            legacy.write_i64(*word);
+        }
+    }
+    legacy.extend([0, 0]);
+    let mut s = session();
+    for (name, mut prefix) in [
+        ("minecraft:light_update", vec![0, 0]),
+        ("minecraft:level_chunk_with_light", vec![0; 11]),
+    ] {
+        let mut body = prefix.clone();
+        body.extend(native);
+        prefix.extend_from_slice(&legacy);
+        assert_eq!(clientbound(&mut s, name, &body).unwrap().unwrap(), prefix);
+    }
+}
+
+#[test]
 fn login_drops_online_mode_and_narrows_game_modes() {
     let mut s = session();
     let mut body = Vec::new();

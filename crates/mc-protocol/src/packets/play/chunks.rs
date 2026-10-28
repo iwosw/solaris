@@ -106,11 +106,11 @@ impl BlockEntityInfo {
 
 /// Sky and block light payload inlined into [`LevelChunkWithLight`].
 ///
-/// Verified via `javap -p -c` of
-/// `ClientboundLightUpdatePacketData.write` (ADR 0002): four BitSets
-/// (`writeBitSet` = `writeLongArray(bs.toLongArray())`) followed by
-/// two `Collection<byte[]>` lists, each entry a 2048-byte light layer
-/// (4 bits per block × 16³ blocks = 2048 bytes).
+/// Verified via local 26.3 `javap -p -c` of
+/// `ClientboundLightUpdatePacketData.STREAM_CODEC` and `ByteBufCodecs$15`:
+/// four BitSets (VarInt byte count + little-endian bytes, trailing zeros
+/// omitted) followed by two `Collection<byte[]>` lists, each entry a
+/// 2048-byte light layer (4 bits per block × 16³ blocks = 2048 bytes).
 ///
 /// Bit `i` set in `sky_y_mask` (resp. `block_y_mask`) means section
 /// `i` has explicit sky-light (resp. block-light) data in
@@ -143,20 +143,20 @@ impl LightData {
     }
 
     fn encode<B: BufMut>(&self, buf: &mut B) -> Result<(), CodecError> {
-        write_long_array(buf, &self.sky_y_mask)?;
-        write_long_array(buf, &self.block_y_mask)?;
-        write_long_array(buf, &self.empty_sky_y_mask)?;
-        write_long_array(buf, &self.empty_block_y_mask)?;
+        Self::encode_mask(buf, &self.sky_y_mask)?;
+        Self::encode_mask(buf, &self.block_y_mask)?;
+        Self::encode_mask(buf, &self.empty_sky_y_mask)?;
+        Self::encode_mask(buf, &self.empty_block_y_mask)?;
         Self::encode_light_list(buf, &self.sky_updates)?;
         Self::encode_light_list(buf, &self.block_updates)?;
         Ok(())
     }
 
     fn decode<B: Buf>(buf: &mut B) -> Result<Self, CodecError> {
-        let sky_y_mask = read_long_array(buf)?;
-        let block_y_mask = read_long_array(buf)?;
-        let empty_sky_y_mask = read_long_array(buf)?;
-        let empty_block_y_mask = read_long_array(buf)?;
+        let sky_y_mask = Self::decode_mask(buf)?;
+        let block_y_mask = Self::decode_mask(buf)?;
+        let empty_sky_y_mask = Self::decode_mask(buf)?;
+        let empty_block_y_mask = Self::decode_mask(buf)?;
         let sky_updates = Self::decode_light_list(buf)?;
         let block_updates = Self::decode_light_list(buf)?;
         Ok(Self {
@@ -167,6 +167,42 @@ impl LightData {
             sky_updates,
             block_updates,
         })
+    }
+
+    fn encode_mask<B: BufMut>(buf: &mut B, words: &[i64]) -> Result<(), CodecError> {
+        if words.len() > MAX_LONG_ARRAY_LEN {
+            return Err(CodecError::StringTooLong {
+                len: words.len(),
+                max: MAX_LONG_ARRAY_LEN,
+            });
+        }
+        let mut bytes = words.iter().rposition(|word| *word != 0).map_or(0, |i| {
+            i * 8 + (64 - words[i].leading_zeros() as usize).div_ceil(8)
+        });
+        buf.write_varint(bytes as i32);
+        for word in words.iter().take(bytes.div_ceil(8)) {
+            let len = bytes.min(8);
+            buf.put_slice(&word.to_le_bytes()[..len]);
+            bytes -= len;
+        }
+        Ok(())
+    }
+
+    fn decode_mask<B: Buf>(buf: &mut B) -> Result<Vec<i64>, CodecError> {
+        let mut bytes = read_bounded_count(buf, MAX_LONG_ARRAY_LEN * 8, 1)?;
+        let mut words = bounded_vec(bytes.div_ceil(8));
+        while bytes != 0 {
+            let len = bytes.min(8);
+            let mut word = [0; 8];
+            buf.copy_to_slice(&mut word[..len]);
+            words.push(i64::from_le_bytes(word));
+            bytes -= len;
+        }
+        // BitSet.valueOf(byte[]) also removes redundant trailing zeros.
+        while words.last() == Some(&0) {
+            words.pop();
+        }
+        Ok(words)
     }
 
     fn encode_light_list<B: BufMut>(buf: &mut B, layers: &[Vec<u8>]) -> Result<(), CodecError> {

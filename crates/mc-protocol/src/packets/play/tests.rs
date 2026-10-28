@@ -1793,10 +1793,10 @@ fn level_chunk_with_light_empty_byte_layout() {
             0, // heightmap count = 0
             0, // chunk data length = 0
             0, // block entity count = 0
-            0, // sky_y_mask longs = 0
-            0, // block_y_mask longs = 0
-            0, // empty_sky_y_mask longs = 0
-            0, // empty_block_y_mask longs = 0
+            0, // sky_y_mask bytes = 0
+            0, // block_y_mask bytes = 0
+            0, // empty_sky_y_mask bytes = 0
+            0, // empty_block_y_mask bytes = 0
             0, // sky_updates count = 0
             0, // block_updates count = 0
         ]
@@ -1865,6 +1865,55 @@ fn level_chunk_with_light_round_trips_with_non_empty_light_masks() {
             block_updates: vec![vec![0u8; LightData::LIGHT_LAYER_BYTES]; 26],
         },
     });
+}
+
+#[test]
+fn light_masks_match_local_vanilla_263_byte_bitsets() {
+    // ByteBufCodecs$15 uses BitSet.toByteArray/valueOf(byte[]): a VarInt
+    // byte count, little-endian bits, and no trailing zero bytes.
+    let light = LightData {
+        sky_y_mask: vec![1 << 9],
+        block_y_mask: vec![i64::MIN],
+        empty_sky_y_mask: vec![0, 1],
+        empty_block_y_mask: vec![0],
+        sky_updates: vec![vec![0xFF; LightData::LIGHT_LAYER_BYTES]],
+        block_updates: vec![vec![0x12; LightData::LIGHT_LAYER_BYTES]],
+    };
+    let update = LightUpdate {
+        chunk_x: 0,
+        chunk_z: 0,
+        light: light.clone(),
+    };
+    let mut bytes = Vec::new();
+    update.encode(&mut bytes).unwrap();
+    let mut vanilla: &[u8] = &bytes;
+    assert_eq!(vanilla.read_varint().unwrap(), 0);
+    assert_eq!(vanilla.read_varint().unwrap(), 0);
+    for expected in [
+        &[0, 2][..],
+        &[0, 0, 0, 0, 0, 0, 0, 0x80][..],
+        &[0, 0, 0, 0, 0, 0, 0, 0, 1][..],
+        &[][..],
+    ] {
+        assert_eq!(vanilla.read_byte_array(32768).unwrap(), expected);
+    }
+    for expected in [&light.sky_updates[0], &light.block_updates[0]] {
+        assert_eq!(vanilla.read_varint().unwrap(), 1);
+        assert_eq!(vanilla.read_byte_array(2048).unwrap(), *expected);
+    }
+    assert!(vanilla.is_empty());
+    let decoded = LightUpdate::decode(&mut bytes.as_slice()).unwrap();
+    assert!(decoded.light.empty_block_y_mask.is_empty());
+    assert_eq!(decoded.light.sky_y_mask, light.sky_y_mask);
+    assert_eq!(decoded.light.block_y_mask, light.block_y_mask);
+    assert_eq!(decoded.light.empty_sky_y_mask, light.empty_sky_y_mask);
+
+    let mut chunk = minimal_chunk_packet();
+    chunk.light = light;
+    let mut chunk_bytes = Vec::new();
+    chunk.encode(&mut chunk_bytes).unwrap();
+    // Empty chunk envelope: coordinates, heightmaps, data and sidecar count.
+    assert_eq!(&chunk_bytes[11..], &bytes[2..]);
 }
 
 #[test]
