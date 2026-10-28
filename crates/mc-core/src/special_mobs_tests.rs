@@ -217,6 +217,115 @@ fn pillager_charged_deadline_survives_restart_and_shoots_once() {
     assert_eq!(missiles(&state, ProjectileKind::Arrow).len(), 1);
 }
 #[test]
+fn crossbow_metadata_does_not_invent_skeleton_or_zombie_accessors() {
+    // 26.3 javap: AbstractSkeleton adds none after Mob15; Skeleton/Bogged
+    // add16, the other skeletons add none. Zombie17 is INT, never charging.
+    for name in [
+        "stray",
+        "skeleton",
+        "bogged",
+        "wither_skeleton",
+        "parched",
+        "zombie",
+        "husk",
+        "drowned",
+        "zombie_villager",
+        "zombified_piglin",
+    ] {
+        let (mut state, mob, player, _) = fixture(name, 7.0);
+        let slot = state.entities.slot_of(mob).unwrap();
+        let original = state.entities.row(slot).appearance.extra.clone();
+        let crossbow = item_id(&state, "crossbow").unwrap();
+        std::sync::Arc::make_mut(&mut state.entities.row_mut(slot).appearance).equipment[0] =
+            Some(mc_data::ItemStack::new(crossbow, 1));
+        for phase in [
+            None,
+            Some(CrossbowPhase::Charging),
+            Some(CrossbowPhase::Charged),
+        ] {
+            state
+                .entities
+                .row_mut(slot)
+                .set_special_mob(Retained::Crossbow(
+                    phase.map(|phase| Crossbow { phase, deadline: 0 }),
+                ));
+            crossbow_appearance(&mut state, slot);
+            assert_eq!(
+                state.entities.row(slot).appearance.extra,
+                original,
+                "{name}: {phase:?}"
+            );
+            if let Some(phase) = phase {
+                assert_eq!(
+                    state.entities.row(slot).appearance.equipment[0]
+                        .as_ref()
+                        .unwrap()
+                        .extended()
+                        .charged_projectiles
+                        .len(),
+                    usize::from(phase == CrossbowPhase::Charged),
+                    "{name}: equipment still follows the actual crossbow phase",
+                );
+            }
+        }
+        state
+            .entities
+            .row_mut(slot)
+            .set_special_mob(Retained::Crossbow(None));
+        for tick in [0, 4, 29] {
+            advance(&mut state, mob, tick, GoalKind::Crossbow, player);
+            assert_eq!(
+                state.entities.row(slot).appearance.extra,
+                original,
+                "{name}: tick{tick}"
+            );
+        }
+        restore(&mut state, mob);
+        let slot = state.entities.slot_of(mob).unwrap();
+        assert_eq!(
+            state.entities.row(slot).appearance.extra,
+            original,
+            "{name}: replay"
+        );
+    }
+}
+
+#[test]
+fn crossbow_metadata_uses_the_actual_carrier_charging_accessor() {
+    // Pillager17 and Piglin18 are BOOLEAN in both protocol777 and legacy775.
+    for (name, index) in [("pillager", 17), ("piglin", 18)] {
+        let (mut state, mob, player, _) = fixture(name, 7.0);
+        let slot = state.entities.slot_of(mob).unwrap();
+        let original: Vec<_> = state
+            .entities
+            .row(slot)
+            .appearance
+            .extra
+            .iter()
+            .filter(|(at, _)| *at != index)
+            .cloned()
+            .collect();
+        for (tick, charging) in [(0, false), (4, true), (29, false)] {
+            advance(&mut state, mob, tick, GoalKind::Crossbow, player);
+            let extra = &state.entities.row(slot).appearance.extra;
+            assert!(
+                extra.contains(&(index, EntityDataValue::Boolean(charging))),
+                "{name}: tick{tick}"
+            );
+            let unrelated: Vec<_> = extra
+                .iter()
+                .filter(|(at, _)| *at != index)
+                .cloned()
+                .collect();
+            assert_eq!(
+                unrelated, original,
+                "{name}: charging must not overwrite baby or other fields"
+            );
+        }
+    }
+}
+
+#[test]
 fn witch_selects_real_potion_payload_and_drinks_without_throwing() {
     let (mut state, witch, player, _) = fixture("witch", 9.0);
     advance(&mut state, witch, 0, GoalKind::Alchemist, player);

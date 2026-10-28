@@ -79,12 +79,29 @@ pub(crate) fn crossbow_appearance(state: &mut TickState, slot: EntitySlot) {
         Some(Retained::Crossbow(Some(crossbow))) => Some(crossbow.phase),
         _ => None,
     };
-    metadata(
-        state,
-        slot,
-        17,
-        EntityDataValue::Boolean(phase == Some(CrossbowPhase::Charging)),
-    );
+    // A crossbow goal does not grant its carrier a Pillager data layout.
+    // Both 777 and 775: Pillager17 is charging; Piglin18 is charging (17 is baby).
+    let index = match state.entities.body(slot).kind {
+        crate::entities::EntityKind::Mob { type_id } => {
+            mc_data::entity_types::entity_type_contract_26_1_2_by_protocol_id(
+                crate::blueprint::wire_type_id(type_id),
+            )
+            .and_then(|contract| match contract.name {
+                "minecraft:pillager" => Some(17),
+                "minecraft:piglin" => Some(18),
+                _ => None,
+            })
+        }
+        _ => None,
+    };
+    if let Some(index) = index {
+        metadata(
+            state,
+            slot,
+            index,
+            EntityDataValue::Boolean(phase == Some(CrossbowPhase::Charging)),
+        );
+    }
     // Idle/restored equipment is authoritative, including authored projectiles.
     if phase.is_none() {
         return;
