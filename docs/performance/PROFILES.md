@@ -84,6 +84,15 @@ bed and composter in the bounded village pens. This is an operator-authored dens
 stress scene, **not** 20,000 independent, naturally generated productive villagers.
 Fixture creation uses distance 8; measured restarts use the distances above.
 
+Spider pens have three blocks of interior headroom (floor top Y=64, roof Y=67);
+the other mixed-mob pens retain their Y=71 roofs. Spiders still take ordinary
+damage after detaching from a wall, so taller pens permit damaging free falls.
+Climb contact also resets retained fall distance in the native movement path:
+ceiling bounces must not accumulate separate short drops into false damage.
+The lower physical ceiling bounds a single unassisted drop without changing AI,
+health or damage rules. The recipe hash changes the fixture-cache key, so old
+tall-pen fixtures are not reused.
+
 Explorers use the existing bot's received-terrain collision checks. They may
 turn when terrain is missing/unwalkable or the height change is too large;
 `--explore` disables the ordinary 200-tick turn, not collision. Read

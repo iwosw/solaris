@@ -67,6 +67,14 @@ Vanilla blaze, snow golem and strider are also water-sensitive, but they did not
 take water damage before this change. Turning on `hurt_by_water` for them is a
 separate parity change.
 
+Wall-climbing contact is an ephemeral movement result, not a new persistent
+entity flag. `entity_motion::step` reports a real loaded horizontal obstacle
+(also when a ceiling clips the rise); serial movement writeback passes that
+result to `mob_fall::after_move`, which resets accumulated fall distance before
+its ascent/no-op shortcut. Separate downward segments while climbing must not
+add up to a damaging fall. This does not grant fall immunity: a detached free
+fall still accumulates distance and damages spiders on landing.
+
 Food temptation and juvenile following are native shared capabilities added for
 VC-06. They run on the existing AI decision cadence, below panic, leash and active
 courtship, using immutable player inventory and entity positions. Player searches

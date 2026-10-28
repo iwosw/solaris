@@ -1371,7 +1371,12 @@ fn zombie_rest_release_probe_300_zombies_no_player() {
 /// chicken here) and flyers take none.
 #[test]
 fn mobs_take_fall_damage_on_landing_unless_immune() {
-    for (species, immune) in [("minecraft:skeleton", false), ("minecraft:chicken", true)] {
+    for (species, immune) in [
+        ("minecraft:skeleton", false),
+        ("minecraft:chicken", true),
+        ("minecraft:spider", false),
+        ("minecraft:cave_spider", false),
+    ] {
         let (mut state, slot) = resting_mob(species);
         let _ = run_tick(
             &mut state,
