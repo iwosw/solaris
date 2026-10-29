@@ -1551,27 +1551,32 @@ impl TerrainGenerator {
     }
 
     fn assign_biomes(&self, chunk: &mut Chunk, columns: &[ColumnPlan; 256]) {
-        let mut sampler = self.vanilla().map(|(climate, _)| climate.column_sampler());
+        let quart_ys = chunk.biomes.len() * BIOME_DIM;
+        let quart_y =
+            |q: usize| i32::try_from(i64::from(self.geometry.min_y()) + q as i64 * 4 + 2).ok();
+        // Each quart column's whole height in one pass, so the column
+        // sampler computes its Y-free climate fields once per chunk instead
+        // of once per section. Indexed `(cz * 4 + cx) * quart_ys + q`.
+        let sampled = self.vanilla().map(|(climate, _)| {
+            let mut sampler = climate.column_sampler();
+            let mut sampled = Vec::with_capacity(BIOME_DIM * BIOME_DIM * quart_ys);
+            for column in 0..BIOME_DIM * BIOME_DIM {
+                let (cz, cx) = (column / BIOME_DIM, column % BIOME_DIM);
+                let plan = &columns[(cz * 4 + 2) * 16 + cx * 4 + 2];
+                for q in 0..quart_ys {
+                    sampled.push(quart_y(q).map(|y| sampler.sample(plan.wx, y, plan.wz).biome));
+                }
+            }
+            sampled
+        });
         for (section_idx, section) in chunk.biomes.iter_mut().enumerate() {
             let mut palette: Vec<Identifier> = Vec::with_capacity(4);
+            // Raw biome names already resolved to a palette slot.
+            let mut named: Vec<(&str, usize)> = Vec::with_capacity(4);
             let mut indices = PackedBitArray::zeroed(6, BIOME_VOLUME);
-            let ys: [Option<i32>; BIOME_DIM] = std::array::from_fn(|cy| {
-                i32::try_from(
-                    i64::from(self.geometry.min_y()) + section_idx as i64 * 16 + cy as i64 * 4 + 2,
-                )
-                .ok()
-            });
-            // Sample four consecutive heights per X/Z column, then consume
-            // in the original Y/Z/X order to retain palette and packed bytes.
-            let sampled = sampler.as_mut().map(|sampler| {
-                std::array::from_fn::<_, BIOME_VOLUME, _>(|index| {
-                    let (cz, cx, cy) = (index / 16, (index / 4) % 4, index % 4);
-                    let column = &columns[(cz * 4 + 2) * 16 + cx * 4 + 2];
-                    ys[cy].map(|y| sampler.sample(column.wx, y, column.wz).biome)
-                })
-            });
-            for (cy, y) in ys.into_iter().enumerate() {
-                let Some(y) = y else {
+            for cy in 0..BIOME_DIM {
+                let q = section_idx * BIOME_DIM + cy;
+                let Some(y) = quart_y(q) else {
                     continue;
                 };
                 for cz in 0..BIOME_DIM {
@@ -1579,30 +1584,33 @@ impl TerrainGenerator {
                         let lx = cx * 4 + 2;
                         let lz = cz * 4 + 2;
                         let column = &columns[lz * 16 + lx];
-                        let biome = if let Some(sampled) = &sampled {
-                            Identifier::parse(
-                                sampled[(cz * BIOME_DIM + cx) * BIOME_DIM + cy]
-                                    .expect("same checked biome Y"),
-                            )
-                            .expect("validated vanilla biome identifier")
+                        let palette_idx = if let Some(sampled) = &sampled {
+                            let name = sampled[(cz * BIOME_DIM + cx) * quart_ys + q]
+                                .expect("same checked biome Y");
+                            match named.iter().find(|(seen, _)| *seen == name) {
+                                Some(&(_, slot)) => slot,
+                                None => {
+                                    let biome = Identifier::parse(name)
+                                        .expect("validated vanilla biome identifier");
+                                    let slot = palette_slot(&mut palette, biome);
+                                    named.push((name, slot));
+                                    slot
+                                }
+                            }
                         } else if i64::from(y) < i64::from(column.height) - 24 && y < 32 {
-                            self.biomes.pick(
-                                &self.biomes.cave,
-                                column.wx,
-                                column.wz,
-                                self.seed,
-                                0x554E_4447,
+                            palette_slot(
+                                &mut palette,
+                                self.biomes.pick(
+                                    &self.biomes.cave,
+                                    column.wx,
+                                    column.wz,
+                                    self.seed,
+                                    0x554E_4447,
+                                ),
                             )
                         } else {
-                            column.biome.clone()
+                            palette_slot(&mut palette, column.biome.clone())
                         };
-                        let palette_idx = palette
-                            .iter()
-                            .position(|entry| entry == &biome)
-                            .unwrap_or_else(|| {
-                                palette.push(biome);
-                                palette.len() - 1
-                            });
                         let idx = (cy * BIOME_DIM + cz) * BIOME_DIM + cx;
                         indices.set(idx, palette_idx as u32);
                     }
@@ -2802,7 +2810,13 @@ impl ChunkGenerator for TerrainGenerator {
             let min_z = world_block_coordinate(pos.z, 0);
             let mut values = vec![0.0; density.height() as usize * 256];
             density.fill_density_chunk(min_x, min_z, &mut values);
-            for idx in 0..256 {
+            // Block columns grouped by biome quart: one column sampler then
+            // reuses each quart's Y-free climate fields for its 16 columns.
+            let mut sampler = climate.column_sampler();
+            let mut parsed: Vec<(&str, Identifier)> = Vec::new();
+            for order in 0..256 {
+                let (quart, inner) = (order / 16, order % 16);
+                let idx = (quart / 4 * 4 + inner / 4) * 16 + quart % 4 * 4 + inner % 4;
                 let x = min_x + (idx % 16) as i32;
                 let z = min_z + (idx / 16) as i32;
                 let top = (self.geometry.min_y()..self.geometry.max_y())
@@ -2814,9 +2828,16 @@ impl ChunkGenerator for TerrainGenerator {
                             && values[offset as usize * 256 + idx] > 0.0
                     })
                     .unwrap_or(self.geometry.min_y());
-                let native = climate.sample(x, top, z);
-                let biome =
-                    Identifier::parse(native.biome).expect("validated vanilla biome identifier");
+                let native = sampler.sample(x, top, z);
+                let biome = match parsed.iter().find(|(name, _)| *name == native.biome) {
+                    Some((_, biome)) => biome.clone(),
+                    None => {
+                        let biome = Identifier::parse(native.biome)
+                            .expect("validated vanilla biome identifier");
+                        parsed.push((native.biome, biome.clone()));
+                        biome
+                    }
+                };
                 let vegetation_density = self
                     .biome_supports_land_vegetation(&biome)
                     .then(|| self.vegetation_density(x, z, f64::from(native.climate[1])));
@@ -2995,6 +3016,17 @@ impl ChunkGenerator for TerrainGenerator {
         stage_clock.end(5);
         chunk
     }
+}
+
+/// Palette index of `biome` in a biome section, appended on first use.
+fn palette_slot(palette: &mut Vec<Identifier>, biome: Identifier) -> usize {
+    palette
+        .iter()
+        .position(|entry| entry == &biome)
+        .unwrap_or_else(|| {
+            palette.push(biome);
+            palette.len() - 1
+        })
 }
 
 #[cfg(test)]
