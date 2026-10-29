@@ -438,6 +438,93 @@ fn distant_bed_use_is_too_far() {
 }
 
 #[test]
+fn bed_head_reach_accepts_the_nearby_foot_in_every_facing() {
+    for (facing, dx, dz) in [
+        ("north", 0, -1),
+        ("south", 0, 1),
+        ("west", -1, 0),
+        ("east", 1, 0),
+    ] {
+        let mut rig = Rig::new();
+        rig.state.day_time = DAY;
+        rig.state.world.set_block(
+            rig.head.x,
+            rig.head.y,
+            rig.head.z,
+            rig.state.registry.states.air,
+        );
+        rig.head = BlockPos {
+            x: rig.foot.x + dx,
+            z: rig.foot.z + dz,
+            ..rig.foot
+        };
+        for (pos, part) in [(rig.foot, "foot"), (rig.head, "head")] {
+            let bed = block(
+                &rig.state,
+                "minecraft:red_bed",
+                &[("facing", facing), ("part", part)],
+            );
+            rig.state.world.set_block(pos.x, pos.y, pos.z, bed);
+        }
+        rig.state.world.fold_overlay();
+        let slot = rig.state.entities.slot_of(rig.player).unwrap();
+        // The foot is 2.7 blocks away along the bed axis, the head 3.7.
+        rig.state.entities.set_pos(
+            slot,
+            [
+                f64::from(rig.foot.x) + 0.5 - f64::from(dx) * 2.7,
+                f64::from(rig.foot.y),
+                f64::from(rig.foot.z) + 0.5 - f64::from(dz) * 2.7,
+            ],
+        );
+        for clicked in [rig.head, rig.foot] {
+            rig.state
+                .players
+                .get_mut(&rig.player)
+                .unwrap()
+                .respawn_point = None;
+            let drains = rig.use_bed_at(1, clicked);
+            assert!(
+                !said(&drains, "You are too far away"),
+                "{facing}, clicked {clicked:?}"
+            );
+            assert!(
+                said(&drains, "You can sleep only at night"),
+                "{facing}, clicked {clicked:?}"
+            );
+            assert_eq!(
+                rig.state.players[&rig.player].respawn_point,
+                Some([rig.head.x, rig.head.y, rig.head.z])
+            );
+            assert!(rig.state.sleepers.is_empty());
+        }
+    }
+}
+
+#[test]
+fn bed_head_reach_sleeps_at_night_when_only_the_foot_is_near() {
+    let mut rig = Rig::new();
+    rig.state.day_time = NIGHT;
+    let slot = rig.state.entities.slot_of(rig.player).unwrap();
+    rig.state.entities.set_pos(
+        slot,
+        [
+            f64::from(rig.foot.x) + 0.5 - 2.7,
+            f64::from(rig.foot.y),
+            f64::from(rig.foot.z) + 0.5,
+        ],
+    );
+    let drains = rig.use_bed_at(1, rig.head);
+    assert!(!said(&drains, "You are too far away"));
+    assert_eq!(rig.state.sleepers[&rig.player].bed, rig.head);
+    assert_eq!(rig.pose(rig.player), SLEEPING_POSE);
+    assert_eq!(
+        rig.state.players[&rig.player].respawn_point,
+        Some([rig.head.x, rig.head.y, rig.head.z])
+    );
+}
+
+#[test]
 fn night_is_not_skipped_while_a_player_is_awake() {
     let mut rig = Rig::new();
     let other = join(&mut rig.state, 2, uuid::Uuid::new_v4());
