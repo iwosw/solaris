@@ -103,6 +103,8 @@ impl PlayerState {
             airtime_safe_position: None,
             last_vehicle_move_tick: None,
             last_vehicle_motion_tick: None,
+            vehicle_airtime_ticks: 0,
+            vehicle_last_reported_y: None,
             chat_spam_ticks: self.chat_spam_ticks,
             using: self.using,
             shield_cooldown: self.shield_cooldown,

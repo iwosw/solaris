@@ -6,6 +6,9 @@ use crate::tick::{TickState, run_tick};
 use mc_data::{Identifier, ItemStack};
 use std::sync::Arc;
 
+#[path = "boat_floating_tests.rs"]
+mod boat_floating;
+
 struct Empty(u32);
 impl mc_world::ChunkGenerator for Empty {
     fn generate(&self, pos: mc_world::ChunkPos) -> mc_world::Chunk {
