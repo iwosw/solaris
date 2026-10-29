@@ -49,13 +49,17 @@ pub enum Command {
 
 #[derive(Debug, Subcommand)]
 pub enum ContentCommand {
-    /// Derive a cache from your licensed server bundle; requires JDK 25.
+    /// Derive a cache from your licensed server bundles; requires JDK 25.
     Import {
         #[arg(long, default_value = mc_protocol::TARGET_RELEASE)]
         version: String,
+        /// Server bundle of `--version` (protocol identity and reports).
         #[arg(long, conflicts_with = "download")]
         from: Option<PathBuf>,
-        /// Download from Mojang (the default when --from is absent).
+        /// Server bundle of the gameplay data-pack release (26.1.2).
+        #[arg(long, conflicts_with = "download")]
+        gameplay_from: Option<PathBuf>,
+        /// Download from Mojang (the default for each bundle not supplied).
         #[arg(long)]
         download: bool,
         #[arg(long)]
@@ -236,14 +240,23 @@ pub async fn run_offline(cli: &Cli, cfg: &mut crate::config::EdgeConfig) -> anyh
             }
             let search = crate::content_cache::ContentSearch::for_config(cfg)?;
             match command {
-                ContentCommand::Import { version, from, .. } => {
+                ContentCommand::Import {
+                    version,
+                    from,
+                    gameplay_from,
+                    ..
+                } => {
+                    let source = |jar: &Option<PathBuf>| {
+                        jar.clone().map_or(
+                            crate::content_import::ContentSource::Download,
+                            crate::content_import::ContentSource::LocalJar,
+                        )
+                    };
                     let report = crate::content_import::import_content(
                         &crate::content_import::ImportRequest {
                             version: version.clone(),
-                            source: from.clone().map_or(
-                                crate::content_import::ContentSource::Download,
-                                crate::content_import::ContentSource::LocalJar,
-                            ),
+                            source: source(from),
+                            gameplay_source: source(gameplay_from),
                             cache: search.import_target(),
                         },
                     )

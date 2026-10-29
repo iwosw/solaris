@@ -535,6 +535,105 @@ fn zero_creative_spectator_nondurable_and_unbreaking_wear_do_not_queue_advanceme
 }
 
 #[test]
+fn ground_rocket_block_use_launches_from_face_with_held_components() {
+    use crate::boundary::{BlockPos, ConnectionId, PlayerInput};
+    use crate::tick::run_tick;
+
+    for hand in [Hand::Main, Hand::Off] {
+        for creative in [false, true] {
+            let (mut state, actor, centre) = super::super::flight_tests::setup();
+            let slot = held_slot(&state, actor, hand).unwrap();
+            let rocket = stack(&state, "firework_rocket", 2).with_enchantment(
+                mc_data::Identifier::parse("minecraft:unbreaking").unwrap(),
+                2,
+            );
+            let player = state.players.get_mut(&actor).unwrap();
+            player.inventory.slots[slot] = rocket.clone();
+            if creative {
+                player.game_mode = GameMode::Creative;
+            }
+            let target = BlockPos {
+                x: centre[0].floor() as i32,
+                y: 200,
+                z: centre[2].floor() as i32,
+            };
+            run_tick(
+                &mut state,
+                &[PlayerInput::UseItemOn {
+                    connection: ConnectionId(1),
+                    hand,
+                    position: target,
+                    face: 1,
+                    cursor: [0.25, 1.0, 0.75],
+                    sequence: 1,
+                }],
+            );
+            let rockets = projectiles(&state);
+            assert_eq!(rockets.len(), 1, "{hand:?} creative={creative}");
+            let launched = rockets[0];
+            assert_eq!(launched.kind, ProjectileKind::Firework);
+            assert_eq!(launched.attached_to, None);
+            let mut expected = rocket.clone();
+            expected.count = 1;
+            assert_eq!(launched.stack, expected);
+            let owner = state
+                .entities
+                .row(state.entities.slot_of(actor).unwrap())
+                .uuid;
+            assert_eq!(launched.owner, Some(owner));
+            assert_eq!(
+                state.players[&actor].inventory.slots[slot].count,
+                if creative { 2 } else { 1 }
+            );
+            assert_eq!(
+                item_stat(&state, actor, StatType::Used, "firework_rocket"),
+                1
+            );
+            let entity = state
+                .entities
+                .slots()
+                .find(|slot| state.entities.row(*slot).projectile.is_some())
+                .unwrap();
+            let position = state.entities.pos(entity);
+            assert!((position[0] - (f64::from(target.x) + 0.25)).abs() < 0.1);
+            assert!((position[2] - (f64::from(target.z) + 0.75)).abs() < 0.1);
+            assert!(position[1] > f64::from(target.y) + 1.0);
+            assert!(state.entities.vel(entity)[1] > 0.0);
+        }
+    }
+}
+
+#[test]
+fn ground_rocket_block_use_respects_reserved_custody() {
+    use crate::boundary::{BlockPos, ConnectionId, PlayerInput};
+    use crate::tick::run_tick;
+
+    let (mut state, actor, centre) = super::super::flight_tests::setup();
+    let rocket = stack(&state, "firework_rocket", 1);
+    state.players.get_mut(&actor).unwrap().inventory.slots[0] = rocket.clone();
+    let hold = super::floor_tests::reserve(&mut state, actor, &[("firework_rocket", 1)]);
+    let input = PlayerInput::UseItemOn {
+        connection: ConnectionId(1),
+        hand: Hand::Main,
+        position: BlockPos {
+            x: centre[0] as i32,
+            y: 200,
+            z: centre[2] as i32,
+        },
+        face: 1,
+        cursor: [0.5, 1.0, 0.5],
+        sequence: 1,
+    };
+    run_tick(&mut state, std::slice::from_ref(&input));
+    assert!(projectiles(&state).is_empty());
+    assert_eq!(state.players[&actor].inventory.slots[0], rocket);
+    super::floor_tests::release_hold(&mut state, &hold);
+    run_tick(&mut state, &[input]);
+    assert_eq!(projectiles(&state).len(), 1);
+    assert!(state.players[&actor].inventory.slots[0].is_empty());
+}
+
+#[test]
 fn gliding_rocket_attaches_consumes_survival_rocket_and_grounded_stays_free() {
     for creative in [false, true] {
         let (mut state, actor, _) = super::super::flight_tests::setup();

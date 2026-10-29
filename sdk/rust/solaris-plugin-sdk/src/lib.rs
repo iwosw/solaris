@@ -661,13 +661,14 @@ pub fn password_verify(password: &str, phc: &str) -> bool {
 
 /// Replace the deployment's command-permission grants (provider only).
 ///
-/// Each entry is `"<identity> <node>"`; `*` as the identity is the default row
-/// for players the table has no explicit row for, and `*` as the node grants
-/// every node. The publication is all-or-nothing: `false` means the host refused
-/// it (this package is not the deployment's permission provider, or an entry was
-/// invalid or over a bound) and the previous table is still in force. Outside the
-/// wasm guest the call is refused the same way instead of panicking, because a
-/// provider's native unit tests may exercise the publication path.
+/// Each entry is `"<identity> <node>"` or an identity alone. Identity-only
+/// rows declare an empty set; node rows for that identity add grants. `*` as
+/// identity is the default for players without an explicit row, and `*` as node
+/// grants every node. Identity-only rows count towards the entry limit.
+/// Publication is all-or-nothing: `false` means the host refused it (this package
+/// is not the provider, or an entry was invalid or over a bound), leaving the
+/// previous table in force. Outside the wasm guest the call is refused instead
+/// of panicking, because native unit tests may exercise the publication path.
 #[must_use]
 pub fn publish_command_permissions(entries: &[String]) -> bool {
     #[cfg(target_arch = "wasm32")]

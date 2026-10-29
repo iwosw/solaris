@@ -11,7 +11,7 @@ pub struct ClientboundSetTitleText {
 impl Packet for ClientboundSetTitleText {
     // GameProtocols.CLIENTBOUND_TEMPLATE: bundle=0, ADD_ENTITY=1, ..., SET_TIME
     // at 114 (wire id 0x71, existing anchor), SET_TITLE_TEXT at 115.
-    const ID: i32 = 0x72;
+    const ID: i32 = 0x74;
     fn encode<B: BufMut>(&self, buf: &mut B) -> Result<(), CodecError> {
         mc_nbt::write_network_value(buf, &self.content)?;
         Ok(())
@@ -30,7 +30,7 @@ pub struct ClientboundSetSubtitleText {
 impl Packet for ClientboundSetSubtitleText {
     // GameProtocols.CLIENTBOUND_TEMPLATE: SET_SUBTITLE_TEXT at 113, between
     // SET_SIMULATION_DISTANCE (0x6F) and SET_TIME (0x71, existing anchor).
-    const ID: i32 = 0x70;
+    const ID: i32 = 0x72;
     fn encode<B: BufMut>(&self, buf: &mut B) -> Result<(), CodecError> {
         mc_nbt::write_network_value(buf, &self.content)?;
         Ok(())
@@ -49,7 +49,7 @@ pub struct ClientboundSetActionBarText {
 impl Packet for ClientboundSetActionBarText {
     // GameProtocols.CLIENTBOUND_TEMPLATE: SET_ACTION_BAR_TEXT at 88, between
     // SERVER_DATA and the SET_BORDER_* run (wire id 0x57).
-    const ID: i32 = 0x57;
+    const ID: i32 = 0x59;
     fn encode<B: BufMut>(&self, buf: &mut B) -> Result<(), CodecError> {
         mc_nbt::write_network_value(buf, &self.content)?;
         Ok(())
@@ -70,7 +70,7 @@ pub struct ClientboundSetTitlesAnimation {
 impl Packet for ClientboundSetTitlesAnimation {
     // GameProtocols.CLIENTBOUND_TEMPLATE: SET_TITLES_ANIMATION at 116, right
     // after SET_TITLE_TEXT (0x72).
-    const ID: i32 = 0x73;
+    const ID: i32 = 0x75;
     fn encode<B: BufMut>(&self, buf: &mut B) -> Result<(), CodecError> {
         buf.write_i32(self.fade_in);
         buf.write_i32(self.stay);

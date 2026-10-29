@@ -2,6 +2,7 @@
 //! Moved verbatim from `core.rs`.
 
 use super::*;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 /// Tick loop: 20 TPS, event-driven wake (no sleeps beyond the tick timer).
 /// Channels owned by the tick thread.
@@ -12,6 +13,7 @@ pub(super) struct TickChannels {
     pub(super) input_rx: Receiver<PlayerInput>,
     pub(super) spawn_rx: Receiver<SpawnRequest>,
     pub(super) ticket_rx: Receiver<RemoteTicket>,
+    pub(super) moderation_selector_rx: Receiver<moderation_selector::Request>,
     /// Reliable FIFO handoff; only the tick owns the sender.
     pub(super) outbox: std::sync::mpsc::Sender<OutboxBatch>,
     pub(super) tick_broadcast: broadcast::Sender<TickOutput>,
@@ -44,6 +46,12 @@ pub(super) fn online_players(state: &TickState) -> usize {
 
 pub(super) fn tick_loop(mut state: TickState, mut channels: TickChannels) {
     let mut next_tick = std::time::Instant::now();
+    let mut admission_reserve_us = state
+        .tick_control
+        .period()
+        .as_micros()
+        .saturating_sub(crate::world::ADMISSION_BUDGET_US);
+    let admission_progress_reservations = Arc::new(AtomicU64::new(0));
     let checkpoint_every = channels.checkpoint_every.max(1);
     let mut since_checkpoint = 0u64;
     // At most one checkpoint in flight: its acknowledgement (chunks written
@@ -90,6 +98,9 @@ pub(super) fn tick_loop(mut state: TickState, mut channels: TickChannels) {
             inputs.push(input);
         }
         let mut activity = !inputs.is_empty();
+        while let Ok(request) = channels.moderation_selector_rx.try_recv() {
+            moderation_selector::answer(&state, request);
+        }
         // Debug/test spawns drain here (bench + tests only).
         let logging = channels.input_log.is_some();
         let mut logged_spawns = Vec::new();
@@ -204,6 +215,24 @@ pub(super) fn tick_loop(mut state: TickState, mut channels: TickChannels) {
             continue;
         }
         let tick_start = std::time::Instant::now();
+        // One deadline across every dimension and repeated ensure call. Reserve
+        // measured non-admission work rather than granting each world 50 ms.
+        let admission_slack_us = state
+            .tick_control
+            .period()
+            .as_micros()
+            .saturating_sub(admission_reserve_us);
+        let admission_deadline = wall_start
+            + std::time::Duration::from_micros(admission_slack_us.min(u64::MAX as u128) as u64);
+        admission_progress_reservations.store(0, Ordering::Relaxed);
+        state
+            .world
+            .begin_admission_tick(admission_deadline, &admission_progress_reservations);
+        for dimension in state.other_dimensions.values_mut() {
+            dimension
+                .world
+                .begin_admission_tick(admission_deadline, &admission_progress_reservations);
+        }
         // Secrets: connections the auth gate holds locked, before and after
         // this tick (a join locks during it; a plugin unlock lifts it).
         let mut locked = Vec::new();
@@ -447,6 +476,16 @@ pub(super) fn tick_loop(mut state: TickState, mut channels: TickChannels) {
         }
         tick_times.owner_post_us = owner_post_start.elapsed().as_micros() as u64;
         tick_times.wall_us = wall_start.elapsed().as_micros().min(u128::from(u64::MAX)) as u64;
+        let admission_us = state.world.admission_elapsed().as_micros()
+            + state
+                .other_dimensions
+                .values()
+                .map(|dimension| dimension.world.admission_elapsed().as_micros())
+                .sum::<u128>();
+        let other_us = u128::from(tick_times.wall_us).saturating_sub(admission_us);
+        // React immediately to expensive later phases; release their reserve
+        // gradually, so one cheap tick cannot promise all of the next tick.
+        admission_reserve_us = other_us.max((admission_reserve_us * 3 + other_us).div_ceil(4));
         state.tick_control.record_tick(tick_times.wall_us);
         if std::env::var("MC_CORE_PHASE_LOG").is_ok() {
             let pre_time = tick_start.duration_since(wall_start);

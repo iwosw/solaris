@@ -27,7 +27,7 @@ fn show_and_clear_dialog_are_reliable_and_use_the_local_packet_ids() {
     );
     assert_eq!(packets.len(), 2);
     assert!(packets.iter().all(|packet| packet.reliable));
-    assert_eq!((packets[0].id, packets[1].id), (140, 139));
+    assert_eq!((packets[0].id, packets[1].id), (143, 142));
     let shown = ClientboundShowDialog::decode(&mut body_of(&packets[0])).unwrap();
     assert_eq!(shown.dialog, dialog);
     assert!(body_of(&packets[1]).is_empty());

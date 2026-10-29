@@ -14,6 +14,9 @@ use std::sync::Arc;
 #[path = "plan/chunk_delta_tests.rs"]
 mod chunk_delta_tests;
 
+#[path = "plan/section_blocks_tests.rs"]
+mod section_blocks_tests;
+
 #[path = "plan_index_tests.rs"]
 mod index_tests;
 
@@ -167,10 +170,10 @@ fn one_shot_explosions_precede_resumable_world_work_with_bounded_credit() {
                         resumed
                             .iter()
                             .filter(|packet| {
-                                packet.id == mc_protocol::packets::play::BlockUpdate::ID
+                                packet.id == mc_protocol::packets::play::SectionBlocksUpdate::ID
                             })
                             .count(),
-                        256
+                        1
                     );
                     assert!(viewer.pending_blocks.is_empty());
                     assert!(!viewer.chunk_repairs.contains(&(0, 0)));
@@ -241,9 +244,9 @@ fn merchant_packets_match_local_vanilla_javap_layout_and_viewer_ownership() {
     ];
     let packets = plan_player_changes(&changes, &mut viewer_at(7, [0.0; 3]));
     assert_eq!(packets.len(), 2);
-    // GameProtocols javap registration indexes: OpenScreen59, MerchantOffers52.
-    assert_eq!(packets[0].id, 0x3b);
-    assert_eq!(packets[1].id, 0x34);
+    // 26.3 packets.json: open_screen = 60, merchant_offers = 53.
+    assert_eq!(packets[0].id, 0x3c);
+    assert_eq!(packets[1].id, 0x35);
     let open = ClientboundOpenScreen::decode(&mut body_of(&packets[0])).unwrap();
     assert_eq!(open.container_id, 4);
     assert_eq!(open.menu_type, 19);
@@ -515,7 +518,7 @@ fn wooden_sword_and_empty_hand_sync_own_attack_speed() {
         let packet = ClientboundUpdateEntityAttributes::decode(&mut body).unwrap();
         assert_eq!(packet.entity_id, 7);
         let attribute = &packet.attributes[0];
-        assert_eq!(attribute.attribute_id.raw(), 4);
+        assert_eq!(attribute.attribute_id.raw(), 5);
         let value = attribute.base + attribute.modifiers.iter().map(|m| m.amount).sum::<f64>();
         assert!((value - expected).abs() < 1.0e-12);
         assert!(body.is_empty());
@@ -557,7 +560,7 @@ fn speed_effect_uses_existing_movement_attribute_packet_and_reset() {
         let packet = ClientboundUpdateEntityAttributes::decode(&mut body).unwrap();
         assert_eq!(packet.entity_id, 7);
         let attribute = &packet.attributes[0];
-        assert_eq!(attribute.attribute_id.raw(), 22);
+        assert_eq!(attribute.attribute_id.raw(), 26);
         let value = attribute
             .modifiers
             .iter()
@@ -1270,7 +1273,7 @@ fn menus_health_chat_gamemode_cursor() {
         mc_protocol::packets::play::ClientboundOpenScreen::ID,
         mc_protocol::packets::play::ClientboundContainerSetContent::ID,
         mc_protocol::packets::play::ClientboundContainerSetSlot::ID,
-        0x60,
+        mc_protocol::packets::play::ClientboundSetCursorItem::ID,
         mc_protocol::packets::play::ClientboundContainerSetData::ID,
         mc_protocol::packets::play::ClientboundSetHealth::ID,
         mc_protocol::packets::play::ClientboundSetExperience::ID,
@@ -1395,7 +1398,7 @@ fn entity_events_map() {
         assert!(
             packets
                 .iter()
-                .any(|p| p.id == mc_protocol::packets::play::EntityAnimation::ID)
+                .any(|p| p.id == mc_protocol::packets::play::ClientboundSwingAnimation::ID)
         );
         assert!(
             packets
@@ -2421,7 +2424,7 @@ fn campfire_items_sync_is_reliable_and_targets_only_its_viewer() {
 }
 
 #[test]
-fn shelf_items_sync_uses_native_type_forty_and_slot_byte() {
+fn shelf_items_sync_uses_native_type_thirty_nine_and_slot_byte() {
     use mc_data::block_entity_kinds::BlockEntityKind;
     use mc_nbt::{ListTag, Tag, tag_type};
     use mc_protocol::packets::play::ClientboundBlockEntityData;
@@ -2460,7 +2463,7 @@ fn shelf_items_sync_uses_native_type_forty_and_slot_byte() {
     let mut cursor = &body[..];
     let decoded = ClientboundBlockEntityData::decode(&mut cursor).unwrap();
     assert!(cursor.is_empty(), "native packet has no trailing fields");
-    assert_eq!(decoded.block_entity_type, 40);
+    assert_eq!(decoded.block_entity_type, 39);
     assert_eq!(decoded.position, pack_block_pos(192, 78, -446));
     assert_eq!(decoded.nbt, nbt);
 }
@@ -2479,16 +2482,20 @@ fn sweep_event_encodes_vanilla_sound_and_single_directional_particle() {
         },
     );
     assert_eq!(packets.len(), 2);
-    assert_eq!(packets[0].id, 0x74);
+    assert_eq!(packets[0].id, 0x76);
     let sound = ClientboundSoundEntity::decode(&mut &body_of(&packets[0])[..]).unwrap();
     assert_eq!(sound.sound.as_str(), "minecraft:entity.player.attack.sweep");
     assert_eq!((sound.entity_id, sound.source), (41, 7));
     assert_eq!((sound.volume, sound.pitch), (1.0, 1.0));
-    assert_eq!(packets[1].id, 0x2F);
+    assert_eq!(packets[1].id, 0x30);
     let body = body_of(&packets[1]);
-    assert_eq!(body.len(), 47);
-    assert_eq!(&body[..2], &[0, 0]);
-    assert_eq!(body[46], 67);
+    assert_eq!(body.len(), 53);
+    assert_eq!(&body[..3], &[77, 0, 0], "26.3 particle id precedes flags");
+    assert_eq!(
+        &body[39..],
+        &[0; 14],
+        "zero speeds, count and randomization"
+    );
     let particle = ClientboundSweepParticle::decode(&mut &body[..]).unwrap();
     assert_eq!(particle.position, [8.0, 64.9, 9.0]);
     assert_eq!(particle.direction, [0.0, 0.0, 1.0]);
@@ -2508,7 +2515,7 @@ fn shield_events_send_vanilla_entity_sound_not_removed_status_bytes() {
             },
         );
         assert_eq!(packets.len(), 1);
-        assert_eq!(packets[0].id, 0x74);
+        assert_eq!(packets[0].id, 0x76);
         let sound = ClientboundSoundEntity::decode(&mut &body_of(&packets[0])[..]).unwrap();
         assert_eq!(sound.entity_id, 41);
         assert_eq!(sound.source, 7);
@@ -3173,14 +3180,14 @@ fn edge_plan_scale_bench() {
                 }
                 if scene == "sparse" {
                     let mut own = entity(cell + 1, [f64::from(x * 16) + 8.0, 64.0, 8.0]);
-                    own.type_id = 155;
+                    own.type_id = player_entity_type_id();
                     entities.push(own);
                 }
             }
             if scene == "dense" {
                 for id in 1..=players {
                     let mut own = entity(id, [8.0, 64.0, 8.0]);
-                    own.type_id = 155;
+                    own.type_id = player_entity_type_id();
                     entities.push(own);
                 }
             }
@@ -3492,4 +3499,94 @@ fn boss_bar_changes_plan_matching_boss_operations() {
             }
         );
     }
+}
+
+#[test]
+fn dimension_change_removes_boss_bars_the_client_still_shows() {
+    with_cache(|_| {
+        let id = ConnectionId(3);
+        let mut v = ViewerState::new(id, EntityId(41), [8.0, 64.0, 8.0]);
+        let dragon = EntityView {
+            id: EntityId(20),
+            uuid: uuid::Uuid::from_u128(12),
+            type_id: mc_data::entity_types::solaris_required_entity_types()
+                .id_of(&mc_data::Identifier::parse("minecraft:ender_dragon").unwrap())
+                .unwrap(),
+            position: [0.0; 3],
+            velocity: [0.0; 3],
+            yaw: 0.0,
+            pitch: 0.0,
+            head_yaw: 0.0,
+            on_ground: false,
+            appearance: Arc::new(mc_core::boundary::EntityAppearance {
+                health: 200.0,
+                ..Default::default()
+            }),
+        };
+        let mut shown = Vec::new();
+        v.boss_baseline
+            .sync(id, std::iter::once(&dragon), &mut shown);
+        assert_eq!(shown.len(), 1, "dragon bar is shown");
+        let planned = plan_player_changes(
+            &[PlayerChange::Respawned {
+                teleport_id: 2,
+                dimension: mc_core::dimensions::Dimension::End,
+                position: [8.0, 80.0, 8.0],
+                yaw: 0.0,
+                pitch: 0.0,
+                game_mode: 0,
+            }],
+            &mut v,
+        );
+        let ids: Vec<i32> = planned.iter().map(|p| p.id).collect();
+        let remove = ids
+            .iter()
+            .position(|p| *p == mc_protocol::packets::play::ClientboundBossEvent::ID)
+            .expect("boss bar removed");
+        let respawn = ids
+            .iter()
+            .position(|p| *p == mc_protocol::packets::play::ClientboundRespawn::ID)
+            .expect("Respawn planned");
+        assert!(remove < respawn);
+        // The baseline is empty again: nothing further to remove.
+        let mut again = Vec::new();
+        v.boss_baseline.clear(id, &mut again);
+        assert!(again.is_empty());
+    });
+}
+
+#[test]
+fn filled_map_slot_update_is_planned_for_the_client() {
+    // s22-04: the map_id component had no wire codec, so the whole slot packet was dropped.
+    with_cache(|_| {
+        let id = ConnectionId(3);
+        let mut v = ViewerState::new(id, EntityId(41), [8.0, 64.0, 8.0]);
+        let filled = mc_data::items::solaris_required_items()
+            .id_of(&mc_data::Identifier::parse("minecraft:filled_map").unwrap())
+            .unwrap();
+        let mut stack = mc_data::ItemStack::new(filled, 1);
+        let mut value = Vec::new();
+        mc_nbt::write_network_value(&mut value, &mc_nbt::Tag::Int(7)).unwrap();
+        stack.extended_mut().preserved_components.push(
+            mc_data::item_stack::PreservedItemComponent {
+                name: "minecraft:map_id".into(),
+                value,
+                baseline: None,
+            },
+        );
+        let planned = plan_player_changes(
+            &[PlayerChange::MenuSlot {
+                window: 0,
+                state_id: 2,
+                slot: 36,
+                item: Some(stack),
+            }],
+            &mut v,
+        );
+        assert_eq!(planned.len(), 1);
+        assert_eq!(
+            planned[0].id,
+            mc_protocol::packets::play::ClientboundContainerSetSlot::ID
+        );
+    });
 }

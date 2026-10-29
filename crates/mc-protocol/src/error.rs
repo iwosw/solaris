@@ -58,6 +58,15 @@ pub enum CodecError {
     #[error("negative length: {0}")]
     NegativeLength(i32),
 
+    /// A wire enum ordinal is outside its supported range.
+    #[error("invalid enum ordinal {value}, maximum {max}")]
+    InvalidEnumOrdinal {
+        /// The signed ordinal received from the wire.
+        value: i32,
+        /// The highest valid ordinal.
+        max: i32,
+    },
+
     /// An identifier failed `namespace:path` validation. The string is
     /// echoed back for debugging.
     #[error("invalid identifier: {0:?}")]

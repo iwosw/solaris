@@ -110,7 +110,7 @@ impl VanillaServerProcess {
         std::fs::write(
             work_dir.join("server.properties"),
             format!(
-                "online-mode=false\nserver-ip=127.0.0.1\nserver-port={port}\nlevel-name=world\nview-distance=2\nsimulation-distance=2\nspawn-protection=0\nallow-flight=true\n"
+                "online-mode=false\nwhite-list=false\nserver-ip=127.0.0.1\nserver-port={port}\nlevel-name=world\nview-distance=2\nsimulation-distance=2\nspawn-protection=0\nallow-flight=true\n"
             ),
         )
         .map_err(|error| work_dir_error(&error))?;
@@ -246,7 +246,9 @@ impl VanillaServerProcess {
             let _ = stdin.write_all(b"stop\n");
             let _ = stdin.flush();
         }
-        let deadline = Instant::now() + Duration::from_secs(10);
+        // A fresh 26.3 server spends ~10 s saving overworld chunks on `stop`
+        // (11.1 s measured), so the old 10 s deadline killed a healthy stop.
+        let deadline = Instant::now() + Duration::from_secs(60);
         loop {
             let remaining = deadline.saturating_duration_since(Instant::now());
             if remaining.is_zero() {

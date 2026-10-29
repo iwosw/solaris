@@ -163,12 +163,12 @@ mod tests {
     }
 
     #[test]
-    fn embedded_required_blocks_cover_dense_26_1_state_registry() {
+    fn embedded_required_blocks_cover_dense_26_3_state_registry() {
         let report = solaris_required_blocks_report();
 
-        assert_eq!(report.len(), 1168, "block count for 26.1.2");
+        assert_eq!(report.len(), 1286, "block count for 26.3");
         let total_states: usize = report.iter().map(|b| b.states.len()).sum();
-        assert_eq!(total_states, 29873, "total block states for 26.1.2");
+        assert_eq!(total_states, 35723, "total block states for 26.3");
         let air = report
             .iter()
             .find(|b| b.id.as_str() == "minecraft:air")
@@ -182,14 +182,14 @@ mod tests {
             birch
                 .states
                 .iter()
-                .any(|state| state.default && state.id == 143)
+                .any(|state| state.default && state.id == 146)
         );
     }
 
     /// Opt-in smoke test against the real vanilla report. The numbers are
-    /// pinned to 26.1.2; update if the bundled server.jar is upgraded.
+    /// pinned to 26.3; update if the bundled server.jar is upgraded.
     #[test]
-    #[ignore = "requires local 26.1.2 blocks report"]
+    #[ignore = "requires local 26.3 blocks report"]
     fn loads_real_blocks_report_if_present() {
         let path = workspace_path("data/vanilla/reports/blocks.json");
         assert!(
@@ -198,9 +198,9 @@ mod tests {
             path.display()
         );
         let report = load_blocks_report(&path).unwrap();
-        assert_eq!(report.len(), 1168, "block count for 26.1.2");
+        assert_eq!(report.len(), 1286, "block count for 26.3");
         let total_states: usize = report.iter().map(|b| b.states.len()).sum();
-        assert_eq!(total_states, 29873, "total block states for 26.1.2");
+        assert_eq!(total_states, 35723, "total block states for 26.3");
         let air = report
             .iter()
             .find(|b| b.id.as_str() == "minecraft:air")

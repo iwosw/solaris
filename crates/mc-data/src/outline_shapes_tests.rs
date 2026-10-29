@@ -24,7 +24,7 @@ fn outline_table_covers_every_fingerprinted_vanilla_state() {
             count += 1;
         }
     }
-    assert_eq!(count, 29_873);
+    assert_eq!(count, 35_723);
     assert_eq!(table.covered_state_count(), count);
 }
 

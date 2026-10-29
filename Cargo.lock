@@ -1470,7 +1470,7 @@ dependencies = [
 
 [[package]]
 name = "mc-core"
-version = "0.0.8"
+version = "1.0.0-rc.1"
 dependencies = [
  "crc32fast",
  "flate2",
@@ -1486,6 +1486,7 @@ dependencies = [
  "mc-worldgen",
  "parking_lot",
  "rayon",
+ "redb",
  "rustc-hash",
  "rustix",
  "serde",
@@ -1502,7 +1503,7 @@ dependencies = [
 
 [[package]]
 name = "mc-data"
-version = "0.0.8"
+version = "1.0.0-rc.1"
 dependencies = [
  "mc-domain",
  "mc-nbt",
@@ -1517,11 +1518,11 @@ dependencies = [
 
 [[package]]
 name = "mc-domain"
-version = "0.0.8"
+version = "1.0.0-rc.1"
 
 [[package]]
 name = "mc-edge"
-version = "0.0.8"
+version = "1.0.0-rc.1"
 dependencies = [
  "aes",
  "anyhow",
@@ -1562,7 +1563,7 @@ dependencies = [
 
 [[package]]
 name = "mc-loader"
-version = "0.0.8"
+version = "1.0.0-rc.1"
 dependencies = [
  "bytes",
  "mc-data",
@@ -1578,7 +1579,7 @@ dependencies = [
 
 [[package]]
 name = "mc-nbt"
-version = "0.0.8"
+version = "1.0.0-rc.1"
 dependencies = [
  "bytemuck",
  "bytes",
@@ -1588,14 +1589,14 @@ dependencies = [
 
 [[package]]
 name = "mc-physics"
-version = "0.0.8"
+version = "1.0.0-rc.1"
 dependencies = [
  "smallvec",
 ]
 
 [[package]]
 name = "mc-plugin-host"
-version = "0.0.8"
+version = "1.0.0-rc.1"
 dependencies = [
  "argon2",
  "mc-data",
@@ -1619,7 +1620,7 @@ dependencies = [
 
 [[package]]
 name = "mc-protocol"
-version = "0.0.8"
+version = "1.0.0-rc.1"
 dependencies = [
  "bytes",
  "flate2",
@@ -1634,7 +1635,7 @@ dependencies = [
 
 [[package]]
 name = "mc-script"
-version = "0.0.8"
+version = "1.0.0-rc.1"
 dependencies = [
  "arc-swap",
  "serde",
@@ -1646,7 +1647,7 @@ dependencies = [
 
 [[package]]
 name = "mc-test-harness"
-version = "0.0.8"
+version = "1.0.0-rc.1"
 dependencies = [
  "anyhow",
  "bytes",
@@ -1670,7 +1671,7 @@ dependencies = [
 
 [[package]]
 name = "mc-vanilla"
-version = "0.0.8"
+version = "1.0.0-rc.1"
 dependencies = [
  "anyhow",
  "bytes",
@@ -1685,7 +1686,7 @@ dependencies = [
 
 [[package]]
 name = "mc-world"
-version = "0.0.8"
+version = "1.0.0-rc.1"
 dependencies = [
  "bytemuck",
  "criterion",
@@ -1706,7 +1707,7 @@ dependencies = [
 
 [[package]]
 name = "mc-worldgen"
-version = "0.0.8"
+version = "1.0.0-rc.1"
 dependencies = [
  "anyhow",
  "flate2",
@@ -4202,7 +4203,7 @@ checksum = "1ffae5123b2d3fc086436f8834ae3ab053a283cfac8fe0a0b8eaae044768a4c4"
 
 [[package]]
 name = "xtask"
-version = "0.0.8"
+version = "1.0.0-rc.1"
 dependencies = [
  "serde_json",
 ]

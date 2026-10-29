@@ -10,11 +10,11 @@
 //! swaps one immutable snapshot: admission never waits for a guest and a failed
 //! publication never leaves half a table behind.
 //!
-//! Entry shape is `"<identity> <node>"`, where `identity` is a lower-case dashed
-//! UUID, a compact 32-hex UUID, or `*`. Identity `*` is the *default* row: it
-//! applies to a player only when the table holds no explicit row for that player,
-//! which is what makes a group assignment override the default group instead of
-//! adding to it. A node of `*` grants every gated root.
+//! Entry shape is `"<identity> <node>"` or an identity alone, where `identity`
+//! is a lower-case dashed UUID, a compact 32-hex UUID, or `*`. Identity-only rows
+//! declare an explicit empty set; node rows for the same identity add grants.
+//! Identity `*` is the default: it applies only without an explicit player row.
+//! A node of `*` grants every gated root.
 //!
 //! A deployment without a permission provider does not manage permissions: gated
 //! roots then behave exactly as they did before the declaration, so a package
@@ -28,7 +28,7 @@ use arc_swap::ArcSwap;
 
 /// Entries one publication may carry.
 pub const MAX_COMMAND_PERMISSION_ENTRIES: usize = 8192;
-/// Bytes one `"<identity> <node>"` entry may carry.
+/// Bytes one entry (identity alone or `"<identity> <node>"`) may carry.
 pub const MAX_COMMAND_PERMISSION_ENTRY_BYTES: usize = 192;
 /// Bytes one permission node may carry.
 pub const MAX_COMMAND_PERMISSION_NODE_BYTES: usize = 128;
@@ -139,7 +139,10 @@ impl ScriptCommandPermissions {
                 parse_entry(entry).ok_or_else(|| ScriptCommandPermissionError::InvalidEntry {
                     entry: entry.clone(),
                 })?;
-            grants.entry(identity).or_default().insert(node);
+            let nodes = grants.entry(identity).or_default();
+            if let Some(node) = node {
+                nodes.insert(node);
+            }
         }
         let table = PermissionTable {
             provider: self.table.load().provider.clone(),
@@ -175,16 +178,17 @@ impl ScriptCommandPermissions {
     }
 }
 
-/// Parse `"<identity> <node>"`, returning the canonical identity and node.
-fn parse_entry(entry: &str) -> Option<(String, String)> {
+/// Parse an identity-only or `"<identity> <node>"` entry.
+fn parse_entry(entry: &str) -> Option<(String, Option<String>)> {
     if entry.len() > MAX_COMMAND_PERMISSION_ENTRY_BYTES {
         return None;
     }
-    let (identity, node) = entry.split_once(' ')?;
-    if !valid_node(node) {
-        return None;
-    }
-    Some((normalize_identity(identity)?, node.to_owned()))
+    let (identity, node) = match entry.split_once(' ') {
+        Some((identity, node)) if valid_node(node) => (identity, Some(node.to_owned())),
+        Some(_) => return None,
+        None => (entry, None),
+    };
+    Some((normalize_identity(identity)?, node))
 }
 
 /// One canonical identity: `*` or compact lower-case UUID hex.
@@ -300,6 +304,33 @@ mod tests {
         let stranger = "00000000-0000-0000-0000-000000000001";
         assert!(permissions.allows(stranger, "solaris.essentials.use"));
         assert!(!permissions.allows(stranger, "solaris.towns.claim"));
+    }
+
+    #[test]
+    fn empty_assigned_identity_overrides_wildcard_default_atomically() {
+        let permissions = managed();
+        let stranger = "00000000-0000-0000-0000-000000000001";
+        permissions.publish(&["* *".into(), ALEX.into()]).unwrap();
+        assert!(!permissions.allows(ALEX, "solaris.essentials.use"));
+        assert!(permissions.allows(stranger, "solaris.essentials.use"));
+        assert!(
+            permissions
+                .publish(&["* *".into(), "not-a-uuid".into()])
+                .is_err()
+        );
+        assert!(!permissions.allows(ALEX, "solaris.essentials.use"));
+        assert!(permissions.allows(stranger, "solaris.essentials.use"));
+        permissions
+            .publish(&[
+                "* *".into(),
+                ALEX.into(),
+                format!("{ALEX} solaris.towns.claim"),
+            ])
+            .unwrap();
+        assert!(permissions.allows(ALEX, "solaris.towns.claim"));
+        assert!(!permissions.allows(ALEX, "solaris.essentials.use"));
+        permissions.set_provider(None);
+        assert!(!permissions.allows(stranger, "solaris.essentials.use"));
     }
 
     #[test]

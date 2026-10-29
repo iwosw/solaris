@@ -67,6 +67,14 @@ Vanilla blaze, snow golem and strider are also water-sensitive, but they did not
 take water damage before this change. Turning on `hurt_by_water` for them is a
 separate parity change.
 
+Wall-climbing contact is an ephemeral movement result, not a new persistent
+entity flag. `entity_motion::step` reports a real loaded horizontal obstacle
+(also when a ceiling clips the rise); serial movement writeback passes that
+result to `mob_fall::after_move`, which resets accumulated fall distance before
+its ascent/no-op shortcut. Separate downward segments while climbing must not
+add up to a damaging fall. This does not grant fall immunity: a detached free
+fall still accumulates distance and damages spiders on landing.
+
 Food temptation and juvenile following are native shared capabilities added for
 VC-06. They run on the existing AI decision cadence, below panic, leash and active
 courtship, using immutable player inventory and entity positions. Player searches
@@ -114,6 +122,12 @@ Limits that follow from presenting as a vanilla type:
   the mob presents as a creeper; any other presentation keeps the fuse on the
   server. Writing a creeper field into another type's layout would break client
   decoding.
+  The same rule applies to crossbow charging: Pillager owns BOOLEAN17 and Piglin
+  owns BOOLEAN18 (17 is its baby state), in both protocol777 and legacy775.
+  Skeleton/zombie carriers can execute the crossbow capability and publish
+  charged equipment without inventing a Pillager accessor. In particular Stray
+  ends at inherited Mob15, while Zombie17 is INT special-type data. Native
+  charging transitions and replay restoration use the same carrier-owned writer.
 - Vanilla kill/riding statistics stay vanilla-typed: a custom key does not
   impersonate its presentation type. Plugin entity events report the custom
   namespaced id.

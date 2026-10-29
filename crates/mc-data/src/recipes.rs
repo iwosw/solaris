@@ -7,6 +7,7 @@
 
 mod armor_dye;
 pub mod cloning;
+pub mod shield_decoration;
 pub mod work;
 pub use armor_dye::armor_dye_crafting_result;
 use std::collections::BTreeMap;
@@ -391,6 +392,7 @@ pub fn crafting_result_from_input(
 ) -> crate::ItemStack {
     if let Some(result) = armor_dye_crafting_result(items, input)
         .or_else(|| repair_item_crafting_result(items, item_facts, input))
+        .or_else(|| shield_decoration::result(items, item_facts, input))
         .or_else(|| cloning::result(items, item_facts, tags, input))
     {
         return result;

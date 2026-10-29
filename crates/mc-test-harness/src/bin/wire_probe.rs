@@ -30,13 +30,13 @@ use mc_protocol::packets::login::{LoginAcknowledged, LoginStart, LoginSuccess};
 use mc_protocol::packets::play::{
     AddEntity, BlockChangedAck, BlockUpdate, ClientboundContainerSetSlot, ClientboundKeepAlive,
     ClientboundSetEntityData, ClientboundSetHealth, ClientboundSystemChat,
-    ClientboundTakeItemEntity, ConfirmTeleportation, Direction, GameMode, InteractionHand,
-    LoginPlay, MoveEntityPos, MoveEntityPosRot, MovePlayerFlags, PlayerActionKind,
-    PlayerCommandAction, PlayerInput, RemoveEntities, ServerboundChangeGameMode,
-    ServerboundChatCommand, ServerboundClientTickEnd, ServerboundKeepAlive,
-    ServerboundMovePlayerPosRot, ServerboundPlayerAction, ServerboundPlayerCommand,
-    ServerboundPlayerInput, ServerboundPlayerLoaded, ServerboundSetCarriedItem, ServerboundSwing,
-    SetEntityMotion, SynchronizePlayerPosition, pack_block_pos, unpack_block_pos,
+    ClientboundTakeItemEntity, ConfirmTeleportation, Direction, GameMode, LoginPlay, MoveEntityPos,
+    MoveEntityPosRot, MovePlayerFlags, PlayerActionKind, PlayerCommandAction, PlayerInput,
+    RemoveEntities, ServerboundChangeGameMode, ServerboundChatCommand, ServerboundClientTickEnd,
+    ServerboundKeepAlive, ServerboundMovePlayerPosRot, ServerboundPlayerAction,
+    ServerboundPlayerCommand, ServerboundPlayerInput, ServerboundPlayerLoaded, ServerboundPunch,
+    ServerboundSetCarriedItem, SetEntityMotion, SynchronizePlayerPosition, pack_block_pos,
+    unpack_block_pos,
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
@@ -384,9 +384,7 @@ impl Probe {
                 let mut body = frame.body.clone();
                 let sync = SynchronizePlayerPosition::decode(&mut body)?;
                 self.write_packet_logged(
-                    &ConfirmTeleportation {
-                        teleport_id: sync.teleport_id,
-                    },
+                    &ConfirmTeleportation::accepting(&sync),
                     "PLAY",
                     "ConfirmTeleportation(command-fence)",
                     capture,
@@ -425,9 +423,7 @@ impl Probe {
                     } else if frame.id == SynchronizePlayerPosition::ID {
                         let sync = SynchronizePlayerPosition::decode(&mut frame.body.clone())?;
                         self.write_packet_logged(
-                            &ConfirmTeleportation {
-                                teleport_id: sync.teleport_id,
-                            },
+                            &ConfirmTeleportation::accepting(&sync),
                             "PLAY",
                             "ConfirmTeleportation(hold-open)",
                             capture,
@@ -519,9 +515,7 @@ impl Probe {
             .dump_until_play_start(Duration::from_secs(play_seconds.max(5)), capture)
             .await?;
         self.write_packet_logged(
-            &ConfirmTeleportation {
-                teleport_id: start.sync.teleport_id,
-            },
+            &ConfirmTeleportation::accepting(&start.sync),
             "PLAY",
             "ConfirmTeleportation",
             capture,
@@ -719,15 +713,8 @@ impl Probe {
         ticker.tick().await;
         for tick in 0..tick_count {
             if tick % 4 == 0 {
-                self.write_packet_logged(
-                    &ServerboundSwing {
-                        hand: InteractionHand::MainHand,
-                    },
-                    "PLAY",
-                    "Swing(MainHand)",
-                    capture,
-                )
-                .await?;
+                self.write_packet_logged(&ServerboundPunch, "PLAY", "Punch", capture)
+                    .await?;
             }
             self.write_packet_logged(&ServerboundClientTickEnd, "PLAY", "ClientTickEnd", capture)
                 .await?;
@@ -1050,15 +1037,8 @@ impl Probe {
         .await?;
         self.write_packet_logged(&ServerboundClientTickEnd, "PLAY", "ClientTickEnd", capture)
             .await?;
-        self.write_packet_logged(
-            &ServerboundSwing {
-                hand: InteractionHand::MainHand,
-            },
-            "PLAY",
-            "Swing(MainHand)",
-            capture,
-        )
-        .await?;
+        self.write_packet_logged(&ServerboundPunch, "PLAY", "Punch", capture)
+            .await?;
         self.send_client_ticks_for(Duration::from_millis(1500), capture)
             .await?;
         self.write_packet_logged(

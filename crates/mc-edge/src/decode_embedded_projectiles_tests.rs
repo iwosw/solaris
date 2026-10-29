@@ -7,8 +7,8 @@ use mc_protocol::packets::play::{ClientboundSetEntityData, EntityDataValue};
 fn counts(packets: &[PlannedPacket], target: EntityId) -> Vec<i32> {
     assert_eq!(
         ClientboundSetEntityData::ID,
-        0x63,
-        "26.1.2 packet report and GameProtocols ordinal"
+        0x65,
+        "26.3 packet report and GameProtocols ordinal"
     );
     packets
         .iter()

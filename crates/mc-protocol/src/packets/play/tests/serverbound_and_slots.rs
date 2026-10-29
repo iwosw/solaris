@@ -36,9 +36,9 @@ fn serverbound_player_action_round_trip() {
 
 #[test]
 fn serverbound_player_action_rejects_out_of_range_action() {
-    // VarInt(8) — one past the last variant.
+    // VarInt(9) — one past the last 26.3 variant (STAB = 8).
     let mut buf = Vec::new();
-    buf.write_varint(8);
+    buf.write_varint(9);
     buf.write_i64(0);
     buf.write_varint(0);
     buf.write_varint(0);
@@ -315,7 +315,7 @@ fn block_update_round_trip() {
 
 #[test]
 fn level_event_id_and_wire_layout_match_local_vanilla() {
-    assert_eq!(LevelEvent::ID, 0x2E);
+    assert_eq!(LevelEvent::ID, 0x2F);
     let position = pack_block_pos(-2, 70, 3);
     let packet = LevelEvent {
         event_id: 2001,
@@ -340,7 +340,7 @@ fn level_event_id_and_wire_layout_match_local_vanilla() {
 
 #[test]
 fn section_blocks_update_id_matches_javap() {
-    assert_eq!(SectionBlocksUpdate::ID, 0x54);
+    assert_eq!(SectionBlocksUpdate::ID, 0x56);
 }
 
 #[test]
@@ -421,16 +421,15 @@ fn light_update_round_trip_empty() {
 
 #[test]
 fn light_update_round_trip_with_layers() {
-    // Use the same shape as the existing LightData non-empty
-    // round-trip test in this module: one full-bright layer per
-    // section + an empty-mask-clearing zero across all 26 slots.
+    // One full-bright layer per section. BitSet.toByteArray() omits all
+    // trailing zero bytes, so empty masks round-trip as empty word vectors.
     let sky_layer = vec![0xFFu8; LightData::LIGHT_LAYER_BYTES];
     let block_layer = vec![0u8; LightData::LIGHT_LAYER_BYTES];
     let light = LightData {
         sky_y_mask: vec![(1 << 26) - 1],
         block_y_mask: vec![(1 << 26) - 1],
-        empty_sky_y_mask: vec![0],
-        empty_block_y_mask: vec![0],
+        empty_sky_y_mask: Vec::new(),
+        empty_block_y_mask: Vec::new(),
         sky_updates: vec![sky_layer; 26],
         block_updates: vec![block_layer; 26],
     };
@@ -709,7 +708,7 @@ fn clientbound_container_close_and_data_layout_match_local_vanilla() {
 
 #[test]
 fn clientbound_open_screen_layout_matches_local_vanilla() {
-    assert_eq!(ClientboundOpenScreen::ID, 0x3B);
+    assert_eq!(ClientboundOpenScreen::ID, 0x3C);
     // Minimal network NBT component: Compound { text: "Furnace" }.
     let title_nbt = vec![
         0x0A, 0x08, 0x00, 0x04, b't', b'e', b'x', b't', 0x00, 0x07, b'F', b'u', b'r', b'n', b'a',
@@ -729,7 +728,7 @@ fn clientbound_open_screen_layout_matches_local_vanilla() {
 
 #[test]
 fn clientbound_mount_screen_matches_local_vanilla() {
-    assert_eq!(ClientboundMountScreenOpen::ID, 0x29);
+    assert_eq!(ClientboundMountScreenOpen::ID, 0x2A);
     let packet = ClientboundMountScreenOpen {
         container_id: 4,
         columns: 5,
@@ -779,30 +778,31 @@ fn clientbound_explode_matches_vanilla_tnt_fixture() {
             y: 0.5,
             z: -0.75,
         }),
-        explosion_particle_id: 22,
-        sound_reference_id: 697,
+        explosion_particle_id: 29,
+        sound_reference_id: 703,
         block_particles: vec![
             ExplosionBlockParticle {
-                particle_id: 59,
+                particle_id: 69,
                 scaling: 0.5,
                 speed: 1.0,
                 weight: 1,
             },
             ExplosionBlockParticle {
-                particle_id: 62,
+                particle_id: 72,
                 scaling: 1.0,
                 speed: 1.0,
                 weight: 1,
             },
         ],
+        play_sound: true,
     };
-    let expected: [u8; 81] = [
+    let expected: [u8; 82] = [
         0x3f, 0xf8, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x40, 0x50, 0x04, 0x00, 0x00, 0x00, 0x00,
         0x00, 0xc0, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x40, 0x80, 0x00, 0x00, 0x00, 0x00,
         0x00, 0x01, 0x01, 0x3f, 0xd0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x3f, 0xe0, 0x00, 0x00,
-        0x00, 0x00, 0x00, 0x00, 0xbf, 0xe8, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x16, 0xba, 0x05,
-        0x02, 0x3b, 0x3f, 0x00, 0x00, 0x00, 0x3f, 0x80, 0x00, 0x00, 0x01, 0x3e, 0x3f, 0x80, 0x00,
-        0x00, 0x3f, 0x80, 0x00, 0x00, 0x01,
+        0x00, 0x00, 0x00, 0x00, 0xbf, 0xe8, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x1d, 0xc0, 0x05,
+        0x02, 0x45, 0x3f, 0x00, 0x00, 0x00, 0x3f, 0x80, 0x00, 0x00, 0x01, 0x48, 0x3f, 0x80, 0x00,
+        0x00, 0x3f, 0x80, 0x00, 0x00, 0x01, 0x01,
     ];
 
     assert_eq!(ClientboundExplode::ID, 0x24);
@@ -833,9 +833,10 @@ fn simple_explode_packet() -> ClientboundExplode {
         radius: 0.0,
         block_count: 0,
         knockback: None,
-        explosion_particle_id: 22,
-        sound_reference_id: 697,
+        explosion_particle_id: 29,
+        sound_reference_id: 703,
         block_particles: Vec::new(),
+        play_sound: false,
     }
 }
 
@@ -854,7 +855,7 @@ fn explode_body_through_sound_holder(explosion_particle_id: i32, sound_holder: i
 
 #[test]
 fn clientbound_explode_rejects_negative_block_particle_count() {
-    let mut bytes = explode_body_through_sound_holder(22, 698);
+    let mut bytes = explode_body_through_sound_holder(29, 704);
     bytes.write_varint(-1);
 
     let err = ClientboundExplode::decode(&mut bytes.as_slice()).unwrap_err();
@@ -863,7 +864,7 @@ fn clientbound_explode_rejects_negative_block_particle_count() {
 
 #[test]
 fn clientbound_explode_rejects_oversized_block_particle_count() {
-    let mut bytes = explode_body_through_sound_holder(22, 698);
+    let mut bytes = explode_body_through_sound_holder(29, 704);
     bytes.write_varint((MAX_EXPLOSION_BLOCK_PARTICLES + 1) as i32);
 
     let err = ClientboundExplode::decode(&mut bytes.as_slice()).unwrap_err();
@@ -878,7 +879,7 @@ fn clientbound_explode_rejects_oversized_block_particle_count() {
 
 #[test]
 fn clientbound_explode_rejects_inline_sound_holder() {
-    let bytes = explode_body_through_sound_holder(22, 0);
+    let bytes = explode_body_through_sound_holder(29, 0);
 
     let err = ClientboundExplode::decode(&mut bytes.as_slice()).unwrap_err();
     assert_eq!(
@@ -890,7 +891,7 @@ fn clientbound_explode_rejects_inline_sound_holder() {
 #[test]
 fn clientbound_explode_encode_rejects_unsupported_explosion_particle() {
     let mut packet = simple_explode_packet();
-    packet.explosion_particle_id = 23;
+    packet.explosion_particle_id = 30;
 
     let err = packet.encode(&mut Vec::new()).unwrap_err();
     assert_eq!(
@@ -901,7 +902,7 @@ fn clientbound_explode_encode_rejects_unsupported_explosion_particle() {
 
 #[test]
 fn clientbound_explode_decode_rejects_unsupported_explosion_particle() {
-    let mut bytes = explode_body_through_sound_holder(23, 698);
+    let mut bytes = explode_body_through_sound_holder(30, 704);
     bytes.write_varint(0);
 
     let err = ClientboundExplode::decode(&mut bytes.as_slice()).unwrap_err();
@@ -915,7 +916,7 @@ fn clientbound_explode_decode_rejects_unsupported_explosion_particle() {
 fn clientbound_explode_encode_rejects_unsupported_block_particle() {
     let mut packet = simple_explode_packet();
     packet.block_particles.push(ExplosionBlockParticle {
-        particle_id: 60,
+        particle_id: 70,
         scaling: 1.0,
         speed: 1.0,
         weight: 1,
@@ -930,9 +931,9 @@ fn clientbound_explode_encode_rejects_unsupported_block_particle() {
 
 #[test]
 fn clientbound_explode_decode_rejects_unsupported_block_particle() {
-    let mut bytes = explode_body_through_sound_holder(22, 698);
+    let mut bytes = explode_body_through_sound_holder(29, 704);
     bytes.write_varint(1);
-    bytes.write_varint(60);
+    bytes.write_varint(70);
     bytes.write_f32(1.0);
     bytes.write_f32(1.0);
     bytes.write_varint(1);
@@ -948,7 +949,7 @@ fn clientbound_explode_decode_rejects_unsupported_block_particle() {
 fn clientbound_explode_encode_rejects_negative_block_particle_weight() {
     let mut packet = simple_explode_packet();
     packet.block_particles.push(ExplosionBlockParticle {
-        particle_id: 59,
+        particle_id: 69,
         scaling: 1.0,
         speed: 1.0,
         weight: -1,
@@ -963,9 +964,9 @@ fn clientbound_explode_encode_rejects_negative_block_particle_weight() {
 
 #[test]
 fn clientbound_explode_decode_rejects_negative_block_particle_weight() {
-    let mut bytes = explode_body_through_sound_holder(22, 698);
+    let mut bytes = explode_body_through_sound_holder(29, 704);
     bytes.write_varint(1);
-    bytes.write_varint(59);
+    bytes.write_varint(69);
     bytes.write_f32(1.0);
     bytes.write_f32(1.0);
     bytes.write_varint(-1);
@@ -1500,7 +1501,7 @@ fn serverbound_container_close_layout_matches_local_vanilla() {
 
 #[test]
 fn serverbound_recipe_book_packets_match_local_vanilla() {
-    assert_eq!(ServerboundRecipeBookChangeSettings::ID, 0x2E);
+    assert_eq!(ServerboundRecipeBookChangeSettings::ID, 0x2F);
     let settings = ServerboundRecipeBookChangeSettings {
         book_type: RecipeBookType::Furnace,
         is_open: true,
@@ -1516,7 +1517,7 @@ fn serverbound_recipe_book_packets_match_local_vanilla() {
     );
     assert!(cursor.is_empty());
 
-    assert_eq!(ServerboundRecipeBookSeenRecipe::ID, 0x2F);
+    assert_eq!(ServerboundRecipeBookSeenRecipe::ID, 0x30);
     let seen = ServerboundRecipeBookSeenRecipe {
         recipe_display_id: 300,
     };
@@ -1532,8 +1533,8 @@ fn serverbound_recipe_book_packets_match_local_vanilla() {
 }
 
 #[test]
-fn clientbound_recipe_book_packets_match_local_vanilla_2612() {
-    assert_eq!(ClientboundRecipeBookSettings::ID, 0x4C);
+fn clientbound_recipe_book_packets_match_local_vanilla_263() {
+    assert_eq!(ClientboundRecipeBookSettings::ID, 0x4D);
     let settings = ClientboundRecipeBookSettings::default();
     let mut settings_bytes = Vec::new();
     settings.encode(&mut settings_bytes).unwrap();
@@ -1545,7 +1546,7 @@ fn clientbound_recipe_book_packets_match_local_vanilla_2612() {
     );
     assert!(cursor.is_empty());
 
-    assert_eq!(ClientboundRecipeBookAdd::ID, 0x4A);
+    assert_eq!(ClientboundRecipeBookAdd::ID, 0x4B);
     let birch_logs = sample_identifier("minecraft:birch_logs");
     let packet = ClientboundRecipeBookAdd {
         entries: vec![RecipeBookEntry {
@@ -1564,7 +1565,20 @@ fn clientbound_recipe_book_packets_match_local_vanilla_2612() {
     };
     let mut bytes = Vec::new();
     packet.encode(&mut bytes).unwrap();
-    let mut expected = vec![0x01, 0x02, 0x00, 0x01, 0x06, 0x14];
+    // 26.3 SlotDisplay$TagSlotDisplay.STREAM_CODEC uses holderSet(ITEM),
+    // whose named-set branch is VarInt 0 followed by the tag identifier.
+    let mut vanilla: &[u8] = &bytes;
+    assert_eq!(vanilla.read_varint().unwrap(), 1); // entries
+    assert_eq!(vanilla.read_varint().unwrap(), 2); // display id
+    assert_eq!(vanilla.read_varint().unwrap(), 0); // shapeless
+    assert_eq!(vanilla.read_varint().unwrap(), 1); // ingredients
+    assert_eq!(vanilla.read_varint().unwrap(), 6); // tag display
+    assert_eq!(vanilla.read_varint().unwrap(), 0); // named HolderSet
+    assert_eq!(
+        vanilla.read_identifier().unwrap(),
+        sample_identifier("minecraft:birch_logs")
+    );
+    let mut expected = vec![0x01, 0x02, 0x00, 0x01, 0x06, 0x00, 0x14];
     expected.extend_from_slice(b"minecraft:birch_logs");
     expected.extend_from_slice(&[0x05, 0x05, 0x04, 0x00, 0x00, 0x04, 0x06]);
     expected.extend_from_slice(&[0x00, 0x00, 0x01, 0x01, 0x00, 0x14]);
@@ -1682,7 +1696,7 @@ fn serverbound_set_creative_mode_slot_id_and_layout_match_local_vanilla() {
     // game-SB index 56 per `javap` of vanilla 26.1.2's GameProtocols
     // serverbound builder, cross-checked against the pinned
     // PLAYER_ACTION (41 = 0x29) and SET_CARRIED_ITEM (53 = 0x35) ids.
-    assert_eq!(ServerboundSetCreativeModeSlot::ID, 0x38);
+    assert_eq!(ServerboundSetCreativeModeSlot::ID, 0x39);
     let packet = ServerboundSetCreativeModeSlot {
         slot: 36,
         item_stack: ItemStack::new(1, 64),

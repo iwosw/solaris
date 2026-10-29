@@ -13,6 +13,9 @@ pub(super) fn visit(
         super::text::fix_node(tag, kind, version, report)?;
         return text_items(tag, version, report);
     }
+    if kind == NodeKind::BlockState && version == super::NATIVE_26_3_DATA_VERSION {
+        return super::v263::fix_node(tag, kind, report);
+    }
     if nbt::fields(tag).is_none() {
         return Err(UpgradeError::malformed(
             format!("{kind:?}"),
@@ -30,29 +33,33 @@ pub(super) fn visit(
         );
         return Ok(());
     }
-    if kind == NodeKind::Chunk && version < 2860 {
-        super::old_chunks::apply(tag, version, report)?;
-    }
-    if version < 2586 {
-        super::old_player_map::fix_node(tag, kind, version, report)?;
-        super::old_entities::fix_node(tag, kind, version, report)?;
-        super::old_items::fix_node(tag, kind, version, report)?;
-        super::old_block_states::fix_node(tag, kind, version, report)?;
-    }
-    if version < 2860 {
-        super::old_payloads::fix_node(tag, kind, version, report);
-        super::old_worldgen::fix_node(tag, kind, version, report)?;
-        super::old_metadata::fix_node(tag, kind, version, report)?;
-    }
-    // Entity/block-entity fixes can introduce typed children (notably an arrow's
-    // item at3818). Visit those children before the same-version item fix runs.
-    super::entities::fix_node(tag, kind, version, report)?;
-    super::block_entities::fix_node(tag, kind, version, report)?;
-    if kind == NodeKind::Item {
+    if version == super::NATIVE_26_3_DATA_VERSION {
+        super::v263::fix_node(tag, kind, report)?;
+    } else {
+        if kind == NodeKind::Chunk && version < 2860 {
+            super::old_chunks::apply(tag, version, report)?;
+        }
         if version < 2586 {
-            super::old_items::prepare_legacy_item(tag, version);
-        } else {
-            super::items::prepare_legacy_item(tag);
+            super::old_player_map::fix_node(tag, kind, version, report)?;
+            super::old_entities::fix_node(tag, kind, version, report)?;
+            super::old_items::fix_node(tag, kind, version, report)?;
+            super::old_block_states::fix_node(tag, kind, version, report)?;
+        }
+        if version < 2860 {
+            super::old_payloads::fix_node(tag, kind, version, report);
+            super::old_worldgen::fix_node(tag, kind, version, report)?;
+            super::old_metadata::fix_node(tag, kind, version, report)?;
+        }
+        // Entity/block-entity fixes can introduce typed children (notably an arrow's
+        // item at3818). Visit those children before the same-version item fix runs.
+        super::entities::fix_node(tag, kind, version, report)?;
+        super::block_entities::fix_node(tag, kind, version, report)?;
+        if kind == NodeKind::Item {
+            if version < 2586 {
+                super::old_items::prepare_legacy_item(tag, version);
+            } else {
+                super::items::prepare_legacy_item(tag);
+            }
         }
     }
     match kind {
@@ -307,6 +314,11 @@ pub(super) fn visit(
             }
             field(tag, "blockState", NodeKind::BlockState, version, report)?;
             lock_text(tag, "lock", version, report)?;
+            if nbt::get(tag, "id").and_then(nbt::string) == Some("minecraft:decorated_pot")
+                && let Some(pot) = nbt::get_mut(tag, "sherds")
+            {
+                pot_templates(pot, version, report)?;
+            }
         }
         NodeKind::Item => {
             field(tag, "components", NodeKind::Components, version, report)?;
@@ -348,13 +360,7 @@ pub(super) fn visit(
                 version,
                 report,
             )?;
-            list_field(
-                tag,
-                "minecraft:bundle_contents",
-                NodeKind::Item,
-                version,
-                report,
-            )?;
+            template_list_field(tag, "minecraft:bundle_contents", version, report)?;
             list_field(
                 tag,
                 "minecraft:charged_projectiles",
@@ -366,7 +372,9 @@ pub(super) fn visit(
                 nbt::get_mut(tag, "minecraft:container").and_then(nbt::list_mut)
             {
                 for slot in container {
-                    field(slot, "item", NodeKind::Item, version, report)?;
+                    if let Some(value) = nbt::get_mut(slot, "item") {
+                        template(value, version, report)?;
+                    }
                 }
             }
             for key in ["minecraft:custom_name", "minecraft:item_name"] {
@@ -383,6 +391,20 @@ pub(super) fn visit(
             }
             bees(tag, "minecraft:bees", version, report)?;
             lock_text(tag, "minecraft:lock", version, report)?;
+            for key in ["minecraft:use_remainder", "minecraft:sulfur_cube_content"] {
+                if let Some(value) = nbt::get_mut(tag, key) {
+                    template(value, version, report)?;
+                }
+            }
+            if let Some(pot) = nbt::get_mut(tag, "minecraft:pot_decorations") {
+                pot_templates(pot, version, report)?;
+            }
+            for key in ["minecraft:sign_text_front", "minecraft:sign_text_back"] {
+                if let Some(text) = nbt::get_mut(tag, key) {
+                    list_field(text, "messages", NodeKind::Text, version, report)?;
+                    list_field(text, "filtered_messages", NodeKind::Text, version, report)?;
+                }
+            }
             if let Some(predicates) = nbt::get_mut(tag, "minecraft:can_break")
                 .and_then(|p| nbt::get_mut(p, "predicates"))
                 .and_then(nbt::list_mut)
@@ -394,12 +416,61 @@ pub(super) fn visit(
         }
         NodeKind::BlockState | NodeKind::Text => {}
     }
+    if version == super::NATIVE_26_3_DATA_VERSION {
+        return Ok(());
+    }
     if version < 2586 {
         super::old_entities::after_children(tag, kind, version, report)?;
     }
     super::items::fix_node(tag, kind, version, report)?;
     super::metadata::fix_node(tag, kind, version, report)?;
     super::chunks::fix_node(tag, kind, version, report)
+}
+
+fn pot_templates(
+    tag: &mut Tag,
+    version: i32,
+    report: &mut UpgradeReport,
+) -> Result<(), UpgradeError> {
+    for side in ["back", "left", "right", "front"] {
+        if let Some(value) = nbt::get_mut(tag, side) {
+            template(value, version, report)?;
+        }
+    }
+    Ok(())
+}
+
+fn template(tag: &mut Tag, version: i32, report: &mut UpgradeReport) -> Result<(), UpgradeError> {
+    match tag {
+        Tag::String(_) => Ok(()), // ItemStackTemplate's identifier shorthand.
+        Tag::Compound(_) => visit(tag, NodeKind::Item, version, report),
+        _ => Err(UpgradeError::malformed(
+            "item template",
+            "expected identifier or compound",
+        )),
+    }
+}
+
+fn template_list_field(
+    tag: &mut Tag,
+    key: &str,
+    version: i32,
+    report: &mut UpgradeReport,
+) -> Result<(), UpgradeError> {
+    if let Some(child) = nbt::get_mut(tag, key) {
+        let Tag::List(list) = child else {
+            return Err(UpgradeError::malformed(key, "expected template list"));
+        };
+        for value in &mut list.elements {
+            // Heterogeneous NBT lists wrap scalars in an empty-key compound.
+            template(
+                super::text::logical_mut(value, list.element_type),
+                version,
+                report,
+            )?;
+        }
+    }
+    Ok(())
 }
 
 fn field(
@@ -425,13 +496,27 @@ fn list_field(
         let Tag::List(list) = child else {
             return Err(UpgradeError::malformed(key, "expected typed list"));
         };
+        let block_palette =
+            kind == NodeKind::BlockState && version == super::NATIVE_26_3_DATA_VERSION;
+        let native_palette = block_palette && report.to == super::TARGET_DATA_VERSION;
         for element in &mut list.elements {
-            let element = if kind == NodeKind::Text && version > 4290 {
+            if native_palette
+                && list.element_type == mc_nbt::tag_type::COMPOUND
+                && let Tag::Compound(fields) = element
+                && fields.len() == 1
+                && fields[0].0.is_empty()
+            {
+                *element = fields.remove(0).1;
+            }
+            let element = if (kind == NodeKind::Text && version > 4290) || block_palette {
                 super::text::logical_mut(element, list.element_type)
             } else {
                 element
             };
             visit(element, kind, version, report)?;
+        }
+        if native_palette {
+            list.element_type = mc_nbt::tag_type::COMPOUND;
         }
         if kind == NodeKind::Text && version == 4290 {
             // Unflattening changes JSON strings into arbitrary component tags.

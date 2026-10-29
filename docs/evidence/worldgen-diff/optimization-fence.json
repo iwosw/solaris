@@ -1,0 +1,36 @@
+{
+  "baseline_server_sha256": "77ce671f03063aa26c0d2ca65ac45aa095bb31f9de6dcf47d87be90d870fb79c",
+  "optimized_server_sha256": "d17fd3f0be117202c15a29863d9e56db7464f1b5d8b1c0a684996b368b0bfb9c",
+  "seeds": {
+    "0": {
+      "chunks": 1024,
+      "cells": 100663296,
+      "exact_state_match_pct": 100.0,
+      "biome_match_pct": 100.0,
+      "exact_state_mismatch_cells": 0,
+      "biome_mismatch_cells": 0,
+      "biome_cells": 1572864,
+      "vanilla_diff_unchanged": true
+    },
+    "81": {
+      "chunks": 1024,
+      "cells": 100663296,
+      "exact_state_match_pct": 100.0,
+      "biome_match_pct": 100.0,
+      "exact_state_mismatch_cells": 0,
+      "biome_mismatch_cells": 0,
+      "biome_cells": 1572864,
+      "vanilla_diff_unchanged": true
+    },
+    "497625": {
+      "chunks": 1024,
+      "cells": 100663296,
+      "exact_state_match_pct": 100.0,
+      "biome_match_pct": 100.0,
+      "exact_state_mismatch_cells": 0,
+      "biome_mismatch_cells": 0,
+      "biome_cells": 1572864,
+      "vanilla_diff_unchanged": true
+    }
+  }
+}

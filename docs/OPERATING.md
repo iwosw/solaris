@@ -19,14 +19,25 @@ enabled unless `--no-console` is supplied.
 ## Vanilla content cache
 
 Solaris does not distribute Minecraft data. Derive a complete cache from your
-licensed 26.1.2 server bundle with JDK 25 (`JAVA`/`JAVAC` may select it):
+licensed server bundles with JDK 25 (`JAVA`/`JAVAC` may select it). A cache
+joins two releases: the 26.3 bundle supplies every protocol identity (block
+states, items, entities, the per-state light/mining/explosion/map-colour
+reports and the exact RegistryData the client receives); the 26.1.2 bundle
+supplies the gameplay data pack (worldgen, loot, recipes, advancements, tags,
+structures), whose JSON grammar Solaris's loaders read. 26.3 rewrote those
+grammars; every name in the 26.1.2 pack exists in 26.3.
 
 ```sh
-solaris-v2 content import --from /path/to/server.jar --cache /path/to/cache
-# Alternative: download Mojang's pinned artifact, verifying size and SHA-1.
-solaris-v2 content import --version 26.1.2 --download --cache /path/to/cache
+solaris-v2 content import --from /path/to/26.3/server.jar \
+  --gameplay-from /path/to/26.1.2/server.jar --cache /path/to/cache
+# Alternative: download both pinned artifacts, verifying size and SHA-1.
+solaris-v2 content import --version 26.3 --download --cache /path/to/cache
 solaris-v2 content verify --cache /path/to/cache
 ```
+
+Either `--from` or `--gameplay-from` may be omitted; that bundle is then
+downloaded. The 26.1.2 bundle's `version.json` is kept as
+`gameplay_version.json` and checked at startup.
 
 Import stages, validates and publishes the cache; a failed derivation preserves
 the previous cache. Verify is offline and checks the same content used by
@@ -34,20 +45,78 @@ startup, not the complete server/plugin deployment. Serving never downloads
 implicitly. Missing or incomplete content fails before world/listener startup.
 
 Selection order: `[data].vanilla_data_dir`, `SOLARIS_CONTENT_CACHE`,
-`$XDG_DATA_HOME/solaris/content/26.1.2` (otherwise
-`~/.local/share/solaris/content/26.1.2`), then `data/vanilla` in the working
+`$XDG_DATA_HOME/solaris/content/26.3` (otherwise
+`~/.local/share/solaris/content/26.3`), then `data/vanilla` in the working
 directory and checkout ancestors. An explicit invalid override fails without
 silently choosing another source. `--cache` affects only that offline command.
 
 ## Client protocol compatibility
 
-Solaris currently serves Minecraft Java 26.1.2, protocol 775. Any client may
-send a Status ping: the reply advertises the supported release name and protocol
-so its server-list entry is shown as incompatible when appropriate. A Login
-handshake on any other protocol receives vanilla's
+Solaris serves Minecraft Java 26.3, protocol 777. Any client may send a Status
+ping: the reply advertises the supported release name and protocol so its
+server-list entry is shown as incompatible when appropriate. A Login handshake
+on an unsupported protocol receives vanilla's
 `multiplayer.disconnect.incompatible` disconnect rather than a silent TCP
-close. Do not point newer clients at a 26.1.2 deployment expecting a partial
-join; 26.3 translation is proposed but not implemented (ADR 0015).
+close. Sessions of the previous release (26.1.2, protocol 775) are translated
+at the edge as described in ADR 0015.
+
+Native block-entity identities follow the 26.3 registry, not the legacy
+client's ids: 49 types cover 191 block variants. Beds no longer have block
+entities and use vanilla's popped-on-piston-push reaction. Poplar signs,
+hanging signs and shelves, plus potent sulfur, use their 26.3 identities.
+Other inventory/opaque block entities retain Solaris's conservative piston
+refusal rather than risking their contents.
+
+### Retaining 26.1.2 clients after upgrading to 26.3
+
+Protocol 775 clients need a **separate, intact 26.1.2 content cache**. Keep
+the deployment's existing cache before importing 26.3; do not overwrite the
+old cache. It must include the datapack, `reports/packets.json`,
+`reports/registries.json`, `reports/blocks.json` and captured
+`reports/registry_network_nbt`, not just a version file or jar.
+
+The edge finds it in this order:
+
+1. `SOLARIS_LEGACY_CONTENT_CACHE` (an explicit path).
+2. A sibling release directory: canonical `.../content/26.3` uses
+   `.../content/26.1.2`.
+3. Otherwise, the canonical path with `-26.1.2` appended: `data/vanilla`
+   uses `data/vanilla-26.1.2`.
+
+For a custom layout, set the environment in the server's normal launch
+environment (or its service configuration), for example:
+
+```sh
+export SOLARIS_LEGACY_CONTENT_CACHE=/srv/solaris/content/26.1.2
+```
+
+The server logs `26.1.2 (protocol 775) clients enabled` when loading succeeds.
+A missing or unusable old cache logs the reason and disables 775 logins;
+they receive the incompatible-version disconnect. Canonical 777 clients
+continue to use the 26.3 cache. The rc.1 `content import` command imports
+26.3 only: retain the old deployment cache rather than trying to recreate it
+with that command. A fresh 26.3-only installation, including native-client
+singleplayer, does not need the legacy cache unless it will admit 775 clients.
+
+Legacy clients receive their own registry/tag snapshot. New block states,
+items and entity types are shown as named 26.1.2 substitutes (for example,
+cinnabar as granite and a sulfur cube as a slime), not their shifted numeric
+ids. This is protocol compatibility, not identical rendering or mechanics for
+new content; see [ADR 0015](decisions/0015-multiversion-protocol-translation.md).
+
+The 14 new 26.3 item components have no 26.1.2 registry entries. For legacy
+viewers their complete, validated payloads are consumed and omitted, including
+nested item patches; native inventory custody is unchanged. Shared components
+and the following stacks remain translated normally. Unknown or malformed
+payloads still fail closed rather than desynchronizing the rest of the packet.
+
+Decorated-pot block entities use 26.3's named `sherds` record: optional
+`back`, `left`, `right` and `front` item templates, rather than a list of
+item identifiers. Existing native worlds migrate the older list on read;
+stored contents and template components are preserved. Chunk and individual
+block-entity updates use the native record. Only the 775 presentation boundary
+converts decorations back to its ordered identifier list (missing sides render
+as brick); this does not rewrite native custody.
 
 ## Supported configuration
 
@@ -432,16 +501,23 @@ but bypass the player cap only with `bypassesPlayerLimit` in `ops.json`.
 `/whitelist reload` re-reads a hand-edited `whitelist.json`; `/whitelist add`
 resolves a live or already-known player, or an offline-mode name.
 
-`/ban <player> [duration] [reason]` keeps vanilla's argument order and adds one
-optional token: a duration such as `30m`, `2h30m`, `1d` or `1w`. Without it the
+`/kick <players> [reason]`, `/ban <profiles> [duration] [reason]` and
+`/pardon <profiles>` accept player selectors such as `@a`; selectors resolve
+only online players, while literal profile names can also target known offline
+players (or offline-mode names). `/ban-ip` accepts an IPv4 address or an online
+player name; `/pardon-ip` accepts an IPv4 address, not a player name.
+`/ban` keeps vanilla's argument order and adds one optional token: a duration
+such as `30m`, `2h30m`, `1d` or `1w`. Without it the
 ban is permanent; with it the row's vanilla `expires` stamp makes the ban expire,
 the login refusal shows the expiration line, and `/banlist` stops listing it.
 Anything that does not parse as a duration is the first word of the reason, so
 vanilla `/ban <player> <reason>` is unchanged. `/mute <player> [duration]
 [reason]` and `/unmute <player>` use `muted-players.json` in the same directory:
 a muted identity cannot send ordinary chat or native communication commands
-(`/me`, `/msg`, `/tell`, `/w`, `/teammsg`, `/tm`, `/say`, `/tellraw`, `/title`); other command rights
+(`/me`, `/msg`, `/reply`, `/tell`, `/w`, `/teammsg`, `/tm`, `/say`, `/tellraw`, `/title`); other command rights
 are unchanged. Refused messages receive a private "You are muted." notice.
+For the console, native `/msg` remains available even when a plugin reserves
+that root for player commands; player-side plugin reservations are unchanged.
 `/warn <player> [reason]` delivers one private warning line to an online player
 and keeps no record.
 
@@ -895,6 +971,45 @@ solaris-v2 --config server.toml world export-anvil \
   --source /srv/native-world --destination /srv/exported-world --receipt /srv/export.json
 ```
 
+Native Java 26.3 worlds (`DataVersion` **5023**) are accepted in addition to the
+existing through-26.1.2 import range. Intermediate development/snapshot versions
+remain refused. The offline reader normalizes only schema-typed block states:
+26.3 `id`/`properties` become the native reader's `Name`/`Properties`; default-state
+identifier strings and mixed palette wrappers become homogeneous native compound
+palettes. Similarly named opaque/custom-data fields are untouched.
+Chunk/entity/player envelopes,
+section packing, inventories, positions and modeled saved-data fields retain
+their existing shapes. The local 26.3 `DataFixers` registrations identify the
+block-state change at 5006, pot template changes at 4996, and terrain-status
+change at 5013; full chunks are unaffected by the status merge.
+
+Ordinary exports remain **4790 / 26.1.2**. A record is promoted to **5023** only
+when it retains a native 26.3 chunk origin or actually contains new component/
+named-pot-template shapes. Promoted records use 26.3 `id`/`properties` block
+states and float blending heights (including the float no-value sentinel),
+not merely a newer version stamp. `level.dat` and the receipt identify
+the highest emitted record version: `Version.Name = "26.3"` / `Version.Id = 5023`
+if promotion was necessary, otherwise `"26.1.2"` / 4790. Unchanged saved-data
+codecs retain their 4790 writer; deferred opaque files retain original bytes.
+
+All 14 new 26.3 item components are admitted by `/give` and creative ingress
+and retained in native inventory snapshots: `attack_animation`,
+`interact_animation`, `block_transformer`, `villager_food`, `sulfur_cube_content`,
+`compostable`, `cooking_fuel`, `brewing_fuel`, `mob_visibility`,
+`provides_pottery_pattern`, `sign_text_front`, `sign_text_back`, `waxed`, and
+`cushion/color`. This is lossless component custody, not a claim that native
+gameplay implements each component's effect. `pot_decorations` stores optional
+`back`/`left`/`right`/`front` item templates, including counts and nested patches;
+absent sides remain absent rather than being rewritten as explicit brick faces.
+Cracked-pot drops keep each present template's count and component patch; missing
+optional sides do not create brick drops. Offline template traversal also accepts
+identifier shorthand and mixed-list NBT wrappers without changing their custody.
+Creative ingress uses the vanilla untrusted stack codec: each added outer
+component has its own VarInt byte length. Ordinary inventory publications and
+nested item templates keep their normal, unframed component codec.
+`charged_projectiles` uses vanilla's 1024-template storage/wire bound rather than
+the three-projectile count produced by ordinary Multishot gameplay.
+
 ### Interchange preservation and limits
 
 A successful receipt means the offline conversion published a complete destination,
@@ -1069,6 +1184,11 @@ Each child is a deployable package with `plugin.toml`, `plugin.wasm`, optional
 malformed entries, duplicate ids/command roots, failed startup and unsupported
 declarations refuse startup. Selecting it authorizes manifest-declared ordinary
 capabilities. There are no current strict/expected/grants or hot-reload settings.
+A configured directory that does not exist yet (the first start from
+`example.toml`) is created empty and logged; the server then runs without
+plugins. Deploying an auth-capable package such as `solaris-auth` locks every
+new session until the package unlocks it, regardless of `[auth]
+require_plugin_login`.
 
 Manifest `before-build` hooks register in deterministic package-id order with
 fail-closed policy. Unsupported hooks, including `before-damage`, fail startup.

@@ -30,8 +30,8 @@ fn sample_dialog() -> Tag {
 
 #[test]
 fn ids_match_local_packets_report() {
-    assert_eq!(ClientboundClearDialog::ID, 139);
-    assert_eq!(ClientboundShowDialog::ID, 140);
+    assert_eq!(ClientboundClearDialog::ID, 142);
+    assert_eq!(ClientboundShowDialog::ID, 143);
     assert_eq!(ServerboundCustomClickAction::ID, 68);
 }
 

@@ -34,6 +34,15 @@ pub(crate) fn write_valid_cache(root: &Path) {
             "protocol_version": mc_protocol::PROTOCOL_VERSION,
         }),
     );
+    write_json(
+        root,
+        crate::content_import::GAMEPLAY_VERSION_FILE,
+        &json!({
+            "id": crate::content_import::GAMEPLAY_DATAPACK_RELEASE,
+            "world_version": 4790,
+            "protocol_version": 775,
+        }),
+    );
     for (registry, directory) in mc_data::KNOWN_REGISTRIES {
         write_json(
             root,
@@ -101,8 +110,8 @@ pub(crate) fn write_valid_cache(root: &Path) {
         "reports/block_explosion.json",
         &json!({
             "version": mc_protocol::TARGET_RELEASE,
-            "max_state_id": 29_872,
-            "entries": vec![0.0; 29_873],
+            "max_state_id": state_count - 1,
+            "entries": vec![0.0; state_count],
         }),
     );
     write_json(
@@ -183,9 +192,17 @@ fn cache_rejects_missing_artifacts_and_empty_network_payload_directory() {
     std::fs::remove_dir_all(temp.path().join(REQUIRED_REGISTRY_PAYLOAD_DIR)).unwrap();
     let error = format!("{:#}", validate_content_cache(temp.path()).unwrap_err());
     assert!(error.contains(REQUIRED_REGISTRY_PAYLOAD_DIR), "{error}");
-    std::fs::create_dir_all(temp.path().join(REQUIRED_REGISTRY_PAYLOAD_DIR)).unwrap();
+    // Keep the current payload directory layout, but no payload files.
+    for (registry, _) in mc_data::KNOWN_REGISTRIES {
+        let registry = mc_data::Identifier::parse(format!("minecraft:{registry}")).unwrap();
+        let entry = mc_data::Identifier::parse("minecraft:sample").unwrap();
+        let path = mc_data::network_registry_payload_path(temp.path(), &registry, &entry).unwrap();
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    }
     let error = format!("{:#}", validate_content_cache(temp.path()).unwrap_err());
-    assert!(error.contains("payload missing"), "{error}");
+    assert!(error.contains("captured RegistryData payloads"), "{error}");
+    assert!(error.contains("minecraft:sample"), "{error}");
+    assert!(error.contains("have no such entry"), "{error}");
     std::fs::remove_file(temp.path().join("reports/block_mining.json")).unwrap();
     let error = format!("{:#}", validate_content_cache(temp.path()).unwrap_err());
     assert!(

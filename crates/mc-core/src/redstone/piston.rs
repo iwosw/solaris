@@ -360,9 +360,9 @@ fn movable(state: &BlockState) -> bool {
     }
 }
 
-/// Vanilla DESTROY reactions do not join adhesive branches, but pop when a
+/// Vanilla POPPED reactions do not join adhesive branches, but pop when a
 /// moving block actually enters their cell.
-/// Derived from every 26.1.2 block state's cached push reaction; the oracle
+/// Derived from every 26.3 block state's cached push reaction; the oracle
 /// fixture tests the compressed families against the full registry. Inventory
 /// and opaque block entities retain this core's conservative refusal policy.
 fn destroys_on_push(path: &str) -> bool {
@@ -375,6 +375,7 @@ fn destroys_on_push(path: &str) -> bool {
         || path.starts_with("potted_")
         || path.ends_with("_flower")
         || path.ends_with("_tulip")
+        || path.ends_with("_bed")
         || path.ends_with("_leaves")
         || path.ends_with("_door")
         || path.ends_with("_button")
@@ -427,6 +428,9 @@ fn destroys_on_push(path: &str) -> bool {
                 | "cactus_flower"
                 | "spore_blossom"
                 | "brown_mushroom"
+                | "shelf_mushroom"
+                | "red_shrub"
+                | "sulfur_spike"
                 | "red_mushroom"
                 | "crimson_fungus"
                 | "warped_fungus"

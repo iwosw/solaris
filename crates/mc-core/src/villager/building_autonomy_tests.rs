@@ -239,11 +239,11 @@ fn adopted_village_produces_stock_and_builds_without_player_supplies() {
     );
     for kind in [BuildingKind::Mine, BuildingKind::LumberCamp] {
         assert!(
-            record
+            !record
                 .buildings
                 .values()
                 .any(|building| building.kind == kind),
-            "adoption certifies real natural {kind:?}"
+            "adoption queues natural {kind:?} until a later resident route proof"
         );
     }
     let items = ["oak_log", "coal", "wheat", "white_wool"].map(|name| {
@@ -259,6 +259,7 @@ fn adopted_village_produces_stock_and_builds_without_player_supplies() {
         state.day_time = (state.tick as i64 + 3000).rem_euclid(24_000);
         state.tick_budget.reset(state.tick);
         let mut changes = ChangeSet::default();
+        crate::settlements::autonomy::tick(&mut state, &mut changes);
         crate::settlements::tick(&mut state, &mut changes);
         super::brain::tick(&mut state, &mut changes);
         let residents: Vec<_> = crate::settlements::construction::residents(&state, id).collect();
@@ -303,6 +304,15 @@ fn adopted_village_produces_stock_and_builds_without_player_supplies() {
                         .any(|building| building.kind == kind)
                 })
         {
+            for kind in [BuildingKind::Mine, BuildingKind::LumberCamp] {
+                assert!(
+                    record
+                        .buildings
+                        .values()
+                        .any(|building| building.kind == kind),
+                    "planner certifies reachable natural {kind:?}"
+                );
+            }
             assert!(record.owner.is_none());
             assert!(
                 !state.plugin_block_writes.is_empty(),

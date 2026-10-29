@@ -11,6 +11,27 @@ from .backends import village_autonomy_qa as qa
 
 
 class VillageAutonomyQaTests(unittest.TestCase):
+    def test_walk_uses_path_planner_for_the_final_loaded_leg(self) -> None:
+        probe = Mock()
+        initial = {"player": {"x": 128.5, "y": 70.0, "z": 0.5}}
+        arrived = {"player": {"x": 120.5, "y": 70.0, "z": 7.5}}
+        probe.observe.return_value = initial
+
+        def act(tool, arguments):
+            if tool == "minecraft_navigate_to_block":
+                probe.observe.return_value = arrived
+            return {}
+
+        probe.call.side_effect = act
+        with patch.object(qa.time, "monotonic", side_effect=[0.0, 0.0, 601.0]):
+            state = qa._walk_to(probe, {}, (120.0, 70.0, 7.0), "approach")
+        self.assertEqual(state, arrived)
+        probe.call.assert_any_call("minecraft_navigate_to_block", {
+            "x": 120, "y": 70, "z": 7, "timeout_seconds": 110.0,
+        })
+        self.assertFalse(any(call.args[0] == "minecraft_press_inputs"
+                             for call in probe.call.call_args_list))
+
     def test_build_completion_accepts_actual_building_list_level_format(self) -> None:
         probe = Mock()
         probe.observe.return_value = {
@@ -184,6 +205,12 @@ class VillageAutonomyQaTests(unittest.TestCase):
                 ctx.exits.append(None)
                 return primary, primary_log, primary_mcp
 
+            def start_server(*args, **kwargs):
+                config = (artifact / "village-autonomy-qa.toml").read_text()
+                self.assertIn("spawn_protection = 0", config,
+                              "the peer operator must not lock the non-op out of the founding chest")
+                return server
+
             def fail_after_peer(*args):
                 ctx.exits.append(None)
                 args[-1]((peer, peer_log, peer_mcp), 1)
@@ -191,7 +218,7 @@ class VillageAutonomyQaTests(unittest.TestCase):
 
             with (
                 patch.dict(qa.os.environ, {"SOLARIS_SERVER_BINARY": str(binary)}),
-                patch.object(qa.subprocess, "Popen", return_value=server),
+                patch.object(qa.subprocess, "Popen", side_effect=start_server),
                 patch.object(qa.runtime, "reserve_port", return_value=25566),
                 patch.object(qa.runtime, "wait_port"),
                 patch.object(qa.runtime, "start_xvfb", return_value=(Mock(), ":100", Mock())),

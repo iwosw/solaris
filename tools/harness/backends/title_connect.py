@@ -2,12 +2,9 @@
 
 Starts the server (same seed-81 survival config as gameplay), launches the
 native client WITHOUT `--server`/`--username` so it opens the Title screen,
-then through the ORDINARY input path: read the Title fields, type the live
-server address + username via `minecraft_set_screen_input`, screenshot the
-filled Title, press Connect via `minecraft_click_screen_button`, assert
-in-game state (in_play + health), screenshot; then `minecraft_disconnect`
-(which returns to Title with the reason shown), assert the Title screen is
-back with a disconnect reason, screenshot.
+then through the ordinary UI: open Multiplayer → Direct Connect, type the
+live server address and username, press Join Server, assert in-game state,
+then disconnect back to Title. The remembered values are also used to rejoin.
 
 Failure anywhere fails the run. No privileged fixtures; typing + Connect are
 the ordinary human path.
@@ -28,6 +25,8 @@ from .gameplay import peak_rss_kib
 from .probe_steps import ProbeSteps
 
 TITLE_CLASS = "net.minecraft.client.gui.screens.TitleScreen"
+MULTIPLAYER_CLASS = "net.minecraft.client.gui.screens.multiplayer.JoinMultiplayerScreen"
+DIRECT_CLASS = "net.minecraft.client.gui.screens.DirectJoinServerScreen"
 USERNAME = "TitleProof"
 
 
@@ -38,6 +37,25 @@ class _TitleProbeSteps(ProbeSteps):
         if wait_for_play:
             return super().observe(wait_for_play=True)
         return self.call("minecraft_observe")
+
+
+def _open_direct_connect(probe: _TitleProbeSteps) -> dict[str, Any]:
+    title = probe.call("minecraft_observe")
+    probe.check("title_screen_open", title["screen"].get("class") == TITLE_CLASS)
+    probe.call("minecraft_click_screen_button", {
+        "expected_screen_class": TITLE_CLASS,
+        "expected_title": title["screen"]["title"],
+        "button_label": "Multiplayer",
+    })
+    multiplayer = probe.wait(lambda s: s["screen"].get("class") == MULTIPLAYER_CLASS,
+                             "multiplayer_screen_open")
+    probe.call("minecraft_click_screen_button", {
+        "expected_screen_class": MULTIPLAYER_CLASS,
+        "expected_title": multiplayer["screen"]["title"],
+        "button_label": "Direct Connect",
+    })
+    return probe.wait(lambda s: s["screen"].get("class") == DIRECT_CLASS,
+                      "direct_connect_screen_open")
 
 
 def run(ctx: ProfileContext) -> dict[str, Any]:
@@ -101,39 +119,42 @@ def run(ctx: ProfileContext) -> dict[str, Any]:
         mcp.request_timeout_seconds = timeout + 10
         with _TitleProbeSteps(mcp, artifact / "title-connect", timeout,
                               "native-title-connect") as probe:
-            title = probe.call("minecraft_observe")
-            probe.check("title_screen_open",
-                        title["screen"].get("class") == TITLE_CLASS)
-            probe.check("title_prefill_server",
-                        "127.0.0.1" in (title.get("title_server") or "") or True)
-            record_title = {
-                "prefill_server": title.get("title_server"),
-                "prefill_username": title.get("title_username"),
-            }
-            # Ordinary typing path into both Title fields.
+            direct = _open_direct_connect(probe)
             probe.call("minecraft_set_screen_input", {
-                "expected_screen_class": TITLE_CLASS,
-                "expected_title": title["screen"].get("title", ""),
+                "expected_screen_class": DIRECT_CLASS,
+                "expected_title": direct["screen"]["title"],
                 "input_label": "Server address",
                 "value": address,
             })
             probe.call("minecraft_set_screen_input", {
-                "expected_screen_class": TITLE_CLASS,
-                "expected_title": title["screen"].get("title", ""),
-                "input_label": "Username",
+                "expected_screen_class": DIRECT_CLASS,
+                "expected_title": direct["screen"]["title"],
+                "input_label": "Offline username",
                 "value": USERNAME,
             })
-            filled = probe.call("minecraft_observe")
-            probe.check("title_server_typed",
-                        filled.get("title_server") == address)
-            probe.check("title_username_typed",
-                        filled.get("title_username") == USERNAME)
             native_client.capture(mcp, artifact, "step-title-filled")
-            # Ordinary Connect press → in-game.
+            # Title observation exposes the same backing fields, unlike Direct Connect.
             probe.call("minecraft_click_screen_button", {
-                "expected_screen_class": TITLE_CLASS,
-                "expected_title": filled["screen"].get("title", ""),
-                "button_label": "Connect",
+                "expected_screen_class": DIRECT_CLASS,
+                "expected_title": direct["screen"]["title"],
+                "button_label": "Cancel",
+            })
+            multiplayer = probe.wait(lambda s: s["screen"].get("class") == MULTIPLAYER_CLASS,
+                                     "multiplayer_after_input")
+            probe.call("minecraft_click_screen_button", {
+                "expected_screen_class": MULTIPLAYER_CLASS,
+                "expected_title": multiplayer["screen"]["title"],
+                "button_label": "Back",
+            })
+            filled = probe.wait(lambda s: s["screen"].get("class") == TITLE_CLASS,
+                                "title_after_input")
+            probe.check("title_server_typed", filled.get("title_server") == address)
+            probe.check("title_username_typed", filled.get("title_username") == USERNAME)
+            direct = _open_direct_connect(probe)
+            probe.call("minecraft_click_screen_button", {
+                "expected_screen_class": DIRECT_CLASS,
+                "expected_title": direct["screen"]["title"],
+                "button_label": "Join Server",
             })
             native_client.capture(mcp, artifact, "step-title-loading")
             play = probe.call("minecraft_wait_for_play", {
@@ -159,18 +180,18 @@ def run(ctx: ProfileContext) -> dict[str, Any]:
             probe.check("title_remembers_username", back.get("title_username") == USERNAME)
             native_client.capture(mcp, artifact, "step-title-disconnected")
             # Rejoin without retyping: the remembered values drive a real connection.
+            direct = _open_direct_connect(probe)
             probe.call("minecraft_click_screen_button", {
-                "expected_screen_class": TITLE_CLASS,
-                "expected_title": back["screen"].get("title", ""),
-                "button_label": "Connect",
+                "expected_screen_class": DIRECT_CLASS,
+                "expected_title": direct["screen"]["title"],
+                "button_label": "Join Server",
             })
             native_client.capture(mcp, artifact, "step-title-rejoin-loading")
             rejoined = probe.call("minecraft_wait_for_play", {"timeout_seconds": probe.remaining()})
             probe.check("remembered_connection_rejoins", rejoined.get("in_play") is True)
             native_client.capture(mcp, artifact, "step-title-rejoined")
             probe.call("minecraft_disconnect", {})
-            probe.report.update(prefill=record_title, title_error=reason,
-                                address=address, username=USERNAME)
+            probe.report.update(title_error=reason, address=address, username=USERNAME)
         if ctx.windowed:
             evidence["capture"] = native_client.capture(mcp, artifact)
         if client_process is not None:

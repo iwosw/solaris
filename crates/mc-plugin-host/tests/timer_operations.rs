@@ -78,8 +78,16 @@ async fn drive(
             Beat::Join(session) => boundary
                 .try_enqueue_event(ScriptEvent::player_joined_with_context(
                     ScriptPlayerId::new(*session),
-                    ScriptPlayerContext::try_new(PLAYER_UUID, "Ada", false, 0.0, 64.0, 0.0)
-                        .unwrap(),
+                    ScriptPlayerContext::try_new(
+                        PLAYER_UUID,
+                        "Ada",
+                        false,
+                        "minecraft:overworld",
+                        0.0,
+                        64.0,
+                        0.0,
+                    )
+                    .unwrap(),
                 ))
                 .unwrap(),
         }

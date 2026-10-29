@@ -165,7 +165,12 @@ fn spider_wall_climb_is_bounded_and_clipped_at_ceiling() {
         state.drive = [4.0, 0.0, 0.0];
         state.climbs_walls = true;
         state.tick = tick;
-        body = step(state, &world, |_, _| true).body;
+        let result = step(state, &world, |_, _| true);
+        assert!(
+            result.wall_climbing,
+            "ceiling contact still resets fall distance"
+        );
+        body = result.body;
         assert!(body.position.y - before <= 0.2 + 1.0e-7);
         assert!(body.position.y + body.aabb.height <= 2.0 + 1.0e-7);
     }
@@ -191,6 +196,7 @@ fn missing_current_chunk_freezes_every_native_kind_without_air_loss() {
         assert_eq!(result.body.velocity, Vec3::ZERO);
         assert_eq!(result.air_supply, -19);
         assert!(!result.drowning);
+        assert!(!result.wall_climbing);
     }
 }
 
@@ -209,6 +215,7 @@ fn spider_does_not_climb_missing_neighbor_chunk_boundary() {
     let result = step(state, &world, |x, _| x < 16);
     assert_eq!(result.body.position.y, 0.0);
     assert!(result.body.position.x <= 15.7 + 1.0e-7);
+    assert!(!result.wall_climbing);
 }
 
 #[test]
@@ -662,4 +669,61 @@ fn same_tick_fill_and_summon_keeps_cows_healthy_above_the_pen_floor() {
         "cows must not suffocate in cleared terrain"
     );
     assert!(final_cows.iter().all(|(_, _, health)| *health == 10.0));
+}
+
+#[test]
+fn wall_climbing_spiders_do_not_accumulate_separate_drops_before_landing() {
+    let mut state = native_state();
+    state.gamerules.insert("spawn_mobs".into(), "false".into());
+    state
+        .gamerules
+        .insert("random_tick_speed".into(), "0".into());
+    let air = state.registry.states.air;
+    let stone = state.registry.states.stone;
+    // Three blocks of headroom: a spider's largest possible free fall is
+    // 2.1 blocks. Repeated wall/ceiling contact must not add those drops.
+    for x in -1..=16 {
+        for z in -1..=16 {
+            for y in 64..=72 {
+                let solid = y == 64 || y == 68 || x == -1 || x == 16 || z == -1 || z == 16;
+                state
+                    .world
+                    .set_block(x, y, z, if solid { stone } else { air });
+            }
+        }
+    }
+    let spiders: Vec<_> = (0..64)
+        .map(|n| {
+            let slot = spawn_named(
+                &mut state,
+                "minecraft:spider",
+                [
+                    0.8 + f64::from(n % 8) * 2.0,
+                    65.0,
+                    0.8 + f64::from(n / 8) * 2.0,
+                ],
+            );
+            state.entities.row_mut(slot).health = 16.0;
+            state.entities.row_mut(slot).persistent = true;
+            state.entities.body(slot).id
+        })
+        .collect();
+    let mut climbed = false;
+    for _ in 0..4000 {
+        crate::tick::run_tick(&mut state, &[]);
+        for &id in &spiders {
+            let slot = state.entities.slot_of(id).expect("fixture spider survives");
+            climbed |= state.entities.pos(slot)[1] > 66.0;
+            assert_eq!(
+                state.entities.row(slot).health,
+                16.0,
+                "spider {id:?} took damage in a fall-safe pen at tick {}",
+                state.tick,
+            );
+        }
+    }
+    assert!(
+        climbed,
+        "the ordinary AI must actually exercise wall climbing"
+    );
 }

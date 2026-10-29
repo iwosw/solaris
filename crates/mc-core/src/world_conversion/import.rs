@@ -845,6 +845,7 @@ pub(super) fn convert(
     let level_path = source.join("level.dat");
     let mut level = read_nbt(&level_path)?;
     let level_version = source_version(&level, &level_path)?;
+    stats.data_version = level_version.max(mc_world::anvil::TARGET_DATA_VERSION);
     let data = field(&level, "Data")?.ok_or_else(|| fail("level.dat: missing Data"))?;
     // Extract the complete original player before the level walker, so its own
     // record version and receipt govern the upgrade exactly once.
@@ -973,7 +974,19 @@ pub(super) fn convert(
         let path = source.join(relative);
         let mut tag = read_nbt(&path)?;
         let version = saved_data_source_version(&tag, &path)?;
-        if version == mc_world::anvil::TARGET_DATA_VERSION {
+        // No saved-data payload fixer is registered between 4790 and 5023.
+        // File-only hardcore spectator settings do not change these codecs.
+        if matches!(
+            version,
+            mc_world::anvil::TARGET_DATA_VERSION | upgrade::NATIVE_26_3_DATA_VERSION
+        ) {
+            // Owned saved-data payload codecs are unchanged in 26.3.
+            if version == upgrade::NATIVE_26_3_DATA_VERSION
+                && let Tag::Compound(fields) = &mut tag
+                && let Some((_, stamp)) = fields.iter_mut().find(|(name, _)| name == "DataVersion")
+            {
+                *stamp = Tag::Int(mc_world::anvil::TARGET_DATA_VERSION);
+            }
             metadata.insert(key.into(), tag);
             consumed.insert(relative.clone());
         } else if key.ends_with("raids.dat") && (2586..4309).contains(&version) {
@@ -1379,6 +1392,18 @@ pub(super) fn convert(
                         pos.z
                     ))
                 })?;
+                if from == upgrade::NATIVE_26_3_DATA_VERSION {
+                    // Native storage is not Anvil: retain the source format
+                    // hint with opaque chunk extras, so export also preserves
+                    // 26.3-only remainder shapes (e.g. blending heights).
+                    let (_, stamp) = chunk
+                        .extras
+                        .iter_mut()
+                        .find(|(name, _)| name == "DataVersion")
+                        .expect("upgraded chunk has DataVersion");
+                    *stamp = Tag::Int(from);
+                    stats.data_version = from;
+                }
                 // SavedTick.filterTickListForChunk discards work outside its
                 // serialized owner, even when the containing chunk exists.
                 // Leave unknown identities to the existing strict validation.

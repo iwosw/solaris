@@ -167,6 +167,7 @@ fn teleport_player(request: &str, session: u64, x: f64, y: f64, z: f64) -> Comma
     commands::Command::TeleportPlayer(commands::TeleportPlayer {
         request: request.to_owned(),
         session,
+        dimension: "minecraft:overworld".to_owned(),
         position: types::Position { x, y, z },
     })
 }
@@ -176,6 +177,7 @@ fn teleport_player(request: &str, session: u64, x: f64, y: f64, z: f64) -> Comma
 fn teleport_failure_name(failure: &PlayerTeleportFailure) -> &'static str {
     match failure {
         PlayerTeleportFailure::PlayerUnavailable => "player-unavailable",
+        PlayerTeleportFailure::DimensionMismatch => "dimension-mismatch",
         PlayerTeleportFailure::TeleportPending => "teleport-pending",
         PlayerTeleportFailure::RuntimeUnavailable => "runtime-unavailable",
     }

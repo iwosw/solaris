@@ -34,7 +34,7 @@ async fn send_handshake(conn: &mut Connection, next_state: ProtoNextState, addre
 async fn status_handshake_routes_to_status() {
     let (mut client, mut server) = loopback_pair().await;
     send_handshake(&mut client, ProtoNextState::Status, "localhost").await;
-    let outcome = super::read_handshake(&mut server, true)
+    let outcome = super::read_handshake(&mut server, true, None)
         .await
         .unwrap()
         .unwrap();
@@ -47,7 +47,7 @@ async fn status_handshake_routes_to_status() {
 async fn login_handshake_routes_to_login() {
     let (mut client, mut server) = loopback_pair().await;
     send_handshake(&mut client, ProtoNextState::Login, "example.com").await;
-    let outcome = super::read_handshake(&mut server, false)
+    let outcome = super::read_handshake(&mut server, false, None)
         .await
         .unwrap()
         .unwrap();
@@ -59,7 +59,7 @@ async fn login_handshake_routes_to_login() {
 async fn transfer_handshake_is_login_only_when_accepted() {
     let (mut client, mut server) = loopback_pair().await;
     send_handshake(&mut client, ProtoNextState::Transfer, "example.com").await;
-    let outcome = super::read_handshake(&mut server, true)
+    let outcome = super::read_handshake(&mut server, true, None)
         .await
         .unwrap()
         .unwrap();
@@ -70,7 +70,9 @@ async fn transfer_handshake_is_login_only_when_accepted() {
     let (mut client, mut server) = loopback_pair().await;
     send_handshake(&mut client, ProtoNextState::Transfer, "example.com").await;
     let server_task = tokio::spawn(async move {
-        let outcome = super::read_handshake(&mut server, false).await.unwrap();
+        let outcome = super::read_handshake(&mut server, false, None)
+            .await
+            .unwrap();
         assert!(outcome.is_none(), "disabled transfers are refused");
     });
     let disconnect = client
@@ -98,7 +100,7 @@ async fn mismatched_status_protocol_still_routes_to_status() {
         .await
         .unwrap();
 
-    let outcome = super::read_handshake(&mut server, true)
+    let outcome = super::read_handshake(&mut server, true, None)
         .await
         .unwrap()
         .unwrap();
@@ -119,7 +121,7 @@ async fn mismatched_login_protocol_gets_vanilla_incompatible_disconnect() {
         .unwrap();
     let server_task = tokio::spawn(async move {
         assert!(
-            super::read_handshake(&mut server, true)
+            super::read_handshake(&mut server, true, None)
                 .await
                 .unwrap()
                 .is_none()
@@ -143,12 +145,12 @@ async fn mismatched_login_protocol_gets_vanilla_incompatible_disconnect() {
 async fn mismatched_status_protocol_receives_supported_version_metadata() {
     let (mut client, mut server) = loopback_pair().await;
     let server_task = tokio::spawn(async move {
-        let outcome = super::read_handshake(&mut server, true)
+        let outcome = super::read_handshake(&mut server, true, None)
             .await
             .unwrap()
             .unwrap();
         assert_eq!(outcome.next, NextState::Status);
-        crate::status::handle_status(&mut server, "motd", 20, 3)
+        crate::status::handle_status(&mut server, "motd", 20, 3, false)
             .await
             .unwrap();
     });

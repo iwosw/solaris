@@ -121,6 +121,43 @@ fn signed_message_commands_reach_the_same_authority_as_unsigned_commands() {
 }
 
 #[test]
+fn decoded_private_and_team_messages_share_mute_admission() {
+    for command in [
+        "reply hello",
+        "/reply hello",
+        "msg Bob hello",
+        "tell Bob hello",
+        "w Bob hello",
+        "me waves",
+        "teammsg hello",
+        "tm hello",
+    ] {
+        let inputs = decode(
+            ServerboundChatCommand::ID,
+            body(&ServerboundChatCommand {
+                command: command.into(),
+            }),
+            &mut state(),
+        )
+        .unwrap();
+        assert_eq!(inputs.len(), 1);
+        assert!(
+            inputs[0].is_communication(),
+            "decoded command must reach the mute gate: {command}"
+        );
+    }
+    let inputs = decode(
+        ServerboundChatCommand::ID,
+        body(&ServerboundChatCommand {
+            command: "home base".into(),
+        }),
+        &mut state(),
+    )
+    .unwrap();
+    assert!(!inputs[0].is_communication());
+}
+
+#[test]
 fn legal_long_commands_are_not_subject_to_chat_length_limit() {
     let command = format!("tellraw @s {{\"text\":\"{}\"}}", "x".repeat(300));
     let inputs = decode(
@@ -151,13 +188,27 @@ fn elytra_start_command_reaches_authoritative_core() {
 #[test]
 fn teleport_confirmation_reaches_the_core_and_rejects_malformed_bodies() {
     use mc_protocol::packets::play::ConfirmTeleportation;
-    let packet = ConfirmTeleportation { teleport_id: 37 };
+    let packet = ConfirmTeleportation {
+        teleport_id: 37,
+        position: [1.5, 70.0, -3.25],
+        yaw: 45.0,
+        pitch: 10.0,
+    };
     assert_eq!(
         decode(ConfirmTeleportation::ID, body(&packet), &mut state()).unwrap(),
-        vec![PlayerInput::ConfirmTeleport {
-            connection: conn(),
-            teleport_id: 37,
-        }]
+        vec![
+            PlayerInput::ConfirmTeleport {
+                connection: conn(),
+                teleport_id: 37,
+            },
+            PlayerInput::Move {
+                connection: conn(),
+                position: [1.5, 70.0, -3.25],
+                yaw: 45.0,
+                pitch: 10.0,
+                on_ground: false,
+            },
+        ]
     );
     assert!(decode(ConfirmTeleportation::ID, Vec::new(), &mut state()).is_err());
     let mut trailing = body(&packet);
@@ -191,30 +242,30 @@ fn crafter_slot_toggle_exact_wire_reaches_core_and_rejects_trailing_bytes() {
 
 #[test]
 fn merchant_select_trade_matches_vanilla_varint_and_rejects_trailing_bytes() {
-    // Local 26.1.2 javap: GameProtocols registration 51; SelectTrade.write
+    // Local 26.3 packets.json: select_trade = 52; SelectTrade.write still
     // writes precisely one VarInt, with no container or revision field.
     use mc_protocol::packets::play::ServerboundSelectTrade;
-    assert_eq!(ServerboundSelectTrade::ID, 0x33);
+    assert_eq!(ServerboundSelectTrade::ID, 0x34);
     assert_eq!(
-        decode(0x33, vec![0xac, 0x02], &mut state()).unwrap(),
+        decode(0x34, vec![0xac, 0x02], &mut state()).unwrap(),
         vec![PlayerInput::SelectTrade {
             connection: conn(),
             offer: 300
         }]
     );
-    assert!(decode(0x33, vec![0x01, 0x00], &mut state()).is_err());
-    assert!(decode(0x33, vec![0xff, 0xff, 0xff, 0xff, 0x0f], &mut state()).is_err());
+    assert!(decode(0x34, vec![0x01, 0x00], &mut state()).is_err());
+    assert!(decode(0x34, vec![0xff, 0xff, 0xff, 0xff, 0x0f], &mut state()).is_err());
 }
 
 #[test]
 fn beacon_set_effect_reaches_core_with_zero_based_ids() {
-    // Local 26.1.2 javap: SERVERBOUND_SET_BEACON is the 53rd serverbound
-    // game addPacket call = wire id 0x34; body is two `optional(holderRegistry)`
-    // fields: one boolean each, then a VarInt zero-based mob_effect id.
+    // Local 26.3 packets.json: set_beacon = 53; body remains two
+    // `optional(holderRegistry)` fields: one boolean each, then a VarInt
+    // zero-based mob_effect id.
     use mc_protocol::packets::play::ServerboundSetBeacon;
-    assert_eq!(ServerboundSetBeacon::ID, 0x34);
+    assert_eq!(ServerboundSetBeacon::ID, 0x35);
     assert_eq!(
-        decode(0x34, vec![1, 1, 1, 9], &mut state()).unwrap(),
+        decode(0x35, vec![1, 1, 1, 9], &mut state()).unwrap(),
         vec![PlayerInput::SetBeacon {
             connection: conn(),
             primary: Some(1),
@@ -222,15 +273,15 @@ fn beacon_set_effect_reaches_core_with_zero_based_ids() {
         }]
     );
     assert_eq!(
-        decode(0x34, vec![0, 0], &mut state()).unwrap(),
+        decode(0x35, vec![0, 0], &mut state()).unwrap(),
         vec![PlayerInput::SetBeacon {
             connection: conn(),
             primary: None,
             secondary: None,
         }]
     );
-    assert!(decode(0x34, vec![1, 1], &mut state()).is_err());
-    assert!(decode(0x34, vec![1, 1, 1, 9, 0], &mut state()).is_err());
+    assert!(decode(0x35, vec![1, 1], &mut state()).is_err());
+    assert!(decode(0x35, vec![1, 1, 1, 9, 0], &mut state()).is_err());
 }
 
 #[test]
@@ -543,13 +594,11 @@ fn use_item_decodes() {
 }
 
 #[test]
-fn swing_emits_nothing() {
+fn punch_emits_nothing() {
     let mut s = state();
     let out = decode(
-        0x3F,
-        body(&mc_protocol::packets::play::ServerboundSwing {
-            hand: InteractionHand::MainHand,
-        }),
+        mc_protocol::packets::play::ServerboundPunch::ID,
+        body(&mc_protocol::packets::play::ServerboundPunch),
         &mut s,
     )
     .unwrap();
@@ -557,23 +606,21 @@ fn swing_emits_nothing() {
 }
 
 #[test]
-fn swing_before_or_after_attack_never_adds_a_second_attack_intent() {
-    for swing_first in [true, false] {
+fn punch_before_or_after_attack_never_adds_a_second_attack_intent() {
+    for punch_first in [true, false] {
         let mut s = state();
         let attack = (
             ServerboundAttack::ID,
             body(&ServerboundAttack { entity_id: 159 }),
         );
-        let swing = (
-            0x3F,
-            body(&mc_protocol::packets::play::ServerboundSwing {
-                hand: InteractionHand::MainHand,
-            }),
+        let punch = (
+            mc_protocol::packets::play::ServerboundPunch::ID,
+            body(&mc_protocol::packets::play::ServerboundPunch),
         );
-        let frames = if swing_first {
-            [swing, attack]
+        let frames = if punch_first {
+            [punch, attack]
         } else {
-            [attack, swing]
+            [attack, punch]
         };
         let mut inputs = Vec::new();
         for (id, frame) in frames {
@@ -1025,7 +1072,7 @@ fn sneak_and_creative_slot_become_inputs() {
     ));
     let stack = mc_data::item_stack::ItemStack::new(1, 5);
     let out = decode(
-        0x38,
+        mc_protocol::packets::play::ServerboundSetCreativeModeSlot::ID,
         body(
             &mc_protocol::packets::play::ServerboundSetCreativeModeSlot {
                 slot: 36,

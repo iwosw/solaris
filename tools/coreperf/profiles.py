@@ -141,7 +141,11 @@ async def measure(args: argparse.Namespace, directory: Path, world: Path,
     config, url, game = load.config(args, directory, world, args.clients, operators=True)
     # Idle measures simulation, not the default pause-when-empty policy.
     config.write_text(config.read_text().replace("[server]\n", "[server]\npause_when_empty_seconds = -1\n", 1))
-    session = compare.CoreSession(args, directory, config)
+    if getattr(args, "remote_host", None):
+        from tools.bench.remote_session import RemoteSession  # imported lazily: only vps runs need it
+        session = RemoteSession(args, directory, config, world)
+    else:
+        session = compare.CoreSession(args, directory, config)
     plan = schedule(args)
     load.scale.dump(directory / "schedule.json", plan)
     result: dict[str, Any] = {"status": "failed", "schedule": plan, "config": str(config),
@@ -150,7 +154,10 @@ async def measure(args: argparse.Namespace, directory: Path, world: Path,
     process_rows: list[dict[str, Any]] = []
     try:
         await session.start_server()
-        await load.wait_dashboard(session, url, args.readiness_seconds)
+        if hasattr(session, "wait_ready"):
+            await session.wait_ready(url, args.readiness_seconds)
+        else:
+            await load.wait_dashboard(session, url, args.readiness_seconds)
         if args.clients:
             command = ["taskset", "-c", args.bot_cpus,
                        *load.bot_command(args, directory, game, args.clients, {"group_size": 1}),
@@ -161,6 +168,8 @@ async def measure(args: argparse.Namespace, directory: Path, world: Path,
                 command += ["--anchors", str(directory / "anchors.json")]
             else:
                 command += ["--explore", "--no-edits"]
+            if hasattr(session, "bot_command"):  # remote server: bots dial the VPS, not loopback
+                command = session.bot_command(command)
             result["bot_command"] = command
             await session.spawn("bots", command, events=True)
             result["ready"] = await session.ready(args.clients, args.readiness_seconds)
@@ -176,7 +185,9 @@ async def measure(args: argparse.Namespace, directory: Path, world: Path,
             await stdin.drain()
             running = await load._event(session, "running", args.readiness_seconds)
             epoch = running["open_loop"]["epoch_unix_ns"]
-        start = epoch + round(args.warmup_seconds * 1e9)
+        # Tick timestamps are on the server's clock; a remote session reports its offset from ours.
+        offset = getattr(session, "clock_offset_ns", 0)
+        start = epoch + offset + round(args.warmup_seconds * 1e9)
         end = start + round(args.measure_seconds * 1e9)
         result.update(epoch_unix_ns=epoch, start_unix_ns=start, end_unix_ns=end)
         deadline = time.monotonic() + args.warmup_seconds + args.measure_seconds + args.readiness_seconds
@@ -193,7 +204,7 @@ async def measure(args: argparse.Namespace, directory: Path, world: Path,
                         raise ValueError("source wall clock regressed")
                     previous_wall_start = tick["wall_start_unix_ns"]
                 stats = await session.http(url + "/stats", 2)
-                row = {"captured_unix_ns": time.time_ns(), "processes": session.process_samples(),
+                row = {"captured_unix_ns": time.time_ns() + offset, "processes": session.process_samples(),
                        "stats": stats, "bots": session.latest_bot}
                 raw.write(json.dumps({"metrics": metric, **row}) + "\n")
                 samples.extend(metric["samples"])
@@ -299,6 +310,19 @@ def main() -> int:
     parser.add_argument("--vanilla-data-dir", type=Path, default=load.ROOT / "data/vanilla")
     parser.add_argument("--server-cpus", default="0-7")
     parser.add_argument("--bot-cpus", default="8-11")
+    parser.add_argument("--server-wrapper", default="",
+                        help="command prefix placed before the pinned server (e.g. a systemd-run memory scope; must exec in place)")
+    remote = parser.add_argument_group("remote server (tools.bench vps)",
+        "Server runs on a remote host in its own transient systemd unit; bots stay local. --server-cpus then names REMOTE CPUs.")
+    remote.add_argument("--remote-host", help="ssh destination, e.g. root@203.0.113.7")
+    remote.add_argument("--remote-ssh-option", action="append", default=[], help="extra ssh option, repeatable (e.g. -p)")
+    remote.add_argument("--remote-dir", default="/var/tmp", help="parent of the per-run solaris-bench-* directory")
+    remote.add_argument("--remote-data-dir", help="imported content cache on the remote host (dir with version.json)")
+    remote.add_argument("--remote-game-port", type=int, default=25590)
+    remote.add_argument("--remote-dash-port", type=int, default=25591)
+    remote.add_argument("--remote-memory-max", help="MemoryMax of the remote server unit")
+    remote.add_argument("--remote-tunnel-game", action="store_true", help="carry bot traffic through ssh (adds sshd CPU on the host)")
+    remote.add_argument("--remote-bot-host", help="address bots dial (default: host part of --remote-host)")
     parser.add_argument("--warmup-seconds", type=int, default=30)
     parser.add_argument("--measure-seconds", type=int, default=120)
     parser.add_argument("--readiness-seconds", type=int, default=1800)

@@ -33,9 +33,11 @@ pub struct CoreConfig {
     pub vanilla_data_dir: Option<PathBuf>,
     /// Strictly discovered production component package directory supplied by edge.
     pub plugin_directory: Option<PathBuf>,
-    /// `false` (default): native sessions play immediately.
+    /// `false` (default): native sessions play immediately unless an
+    /// auth-capable plugin package is deployed, which forces the gate on.
     /// `true`: new native sessions start locked and fail closed until the
-    /// auth plugin unlocks them. Owned by the AuthGate native gate.
+    /// auth plugin unlocks them; startup fails without such a package.
+    /// Owned by the AuthGate native gate.
     pub require_plugin_login: bool,
     /// Consecutive non-descending airborne movement packets before the native
     /// fly check corrects and disconnects a survival player. Zero disables it.

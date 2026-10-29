@@ -20,7 +20,7 @@ import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.shapes.VoxelShape;
 
 public final class CollisionShapeExtractor {
-    private static final String EXPECTED_VERSION = "26.1.2";
+    private static final String EXPECTED_VERSION = "26.3";
     private static final int UNITS_PER_BLOCK = 4096;
     private static final byte[] MAGIC = {'S', 'O', 'L', 'C', 'O', 'L', 'L', '1'};
     private static final int MISSING_SHAPE = 0xffff;

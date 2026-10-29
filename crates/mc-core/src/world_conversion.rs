@@ -3,7 +3,7 @@
 //! only vanilla's storage path is relocated. POI files remain wholly opaque.
 //! Typed metadata whose payload no DFU fixer rewrote since 4772 (world clocks,
 //! wandering trader, scheduled/custom events) is accepted at its stored 4772
-//! stamp exactly as vanilla decodes it; everything else still requires 4790.
+//! stamp exactly as vanilla decodes it. Native 26.3 records are schema-normalized.
 mod census;
 #[cfg(test)]
 mod census_tests;
@@ -24,6 +24,8 @@ mod old_world_import_tests;
 mod roundtrip_tests;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod v263_tests;
 
 use crate::{CoreConfig, CoreError};
 use mc_nbt::Tag;
@@ -36,6 +38,7 @@ use std::path::{Path, PathBuf};
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub(super) struct ConversionStats {
+    pub data_version: i32,
     pub tick: u64,
     pub durable_tick: u64,
     pub chunks: u64,
@@ -215,7 +218,7 @@ fn convert(
         operation: operation.into(),
         source: source.into(),
         destination: destination.into(),
-        data_version: 4790,
+        data_version: mc_world::anvil::TARGET_DATA_VERSION,
         native_schema: mc_world::native::NATIVE_PROTOTYPE_SCHEMA,
         checkpoint_tick: None,
         replay_tick: None,
@@ -330,6 +333,7 @@ fn convert(
         sync_tree(&stage)?;
         receipt.checkpoint_tick = Some(stats.durable_tick);
         receipt.replay_tick = Some(stats.tick);
+        receipt.data_version = stats.data_version.max(mc_world::anvil::TARGET_DATA_VERSION);
         for (key, value) in [
             ("chunks", stats.chunks),
             ("non_full_empty_chunks", stats.non_full_empty_chunks),
@@ -377,9 +381,10 @@ fn convert(
         receipt.known_gaps.extend(stats.known_gaps);
         receipt.opaque_retention = stats.opaque_retention;
         receipt.upgrades = stats.upgrades;
-        receipt
-            .normalizations
-            .push("Anvil payloads use DataVersion 4790 and recovered checkpoint time".into());
+        receipt.normalizations.push(format!(
+            "Anvil {} uses DataVersion {} and recovered checkpoint time",
+            operation, receipt.data_version
+        ));
         receipt
             .opaque_retention
             .push("unknown NBT fields and safe auxiliary files retained except explicit empty-chunk regeneration and duplicate-UUID dispositions".into());
@@ -817,8 +822,9 @@ pub(super) fn declared_version(tag: &Tag, path: &Path) -> Result<i32, CoreError>
 /// floor (>= 2586) through the target.
 pub(super) fn source_version(tag: &Tag, path: &Path) -> Result<i32, CoreError> {
     let version = declared_version(tag, path)?;
-    if !(mc_world::anvil::upgrade::MIN_DATA_VERSION..=mc_world::anvil::TARGET_DATA_VERSION)
-        .contains(&version)
+    if version != mc_world::anvil::upgrade::NATIVE_26_3_DATA_VERSION
+        && !(mc_world::anvil::upgrade::MIN_DATA_VERSION..=mc_world::anvil::TARGET_DATA_VERSION)
+            .contains(&version)
     {
         return Err(fail(format!(
             "{}: {}",
@@ -842,7 +848,9 @@ pub(super) fn player_source_version(tag: &Tag, path: &Path) -> Result<i32, CoreE
         }
         Err(error) => return Err(error),
     };
-    if version > mc_world::anvil::TARGET_DATA_VERSION {
+    if version > mc_world::anvil::TARGET_DATA_VERSION
+        && version != mc_world::anvil::upgrade::NATIVE_26_3_DATA_VERSION
+    {
         return Err(fail(format!(
             "{}: {}",
             path.display(),
@@ -863,7 +871,9 @@ pub(super) fn saved_data_source_version(tag: &Tag, path: &Path) -> Result<i32, C
         Err(error) if error.to_string().ends_with("missing DataVersion") => 1343,
         Err(error) => return Err(error),
     };
-    if version > mc_world::anvil::TARGET_DATA_VERSION {
+    if version > mc_world::anvil::TARGET_DATA_VERSION
+        && version != mc_world::anvil::upgrade::NATIVE_26_3_DATA_VERSION
+    {
         return Err(fail(format!(
             "{}: unsupported saved-data DataVersion {version}; newer than {}",
             path.display(),
@@ -900,6 +910,7 @@ pub(super) fn check_version(tag: &Tag, path: &Path) -> Result<(), CoreError> {
         "custom_boss_events.dat",
     ];
     if version == mc_world::anvil::TARGET_DATA_VERSION
+        || version == mc_world::anvil::upgrade::NATIVE_26_3_DATA_VERSION
         || (version == 4772 && DFU_NEUTRAL_SINCE_4772.contains(&name))
     {
         return Ok(());

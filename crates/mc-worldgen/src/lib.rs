@@ -120,7 +120,10 @@ pub use terrain::{HeightContextStats, height_context_stats, reset_height_context
 ///
 /// 29: persist native structure starts and generate Overworld structures,
 /// modern jigsaw families, Nether landscapes/resources, and End outer cities.
-pub const WORLDGEN_REVISION: u32 = 29;
+///
+/// 30: correct the deepslate vertical gradient to Y 0..8 with linear probability.
+/// Existing chunks are retained by the explicit offline worldgen upgrade.
+pub const WORLDGEN_REVISION: u32 = 30;
 
 /// Crate version, exposed so other crates and the binary can report it.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

@@ -168,9 +168,26 @@ fn load(output: &TickOutput, viewer: &mut ViewerState, cache: &mut ChunkPacketCa
     for chunk in chunks {
         assert_eq!(
             chunk.light,
-            chunk_light(&output.snapshot.chunks[chunk.chunk_x as usize].chunk)
+            wire_light(&output.snapshot.chunks[chunk.chunk_x as usize].chunk)
         );
     }
+}
+
+/// `chunk_light` as a 26.3 client decodes it: `BitSet.valueOf` drops
+/// trailing zero words, so an all-zero mask arrives as an empty one.
+fn wire_light(chunk: &Chunk) -> LightData {
+    let mut light = chunk_light(chunk);
+    for mask in [
+        &mut light.sky_y_mask,
+        &mut light.block_y_mask,
+        &mut light.empty_sky_y_mask,
+        &mut light.empty_block_y_mask,
+    ] {
+        while mask.last() == Some(&0) {
+            mask.pop();
+        }
+    }
+    light
 }
 
 fn block_nibble(light: &LightData, x: usize, y: i32, z: usize) -> u8 {
@@ -257,7 +274,7 @@ fn viewer_light_baseline_shares_nibble_storage_until_snapshot_mutation() {
         allocation
     );
     baseline.update((0, 0), &next, 2, ConnectionId(7), &mut packets, &mut 1);
-    assert_eq!(updates(&packets)[0].light, chunk_light(&next));
+    assert_eq!(updates(&packets)[0].light, wire_light(&next));
     baseline.update((0, 0), &next, 3, ConnectionId(7), &mut packets, &mut 1);
     assert_eq!(updates(&packets).len(), 1);
 }
@@ -285,7 +302,7 @@ fn viewer_light_baseline_diffs_a_chunk_only_when_its_revision_moves() {
     assert!(packets.is_empty());
     baseline.update((0, 0), &next, 3, ConnectionId(7), &mut packets, &mut 1);
     assert_eq!(updates(&packets).len(), 1);
-    assert_eq!(updates(&packets)[0].light, chunk_light(&next));
+    assert_eq!(updates(&packets)[0].light, wire_light(&next));
 }
 
 #[test]
@@ -317,8 +334,8 @@ fn torch_placement_and_removal_publish_blocks_and_neighbour_light_without_full_c
     );
     let light = updates(&packets);
     assert_eq!(light.len(), 2);
-    assert_eq!(light[0].light, chunk_light(&FIXTURES.lit[0]));
-    assert_eq!(light[1].light, chunk_light(&FIXTURES.lit[1]));
+    assert_eq!(light[0].light, wire_light(&FIXTURES.lit[0]));
+    assert_eq!(light[1].light, wire_light(&FIXTURES.lit[1]));
     assert!(updates(&plan_viewer(&quiet(&placed), &mut viewer, 1, &cache)).is_empty());
     let removed = output(&FIXTURES.dark, 3, Some(0));
     let packets = plan_viewer(&removed, &mut viewer, 1, &cache);
@@ -331,7 +348,7 @@ fn torch_placement_and_removal_publish_blocks_and_neighbour_light_without_full_c
     let light = updates(&packets);
     assert_eq!(light.len(), 2);
     for update in light {
-        assert_eq!(update.light.block_y_mask, vec![0]);
+        assert!(update.light.block_y_mask.is_empty());
         assert_eq!(update.light.empty_block_y_mask, vec![(1_i64 << 26) - 1]);
         assert!(update.light.block_updates.is_empty());
     }
@@ -376,7 +393,7 @@ fn credit_debt_survives_quiet_ticks_and_uses_latest_baked_arrays() {
     assert_eq!(neighbour[0].chunk_x, 1);
     assert_eq!(
         neighbour[0].light,
-        chunk_light(&latest.snapshot.chunks[1].chunk)
+        wire_light(&latest.snapshot.chunks[1].chunk)
     );
     assert!(updates(&plan_viewer(&latest, &mut viewer, 1, &cache)).is_empty());
 }

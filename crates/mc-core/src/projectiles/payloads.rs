@@ -801,7 +801,7 @@ pub(crate) fn record_crossbow_kill(
     crate::advancements::trigger(state, actor, "minecraft:killed_by_arrow", event);
 }
 
-pub(super) fn level_event(state: &mut TickState, position: [f64; 3], event: i32, data: i32) {
+pub(crate) fn level_event(state: &mut TickState, position: [f64; 3], event: i32, data: i32) {
     let recipients: Vec<_> = state
         .players
         .iter()

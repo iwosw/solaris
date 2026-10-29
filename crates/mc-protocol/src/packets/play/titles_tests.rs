@@ -2,7 +2,7 @@ use super::*;
 
 #[test]
 fn title_text_wire_id_and_component_round_trip() {
-    assert_eq!(ClientboundSetTitleText::ID, 0x72);
+    assert_eq!(ClientboundSetTitleText::ID, 0x74);
     let packet = ClientboundSetTitleText {
         content: Tag::Compound(vec![("text".into(), Tag::String("Hello".into()))]),
     };
@@ -16,8 +16,8 @@ fn title_text_wire_id_and_component_round_trip() {
 
 #[test]
 fn subtitle_and_action_bar_wire_ids_and_components_round_trip() {
-    assert_eq!(ClientboundSetSubtitleText::ID, 0x70);
-    assert_eq!(ClientboundSetActionBarText::ID, 0x57);
+    assert_eq!(ClientboundSetSubtitleText::ID, 0x72);
+    assert_eq!(ClientboundSetActionBarText::ID, 0x59);
     let subtitle = ClientboundSetSubtitleText {
         content: Tag::String("S".into()),
     };
@@ -45,7 +45,7 @@ fn subtitle_and_action_bar_wire_ids_and_components_round_trip() {
 
 #[test]
 fn titles_animation_writes_three_big_endian_ints() {
-    assert_eq!(ClientboundSetTitlesAnimation::ID, 0x73);
+    assert_eq!(ClientboundSetTitlesAnimation::ID, 0x75);
     let packet = ClientboundSetTitlesAnimation {
         fade_in: 10,
         stay: 70,

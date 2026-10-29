@@ -10,8 +10,8 @@ on:
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: "-D warnings"
-  SOLARIS_LOADER_REVISION: 060cf44b264a8404a6c8cf629c14867d6e5cd212
-  SOLARIS_PLUGINS_REVISION: 2e6d6869d6f58c5fb5a377038cea1f7f69485fb8
+  SOLARIS_LOADER_REVISION: ae6e457ad13b56394987c7b68e202a3eb2cb0013
+  SOLARIS_PLUGINS_REVISION: 63540715138d5e74d5a00a595992d5ebe9056371
 
 permissions:
   contents: read
@@ -91,30 +91,15 @@ jobs:
         with:
           distribution: temurin
           java-version: "25"
-      - name: Extract local vanilla test data (never redistributed)
+      - name: Import the canonical 26.3 content cache as local test data (never redistributed)
         run: |
-          python3 - <<'PY'
-          import hashlib
-          import json
-          from pathlib import Path
-          from urllib.request import urlopen
-
-          version = "26.1.2"
-          with urlopen("https://piston-meta.mojang.com/mc/game/version_manifest_v2.json") as response:
-              versions = json.load(response)["versions"]
-          metadata_url = next(entry["url"] for entry in versions if entry["id"] == version)
-          with urlopen(metadata_url) as response:
-              server = json.load(response)["downloads"]["server"]
-          with urlopen(server["url"]) as response:
-              content = response.read()
-          if hashlib.sha1(content).hexdigest() != server["sha1"]:
-              raise SystemExit("Minecraft server checksum mismatch")
-          destination = Path(".analysis/server.jar")
-          destination.parent.mkdir(parents=True, exist_ok=True)
-          destination.write_bytes(content)
-          print(f"Verified Minecraft {version} server: {server['sha1']}")
-          PY
-          tools/extract-vanilla-data.sh .analysis/server.jar
+          set -euo pipefail
+          # `content import` verifies Mojang's size/sha1 and derives the same
+          # composite cache operators use (26.3 identity, 26.1.2 gameplay pack).
+          XDG_DATA_HOME="$RUNNER_TEMP/xdg" cargo run --locked -p mc-edge --bin solaris-v2 -- content import --version 26.3 --download
+          rm -rf data/vanilla
+          mkdir -p data
+          cp -a "$RUNNER_TEMP/xdg/solaris/content/26.3" data/vanilla
       - run: python3 -m tools.harness run test --workspace --all-targets --partition count:${{ matrix.shard }}/4
       - name: Retain failed test receipts
         if: failure()
@@ -326,17 +311,21 @@ jobs:
           TAG: ${{ github.ref_name }}
         run: |
           set -euo pipefail
-          release_args=(--repo "$GITHUB_REPOSITORY" --verify-tag --title "Solaris ${TAG}")
+          title="Solaris ${TAG}"
+          release_args=(--repo "$GITHUB_REPOSITORY" --verify-tag)
           # Every 0.x release is preliminary (draft maturity); keep it off `latest`.
           if [[ "$TAG" == *-* || "$TAG" == v0.* ]]; then
             release_args+=(--prerelease)
           fi
           notes_file="docs/releases/${TAG}.md"
           if [[ -f "$notes_file" ]]; then
+            # The notes' first heading names the release (e.g. its codename).
+            title="$(sed -n 's/^# //p' "$notes_file" | head -n 1)"
             release_args+=(--notes-file "$notes_file")
           else
             release_args+=(--generate-notes)
           fi
+          release_args+=(--title "$title")
           gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 || \
             gh release create "$TAG" "${release_args[@]}"
           gh release upload "$TAG" \

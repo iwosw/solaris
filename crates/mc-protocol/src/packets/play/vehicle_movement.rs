@@ -55,7 +55,7 @@ pub struct ClientboundMoveVehicle {
 }
 
 impl Packet for ClientboundMoveVehicle {
-    const ID: i32 = 0x39;
+    const ID: i32 = 0x3A;
 
     fn encode<B: BufMut>(&self, buf: &mut B) -> Result<(), CodecError> {
         buf.write_f64(self.x);

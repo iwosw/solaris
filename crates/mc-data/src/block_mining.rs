@@ -463,7 +463,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "requires local 26.1.2 block mining and blocks reports"]
+    #[ignore = "requires local 26.3 block mining and blocks reports"]
     fn real_table_matches_vanilla_2612_blocks() {
         let workspace = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .parent()
@@ -481,8 +481,8 @@ mod tests {
 
         let blocks = crate::blocks::load_blocks_report(blocks_path).unwrap();
         let table = load(mining_path).unwrap();
-        assert_eq!(table.version, "26.1.2");
-        assert_eq!(table.len(), 29_873);
+        assert_eq!(table.version, "26.3");
+        assert_eq!(table.len(), 35_723);
 
         let state_id = |name: &str| {
             blocks

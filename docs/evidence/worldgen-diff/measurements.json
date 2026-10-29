@@ -1,0 +1,418 @@
+{
+  "environment": "Linux-7.0.0-38-generic-x86_64-with-glibc2.43",
+  "scope": "contended, shared lane; single-threaded in-process, no lighting in timer",
+  "test": "terrain::profile_tests::parity_stages",
+  "binary_sha256": {
+    "before": "7d26f8f268bd51868677529c6afd392b9a1551ccb584d88c85938c9ba4a08ce5",
+    "after": "b378ad128a3229bbae8ff6914942240067e4c6a3e39fb0b41e234ef196778fb0"
+  },
+  "runs": [
+    {
+      "repetition": 0,
+      "variant": "before",
+      "command": [
+        "/run/media/kaiserroman/games/solaris-work/wt/worldgen/.analysis/worldgen-diff/before-test",
+        "--ignored",
+        "--exact",
+        "terrain::profile_tests::parity_stages",
+        "--nocapture",
+        "--test-threads=1"
+      ],
+      "log": "0-before.log",
+      "samples": [
+        {
+          "seed": 0,
+          "run": 0,
+          "chunks": 36,
+          "ms_per_chunk": 22.923298472222225,
+          "density_noise": 14.855368166666668,
+          "surface_fill": 0.87285675,
+          "carvers": 0.023442666666666667,
+          "features": 7.151032333333333,
+          "structures": 0.00307375,
+          "other": 0.008253611111111111,
+          "lighting": 4.3303920625
+        },
+        {
+          "seed": 81,
+          "run": 0,
+          "chunks": 36,
+          "ms_per_chunk": 18.42238222222222,
+          "density_noise": 13.156710194444445,
+          "surface_fill": 0.8396734444444445,
+          "carvers": 0.03341622222222222,
+          "features": 4.07137275,
+          "structures": 0.30608019444444445,
+          "other": 0.006087888888888889,
+          "lighting": 3.247347875
+        },
+        {
+          "seed": 497625,
+          "run": 0,
+          "chunks": 36,
+          "ms_per_chunk": 23.6389625,
+          "density_noise": 16.454764722222222,
+          "surface_fill": 1.0752431944444443,
+          "carvers": 0.03464236111111111,
+          "features": 6.054558083333333,
+          "structures": 0.0033068888888888887,
+          "other": 0.007194166666666666,
+          "lighting": 3.0906626875
+        }
+      ]
+    },
+    {
+      "repetition": 0,
+      "variant": "after",
+      "command": [
+        "/run/media/kaiserroman/games/solaris-work/wt/worldgen/.analysis/worldgen-diff/after-test",
+        "--ignored",
+        "--exact",
+        "terrain::profile_tests::parity_stages",
+        "--nocapture",
+        "--test-threads=1"
+      ],
+      "log": "0-after.log",
+      "samples": [
+        {
+          "seed": 0,
+          "run": 0,
+          "chunks": 36,
+          "ms_per_chunk": 19.634448250000002,
+          "density_noise": 12.138526,
+          "surface_fill": 0.9066612222222221,
+          "carvers": 0.022946249999999998,
+          "features": 6.547843388888889,
+          "structures": 0.0022474166666666667,
+          "other": 0.007718750000000001,
+          "lighting": 3.3006756875
+        },
+        {
+          "seed": 81,
+          "run": 0,
+          "chunks": 36,
+          "ms_per_chunk": 16.33829422222222,
+          "density_noise": 11.301430305555556,
+          "surface_fill": 0.8791736944444445,
+          "carvers": 0.03150758333333334,
+          "features": 3.9026789444444443,
+          "structures": 0.20867288888888888,
+          "other": 0.005672194444444444,
+          "lighting": 3.32174925
+        },
+        {
+          "seed": 497625,
+          "run": 0,
+          "chunks": 36,
+          "ms_per_chunk": 21.185745305555557,
+          "density_noise": 14.162139444444444,
+          "surface_fill": 0.9981891388888889,
+          "carvers": 0.0318645,
+          "features": 5.977110916666667,
+          "structures": 0.0021326388888888888,
+          "other": 0.005539777777777778,
+          "lighting": 3.3961688125
+        }
+      ]
+    },
+    {
+      "repetition": 1,
+      "variant": "before",
+      "command": [
+        "/run/media/kaiserroman/games/solaris-work/wt/worldgen/.analysis/worldgen-diff/before-test",
+        "--ignored",
+        "--exact",
+        "terrain::profile_tests::parity_stages",
+        "--nocapture",
+        "--test-threads=1"
+      ],
+      "log": "1-before.log",
+      "samples": [
+        {
+          "seed": 0,
+          "run": 0,
+          "chunks": 36,
+          "ms_per_chunk": 22.611849083333333,
+          "density_noise": 14.956662083333335,
+          "surface_fill": 0.9769578611111113,
+          "carvers": 0.024887083333333334,
+          "features": 6.632533861111111,
+          "structures": 0.003221638888888889,
+          "other": 0.008273333333333334,
+          "lighting": 4.337048375
+        },
+        {
+          "seed": 81,
+          "run": 0,
+          "chunks": 36,
+          "ms_per_chunk": 19.901479249999998,
+          "density_noise": 14.242563694444446,
+          "surface_fill": 0.9080196388888889,
+          "carvers": 0.03498491666666667,
+          "features": 4.347696444444445,
+          "structures": 0.35229777777777777,
+          "other": 0.006397416666666666,
+          "lighting": 4.367078375
+        },
+        {
+          "seed": 497625,
+          "run": 0,
+          "chunks": 36,
+          "ms_per_chunk": 22.836986666666668,
+          "density_noise": 15.961168833333334,
+          "surface_fill": 0.9282669722222222,
+          "carvers": 0.03344166666666667,
+          "features": 5.894450333333333,
+          "structures": 0.0033805555555555555,
+          "other": 0.006960666666666666,
+          "lighting": 3.4380236249999996
+        }
+      ]
+    },
+    {
+      "repetition": 1,
+      "variant": "after",
+      "command": [
+        "/run/media/kaiserroman/games/solaris-work/wt/worldgen/.analysis/worldgen-diff/after-test",
+        "--ignored",
+        "--exact",
+        "terrain::profile_tests::parity_stages",
+        "--nocapture",
+        "--test-threads=1"
+      ],
+      "log": "1-after.log",
+      "samples": [
+        {
+          "seed": 0,
+          "run": 0,
+          "chunks": 36,
+          "ms_per_chunk": 19.504681805555556,
+          "density_noise": 11.996206944444445,
+          "surface_fill": 0.8727360277777776,
+          "carvers": 0.02382891666666667,
+          "features": 6.592183277777777,
+          "structures": 0.0023550555555555555,
+          "other": 0.007867472222222222,
+          "lighting": 4.7114273749999995
+        },
+        {
+          "seed": 81,
+          "run": 0,
+          "chunks": 36,
+          "ms_per_chunk": 16.5933125,
+          "density_noise": 10.936173027777777,
+          "surface_fill": 0.9344719444444445,
+          "carvers": 0.033452249999999996,
+          "features": 4.3442305,
+          "structures": 0.33007322222222224,
+          "other": 0.005372138888888888,
+          "lighting": 4.122133
+        },
+        {
+          "seed": 497625,
+          "run": 0,
+          "chunks": 36,
+          "ms_per_chunk": 20.763959361111112,
+          "density_noise": 13.468066472222223,
+          "surface_fill": 1.0040254722222222,
+          "carvers": 0.11612472222222221,
+          "features": 6.157625722222223,
+          "structures": 0.002250166666666667,
+          "other": 0.006380833333333333,
+          "lighting": 2.9999955
+        }
+      ]
+    },
+    {
+      "repetition": 2,
+      "variant": "before",
+      "command": [
+        "/run/media/kaiserroman/games/solaris-work/wt/worldgen/.analysis/worldgen-diff/before-test",
+        "--ignored",
+        "--exact",
+        "terrain::profile_tests::parity_stages",
+        "--nocapture",
+        "--test-threads=1"
+      ],
+      "log": "2-before.log",
+      "samples": [
+        {
+          "seed": 0,
+          "run": 0,
+          "chunks": 36,
+          "ms_per_chunk": 23.91627088888889,
+          "density_noise": 15.278910305555558,
+          "surface_fill": 0.8932853888888889,
+          "carvers": 0.02444761111111111,
+          "features": 7.697969444444445,
+          "structures": 0.0033107222222222223,
+          "other": 0.008530777777777778,
+          "lighting": 4.6767454375
+        },
+        {
+          "seed": 81,
+          "run": 0,
+          "chunks": 36,
+          "ms_per_chunk": 20.764433555555556,
+          "density_noise": 15.025903805555556,
+          "surface_fill": 0.9775748611111111,
+          "carvers": 0.03548952777777778,
+          "features": 4.34530675,
+          "structures": 0.3623820277777778,
+          "other": 0.007315388888888889,
+          "lighting": 4.329718875
+        },
+        {
+          "seed": 497625,
+          "run": 0,
+          "chunks": 36,
+          "ms_per_chunk": 21.796439777777778,
+          "density_noise": 15.242844638888888,
+          "surface_fill": 0.8719320277777778,
+          "carvers": 0.03243666666666666,
+          "features": 5.631595027777778,
+          "structures": 0.0023859166666666664,
+          "other": 0.0062365277777777775,
+          "lighting": 4.0962101875000005
+        }
+      ]
+    },
+    {
+      "repetition": 2,
+      "variant": "after",
+      "command": [
+        "/run/media/kaiserroman/games/solaris-work/wt/worldgen/.analysis/worldgen-diff/after-test",
+        "--ignored",
+        "--exact",
+        "terrain::profile_tests::parity_stages",
+        "--nocapture",
+        "--test-threads=1"
+      ],
+      "log": "2-after.log",
+      "samples": [
+        {
+          "seed": 0,
+          "run": 0,
+          "chunks": 36,
+          "ms_per_chunk": 22.703515111111113,
+          "density_noise": 13.999056555555557,
+          "surface_fill": 1.06799875,
+          "carvers": 0.02711661111111111,
+          "features": 7.583646722222222,
+          "structures": 0.003209111111111111,
+          "other": 0.008963722222222222,
+          "lighting": 5.3344949375
+        },
+        {
+          "seed": 81,
+          "run": 0,
+          "chunks": 36,
+          "ms_per_chunk": 17.540751694444445,
+          "density_noise": 11.934049694444445,
+          "surface_fill": 0.9967517777777777,
+          "carvers": 0.033972138888888885,
+          "features": 4.222413277777778,
+          "structures": 0.33724633333333337,
+          "other": 0.006246861111111111,
+          "lighting": 4.2661266875
+        },
+        {
+          "seed": 497625,
+          "run": 0,
+          "chunks": 36,
+          "ms_per_chunk": 26.197618833333333,
+          "density_noise": 17.357430277777777,
+          "surface_fill": 1.1911105555555555,
+          "carvers": 0.04382641666666667,
+          "features": 7.582655972222223,
+          "structures": 0.0029795000000000004,
+          "other": 0.006977166666666667,
+          "lighting": 5.5340286875
+        }
+      ]
+    }
+  ],
+  "seeds": {
+    "0": {
+      "before": {
+        "ms_per_chunk": [
+          22.923298472222225,
+          22.611849083333333,
+          23.91627088888889
+        ],
+        "median_ms": 22.923298472222225,
+        "min_ms": 22.611849083333333,
+        "max_ms": 23.91627088888889,
+        "median_chunks_per_s": 43.62373945493797
+      },
+      "after": {
+        "ms_per_chunk": [
+          19.634448250000002,
+          19.504681805555556,
+          22.703515111111113
+        ],
+        "median_ms": 19.634448250000002,
+        "min_ms": 19.504681805555556,
+        "max_ms": 22.703515111111113,
+        "median_chunks_per_s": 50.93089386914654
+      },
+      "time_reduction_pct": 14.34719452005371,
+      "spread_ms": 3.1988333055555564,
+      "delta_exceeds_spread": true
+    },
+    "81": {
+      "before": {
+        "ms_per_chunk": [
+          18.42238222222222,
+          19.901479249999998,
+          20.764433555555556
+        ],
+        "median_ms": 19.901479249999998,
+        "min_ms": 18.42238222222222,
+        "max_ms": 20.764433555555556,
+        "median_chunks_per_s": 50.24752117358312
+      },
+      "after": {
+        "ms_per_chunk": [
+          16.33829422222222,
+          16.5933125,
+          17.540751694444445
+        ],
+        "median_ms": 16.5933125,
+        "min_ms": 16.33829422222222,
+        "max_ms": 17.540751694444445,
+        "median_chunks_per_s": 60.26524239810466
+      },
+      "time_reduction_pct": 16.622717881636856,
+      "spread_ms": 2.342051333333334,
+      "delta_exceeds_spread": true
+    },
+    "497625": {
+      "before": {
+        "ms_per_chunk": [
+          23.6389625,
+          22.836986666666668,
+          21.796439777777778
+        ],
+        "median_ms": 22.836986666666668,
+        "min_ms": 21.796439777777778,
+        "max_ms": 23.6389625,
+        "median_chunks_per_s": 43.78861425967465
+      },
+      "after": {
+        "ms_per_chunk": [
+          21.185745305555557,
+          20.763959361111112,
+          26.197618833333333
+        ],
+        "median_ms": 21.185745305555557,
+        "min_ms": 20.763959361111112,
+        "max_ms": 26.197618833333333,
+        "median_chunks_per_s": 47.20154922931926
+      },
+      "time_reduction_pct": 7.23055710113146,
+      "spread_ms": 5.433659472222221,
+      "delta_exceeds_spread": false
+    }
+  }
+}

@@ -14,7 +14,7 @@ pub struct ClientboundSetHeldSlot {
 impl Packet for ClientboundSetHeldSlot {
     // Verified via `javap` of vanilla 26.1.2's GameProtocols:
     // CLIENTBOUND_SET_HELD_SLOT at game-CB index 105 = wire id 0x69.
-    const ID: i32 = 0x69;
+    const ID: i32 = 0x6B;
 
     fn encode<B: BufMut>(&self, buf: &mut B) -> Result<(), CodecError> {
         buf.write_varint(self.slot);
@@ -193,7 +193,7 @@ pub struct ClientboundSetCursorItem {
 }
 
 impl Packet for ClientboundSetCursorItem {
-    const ID: i32 = 0x60;
+    const ID: i32 = 0x62;
 
     fn encode<B: BufMut>(&self, buf: &mut B) -> Result<(), CodecError> {
         self.item_stack.encode(buf)
@@ -218,7 +218,7 @@ pub struct ClientboundOpenScreen {
 }
 
 impl Packet for ClientboundOpenScreen {
-    const ID: i32 = 0x3B;
+    const ID: i32 = 0x3C;
 
     fn encode<B: BufMut>(&self, buf: &mut B) -> Result<(), CodecError> {
         buf.write_varint(self.container_id);
@@ -250,7 +250,7 @@ pub struct ClientboundMountScreenOpen {
 }
 
 impl Packet for ClientboundMountScreenOpen {
-    const ID: i32 = 0x29;
+    const ID: i32 = 0x2A;
 
     fn encode<B: BufMut>(&self, buf: &mut B) -> Result<(), CodecError> {
         buf.write_varint(self.container_id);
@@ -568,7 +568,7 @@ pub struct ServerboundSetCarriedItem {
 impl Packet for ServerboundSetCarriedItem {
     // Verified via `javap` of vanilla 26.1.2's GameProtocols:
     // SERVERBOUND_SET_CARRIED_ITEM at game-SB index 53 = wire id 0x35.
-    const ID: i32 = 0x35;
+    const ID: i32 = 0x36;
 
     fn encode<B: BufMut>(&self, buf: &mut B) -> Result<(), CodecError> {
         buf.write_i16(self.slot);
@@ -586,12 +586,9 @@ impl Packet for ServerboundSetCarriedItem {
 /// client reports the FULL new stack for a player-inventory slot — taking
 /// an item from the creative menu, overwriting a slot, or destroying the
 /// slot's stack (empty payload). A negative `slot` is the creative
-/// drop/destroy action. Per ADR 0002, verified against `javap -p` of the
-/// unobfuscated 26.1.2 jar:
-/// `ServerboundSetCreativeModeSlotPacket(short slotNum, ItemStack
-/// itemStack)` with `STREAM_CODEC = composite(ByteBufCodecs.SHORT,
-/// ItemStack.OPTIONAL_UNTRUSTED_STREAM_CODEC)` (wrapped by
-/// `validatedStreamCodec`).
+/// drop/destroy action. Local 26.3 ServerboundSetCreativeModeSlotPacket uses
+/// ItemStack.OPTIONAL_UNTRUSTED_STREAM_CODEC through validatedStreamCodec:
+/// each added outer component is byte-length-prefixed, unlike inventory slots.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ServerboundSetCreativeModeSlot {
     pub slot: i16,
@@ -599,23 +596,19 @@ pub struct ServerboundSetCreativeModeSlot {
 }
 
 impl Packet for ServerboundSetCreativeModeSlot {
-    // Verified via `javap` of vanilla 26.1.2's GameProtocols:
-    // SERVERBOUND_SET_CREATIVE_MODE_SLOT at game-SB index 56 = wire id
-    // 0x38. Cross-checked against the pinned ids of the same builder
-    // lambda: SERVERBOUND_PLAYER_ACTION at index 41 = 0x29 and
-    // SERVERBOUND_SET_CARRIED_ITEM at index 53 = 0x35.
-    const ID: i32 = 0x38;
+    // Local 26.3 GameProtocols: SERVERBOUND_SET_CREATIVE_MODE_SLOT.
+    const ID: i32 = 0x39;
 
     fn encode<B: BufMut>(&self, buf: &mut B) -> Result<(), CodecError> {
         buf.write_i16(self.slot);
-        self.item_stack.encode(buf)?;
+        item_stack_codec::encode_untrusted(&self.item_stack, buf)?;
         Ok(())
     }
 
     fn decode<B: Buf>(buf: &mut B) -> Result<Self, CodecError> {
         Ok(Self {
             slot: buf.read_i16()?,
-            item_stack: ItemStack::decode(buf)?,
+            item_stack: item_stack_codec::decode_stack(buf, 0, true)?,
         })
     }
 }
@@ -670,7 +663,7 @@ pub struct ClientboundRecipeBookSettings {
 }
 
 impl Packet for ClientboundRecipeBookSettings {
-    const ID: i32 = 0x4C;
+    const ID: i32 = 0x4D;
 
     fn encode<B: BufMut>(&self, buf: &mut B) -> Result<(), CodecError> {
         for settings in [self.crafting, self.furnace, self.blast_furnace, self.smoker] {
@@ -697,8 +690,8 @@ impl Packet for ClientboundRecipeBookSettings {
 }
 
 /// The slot-display variants Solaris emits in initial recipe-book entries.
-/// Registry ids are pinned to the bundled 26.1.2 `minecraft:slot_display`
-/// registry report.
+/// Registry ids are pinned to the bundled 26.3 `minecraft:slot_display`
+/// registry report. Named tag displays use the item HolderSet codec.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RecipeBookSlotDisplay {
     Empty,
@@ -743,6 +736,8 @@ impl RecipeBookSlotDisplay {
             }
             Self::Tag(tag) => {
                 buf.write_varint(6);
+                // 26.3 TagSlotDisplay wraps a HolderSet, not a bare TagKey.
+                buf.write_varint(0);
                 buf.write_identifier(tag)?;
             }
             Self::Composite(displays) => {
@@ -790,7 +785,14 @@ impl RecipeBookSlotDisplay {
                     count,
                 )?)))
             }
-            6 => Ok(Self::Tag(buf.read_identifier()?)),
+            6 => {
+                if buf.read_varint()? != 0 {
+                    return Err(CodecError::NotSupported(
+                        "direct holder-set recipe-book tag display",
+                    ));
+                }
+                Ok(Self::Tag(buf.read_identifier()?))
+            }
             10 => {
                 let count = read_count(buf, MAX_RECIPE_BOOK_SLOTS)?;
                 let mut displays = bounded_vec(count);
@@ -842,7 +844,7 @@ pub struct ClientboundUpdateRecipes {
 impl Packet for ClientboundUpdateRecipes {
     // GameProtocols' bundle packet is wire id 0. UPDATE_RECIPES is the
     // 133rd following clientbound registration, giving wire id 0x85.
-    const ID: i32 = 0x85;
+    const ID: i32 = 0x88;
 
     fn encode<B: BufMut>(&self, buf: &mut B) -> Result<(), CodecError> {
         write_bounded_count(buf, self.item_sets.len(), MAX_RECIPE_BOOK_ENTRIES)?;
@@ -1205,7 +1207,7 @@ impl RecipeBookEntry {
     }
 }
 
-/// `ClientboundRecipeBookAddPacket` from the local vanilla 26.1.2 jar.
+/// `ClientboundRecipeBookAddPacket` from the local vanilla 26.3 jar.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ClientboundRecipeBookAdd {
     pub entries: Vec<RecipeBookEntry>,
@@ -1213,7 +1215,7 @@ pub struct ClientboundRecipeBookAdd {
 }
 
 impl Packet for ClientboundRecipeBookAdd {
-    const ID: i32 = 0x4A;
+    const ID: i32 = 0x4B;
 
     fn encode<B: BufMut>(&self, buf: &mut B) -> Result<(), CodecError> {
         write_bounded_count(buf, self.entries.len(), MAX_RECIPE_BOOK_ENTRIES)?;
@@ -1303,7 +1305,7 @@ pub struct ServerboundRecipeBookChangeSettings {
 }
 
 impl Packet for ServerboundRecipeBookChangeSettings {
-    const ID: i32 = 0x2E;
+    const ID: i32 = 0x2F;
 
     fn encode<B: BufMut>(&self, buf: &mut B) -> Result<(), CodecError> {
         buf.write_varint(self.book_type.as_wire());
@@ -1329,7 +1331,7 @@ pub struct ServerboundRecipeBookSeenRecipe {
 }
 
 impl Packet for ServerboundRecipeBookSeenRecipe {
-    const ID: i32 = 0x2F;
+    const ID: i32 = 0x30;
 
     fn encode<B: BufMut>(&self, buf: &mut B) -> Result<(), CodecError> {
         buf.write_varint(self.recipe_display_id);

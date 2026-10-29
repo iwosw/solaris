@@ -122,7 +122,7 @@ pub struct ClientboundKnownPacks {
 }
 
 impl Packet for ClientboundKnownPacks {
-    const ID: i32 = 0x0E;
+    const ID: i32 = 0x0F;
 
     fn encode<B: BufMut>(&self, buf: &mut B) -> Result<(), CodecError> {
         write_known_pack_array(buf, &self.packs, MAX_CLIENTBOUND_KNOWN_PACKS)
@@ -135,14 +135,14 @@ impl Packet for ClientboundKnownPacks {
     }
 }
 
-/// Clientbound 0x0C — feature flags selected by the server data packs.
+/// Clientbound 0x0D — feature flags selected by the server data packs.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UpdateEnabledFeatures {
     pub features: Vec<Identifier>,
 }
 
 impl Packet for UpdateEnabledFeatures {
-    const ID: i32 = 0x0C;
+    const ID: i32 = 0x0D;
 
     fn encode<B: BufMut>(&self, buf: &mut B) -> Result<(), CodecError> {
         write_count(buf, self.features.len(), MAX_ENABLED_FEATURES)?;
@@ -339,9 +339,10 @@ impl Packet for AcknowledgeFinishConfiguration {
 /// One registry entry. If `has_data` is `false` the client uses its
 /// built-in data for this entry (matched via the Known Packs handshake).
 ///
-/// The `nbt_payload` field contains a pre-serialised, root-less Network-NBT
-/// compound. Keeping the encoded bytes avoids rebuilding immutable registry
-/// payloads for every connection.
+/// The `nbt_payload` field contains one pre-serialised anonymous Network-NBT
+/// value (vanilla `ByteBufCodecs.TAG`): a compound for most registries, a
+/// list for 26.3 `minecraft:block_transformer`. Keeping the encoded bytes
+/// avoids rebuilding immutable registry payloads for every connection.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RegistryEntry {
     pub name: Identifier,
@@ -383,9 +384,9 @@ impl Packet for RegistryData {
             let name = buf.read_identifier()?;
             let has_data = buf.read_bool()?;
             let nbt_payload = if has_data {
-                let root = mc_nbt::read_network(buf)?;
+                let root = mc_nbt::read_network_value(buf)?;
                 let mut payload = Vec::new();
-                mc_nbt::write_network(&mut payload, &root)?;
+                mc_nbt::write_network_value(&mut payload, &root)?;
                 Some(payload.into())
             } else {
                 None
@@ -450,9 +451,9 @@ pub struct UpdateTags {
 }
 
 impl Packet for UpdateTags {
-    // Verified via `javap` of vanilla 26.1.2's ConfigurationProtocols:
-    // CLIENTBOUND_UPDATE_TAGS at configuration-CB index 13 = wire id 0x0D.
-    const ID: i32 = 0x0D;
+    // `data/vanilla/reports/packets.json` (26.3): configuration clientbound
+    // `minecraft:update_tags` = 14 (`post_effects` was inserted at 10).
+    const ID: i32 = 0x0E;
 
     fn encode<B: BufMut>(&self, buf: &mut B) -> Result<(), CodecError> {
         write_count(buf, self.registries.len(), MAX_TAG_REGISTRIES)?;
@@ -529,7 +530,7 @@ mod tests {
         let packet = UpdateEnabledFeatures {
             features: vec![Identifier::parse("minecraft:vanilla").unwrap()],
         };
-        assert_eq!(UpdateEnabledFeatures::ID, 0x0C);
+        assert_eq!(UpdateEnabledFeatures::ID, 0x0D);
         round_trip(packet.clone());
 
         let mut encoded = Vec::new();
@@ -913,7 +914,7 @@ mod tests {
 
     #[test]
     fn update_tags_id_matches_javap() {
-        assert_eq!(UpdateTags::ID, 0x0D);
+        assert_eq!(UpdateTags::ID, 0x0E);
     }
 
     #[test]
@@ -1040,5 +1041,32 @@ mod tests {
                 nbt_payload: Some(payload.into()),
             }],
         });
+    }
+
+    /// 26.3 `minecraft:block_transformer` entries (axe/hoe/shovel) carry a
+    /// list root, not a compound: `PackedRegistryEntry` is `ByteBufCodecs.TAG`.
+    #[test]
+    fn registry_data_entries_with_list_payload_round_trip() {
+        let mut payload = Vec::new();
+        mc_nbt::write_network_value(
+            &mut payload,
+            &mc_nbt::Tag::List(mc_nbt::ListTag {
+                element_type: 10,
+                elements: vec![mc_nbt::Tag::Compound(vec![(
+                    "block_state_provider".into(),
+                    mc_nbt::Tag::String("minecraft:stripped_oak_log".into()),
+                )])],
+            }),
+        )
+        .unwrap();
+        assert_eq!(payload[0], 9, "list root on the wire");
+        let packet = RegistryData {
+            registry_id: Identifier::parse("minecraft:block_transformer").unwrap(),
+            entries: vec![RegistryEntry {
+                name: Identifier::parse("minecraft:axe").unwrap(),
+                nbt_payload: Some(payload.into()),
+            }],
+        };
+        round_trip(packet);
     }
 }

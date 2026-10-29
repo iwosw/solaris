@@ -2,6 +2,7 @@
 //! Typed values still go through stack_from_fields/ExtendedItemComponents;
 //! this rejects malformed opaque values before inventory/wire publication.
 use super::item_nbt::field;
+use crate::data_component_types_26_1_2 as ids;
 use crate::{Identifier, items::ItemRegistry};
 use mc_nbt::Tag;
 
@@ -21,7 +22,7 @@ pub(crate) fn validate(
         {
             return Err(format!("duplicate item component {canonical}"));
         }
-        let id = crate::data_component_types_26_1_2::ITEM_COMPONENT_CODECS
+        let id = ids::ITEM_COMPONENT_CODECS
             .iter()
             .find_map(|(name, id)| (*name == canonical).then_some(*id))
             .ok_or_else(|| format!("unsupported item component {canonical}"))?;
@@ -77,7 +78,7 @@ fn registry(registry: &str, value: &Tag) -> Result<(), &'static str> {
 fn registry_name(registry: &str, name: &str) -> Result<(), &'static str> {
     let id = Identifier::parse(name).map_err(|_| "invalid identifier")?;
     let known = match registry {
-        "data_component_type" => crate::data_component_types_26_1_2::id(&id).is_some(),
+        "data_component_type" => ids::id(&id).is_some(),
         "entity_type" => {
             crate::entity_types::entity_type_contract_26_1_2_by_name(id.as_str()).is_some()
         }
@@ -246,37 +247,37 @@ fn value_shape(
     depth: usize,
 ) -> Result<(), &'static str> {
     match id {
-        0 => {
+        ids::CUSTOM_DATA => {
             compound(value)?;
         }
-        2 => crate::item_stack::validate_max_damage(
+        ids::MAX_DAMAGE => crate::item_stack::validate_max_damage(
             u32::try_from(integer(value)?).map_err(|_| "invalid max_damage")?,
         )?,
-        3 | 19 => {
+        ids::DAMAGE | ids::REPAIR_COST | ids::MAP_ID => {
             if integer(value)? < 0 {
                 return Err("negative integer");
             }
         }
-        63 => {
+        ids::OMINOUS_BOTTLE_AMPLIFIER => {
             if !(0..=4).contains(&integer(value)?) {
                 return Err("invalid ominous amplifier");
             }
         }
-        6 | 9 => text(value)?,
-        10 | 71 => {
+        ids::CUSTOM_NAME | ids::ITEM_NAME => text(value)?,
+        ids::ITEM_MODEL | ids::NOTE_BLOCK_SOUND => {
             identifier(value)?;
         }
-        11 => {
+        ids::LORE => {
             for line in list(value, 256)? {
                 text(line)?;
             }
         }
-        12 => {
+        ids::RARITY => {
             if !matches!(string(value)?, "common" | "uncommon" | "rare" | "epic") {
                 return Err("invalid rarity");
             }
         }
-        13 | 42 => {
+        ids::ENCHANTMENTS | ids::STORED_ENCHANTMENTS => {
             for (name, level) in compound(value)? {
                 registry_name("enchantment", name)?;
                 if !(1..=255).contains(&integer(level)?) {
@@ -284,7 +285,7 @@ fn value_shape(
                 }
             }
         }
-        18 => {
+        ids::TOOLTIP_DISPLAY => {
             let fields = compound(value)?;
             if let Some(value) = field(fields, "hide_tooltip")
                 && !matches!(integer(value)?, 0 | 1)
@@ -292,32 +293,38 @@ fn value_shape(
                 return Err("invalid tooltip boolean");
             }
             if let Some(hidden) = field(fields, "hidden_components") {
-                for value in list(hidden, 110)? {
+                for value in list(hidden, ids::COUNT)? {
                     registry("data_component_type", value)?;
                 }
             }
         }
-        21 => {
+        ids::ENCHANTMENT_GLINT_OVERRIDE => {
             if !matches!(integer(value)?, 0 | 1) {
                 return Err("invalid glint boolean");
             }
         }
-        25 => template(items, value, depth)?,
-        36 => crate::item_stack::validate_death_protection(value)?,
-        44 => {
+        ids::USE_REMAINDER => template(items, value, depth)?,
+        ids::DEATH_PROTECTION => crate::item_stack::validate_death_protection(value)?,
+        ids::DYED_COLOR => {
             crate::item_stack::decode_dyed_color(value)?;
         }
-        50 => {
+        ids::BUNDLE_CONTENTS => {
             for value in list(value, i32::MAX as usize)? {
+                let value = match value {
+                    Tag::Compound(fields) if fields.len() == 1 && fields[0].0.is_empty() => {
+                        &fields[0].1
+                    }
+                    _ => value,
+                };
                 template(items, value, depth)?;
             }
         }
-        49 => {
-            for value in list(value, 3)? {
+        ids::CHARGED_PROJECTILES => {
+            for value in list(value, 1024)? {
                 nested(items, compound(value)?, depth)?;
             }
         }
-        51 => {
+        ids::POTION_CONTENTS => {
             let fields = compound(value)?;
             if let Some(potion) = field(fields, "potion")
                 && crate::stations::potion_id(&identifier(potion)?).is_none()
@@ -325,7 +332,7 @@ fn value_shape(
                 return Err("unknown potion");
             }
         }
-        53 => {
+        ids::SUSPICIOUS_STEW_EFFECTS => {
             for effect in list(value, 256)? {
                 let fields = compound(effect)?;
                 registry("mob_effect", required(fields, "id")?)?;
@@ -334,21 +341,23 @@ fn value_shape(
                 }
             }
         }
-        56 | 69 => {
+        ids::TRIM | ids::FIREWORKS => {
             compound(value)?;
         }
-        70 => profile(value)?,
-        72 => {
+        ids::PROFILE => profile(value)?,
+        ids::BANNER_PATTERNS => {
             list(value, 20)?;
         }
-        74 => {
-            for decoration in list(value, 4)? {
-                if items.id_of(&identifier(decoration)?).is_none() {
-                    return Err("unknown decoration item");
+        ids::BASE_COLOR => dye(value)?,
+        ids::POT_DECORATIONS => {
+            let fields = compound(value)?;
+            for side in ["back", "left", "right", "front"] {
+                if let Some(value) = field(fields, side) {
+                    template(items, value, depth)?;
                 }
             }
         }
-        75 => {
+        ids::CONTAINER => {
             let mut seen = [false; 256];
             for entry in list(value, 256)? {
                 let fields = compound(entry)?;
@@ -361,14 +370,14 @@ fn value_shape(
                 nested(items, compound(required(fields, "item")?)?, depth)?;
             }
         }
-        76 => {
+        ids::BLOCK_STATE => {
             for (_, property) in compound(value)? {
                 if string(property)?.chars().count() > 32767 {
                     return Err("block state value too long");
                 }
             }
         }
-        77 => {
+        ids::BEES => {
             for occupant in list(value, 1024)? {
                 let fields = compound(occupant)?;
                 integer(required(fields, "ticks_in_hive")?)?;
@@ -377,10 +386,147 @@ fn value_shape(
                 registry("entity_type", required(data, "id")?)?;
             }
         }
-        78 | 79 => {
+        ids::LOCK | ids::CONTAINER_LOOT => {
             compound(value)?;
         }
+        ids::ATTACK_ANIMATION | ids::INTERACT_ANIMATION => {
+            let fields = compound(value)?;
+            if let Some(value) = field(fields, "type")
+                && !matches!(string(value)?, "none" | "whack" | "stab")
+            {
+                return Err("invalid animation type");
+            }
+            if let Some(value) = field(fields, "duration")
+                && integer(value)? < 0
+            {
+                return Err("negative animation duration");
+            }
+        }
+        ids::BLOCK_TRANSFORMER => registry("block_transformer", value)?,
+        ids::PROVIDES_POTTERY_PATTERN => registry("decorated_pot_pattern", value)?,
+        ids::VILLAGER_FOOD => {
+            if integer(required(compound(value)?, "nutrition")?)? <= 0 {
+                return Err("nonpositive nutrition");
+            }
+        }
+        ids::SULFUR_CUBE_CONTENT => template(items, value, depth)?,
+        ids::COMPOSTABLE | ids::COOKING_FUEL | ids::BREWING_FUEL => {
+            let fields = compound(value)?;
+            let name = match id {
+                ids::COMPOSTABLE => "layers",
+                ids::COOKING_FUEL => "burn_time",
+                _ => "uses",
+            };
+            resolvable(required(fields, name)?, false)?;
+            if id != ids::COMPOSTABLE {
+                resolvable(required(fields, "speed_multiplier")?, true)?;
+            }
+        }
+        ids::MOB_VISIBILITY => {
+            let fields = compound(value)?;
+            match required(fields, "targeting_entity_types")? {
+                Tag::String(name) if name.starts_with('#') => {
+                    Identifier::parse(&name[1..]).map_err(|_| "invalid entity tag")?;
+                }
+                Tag::String(_) => {
+                    registry("entity_type", required(fields, "targeting_entity_types")?)?
+                }
+                value => {
+                    for entity in list(value, 1024)? {
+                        registry("entity_type", entity)?;
+                    }
+                }
+            }
+            if !(0.0..=10.0).contains(&number(required(fields, "visibility")?)?) {
+                return Err("visibility outside 0..10");
+            }
+        }
+        ids::SIGN_TEXT_FRONT | ids::SIGN_TEXT_BACK => {
+            let fields = compound(value)?;
+            for name in ["messages", "filtered_messages"] {
+                let lines = if name == "messages" {
+                    Some(required(fields, name)?)
+                } else {
+                    field(fields, name)
+                };
+                if let Some(lines) = lines {
+                    let lines = list(lines, 4)?;
+                    if lines.len() != 4 {
+                        return Err("sign requires four lines");
+                    }
+                    for line in lines {
+                        text(line)?;
+                    }
+                }
+            }
+            if let Some(value) = field(fields, "color") {
+                dye(value)?;
+            }
+            if let Some(value) = field(fields, "has_glowing_text")
+                && !matches!(integer(value)?, 0 | 1)
+            {
+                return Err("invalid sign glow boolean");
+            }
+        }
+        ids::WAXED => {
+            if !compound(value)?.is_empty() {
+                return Err("unit must be empty");
+            }
+        }
+        ids::CUSHION_COLOR => dye(value)?,
         _ => return Err("unsupported component"),
     }
     Ok(())
 }
+
+fn number(value: &Tag) -> Result<f32, &'static str> {
+    let value = match value {
+        Tag::Float(value) => *value,
+        Tag::Double(value) => *value as f32,
+        _ => integer(value)? as f32,
+    };
+    if value.is_finite() {
+        Ok(value)
+    } else {
+        Err("nonfinite number")
+    }
+}
+fn resolvable(value: &Tag, float: bool) -> Result<(), &'static str> {
+    if matches!(value, Tag::String(_)) {
+        identifier(value)?;
+    } else if float {
+        number(value)?;
+    } else {
+        integer(value)?;
+    }
+    Ok(())
+}
+fn dye(value: &Tag) -> Result<(), &'static str> {
+    if matches!(
+        string(value)?,
+        "white"
+            | "orange"
+            | "magenta"
+            | "light_blue"
+            | "yellow"
+            | "lime"
+            | "pink"
+            | "gray"
+            | "light_gray"
+            | "cyan"
+            | "purple"
+            | "blue"
+            | "brown"
+            | "green"
+            | "red"
+            | "black"
+    ) {
+        Ok(())
+    } else {
+        Err("invalid dye color")
+    }
+}
+
+#[cfg(test)]
+#[path = "item_component_values_tests.rs"]
+mod tests;

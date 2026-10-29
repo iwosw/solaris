@@ -1,4 +1,4 @@
-//! Vanilla 26.1.2 context-free collision boxes for every embedded block state.
+//! Vanilla 26.3 context-free collision boxes for every embedded block state.
 //!
 //! Entity-dependent rules such as leather boots walking on powder snow belong
 //! in the entity collision layer on top of this static baseline.
@@ -7,8 +7,8 @@ use std::sync::OnceLock;
 
 use crate::Identifier;
 
-const RAW_COLLISION_SHAPES: &[u8] = include_bytes!("../data/block_collision_shapes_26_1_2.bin");
-const EXPECTED_VERSION: &str = "26.1.2";
+const RAW_COLLISION_SHAPES: &[u8] = include_bytes!("../data/block_collision_shapes_26_3.bin");
+const EXPECTED_VERSION: &str = "26.3";
 pub const COLLISION_UNITS_PER_BLOCK: i16 = 4096;
 const HEADER_LEN: usize = 32;
 const MISSING_SHAPE: u16 = u16::MAX;

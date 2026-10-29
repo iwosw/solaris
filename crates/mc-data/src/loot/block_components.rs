@@ -1,5 +1,5 @@
 //! `copy_components` over the vanilla block entity's collected component map.
-use super::{BlockLootContext, BlockLootEvaluationError};
+use super::{BlockLootContext, BlockLootEvaluationError, LootCount, LootDrop};
 use crate::Identifier;
 use mc_nbt::{ListTag, Tag, tag_type};
 
@@ -136,7 +136,12 @@ fn implicit(
         _ => None,
     };
     if let Some(value) = direct {
-        return Ok(Some(value.clone()));
+        let mut value = value.clone();
+        if component == "minecraft:pot_decorations" {
+            crate::item_nbt::upgrade_pot_decorations(&mut value)
+                .map_err(|_| invalid("invalid pot decorations"))?;
+        }
+        return Ok(Some(value));
     }
     if component == "minecraft:container_loot" {
         let Some(table) = field(fields, "LootTable") else {
@@ -193,31 +198,56 @@ fn implicit(
 pub(super) fn sherds(
     context: &BlockLootContext<'_>,
     brick: &Identifier,
-) -> Result<Vec<Identifier>, BlockLootEvaluationError> {
+) -> Result<Vec<LootDrop>, BlockLootEvaluationError> {
     let fields = match context.block_entity() {
         None => &[][..],
         Some(Tag::Compound(fields)) => fields.as_slice(),
         Some(_) => return Err(invalid("root must be a compound")),
     };
-    let decorations = match field(fields, "sherds") {
-        None => &[][..],
-        Some(Tag::List(list))
-            if list.elements.len() <= 4
-                && (list.elements.is_empty() || list.element_type == tag_type::STRING) =>
-        {
-            list.elements.as_slice()
-        }
-        Some(_) => {
-            return Err(invalid(
-                "sherds must be a string list of at most four entries",
-            ));
-        }
+    let Some(decorations) = field(fields, "sherds") else {
+        return Ok(Vec::new());
     };
     let mut output = Vec::with_capacity(4);
-    for decoration in decorations {
-        let Tag::String(name) = decoration else {
-            return Err(invalid("sherds entries must be strings"));
+    // 26.3 DecoratedPotBlock.getDrops emits optional templates in this order.
+    for (side, index) in [("left", 1), ("back", 0), ("front", 3), ("right", 2)] {
+        let decoration = match decorations {
+            Tag::List(list) if list.elements.len() <= 4 => list.elements.get(index),
+            Tag::Compound(sides) => {
+                let Some(value) = field(sides, side) else {
+                    continue;
+                };
+                Some(value)
+            }
+            _ => return Err(invalid("sherds must be named templates or a legacy list")),
         };
+        let mut count = 1;
+        let mut components = None;
+        let name = match decoration {
+            Some(Tag::String(name)) => name.as_str(),
+            Some(Tag::Compound(template)) => {
+                count = match field(template, "count") {
+                    None => 1,
+                    Some(Tag::Byte(count)) => i32::from(*count),
+                    Some(Tag::Short(count)) => i32::from(*count),
+                    Some(Tag::Int(count)) => *count,
+                    _ => return Err(invalid("sherd count must be an integer")),
+                };
+                components = match field(template, "components") {
+                    None => None,
+                    Some(value @ Tag::Compound(_)) => Some(value),
+                    _ => return Err(invalid("sherd components must be a compound")),
+                };
+                match field(template, "id") {
+                    Some(Tag::String(name)) => name.as_str(),
+                    _ => return Err(invalid("sherd template requires an item id")),
+                }
+            }
+            None => brick.as_str(), // The pre-26.3 list pads missing sides.
+            _ => return Err(invalid("invalid sherd template")),
+        };
+        if !(1..=99).contains(&count) {
+            return Err(invalid("invalid sherd template count"));
+        }
         let item = Identifier::parse(name)
             .map_err(|_| invalid("sherds contains an invalid item identifier"))?;
         static ITEMS: std::sync::LazyLock<crate::items::ItemRegistry> =
@@ -225,9 +255,12 @@ pub(super) fn sherds(
         if ITEMS.id_of(&item).is_none() {
             return Err(invalid("sherds contains an unknown item"));
         }
-        output.push(item);
+        output.push(LootDrop {
+            item,
+            count: LootCount::Fixed(count as u32),
+            components: components.map(|value| Box::new(value.clone())),
+        });
     }
-    output.resize(4, brick.clone());
     Ok(output)
 }
 

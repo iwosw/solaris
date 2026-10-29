@@ -219,6 +219,26 @@ fn collide(
     state.entities.set_ground(slot, resolved.grounded || rail);
     !clipped
 }
+fn supported(state: &TickState, slot: EntitySlot) -> bool {
+    let p = state.entities.pos(slot);
+    let body = state.entities.body(slot);
+    mc_physics::resolve_collision_displacement(
+        &TickSampler {
+            world: &state.world,
+            registry: &state.registry,
+        },
+        Vec3::new(p[0], p[1], p[2]),
+        Aabb {
+            half_width: body.half_width,
+            height: body.height,
+        },
+        Vec3::new(0.0, -0.001, 0.0),
+        false,
+        0.0,
+    )
+    .is_some_and(|resolved| resolved.grounded)
+}
+
 fn boat(state: &mut TickState, slot: EntitySlot) {
     let p = state.entities.pos(slot);
     let input = crate::mounts::vehicle_input(state, slot);
@@ -227,18 +247,44 @@ fn boat(state: &mut TickState, slot: EntitySlot) {
     let right = input & 8 != 0;
     let forward = input & 1 != 0;
     let back = input & 2 != 0;
+    let paddles = [forward || right, forward || left];
+    if state
+        .entities
+        .row(slot)
+        .entity_life
+        .vehicle
+        .as_ref()
+        .unwrap()
+        .paddles
+        != paddles
+    {
+        state
+            .entities
+            .row_mut(slot)
+            .entity_life
+            .vehicle
+            .as_mut()
+            .unwrap()
+            .paddles = paddles;
+    }
+    let water = crate::fluids::water_at_point(state, p);
+    // Only supported/buoyant client motion consumes the native step. In air,
+    // gravity remains authoritative even when a valid packet claims on_ground.
+    if crate::mounts::rider(state, slot).is_some_and(|rider| {
+        state
+            .players
+            .get(&state.entities.body(rider).id)
+            .is_some_and(|player| player.last_vehicle_motion_tick == Some(state.tick))
+    }) && (water || supported(state, slot))
+    {
+        if state.entities.vel(slot)[1] != 0.0 {
+            state.entities.set_vel(slot, [0.0; 3]);
+        }
+        return;
+    }
     yaw += (i32::from(right) - i32::from(left)) as f32 * 4.0;
     let angle = f64::from(yaw).to_radians();
     let mut vel = state.entities.vel(slot).map(|v| v / 20.0);
-    let water = state
-        .world
-        .block_at(
-            p[0].floor() as i32,
-            p[1].floor() as i32,
-            p[2].floor() as i32,
-        )
-        .and_then(|id| state.registry.blocks.by_id(BlockStateId(id)))
-        .is_some_and(|b| b.block.id.path() == "water");
     let acceleration = if forward {
         0.04
     } else if back {
@@ -270,26 +316,6 @@ fn boat(state: &mut TickState, slot: EntitySlot) {
     let desired = std::array::from_fn(|i| p[i] + vel[i]);
     collide(state, slot, desired, vel, false);
     state.entities.set_rot(slot, yaw, 0.0);
-    let paddles = [forward || right, forward || left];
-    if state
-        .entities
-        .row(slot)
-        .entity_life
-        .vehicle
-        .as_ref()
-        .unwrap()
-        .paddles
-        != paddles
-    {
-        state
-            .entities
-            .row_mut(slot)
-            .entity_life
-            .vehicle
-            .as_mut()
-            .unwrap()
-            .paddles = paddles;
-    }
 }
 fn cart(state: &mut TickState, slot: EntitySlot) {
     let p = state.entities.pos(slot);

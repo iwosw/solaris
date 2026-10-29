@@ -257,7 +257,10 @@ pub struct SpawnRequest {
 mod recovery;
 pub(crate) use recovery::*;
 
+mod moderation_selector;
 mod tick_loop;
+/// A currently joined player selected for an edge moderation command.
+pub type ModerationPlayer = (ConnectionId, uuid::Uuid, String);
 use tick_loop::*;
 
 mod bench;
@@ -279,6 +282,7 @@ struct CoreInner {
     input_tx: Sender<PlayerInput>,
     spawn_tx: Sender<SpawnRequest>,
     ticket_tx: Sender<RemoteTicket>,
+    moderation_selector_tx: Sender<moderation_selector::Request>,
     checkpoint_tx: std::sync::mpsc::Sender<std::sync::mpsc::Sender<bool>>,
     backup_tx: std::sync::mpsc::Sender<BackupJob>,
     input_dropped: AtomicU64,
@@ -442,7 +446,7 @@ pub(crate) fn end_terrain(
 impl Core {
     /// Open the world: build registries, recover the journal, spawn the tick
     /// and journal threads.
-    pub fn open(config: CoreConfig) -> Result<Self, CoreError> {
+    pub fn open(mut config: CoreConfig) -> Result<Self, CoreError> {
         stop::install_panic_hook();
         let is_stage = |path: &std::path::Path| {
             path.file_name()
@@ -484,6 +488,16 @@ impl Core {
         }
         let registry = Arc::new(CoreRegistry::load(config.vanilla_data_dir.as_deref())?);
         let mut plugin_runtime = crate::plugin::PluginRuntime::open(&config)?;
+        if let Some(runtime) = &plugin_runtime
+            && !runtime.required_auth_plugins.is_empty()
+            && !config.require_plugin_login
+        {
+            tracing::info!(
+                plugins = ?runtime.required_auth_plugins,
+                "auth plugin deployed: new sessions stay locked until it unlocks them"
+            );
+            config.require_plugin_login = true;
+        }
         let mut registry = Arc::try_unwrap(registry).expect("registry has no readers at startup");
         // Native settlement startup installs on the same pipeline whether or
         // not a plugin deployment exists: the default contribution carries no
@@ -627,6 +641,7 @@ impl Core {
         let (input_tx, input_rx) = mpsc_channel::<PlayerInput>(config.input_queue_cap.max(4));
         let (spawn_tx, spawn_rx) = mpsc_channel::<SpawnRequest>(16);
         let (ticket_tx, ticket_rx) = mpsc_channel::<RemoteTicket>(16);
+        let (moderation_selector_tx, moderation_selector_rx) = mpsc_channel(32);
         let (tick_tx, _) = broadcast::channel::<TickOutput>(config.broadcast_cap.max(1));
         let (timing_tx, _) = broadcast::channel::<(u64, TickTimes)>(16384);
         let (outbox_tx, outbox_rx) = std::sync::mpsc::channel();
@@ -695,6 +710,7 @@ impl Core {
             input_rx,
             spawn_rx,
             ticket_rx,
+            moderation_selector_rx,
             tick_broadcast: tick_tx.clone(),
             timing_broadcast: timing_tx.clone(),
             outbox: outbox_tx,
@@ -727,6 +743,7 @@ impl Core {
                 input_tx,
                 spawn_tx,
                 ticket_tx,
+                moderation_selector_tx,
                 checkpoint_tx,
                 backup_tx,
                 input_dropped: AtomicU64::new(0),
@@ -990,6 +1007,32 @@ impl Core {
         self.inner.spawn_tx.try_send(request).is_ok()
     }
 
+    /// Tokenize a moderation command with the native balanced selector lexer.
+    pub fn moderation_command_words(command: &str) -> Result<Vec<&str>, String> {
+        crate::commands::command_words(command).map_err(|error| error.message())
+    }
+
+    /// Resolve a player selector on the tick owner, using the command source's
+    /// position and dimension. A closed or full queue fails closed.
+    pub async fn resolve_moderation_selector(
+        &self,
+        source: ConnectionId,
+        selector: String,
+    ) -> Result<Vec<ModerationPlayer>, String> {
+        let (reply, receiver) = tokio::sync::oneshot::channel();
+        self.inner
+            .moderation_selector_tx
+            .try_send(moderation_selector::Request {
+                source,
+                selector,
+                reply,
+            })
+            .map_err(|_| "Selector resolution unavailable".to_owned())?;
+        receiver
+            .await
+            .map_err(|_| "Selector resolution unavailable".to_owned())?
+    }
+
     /// Try-drain reliably queued per-connection changes (never skipped).
     /// The tick hands off owned batches before broadcasting; per-connection
     /// order is preserved even when the edge misses world publications.
@@ -1142,6 +1185,10 @@ fn surface_height(world: &ChunkWorld, air: u32, x: f64, z: f64) -> f64 {
 #[cfg(test)]
 #[path = "native_checkpoint_crash_tests.rs"]
 mod native_checkpoint_crash_tests;
+
+#[cfg(test)]
+#[path = "native_component_26_3_tests.rs"]
+mod native_component_26_3_tests;
 
 #[cfg(all(test, target_os = "linux"))]
 #[path = "persistence_crash_tests.rs"]

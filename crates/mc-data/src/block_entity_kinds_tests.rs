@@ -71,7 +71,7 @@ fn storage_blocks_use_native_kinds_not_inventory_size() {
 }
 
 #[test]
-fn all_201_native_block_aliases_have_one_owner() {
+fn all_191_native_block_aliases_have_one_owner() {
     let mut blocks = BTreeSet::new();
     for kind in BlockEntityKind::ALL {
         for path in kind.block_paths() {
@@ -79,9 +79,12 @@ fn all_201_native_block_aliases_have_one_owner() {
             assert_eq!(BlockEntityKind::for_block(path), Some(*kind));
         }
     }
-    assert_eq!(blocks.len(), 201, "BlockEntityType registration, 26.1.2");
+    // 26.3 BlockEntityTypes: 26.1.2's 201 minus the 16 beds (no bed block
+    // entity), plus poplar sign/wall sign/hanging/wall hanging/shelf and
+    // potent_sulfur.
+    assert_eq!(blocks.len(), 191, "BlockEntityTypes registration, 26.3");
     assert_eq!(BlockEntityKind::ShulkerBox.block_paths().len(), 17);
-    assert_eq!(BlockEntityKind::Sign.block_paths().len(), 24);
-    assert_eq!(BlockEntityKind::HangingSign.block_paths().len(), 24);
+    assert_eq!(BlockEntityKind::Sign.block_paths().len(), 26);
+    assert_eq!(BlockEntityKind::HangingSign.block_paths().len(), 26);
     assert_eq!(BlockEntityKind::Banner.block_paths().len(), 32);
 }

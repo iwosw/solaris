@@ -29,10 +29,10 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 /// Locked at the start of M1 from the bundled vanilla server's
 /// `version.json` (`.analysis/server.jar`). When we follow a Mojang patch
 /// release we bump this and document the diff in an ADR.
-pub const PROTOCOL_VERSION: i32 = 775;
+pub const PROTOCOL_VERSION: i32 = 777;
 
 /// The Minecraft Java Edition release Solaris is built against.
-pub const TARGET_RELEASE: &str = "26.1.2";
+pub const TARGET_RELEASE: &str = "26.3";
 
 /// The data-pack world version that pairs with [`TARGET_RELEASE`].
-pub const WORLD_VERSION: u32 = 4790;
+pub const WORLD_VERSION: u32 = 5023;

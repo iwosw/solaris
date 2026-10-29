@@ -30,9 +30,11 @@ max_connections_per_ip = 0
 # Enable Mojang session authentication for public play.
 # Offline mode cannot authenticate player or operator identities.
 online_mode = false
-# Opt-in native session lock: new sessions stay locked (fail closed,
-# invulnerable and not targetable) until the auth plugin calls `unlock_session`.
-# Login prompts come from the plugin; deploy it before enabling this.
+# Native session lock: new sessions stay locked (fail closed, invulnerable and
+# not targetable; only /register, /login and /changepassword run) until the auth
+# plugin calls `unlock_session`. Deploying an auth-capable plugin such as
+# `solaris-auth` turns the lock on by itself, even with `false` here; `true`
+# additionally refuses startup unless such a plugin is deployed.
 require_plugin_login = false
 
 [proxy]

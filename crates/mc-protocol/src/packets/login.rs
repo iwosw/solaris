@@ -289,11 +289,15 @@ pub struct GameProfileProperty {
 /// Final clientbound packet of the Login state. After sending this the
 /// server waits for [`LoginAcknowledged`] and then is in the
 /// Configuration state.
+///
+/// 26.3 `ClientboundLoginFinishedPacket`: `GameProfile` followed by the
+/// server connection's session UUID.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LoginSuccess {
     pub uuid: Uuid,
     pub name: String,
     pub properties: Vec<GameProfileProperty>,
+    pub session_id: Uuid,
 }
 
 impl Packet for LoginSuccess {
@@ -325,6 +329,7 @@ impl Packet for LoginSuccess {
                 None => buf.write_bool(false),
             }
         }
+        buf.write_uuid(self.session_id);
         Ok(())
     }
 
@@ -351,10 +356,12 @@ impl Packet for LoginSuccess {
                 })
             },
         )?;
+        let session_id = buf.read_uuid()?;
         Ok(Self {
             uuid,
             name,
             properties,
+            session_id,
         })
     }
 }
@@ -601,6 +608,7 @@ mod tests {
             uuid: Uuid::from_u128(1),
             name: "Player".into(),
             properties: vec![],
+            session_id: Uuid::from_u128(11),
         });
     }
 
@@ -621,6 +629,7 @@ mod tests {
                     signature: None,
                 },
             ],
+            session_id: Uuid::from_u128(12),
         });
     }
 
@@ -654,6 +663,7 @@ mod tests {
                 };
                 MAX_GAME_PROFILE_PROPERTIES + 1
             ],
+            session_id: Uuid::from_u128(14),
         };
         let mut body = Vec::new();
 

@@ -29,7 +29,7 @@ impl Bot {
             })
             .await?;
         self.metrics.fixture_input_fences_sent += 1;
-        tokio::time::timeout(Duration::from_secs(60), async {
+        let echoed = async {
             loop {
                 let frame = client.read_frame().await?;
                 let acknowledged = if frame.id == ClientboundSystemChat::ID {
@@ -46,9 +46,17 @@ impl Bot {
                     return Ok::<(), anyhow::Error>(());
                 }
             }
-        })
-        .await
-        .context("public preparation input echo fence deadline")??;
+        };
+        if preparing {
+            // Bot::prepare is already bounded by --prepare-seconds for the whole
+            // readiness operation. A slow checkpoint must not get a shorter,
+            // unrelated per-batch deadline while its connection is still live.
+            echoed.await?;
+        } else {
+            tokio::time::timeout(Duration::from_secs(60), echoed)
+                .await
+                .context("public preparation input echo fence deadline")??;
+        }
         Ok(())
     }
     async fn setup_commands(&mut self, client: &mut Client, preparing: bool) -> Result<()> {

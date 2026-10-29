@@ -40,7 +40,7 @@ fn empty_output() -> TickOutput {
 }
 
 /// Read burst frames until the closing time sync: the burst ends with
-/// container + health + a second `SetTime`, so the second `0x71` bounds
+/// container + health + a second `SetTime`, so the second time packet bounds
 /// the read without depending on the chunk count (zero here).
 async fn read_burst_ids(conn: &mut crate::connection::Connection) -> Vec<(i32, Vec<u8>)> {
     let mut out = Vec::new();
@@ -48,7 +48,7 @@ async fn read_burst_ids(conn: &mut crate::connection::Connection) -> Vec<(i32, V
     // Hard cap: the static burst is ~20 packets; never spin forever.
     for _ in 0..64 {
         let frame = conn.read_frame_play().await.expect("burst frame decodes");
-        if frame.id == 0x71 {
+        if frame.id == mc_protocol::packets::play::ClientboundSetTime::ID {
             time_seen += 1;
         }
         out.push((frame.id, frame.body.to_vec()));
@@ -89,6 +89,7 @@ async fn join_burst_carries_load_start_before_center() {
             recipes: &recipes,
             op_level: 0,
             plugin_commands: &[],
+            online_mode: true,
         })
         .await
         .unwrap();
@@ -106,8 +107,8 @@ async fn join_burst_carries_load_start_before_center() {
     assert!(!tree.nodes.iter().any(|node| matches!(&node.kind, mc_protocol::packets::play::CommandNodeKind::Literal(name) if name == "op")));
 
     // LoginPlay opens the burst (the client creates its load tracker there).
-    assert_eq!(ids.first(), Some(&0x31), "burst must open with LoginPlay");
-    let (_, login_body) = frames.iter().find(|(id, _)| *id == 0x31).unwrap();
+    assert_eq!(ids.first(), Some(&0x32), "burst must open with LoginPlay");
+    let (_, login_body) = frames.iter().find(|(id, _)| *id == 0x32).unwrap();
     let login = mc_protocol::packets::play::LoginPlay::decode(&mut &login_body[..]).unwrap();
     assert_eq!(login.view_distance, 4);
     assert_eq!(
@@ -125,19 +126,19 @@ async fn join_burst_carries_load_start_before_center() {
         .iter()
         .enumerate()
         .filter(|(_, (id, body))| {
-            *id == 0x26 && body.len() == 5 && body[0] == GameEvent::EVENT_START_WAITING_FOR_CHUNKS
+            *id == 0x27 && body.len() == 5 && body[0] == GameEvent::EVENT_START_WAITING_FOR_CHUNKS
         })
         .map(|(i, _)| i)
         .collect();
     assert_eq!(
         load_start.len(),
         1,
-        "burst must carry exactly one LEVEL_CHUNKS_LOAD_START (0x26/event 13), got ids {ids:02x?}"
+        "burst must carry exactly one LEVEL_CHUNKS_LOAD_START (0x27/event 13), got ids {ids:02x?}"
     );
     let event_at = load_start[0];
-    let login_at = ids.iter().position(|id| *id == 0x31).unwrap();
-    let sync_at = ids.iter().position(|id| *id == 0x48).unwrap();
-    let center_at = ids.iter().position(|id| *id == 0x5E).unwrap();
+    let login_at = ids.iter().position(|id| *id == 0x32).unwrap();
+    let sync_at = ids.iter().position(|id| *id == 0x49).unwrap();
+    let center_at = ids.iter().position(|id| *id == 0x60).unwrap();
     assert!(
         event_at > login_at && event_at > sync_at && event_at < center_at,
         "load-start must sit after Login/SyncPos and before CenterChunk: {ids:02x?}"

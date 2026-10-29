@@ -30,7 +30,7 @@ pub struct ClientboundShowDialog {
 }
 
 impl Packet for ClientboundShowDialog {
-    const ID: i32 = 0x8C;
+    const ID: i32 = 0x8F;
 
     fn encode<B: BufMut>(&self, buf: &mut B) -> Result<(), CodecError> {
         let mut body = Vec::new();
@@ -57,7 +57,7 @@ impl Packet for ClientboundShowDialog {
 pub struct ClientboundClearDialog;
 
 impl Packet for ClientboundClearDialog {
-    const ID: i32 = 0x8B;
+    const ID: i32 = 0x8E;
 
     fn encode<B: BufMut>(&self, _buf: &mut B) -> Result<(), CodecError> {
         Ok(())

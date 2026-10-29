@@ -282,7 +282,7 @@ impl ExtendedItemComponents {
             let Tag::List(projectiles) = projectiles else {
                 return Err("charged projectiles must be a list");
             };
-            if projectiles.elements.len() > 3 {
+            if projectiles.elements.len() > 1024 {
                 return Err("too many charged projectiles");
             }
             for projectile in &projectiles.elements {

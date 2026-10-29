@@ -73,6 +73,68 @@ fn reset_tree_and_progress_delta_are_reliable_and_viewer_scoped() {
     assert!(delta_packet.added.is_empty());
     assert_eq!(delta_packet.progress, reset.progress);
 }
+
+#[test]
+fn hero_of_the_village_icon_emits_each_component_once() {
+    use mc_protocol::codec::ReadMc;
+    let dir = tempfile::tempdir().unwrap();
+    let mut config = mc_core::config::CoreConfig::new(dir.path().join("world"), 42);
+    config.vanilla_data_dir =
+        Some(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data/vanilla"));
+    let core = mc_core::Core::open(config).unwrap();
+    let catalog = AdvancementPackets::new(core.registry()).unwrap();
+    let hero = catalog.definitions["minecraft:adventure/hero_of_the_village"].clone();
+    let icon = &hero.display.as_ref().unwrap().icon;
+    assert_eq!(icon.extended().banner_patterns.len(), 8);
+    let packet = ClientboundUpdateAdvancements {
+        reset: true,
+        added: vec![hero],
+        removed: Vec::new(),
+        progress: BTreeMap::new(),
+        show_advancements: true,
+    };
+    let mut bytes = Vec::new();
+    packet.encode(&mut bytes).unwrap();
+    let mut icon_bytes = bytes.as_slice();
+    assert!(icon_bytes.read_bool().unwrap());
+    assert_eq!(icon_bytes.read_varint().unwrap(), 1);
+    icon_bytes.read_string(32767).unwrap();
+    if icon_bytes.read_bool().unwrap() {
+        icon_bytes.read_string(32767).unwrap();
+    }
+    assert!(icon_bytes.read_bool().unwrap());
+    mc_nbt::read_network_value(&mut icon_bytes).unwrap();
+    mc_nbt::read_network_value(&mut icon_bytes).unwrap();
+    icon_bytes.read_varint().unwrap(); // template item id
+    assert_eq!(icon_bytes.read_varint().unwrap(), 1);
+    // item_name, rarity, tooltip_display, banner_patterns; never a fifth
+    // station-owned copy of the preserved banner_patterns component.
+    assert_eq!(icon_bytes.read_varint().unwrap(), 4);
+    assert_eq!(icon_bytes.read_varint().unwrap(), 0);
+    let mut input = bytes.as_slice();
+    let decoded = ClientboundUpdateAdvancements::decode(&mut input)
+        .expect("the exact ominous-banner icon must not duplicate banner_patterns");
+    assert!(input.is_empty());
+    assert_eq!(decoded.added.len(), 1);
+    let actual = &decoded.added[0].display.as_ref().unwrap().icon;
+    let expected = &packet.added[0].display.as_ref().unwrap().icon;
+    assert_eq!(actual.item_id, expected.item_id);
+    assert_eq!(actual.count, expected.count);
+    assert_eq!(
+        actual.extended().banner_patterns,
+        expected.extended().banner_patterns
+    );
+    // The wire decoder stores banner patterns in their typed field, not the
+    // source-NBT preservation baseline. All other components survive verbatim.
+    assert!(
+        actual.extended().preserved_components.iter().eq(expected
+            .extended()
+            .preserved_components
+            .iter()
+            .filter(|component| component.name != "minecraft:banner_patterns"))
+    );
+    core.shutdown();
+}
 #[test]
 fn seen_tab_decode_and_selected_tab_reply() {
     let (mut viewer, _) = fixture();

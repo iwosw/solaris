@@ -198,6 +198,7 @@ fn convert(
             request: ScriptPlayerTeleportRequest::try_new(
                 teleport.request,
                 ScriptPlayerId::new(teleport.session),
+                teleport.dimension,
                 ScriptPosition::try_new(
                     teleport.position.x,
                     teleport.position.y,

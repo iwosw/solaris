@@ -132,6 +132,7 @@ fn a_real_component_answers_a_join_and_a_command() {
                     y: 64.0,
                     z: 0.0,
                 },
+                dimension: "minecraft:overworld".to_owned(),
                 name: "hello".to_owned(),
                 arguments: Vec::new(),
                 raw_arguments: String::new(),

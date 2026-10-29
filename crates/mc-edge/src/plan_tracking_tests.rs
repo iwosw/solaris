@@ -158,7 +158,17 @@ fn entity_waits_for_held_chunk_and_appearance_does_not_wait_for_cadence() {
 #[test]
 fn contract_intervals_one_two_twenty_and_max_are_not_cow_special_cases() {
     let cache = ChunkPacketCache::new();
-    for (type_id, interval) in [(15, 1), (155, 2), (6, 20), (3, i32::MAX as u64)] {
+    for (name, interval) in [
+        ("block_display", 1),
+        ("player", 2),
+        ("arrow", 20),
+        ("area_effect_cloud", i32::MAX as u64),
+    ] {
+        let type_id = mc_data::entity_types::entity_type_contract_26_1_2_by_name(&format!(
+            "minecraft:{name}"
+        ))
+        .unwrap()
+        .protocol_id;
         let mut viewer = viewer_at(1, [8.0, 64.0, 8.0]);
         viewer.loaded_chunks.insert((0, 0), 0);
         let mut tracked = entity(20, [8.0, 64.0, 8.0]);

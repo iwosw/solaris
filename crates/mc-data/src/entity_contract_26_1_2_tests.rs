@@ -12,7 +12,7 @@ use crate::entity_types::{
 
 // This checksum only detects drift in the committed, reviewed contract data.
 // It is not independent oracle evidence for vanilla parity.
-const REVIEWED_CONTRACT_CHECKSUM: u64 = 0xe352_261a_b2a0_160b;
+const REVIEWED_CONTRACT_CHECKSUM: u64 = 0x222d_e419_e6f1_5371;
 
 fn registry_report() -> Vec<EntityTypeReport> {
     entity_type_contracts_26_1_2()
@@ -98,8 +98,8 @@ fn hash_bytes(mut hash: u64, bytes: &[u8]) -> u64 {
 
 #[test]
 fn dense_registry_ids_are_exhaustive_and_round_trip() {
-    assert_eq!(MINECRAFT_VERSION, "26.1.2");
-    assert_eq!(ENTITY_TYPE_COUNT, 157);
+    assert_eq!(MINECRAFT_VERSION, "26.3");
+    assert_eq!(ENTITY_TYPE_COUNT, 161);
 
     for (expected_id, contract) in entity_type_contracts_26_1_2().enumerate() {
         assert_eq!(contract.protocol_id as usize, expected_id);
@@ -445,7 +445,7 @@ fn dragon_part_is_an_explicit_nonregistered_never_sent_instance() {
 #[test]
 fn public_strict_contract_lookup_has_no_unknown_or_alias_fallback() {
     assert_eq!(
-        entity_type_contract_26_1_2_by_protocol_id(110)
+        entity_type_contract_26_1_2_by_protocol_id(113)
             .unwrap()
             .name,
         "minecraft:salmon"
@@ -454,7 +454,7 @@ fn public_strict_contract_lookup_has_no_unknown_or_alias_fallback() {
         entity_type_contract_26_1_2_by_name("minecraft:salmon")
             .unwrap()
             .protocol_id,
-        110
+        113
     );
 
     assert_eq!(
@@ -558,30 +558,30 @@ fn boundary_and_non_default_facts_are_exact() {
     assert_eq!(cloud.update_interval, i32::MAX as u32);
     assert!(cloud.flags.is_fire_immune());
 
-    let dolphin = by_protocol_id(35).unwrap();
+    let dolphin = by_protocol_id(36).unwrap();
     assert_eq!(dolphin.tracking_range, 5);
     assert_eq!(dolphin.category, MobCategory::WaterCreature);
 
-    let magma_cube = by_protocol_id(80).unwrap();
+    let magma_cube = by_protocol_id(81).unwrap();
     assert_eq!(magma_cube.dimensions.spawn_dimensions_scale, 4.0);
 
-    let marker = by_protocol_id(84).unwrap();
+    let marker = by_protocol_id(85).unwrap();
     assert_eq!(marker.dimensions.width, 0.0);
     assert_eq!(marker.dimensions.height, 0.0);
     assert_eq!(marker.tracking_range, 0);
 
-    let pillager = by_protocol_id(103).unwrap();
+    let pillager = by_protocol_id(104).unwrap();
     assert!(pillager.flags.can_spawn_far_from_player());
     assert!(!pillager.flags.is_allowed_in_peaceful());
 
-    let player = by_protocol_id(155).unwrap();
+    let player = by_protocol_id(159).unwrap();
     assert_eq!(player.name, "minecraft:player");
     assert_eq!(player.tracking_range, 32);
     assert_eq!(player.update_interval, 2);
     assert!(!player.flags.is_serializable());
     assert!(!player.flags.is_summonable());
 
-    let fishing_bobber = by_protocol_id(156).unwrap();
+    let fishing_bobber = by_protocol_id(160).unwrap();
     assert_eq!(fishing_bobber.name, "minecraft:fishing_bobber");
     assert_eq!(fishing_bobber.update_interval, 5);
     assert!(!fishing_bobber.flags.is_serializable());
@@ -671,7 +671,7 @@ fn embedded_production_registry_is_strict_and_canonical() {
     let salmon = registry
         .facts_of(&Identifier::parse("minecraft:salmon").unwrap())
         .unwrap();
-    assert_eq!(salmon.protocol_id, 110);
+    assert_eq!(salmon.protocol_id, 113);
     assert_eq!(salmon.mob_category, Some(MobCategory::WaterAmbient));
     assert_eq!(salmon.dimensions.width, f64::from(0.7_f32));
 }
@@ -709,7 +709,7 @@ fn strict_registry_rejects_a_missing_id() {
         EntityTypeRegistry::try_from_report_26_1_2(&report).unwrap_err(),
         EntityTypeRegistryValidationError::MissingProtocolId {
             protocol_id: 71,
-            expected_name: Identifier::parse("minecraft:item").unwrap(),
+            expected_name: Identifier::parse("minecraft:iron_golem").unwrap(),
         }
     );
 }

@@ -7,7 +7,7 @@
 //! chunks by `Arc`.
 
 use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
-use std::sync::Arc;
+use std::sync::{Arc, atomic::AtomicU64};
 
 use mc_data::Identifier;
 use mc_world::native::{NativeChunkSnapshot, NativeStore};
@@ -113,6 +113,14 @@ pub struct ChunkWorld {
     /// EWMA of measured admission microseconds per chunk, including its
     /// synchronous light fence. Start conservatively with one whole chunk.
     admission_us_per_chunk: u128,
+    /// Shared absolute global-tick deadline; never renewed by dimension calls.
+    admission_deadline: Option<std::time::Instant>,
+    /// Admission wall time across every ensure call in the current global tick.
+    admission_tick_elapsed: std::time::Duration,
+    /// Remaining mandatory progress costs, shared by this tick's worlds.
+    admission_progress_reservations: Option<Arc<AtomicU64>>,
+    /// This world's reservation until its first progress batch settles.
+    admission_progress_reserve_us: u64,
     /// Failed stored loads remain unavailable until an operator repairs and restarts.
     failed: HashMap<ChunkPos, ChunkLoadError>,
     /// Durable revisions fence checkpoint ACKs for resident chunks and absent
@@ -221,7 +229,7 @@ const RECENT_CHUNKS: usize = 2048;
 
 /// Tick-owned whole-chunk admission budget. A single chunk is the progress
 /// floor even when its measured cost exceeds this budget.
-const ADMISSION_BUDGET_US: u128 = 8_000;
+pub(crate) const ADMISSION_BUDGET_US: u128 = 8_000;
 
 /// Generated chunks held for saving while the journal thread is busy (a
 /// slow disk); bounds that memory.
@@ -475,6 +483,10 @@ impl ChunkWorld {
             next_ticket: 0,
             ready: Vec::new(),
             admission_us_per_chunk: ADMISSION_BUDGET_US,
+            admission_deadline: None,
+            admission_tick_elapsed: std::time::Duration::ZERO,
+            admission_progress_reservations: None,
+            admission_progress_reserve_us: 0,
             failed: HashMap::default(),
             revisions: HashMap::default(),
             next_revision: 0,

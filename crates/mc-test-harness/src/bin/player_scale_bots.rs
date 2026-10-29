@@ -1904,9 +1904,7 @@ impl Bot {
                     self.direction = (self.direction + 1) % 4;
                 }
                 client
-                    .write_packet(&ConfirmTeleportation {
-                        teleport_id: packet.teleport_id,
-                    })
+                    .write_packet(&ConfirmTeleportation::accepting(&packet))
                     .await?;
                 if self.wire_trace_sink.is_some() {
                     self.trace_wire(
@@ -2111,7 +2109,7 @@ impl Bot {
                 self.metrics.respawns_received += 1;
                 client.write_packet(&ServerboundPlayerLoaded).await?;
             }
-            ClientboundSystemChat::ID if !preparing => {
+            ClientboundSystemChat::ID if !preparing || !self.commands.setup.is_empty() => {
                 let packet = ClientboundSystemChat::decode(&mut body)?;
                 let tag = mc_nbt::read_network(&mut packet.content_nbt.as_slice())?;
                 if let Some(index) = self

@@ -267,6 +267,11 @@ fn live_edit_outranks_native_image_and_changes_revision() {
     // checkpoint, then reopen with a fresh core (no residency at all) and
     // re-sample: the edit must come back from the durable store, not from
     // any surviving snapshot or supplement.
+    // The probe player leaves first: a player still in the checkpoint is restored on
+    // reopen and its chunks become resident at a timing-dependent tick, which made the
+    // no-residency assertion below flaky (9/30 failures when run alone).
+    assert!(core.submit(PlayerInput::Leave { connection }));
+    recv_tick(&mut rx);
     assert!(core.checkpoint(), "pre-reopen checkpoint must commit");
     let world_dir = dir.path().to_path_buf();
     let epoch = core.terrain_identity().to_owned();

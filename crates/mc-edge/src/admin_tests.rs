@@ -15,6 +15,7 @@ fn fixture() -> (EdgeServer, std::path::PathBuf) {
     let server = EdgeServer {
         recipes: crate::recipes::RecipePackets::new(hub.registry()).unwrap(),
         loader_manifest: None,
+        legacy: None,
         wire: WireRegistries {
             dimension_type_ids: crate::dimensions::registry_ids(&data).unwrap(),
             biomes: data.registry("worldgen/biome").unwrap().clone(),
@@ -362,6 +363,291 @@ async fn whitelist_and_banlist_commands_report_and_enforce_vanilla_state() {
         "There are 1 total banned IPs:"
     );
     assert_eq!(feedback_text(&receive(&mut operator_rx).await), "10.0.0.1");
+    server.hub.shutdown();
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[tokio::test]
+async fn moderation_selectors_ban_all_online_players_without_fake_profiles() {
+    let (server, dir) = fixture();
+    let (alice, mut alice_rx) = register(&server, "Alice", false);
+    let (bob, mut bob_rx) = register(&server, "Bob", false);
+    let mut ticks = server.hub.subscribe();
+    for (id, name) in [(alice, "Alice"), (bob, "Bob")] {
+        assert!(server.hub.submit(mc_core::boundary::PlayerInput::Join {
+            connection: id,
+            uuid: crate::crypto::offline_uuid(name),
+            name: name.into(),
+            permission_level: 0,
+        }));
+    }
+    for _ in 0..3 {
+        ticks.recv().await.unwrap();
+    }
+    assert!(
+        server
+            .handle_admin_command(mc_core::command_console::CONNECTION, "ban @a griefing")
+            .await
+            .unwrap()
+    );
+    let bans = server.admin.bans().0;
+    assert_eq!(bans.len(), 2);
+    assert!(bans.iter().any(|entry| entry.starts_with("Alice (")));
+    assert!(bans.iter().any(|entry| entry.starts_with("Bob (")));
+    assert!(!bans.iter().any(|entry| entry.starts_with("@a (")));
+    assert_eq!(
+        tokio::time::timeout(std::time::Duration::from_secs(2), receive(&mut alice_rx))
+            .await
+            .unwrap()
+            .id,
+        PlayDisconnect::ID
+    );
+    assert_eq!(
+        tokio::time::timeout(std::time::Duration::from_secs(2), receive(&mut bob_rx))
+            .await
+            .unwrap()
+            .id,
+        PlayDisconnect::ID
+    );
+    server.hub.shutdown();
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[tokio::test]
+async fn moderation_selectors_missing_and_invalid_never_ban_literal() {
+    let (server, dir) = fixture();
+    for command in ["ban @a reason", "ban @bogus reason", "pardon @a"] {
+        assert!(
+            server
+                .handle_admin_command(mc_core::command_console::CONNECTION, command)
+                .await
+                .unwrap()
+        );
+        assert!(server.admin.bans().0.is_empty(), "{command}");
+    }
+    assert!(
+        server
+            .handle_admin_command(mc_core::command_console::CONNECTION, "ban Offline reason")
+            .await
+            .unwrap()
+    );
+    assert!(
+        server
+            .admin
+            .bans()
+            .0
+            .iter()
+            .any(|entry| entry.starts_with("Offline ("))
+    );
+    server.hub.shutdown();
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[tokio::test]
+async fn moderation_selectors_kick_all_and_report_missing_without_success() {
+    let (server, dir) = fixture();
+    let (alice, mut alice_rx) = register(&server, "Alice", false);
+    let (bob, mut bob_rx) = register(&server, "Bob", false);
+    let mut ticks = server.hub.subscribe();
+    for (id, name) in [(alice, "Alice"), (bob, "Bob")] {
+        assert!(server.hub.submit(mc_core::boundary::PlayerInput::Join {
+            connection: id,
+            uuid: crate::crypto::offline_uuid(name),
+            name: name.into(),
+            permission_level: 0,
+        }));
+    }
+    for _ in 0..3 {
+        ticks.recv().await.unwrap();
+    }
+    assert!(
+        server
+            .handle_admin_command(mc_core::command_console::CONNECTION, "kick @a reason")
+            .await
+            .unwrap()
+    );
+    assert_eq!(
+        tokio::time::timeout(std::time::Duration::from_secs(2), receive(&mut alice_rx))
+            .await
+            .unwrap()
+            .id,
+        PlayDisconnect::ID
+    );
+    assert_eq!(
+        tokio::time::timeout(std::time::Duration::from_secs(2), receive(&mut bob_rx))
+            .await
+            .unwrap()
+            .id,
+        PlayDisconnect::ID
+    );
+    let (operator, mut operator_rx) = register(&server, "Operator", true);
+    assert!(
+        server
+            .handle_admin_command(operator, "kick Nobody reason")
+            .await
+            .unwrap()
+    );
+    assert_eq!(
+        feedback_text(&receive(&mut operator_rx).await),
+        "No player was found"
+    );
+    assert!(
+        operator_rx.try_recv().is_err(),
+        "failure must not emit a completion"
+    );
+    server.hub.shutdown();
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[tokio::test]
+async fn moderation_selectors_ip_and_offline_profile_rules() {
+    let (server, dir) = fixture();
+    let operator = mc_core::command_console::CONNECTION;
+    let (_alice, _alice_rx) = register(&server, "Alice", false);
+    assert!(
+        server
+            .handle_admin_command(operator, "ban-ip Alice reason")
+            .await
+            .unwrap()
+    );
+    assert!(
+        server
+            .handle_admin_command(operator, "pardon-ip Alice")
+            .await
+            .unwrap()
+    );
+    assert_eq!(server.admin.bans().1, vec!["127.0.0.1"]);
+    assert!(
+        server
+            .handle_admin_command(operator, "pardon-ip 127.0.0.1")
+            .await
+            .unwrap()
+    );
+    assert!(server.admin.bans().1.is_empty());
+    server.admin.ban_ip("::1", "Server", "test", true).unwrap();
+    assert!(
+        server
+            .handle_admin_command(operator, "pardon-ip ::1")
+            .await
+            .unwrap()
+    );
+    assert_eq!(server.admin.bans().1, vec!["::1"]);
+    assert!(
+        server
+            .handle_admin_command(operator, "ban Offline reason")
+            .await
+            .unwrap()
+    );
+    assert!(
+        server
+            .admin
+            .bans()
+            .0
+            .iter()
+            .any(|entry| entry.starts_with("Offline ("))
+    );
+    assert!(
+        server
+            .handle_admin_command(operator, "pardon Offline")
+            .await
+            .unwrap()
+    );
+    assert!(server.admin.bans().0.is_empty());
+    server.hub.shutdown();
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[tokio::test]
+async fn moderation_selectors_idempotent_ban_and_pardon_report_failure() {
+    let (server, dir) = fixture();
+    let (operator, mut rx) = register(&server, "Operator", true);
+    for (command, success) in [
+        ("ban Offline reason", true),
+        ("ban Offline reason", false),
+        ("pardon Offline", true),
+        ("pardon Offline", false),
+    ] {
+        assert!(
+            server
+                .handle_admin_command(operator, command)
+                .await
+                .unwrap()
+        );
+        let text = feedback_text(&receive(&mut rx).await);
+        assert_eq!(text.contains("completed"), success, "{command}: {text}");
+    }
+    server.hub.shutdown();
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[tokio::test]
+async fn moderation_selectors_invalid_and_empty_report_failure() {
+    let (server, dir) = fixture();
+    let (operator, mut rx) = register(&server, "Operator", true);
+    for command in ["kick @a", "ban @a", "ban @bogus", "pardon @a"] {
+        assert!(
+            server
+                .handle_admin_command(operator, command)
+                .await
+                .unwrap()
+        );
+        let text = feedback_text(&receive(&mut rx).await);
+        assert!(!text.contains("completed"), "{command}: {text}");
+        assert!(rx.try_recv().is_err(), "{command} emitted extra feedback");
+        assert!(server.admin.bans().0.is_empty());
+    }
+    server.hub.shutdown();
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[tokio::test]
+async fn moderation_selectors_filtered_ban_and_online_pardon() {
+    let (server, dir) = fixture();
+    let (alice, _alice_rx) = register(&server, "Alice", false);
+    let (bob, _bob_rx) = register(&server, "Bob", false);
+    let mut ticks = server.hub.subscribe();
+    for (id, name) in [(alice, "Alice"), (bob, "Bob")] {
+        assert!(server.hub.submit(mc_core::boundary::PlayerInput::Join {
+            connection: id,
+            uuid: crate::crypto::offline_uuid(name),
+            name: name.into(),
+            permission_level: 0,
+        }));
+    }
+    for _ in 0..3 {
+        ticks.recv().await.unwrap();
+    }
+    let console = mc_core::command_console::CONNECTION;
+    assert!(
+        server
+            .handle_admin_command(console, "ban @a[name=Alice, limit=1] 1h test")
+            .await
+            .unwrap()
+    );
+    let bans = server.admin.bans().0;
+    assert_eq!(bans.len(), 1);
+    assert!(bans[0].starts_with("Alice ("));
+    let persisted: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(dir.join("banned-players.json")).unwrap()).unwrap();
+    assert_ne!(persisted[0]["expires"], "forever");
+    assert_eq!(persisted[0]["reason"], "test");
+    server
+        .admin
+        .ban_player(
+            crate::crypto::offline_uuid("Bob"),
+            "Bob",
+            "Server",
+            "test",
+            true,
+        )
+        .unwrap();
+    assert!(
+        server
+            .handle_admin_command(console, "pardon @a")
+            .await
+            .unwrap()
+    );
+    assert!(server.admin.bans().0.is_empty());
     server.hub.shutdown();
     std::fs::remove_dir_all(dir).unwrap();
 }

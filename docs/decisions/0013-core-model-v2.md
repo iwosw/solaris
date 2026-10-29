@@ -212,6 +212,17 @@ cleanup credits. Edge composition adds one credit per configured player slot to
 the ordinary input budget. Gameplay/session removal remains native tick work;
 there is no second player authority or persistence stream.
 
+Administrative completion (notably `save-all flush`) preserves per-connection
+input order but must not gate socket liveness on native checkpoint progress.
+While waiting, the same Play reader validates and forwards KeepAlive echoes
+directly to the writer; other decoded frames wait in a one-MiB FIFO, including
+per-frame overhead in its budget. Per-packet rate admission remains at receipt;
+command decoding and dispatch wait until the preceding command finishes, so
+`deop` cannot race a following privileged command. Overflow sends an explicit
+disconnect reason and closes the session; no frames are silently discarded or
+replayed ahead of the command. The normal path allocates no queue storage and
+keeps the existing heartbeat deadlines.
+
 ## G1-A event-driven allocator (2026-10-16)
 
 Decision 008 replaces the per-tick population validator with a runtime dirty
@@ -795,7 +806,13 @@ Tick `t -> t+1`:
    revisions because enclosure is judged across chunk borders. Reveal rides
    the block-update path: once per publish the tick index lists the hideable
    ores a block change just un-enclosed (keyed by the ore's own chunk), and
-   each viewer holding that chunk gets their real `BlockUpdate`. World packets are planned within each
+   each viewer holding that chunk gets the real state through block updates.
+   One changed block uses `BlockUpdate`; multiple changed blocks in one section
+   share a `SectionBlocksUpdate`, including bulk `/fill` edits. A section consumes
+   one world-queue credit; if credit is exhausted, its positions remain owed and
+   are encoded together from the newest snapshot on a later publish. This avoids
+   burying connection liveness behind tens of thousands of per-block frames.
+   World packets are planned within each
    connection's credit, the free slots of its world queue read before the
    publish (only the pump sends there, so nothing planned is ever dropped):
    forgets, block updates, chunks, removals, spawns (nearest first), then
@@ -2837,14 +2854,43 @@ The full-recompute oracle remains the correctness contract, including roofed
 neighbour decreases, missing diagonal air, removed emitters and stale resident
 light after eviction followed by a different neighbour's admission.
 
-**Tick budget.** One nearest-first batch runs per tick. Its limit is
+Residual classification reads each neighbour's light before its material.
+If neither channel exceeds the strongest already-unoccluded support, that
+neighbour cannot change either maximum, so its face/material lookup is skipped.
+This preserves the same residuals, wave order and prepublication light fence;
+the direct-sky/emitter admission regression checks the full oracle and bounds
+the number of seed face checks.
+
+**Tick budget.** The nearest-first progress batch retains its limit:
 `clamp(floor(8000 / estimated_microseconds_per_chunk), 1, 32)`.
 The estimate starts at 8,000 µs/chunk and uses an EWMA with weight 1/4 for
 the latest measured admission cost per chunk, rounded up; timing includes the
 synchronous light install/revision fence. Empty batches do not train it.
+After settling that batch, admission may use actual remaining tick slack,
+one whole chunk at a time, provided its estimated cost fits before the deadline.
+All dimensions share the same absolute deadline, set once at global tick entry.
+Before any world spends extra slack, the tick owner also reserves each world's
+estimated mandatory progress-batch cost in one shared counter. A world releases
+its reservation after its first progress batch settles, even if it admits no
+chunks. Extra chunks must fit after subtracting all unreleased reservations;
+an earlier dimension cannot borrow time needed by a later dimension's floor.
+The counter resets at every global tick, including consecutive loading ticks.
+The deadline reserves the previous tick's non-admission work, increasing immediately on a
+larger sample and decaying with a 1/4 EWMA otherwise. New dimensions fall back to
+the progress batch until the next global tick. The total per `ensure` remains
+bounded by 32 chunks; previews and repeated calls never renew the deadline.
 There is no operator knob, percentage budget or deferred publication.
-One chunk remains the progress floor even if it exceeds 8 ms, so measurement,
-not the estimator alone, decides whether this implementation meets acceptance.
+A whole light solve cannot be preempted: an underestimated extra chunk may
+overrun the deadline, but no further extra chunk starts without estimated room.
+The original progress batch still runs on an expired deadline. This is a soft
+admission bound, not a guarantee about the cost of later simulation/journal work.
+`MC_CORE_PHASE_LOG` additionally reports admission thread CPU microseconds on
+Linux, so descheduling does not masquerade as additional light-solving work.
+The 2026-10-28 matched weak-host diagnostic and its operation-count regression
+are recorded in [Benchmarks](../performance/BENCHMARKS.md#smoke-checks-pipeline-proof-not-numbers):
+aggregate admission CPU fell 19.5%, seed face checks fell 73.2%, and admitted
+chunks per observed global tick rose 60.7%. These partial cold-admission runs
+are not readiness acceptance.
 
 **Focused after measurement.** The same counter-instrumented release bench
 completed all 2,819 pairs with the new solver:
@@ -4252,8 +4298,13 @@ not exclusive performance or real-client acceptance.
 ## Native session auth gate — opt-in plugin login (2026-10-19)
 
 `[auth] require_plugin_login` (default `false`) wires `EdgeConfig.auth` into
-`CoreConfig.require_plugin_login` at edge startup. Default behavior is
-unchanged: native sessions play immediately when the flag is off.
+`CoreConfig.require_plugin_login` at edge startup. With the flag off and no
+auth-capable package deployed, native sessions play immediately. Deploying a
+package that requests the `auth` capability enables the gate even with the flag
+off (`Core::open` raises it after plugin discovery, so a server that ships
+`solaris-auth` never hands command/chat powers to an unauthenticated offline
+name); the flag set to `true` additionally refuses startup without such a
+package.
 
 When enabled, each new native play session starts locked and fails closed until
 an admitted plugin `unlock_session(session)` command releases that exact session.

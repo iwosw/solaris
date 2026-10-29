@@ -145,6 +145,7 @@ fn consumer_batch(plugin: &mut PluginInstance<Services>, arguments: &[&str]) -> 
             y: 64.0,
             z: 0.0,
         },
+        dimension: "minecraft:overworld".to_owned(),
         name: SETTLEMENT_API.to_owned(),
         arguments: arguments.iter().map(ToString::to_string).collect(),
         raw_arguments: arguments.join(" "),

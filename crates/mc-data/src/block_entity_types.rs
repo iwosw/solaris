@@ -115,19 +115,18 @@ mod tests {
             "minecraft:blast_furnace",
             "minecraft:campfire",
             "minecraft:sign",
-            "minecraft:bed",
         ] {
             assert!(registry.id_of(&Identifier::parse(id).unwrap()).is_some());
         }
     }
 
     #[test]
-    fn bed_block_entity_type_matches_vanilla_protocol_id() {
+    fn bed_has_no_block_entity_type_in_26_3() {
         let registry = solaris_required_block_entity_types();
         assert_eq!(
             registry.id_of(&Identifier::parse("minecraft:bed").unwrap()),
-            Some(25),
-            "26.1 registries.json block_entity_type protocol id for minecraft:bed"
+            None,
+            "26.3 registries.json block_entity_type drops minecraft:bed"
         );
     }
 
@@ -136,7 +135,7 @@ mod tests {
         let registry = solaris_required_block_entity_types();
         assert_eq!(
             registry.id_of(&Identifier::parse("minecraft:sculk_shrieker").unwrap()),
-            Some(38)
+            Some(37)
         );
     }
 }

@@ -127,7 +127,7 @@ fn shelf_checkpoint_native_chunk_restart_preserves_stacks_and_alignment() {
             _ => None,
         })
         .unwrap();
-    assert_eq!(update.0, 40, "26.1.2 shelf block_entity_type");
+    assert_eq!(update.0, 39, "26.3 shelf block_entity_type");
     assert_shelf_items(update.1);
     let original = state.block_entities[&key(POS)].slots.clone();
     let bytes = state
@@ -161,7 +161,7 @@ fn shelf_checkpoint_native_chunk_restart_preserves_stacks_and_alignment() {
     let shelf = records.iter().find(|record| record.pos == POS).unwrap();
     assert_eq!(shelf.type_name.as_str(), "minecraft:shelf");
     let registry = mc_data::block_entity_types::solaris_required_block_entity_types();
-    assert_eq!(registry.id_of(&shelf.type_name), Some(40));
+    assert_eq!(registry.id_of(&shelf.type_name), Some(39));
     let Tag::Compound(fields) = &shelf.nbt else {
         panic!("shelf update is not a compound")
     };

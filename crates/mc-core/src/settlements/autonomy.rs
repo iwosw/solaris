@@ -42,6 +42,16 @@ struct PendingVillage {
     uncertified: VecDeque<usize>,
     piece_kinds: Vec<Option<Option<BuildingKind>>>,
     zone_cursor: usize,
+    natural_candidates: VecDeque<NaturalCandidate>,
+}
+
+#[derive(Debug)]
+struct NaturalCandidate {
+    kind: BuildingKind,
+    bounds: ScriptWorldBounds,
+    entrance: [i32; 3],
+    queued_at: u64,
+    after_resident: Option<uuid::Uuid>,
 }
 
 fn adopted_marker(source: &str) -> String {
@@ -121,6 +131,7 @@ pub(crate) fn tick(state: &mut TickState, changes: &mut ChangeSet) {
                     known_residents: BTreeSet::new(),
                     meeting_bell: None,
                     zone_cursor: 0,
+                    natural_candidates: VecDeque::new(),
                 });
                 queue.villages.back_mut().expect("queued village")
             };
@@ -276,21 +287,40 @@ fn advance(
             }
         }
     }
+    // Chunk adoption only queues terrain candidates. Ordinary route proof is
+    // deferred to later planner passes, one resident/candidate per pass.
+    if state.tick.is_multiple_of(20) {
+        prove_natural(
+            state,
+            id,
+            &pending.known_residents,
+            &mut pending.natural_candidates,
+        );
+    }
     let zone_limit = state
         .settlements
         .get(id)
         .map_or(0, |record| zone_probe_limit(record.radius));
-    if pending.zone_cursor < zone_limit
+    if pending.natural_candidates.is_empty()
+        && pending.zone_cursor < zone_limit
         && (pending.zone_cursor == 0 || state.tick.is_multiple_of(20))
     {
         for _ in 0..ZONE_PROBES_PER_PASS {
             if pending.zone_cursor == zone_limit {
                 break;
             }
-            natural_zones(state, id, anchor, &pending.site, pending.zone_cursor);
+            natural_zones(
+                state,
+                id,
+                anchor,
+                &pending.site,
+                pending.zone_cursor,
+                &mut pending.natural_candidates,
+            );
             pending.zone_cursor += 1;
-            if has_kind(state, id, BuildingKind::Mine)
-                && has_kind(state, id, BuildingKind::LumberCamp)
+            if !pending.natural_candidates.is_empty()
+                || (has_kind(state, id, BuildingKind::Mine)
+                    && has_kind(state, id, BuildingKind::LumberCamp))
             {
                 break;
             }
@@ -298,6 +328,7 @@ fn advance(
     }
     !pending.residents.is_empty()
         || !pending.uncertified.is_empty()
+        || !pending.natural_candidates.is_empty()
         || state
             .settlements
             .get(id)
@@ -517,6 +548,7 @@ fn natural_zones(
     anchor: [i32; 3],
     site: &GeneratedVillageSite,
     cursor: usize,
+    candidates: &mut VecDeque<NaturalCandidate>,
 ) {
     let Some(record) = state.settlements.get(id) else {
         return;
@@ -532,7 +564,14 @@ fn natural_zones(
                 [max[0], entrance[1] + 1, max[2]],
             )
         {
-            certify_natural(state, id, site, BuildingKind::Mine, bounds, entrance);
+            queue_natural(
+                site,
+                BuildingKind::Mine,
+                bounds,
+                entrance,
+                state.tick,
+                candidates,
+            );
         }
     }
     if !has_kind(state, id, BuildingKind::LumberCamp) {
@@ -564,19 +603,26 @@ fn natural_zones(
                 && let Some(entrance) =
                     open_entrance(state, &bounds, [min[0], anchor[1], (min[2] + max[2]) / 2])
             {
-                certify_natural(state, id, site, BuildingKind::LumberCamp, bounds, entrance);
+                queue_natural(
+                    site,
+                    BuildingKind::LumberCamp,
+                    bounds,
+                    entrance,
+                    state.tick,
+                    candidates,
+                );
             }
         }
     }
 }
 
-fn certify_natural(
-    state: &mut TickState,
-    id: SettlementId,
+fn queue_natural(
     site: &GeneratedVillageSite,
     kind: BuildingKind,
     bounds: ScriptWorldBounds,
     entrance: [i32; 3],
+    queued_at: u64,
+    candidates: &mut VecDeque<NaturalCandidate>,
 ) {
     if site
         .pieces
@@ -592,7 +638,105 @@ fn certify_natural(
     {
         return;
     }
-    let _ = super::buildings::certify_zone(state, id, kind, bounds, entrance);
+    candidates.push_back(NaturalCandidate {
+        kind,
+        bounds,
+        entrance,
+        queued_at,
+        after_resident: None,
+    });
+}
+
+fn prove_natural(
+    state: &mut TickState,
+    settlement: SettlementId,
+    residents: &BTreeSet<uuid::Uuid>,
+    candidates: &mut VecDeque<NaturalCandidate>,
+) {
+    use super::allocator::{RouteCtx, at, find_path_ctx};
+    use crate::tick_budget::Consumer;
+    use std::ops::Bound::{Excluded, Unbounded};
+
+    let Some(candidate) = candidates.front() else {
+        return;
+    };
+    if candidate.queued_at >= state.tick {
+        return;
+    }
+    if has_kind(state, settlement, candidate.kind) {
+        candidates.pop_front();
+        return;
+    }
+    let after = candidate.after_resident.map_or(Unbounded, Excluded);
+    let resident = residents.range((after, Unbounded)).find_map(|uuid| {
+        let slot = state.entities.slot_of_uuid(*uuid)?;
+        let villager = state.entities.row(slot).villager.as_ref()?;
+        let body = state.entities.body(slot);
+        (body.alive
+            && villager.settlement == Some(settlement)
+            && villager.age >= 0
+            && villager.job_site.is_none()
+            && villager.data.profession == crate::villager::VillagerProfession::None)
+            .then(|| {
+                (
+                    *uuid,
+                    state.entities.pos(slot),
+                    body.half_width,
+                    body.height,
+                )
+            })
+    });
+    let Some((uuid, start, width, height)) = resident else {
+        candidates.pop_front();
+        return;
+    };
+    let [x, y, z] = candidate.entrance;
+    let target = BlockPos { x, y, z };
+    let from = at(start);
+    let horizontal = from
+        .x
+        .abs_diff(x)
+        .max(from.z.abs_diff(z))
+        .saturating_add(8)
+        .clamp(48, 512);
+    let vertical = from.y.abs_diff(y).saturating_add(4).clamp(16, 512);
+    let mut cache = std::mem::take(&mut state.villager_pois);
+    let mut path = std::mem::take(&mut cache.candidate_path);
+    let mut ctx = RouteCtx {
+        world: &state.world,
+        registry: &state.registry,
+        dimension: state.dimension,
+        consumer: Consumer::Allocator,
+        budget: &mut state.tick_budget,
+    };
+    let admitted = ctx.admit();
+    let reached = admitted
+        && find_path_ctx(
+            &mut ctx, &mut cache, start, target, width, height, &mut path, false, horizontal,
+            vertical, true,
+        );
+    cache.candidate_path = path;
+    state.villager_pois = cache;
+    if !admitted {
+        return;
+    }
+    if reached {
+        let candidate = candidates.pop_front().expect("proved candidate");
+        let _ = super::buildings::certify_zone(
+            state,
+            settlement,
+            candidate.kind,
+            candidate.bounds,
+            candidate.entrance,
+        );
+    } else {
+        // A failed bounded route never installs a job. Try another resident on
+        // a later pass, then let the existing terrain sweep seek another zone.
+        candidates
+            .front_mut()
+            .expect("unproved candidate")
+            .after_resident = Some(uuid);
+    }
 }
 
 fn open_entrance(

@@ -670,6 +670,90 @@ async fn no_op_setup_batches_finish_on_unique_chat_not_feedback_count() -> Resul
     Ok(())
 }
 
+#[tokio::test(start_paused = true)]
+async fn preparation_fence_uses_total_readiness_deadline_and_keeps_echoing_heartbeats() -> Result<()>
+{
+    // Real socket readiness must not auto-advance the paused clock to the
+    // enclosing timeout before the kernel delivers already-written bytes.
+    let clock_guard = tokio::spawn(async {
+        loop {
+            tokio::task::yield_now().await;
+        }
+    });
+    let mut bot = terrain_bot(0.5, 64, 0.5, 0);
+    let username = bot.username.clone();
+    let (mut client, mut peer, mut buffer) = connection().await?;
+    let server = tokio::spawn(async move {
+        let mut fence = loop {
+            if let Some(frame) = try_decode_frame(&mut buffer, Compression::Disabled)? {
+                break frame;
+            }
+            ensure!(
+                peer.read_buf(&mut buffer).await? != 0,
+                "fence socket closed"
+            );
+        };
+        assert_eq!(fence.id, ServerboundChat::ID);
+        let chat = ServerboundChat::decode(&mut fence.body)?;
+        let mut body = Vec::new();
+        ClientboundKeepAlive { id: 42 }.encode(&mut body)?;
+        let keepalive = mc_protocol::frame::encode_frame(
+            ClientboundKeepAlive::ID,
+            &body,
+            Compression::Disabled,
+        )?;
+        peer.write_all(&keepalive).await?;
+        let mut reply = loop {
+            if let Some(frame) = try_decode_frame(&mut buffer, Compression::Disabled)? {
+                break frame;
+            }
+            ensure!(
+                peer.read_buf(&mut buffer).await? != 0,
+                "heartbeat socket closed"
+            );
+        };
+        assert_eq!(reply.id, ServerboundKeepAlive::ID);
+        assert_eq!(ServerboundKeepAlive::decode(&mut reply.body)?.id, 42);
+        // A real checkpoint may exceed the former per-fence 60-second timer.
+        tokio::time::advance(Duration::from_secs(65)).await;
+        let echo = system_chat_frame(&format!("<{username}> {}", chat.message))?;
+        peer.write_all(&mc_protocol::frame::encode_frame(
+            echo.id,
+            &echo.body,
+            Compression::Disabled,
+        )?)
+        .await?;
+        Ok::<(), anyhow::Error>(())
+    });
+    tokio::time::timeout(
+        Duration::from_secs(120),
+        bot.setup_fence(&mut client, "slow_checkpoint", true),
+    )
+    .await??;
+    server.await??;
+    assert_eq!(bot.metrics.fixture_input_fences_completed, 1);
+    assert_eq!(bot.metrics.keepalives_replied, 1);
+
+    // The enclosing preparation budget still bounds a server that never echoes.
+    let (mut client, _peer, _buffer) = connection().await?;
+    let expire = tokio::spawn(async {
+        tokio::task::yield_now().await;
+        tokio::time::advance(Duration::from_secs(1)).await;
+    });
+    assert!(
+        tokio::time::timeout(
+            Duration::from_secs(1),
+            bot.setup_fence(&mut client, "never_echoes", true),
+        )
+        .await
+        .is_err()
+    );
+    expire.await?;
+    clock_guard.abort();
+    let _ = clock_guard.await;
+    Ok(())
+}
+
 #[tokio::test]
 async fn read_only_preparation_tracks_real_spawn_center() -> Result<()> {
     let mut bot = terrain_bot(0.5, 64, 0.5, 0);
@@ -2002,9 +2086,10 @@ fn primary_explosion_rows_preserve_unique_blasts_under_observer_fanout() -> Resu
             radius: 4.0,
             block_count: 0,
             knockback: None,
-            explosion_particle_id: 22,
-            sound_reference_id: 697,
+            explosion_particle_id: 29,
+            sound_reference_id: 703,
             block_particles: Vec::new(),
+            play_sound: true,
         })?;
         for observer in 0..100 {
             bot.index = observer;

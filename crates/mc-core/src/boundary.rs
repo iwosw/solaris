@@ -336,7 +336,17 @@ impl PlayerInput {
             Self::Chat { .. } => true,
             Self::Command { command, .. } => matches!(
                 command.split_whitespace().next(),
-                Some("me" | "msg" | "tell" | "w" | "teammsg" | "tm" | "say" | "tellraw" | "title")
+                Some(
+                    "me" | "msg"
+                        | "tell"
+                        | "w"
+                        | "reply"
+                        | "teammsg"
+                        | "tm"
+                        | "say"
+                        | "tellraw"
+                        | "title"
+                )
             ),
             _ => false,
         }

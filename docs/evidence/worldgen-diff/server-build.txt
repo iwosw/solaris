@@ -1,0 +1,5 @@
+mem-run: scope -p MemoryMax=6G -p MemorySwapMax=1G -p CPUQuota=600% -p CPUWeight=50 nice=19 exclusive=0 perf=0 cpus=all slice=solaris-heavy.slice target=/run/media/kaiserroman/games/solaris-work/targets/worldgen expect=4215MiB key='cargo build --release -p mc-edge --bin solaris-v2'
+   Compiling mc-worldgen v0.0.8 (/run/media/kaiserroman/games/solaris-work/wt/worldgen/crates/mc-worldgen)
+   Compiling mc-core v0.0.8 (/run/media/kaiserroman/games/solaris-work/wt/worldgen/crates/mc-core)
+   Compiling mc-edge v0.0.8 (/run/media/kaiserroman/games/solaris-work/wt/worldgen/crates/mc-edge)
+    Finished `release` profile [optimized] target(s) in 4m 38s

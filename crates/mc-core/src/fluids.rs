@@ -268,6 +268,49 @@ fn set(state: &mut TickState, writes: &mut Vec<(BlockPos, u32)>, pos: BlockPos, 
     writes.push((pos, new));
 }
 
+/// Reconcile a source-water cell with the bubble producer immediately below it.
+/// Writes schedule the next cell above through the ordinary fluid queue.
+fn update_bubble_column(state: &TickState, pos: BlockPos, current: u32) -> Option<u32> {
+    let entry = state
+        .registry
+        .blocks
+        .by_id(mc_world::BlockStateId(current))?;
+    let is_column = entry.block.id.path() == "bubble_column";
+    if !is_column && current != state.registry.states.water_levels[0] {
+        return None;
+    }
+    let below = offset(pos, [0, -1, 0]);
+    let support = state.world.block_at(below.x, below.y, below.z)?;
+    let support = state
+        .registry
+        .blocks
+        .by_id(mc_world::BlockStateId(support))?;
+    let drag = match support.block.id.path() {
+        "soul_sand" => Some(false),
+        "magma_block" => Some(true),
+        "bubble_column" => support
+            .properties
+            .iter()
+            .find(|(key, _)| key == "drag")
+            .map(|(_, value)| value == "true"),
+        _ => None,
+    };
+    let Some(drag) = drag else {
+        return is_column.then_some(state.registry.states.water_levels[0]);
+    };
+    static ID: LazyLock<Identifier> =
+        LazyLock::new(|| Identifier::parse("minecraft:bubble_column").expect("static block id"));
+    static UP: LazyLock<[(String, String); 1]> =
+        LazyLock::new(|| [("drag".into(), "false".into())]);
+    static DOWN: LazyLock<[(String, String); 1]> =
+        LazyLock::new(|| [("drag".into(), "true".into())]);
+    state
+        .registry
+        .blocks
+        .by_name_and_props(&ID, if drag { &*DOWN } else { &*UP })
+        .map(|id| id.0)
+}
+
 /// Vanilla `FlowingFluid.tick` for one cell.
 fn tick_cell(
     state: &mut TickState,
@@ -282,6 +325,13 @@ fn tick_cell(
     let Some((fluid, level)) = contained(state, current) else {
         return;
     };
+    if fluid == Fluid::Water
+        && level == 0
+        && let Some(new) = update_bubble_column(state, pos, current)
+        && new != current
+    {
+        set(state, writes, pos, new);
+    }
     // Vanilla `LiquidBlock.shouldSpreadLiquid`: lava touching water (not
     // from below) hardens.
     if fluid == Fluid::Lava {
@@ -418,6 +468,10 @@ pub(crate) fn flow_into(state: &TickState, pos: BlockPos, fluid: Fluid) -> Optio
         return (other == fluid && level != 0).then_some(Flow::Open);
     }
     let entry = state.registry.blocks.by_id(mc_world::BlockStateId(block))?;
+    // A bubble column is a full water source, not a washable decoration.
+    if entry.block.id.path() == "bubble_column" {
+        return None;
+    }
     // Material classification defaults unlisted states to solid. Use the
     // recorded collision shape instead, but never replace a waterloggable block.
     if entry.properties.iter().any(|(key, _)| key == "waterlogged") {

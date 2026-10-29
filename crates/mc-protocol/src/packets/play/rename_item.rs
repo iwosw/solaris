@@ -14,7 +14,7 @@ pub struct ServerboundRenameItem {
 }
 
 impl Packet for ServerboundRenameItem {
-    const ID: i32 = 0x30;
+    const ID: i32 = 0x31;
 
     fn encode<B: BufMut>(&self, buf: &mut B) -> Result<(), CodecError> {
         buf.write_string(&self.name, 32767)

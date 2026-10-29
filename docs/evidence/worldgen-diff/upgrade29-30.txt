@@ -1,0 +1,82 @@
+mem-run: scope -p MemoryMax=6G -p MemorySwapMax=1G -p CPUQuota=600% -p CPUWeight=50 nice=19 exclusive=0 perf=0 cpus=all slice=solaris-heavy.slice target=/run/media/kaiserroman/games/solaris-work/targets/worldgen expect=4096MiB key='cargo test --release -p mc-core --lib older_revision_world_is_refused_then_upgraded_and_opens -- --nocapture'
+   Compiling serde v1.0.228
+   Compiling foldhash v0.2.0
+   Compiling hashbrown v0.17.1
+   Compiling indexmap v2.14.0
+   Compiling smallvec v1.15.1
+   Compiling pulley-macros v36.0.15
+   Compiling cranelift-bitset v0.123.15
+   Compiling semver v1.0.28
+   Compiling pulley-interpreter v36.0.15
+   Compiling cranelift-entity v0.123.15
+   Compiling digest v0.10.7
+   Compiling cranelift-codegen-meta v0.123.15
+   Compiling gimli v0.32.3
+   Compiling cranelift-bforest v0.123.15
+   Compiling regalloc2 v0.12.2
+   Compiling cobs v0.3.0
+   Compiling cranelift-codegen v0.123.15
+   Compiling toml_datetime v0.6.11
+   Compiling serde_spanned v0.6.9
+   Compiling toml_edit v0.22.27
+   Compiling postcard v1.1.3
+   Compiling object v0.37.3
+   Compiling wasmparser v0.236.1
+   Compiling wasmtime-internal-versioned-export-macros v36.0.15
+   Compiling tracing v0.1.44
+   Compiling sha2 v0.10.9
+   Compiling getrandom v0.2.17
+   Compiling toml v0.8.23
+   Compiling rand_core v0.6.4
+   Compiling parking_lot_core v0.9.12
+   Compiling mc-data v0.0.8 (/run/media/kaiserroman/games/solaris-work/wt/worldgen/crates/mc-data)
+   Compiling wit-parser v0.236.1
+   Compiling parking_lot v0.12.5
+   Compiling wasmparser v0.259.0
+   Compiling wasmprinter v0.236.1
+   Compiling tokio-macros v2.7.0
+   Compiling wasmtime-internal-wit-bindgen v36.0.15
+   Compiling wasmtime v36.0.15
+   Compiling wasmtime-internal-cache v36.0.15
+   Compiling tokio v1.52.3
+   Compiling wasmtime-environ v36.0.15
+   Compiling password-hash v0.5.0
+   Compiling wasmtime-internal-component-macro v36.0.15
+   Compiling blake2 v0.10.6
+   Compiling bitmaps v2.1.0
+   Compiling unicode-ident v1.0.24
+   Compiling lazy_static v1.5.0
+   Compiling id-arena v2.3.0
+   Compiling zip v8.6.0
+   Compiling sharded-slab v0.1.7
+   Compiling sized-chunks v0.6.5
+   Compiling argon2 v0.5.3
+   Compiling rand_xoshiro v0.6.0
+   Compiling md-5 v0.10.6
+   Compiling tracing-subscriber v0.3.23
+   Compiling im v15.1.0
+   Compiling mc-physics v0.0.8 (/run/media/kaiserroman/games/solaris-work/wt/worldgen/crates/mc-physics)
+   Compiling wasm-encoder v0.259.0
+   Compiling mc-script v0.0.8 (/run/media/kaiserroman/games/solaris-work/wt/worldgen/crates/mc-script)
+   Compiling mc-world v0.0.8 (/run/media/kaiserroman/games/solaris-work/wt/worldgen/crates/mc-world)
+   Compiling wasm-metadata v0.259.0
+   Compiling wit-parser v0.259.0
+   Compiling cranelift-native v0.123.15
+   Compiling cranelift-frontend v0.123.15
+   Compiling wasmtime-internal-unwinder v36.0.15
+   Compiling wasmtime-internal-cranelift v36.0.15
+   Compiling mc-loader v0.0.8 (/run/media/kaiserroman/games/solaris-work/wt/worldgen/crates/mc-loader)
+   Compiling mc-worldgen v0.0.8 (/run/media/kaiserroman/games/solaris-work/wt/worldgen/crates/mc-worldgen)
+   Compiling winch-codegen v36.0.15
+   Compiling wit-component v0.259.0
+   Compiling wasmtime-internal-winch v36.0.15
+   Compiling mc-plugin-host v0.0.8 (/run/media/kaiserroman/games/solaris-work/wt/worldgen/crates/mc-plugin-host)
+   Compiling mc-core v0.0.8 (/run/media/kaiserroman/games/solaris-work/wt/worldgen/crates/mc-core)
+    Finished `release` profile [optimized] target(s) in 12m 34s
+     Running unittests src/lib.rs (/run/media/kaiserroman/games/solaris-work/targets/worldgen/release/deps/mc_core-bef79b9f1b9e9a7f)
+
+running 1 test
+test worldgen_upgrade::tests::older_revision_world_is_refused_then_upgraded_and_opens ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 3304 filtered out; finished in 1.22s
+

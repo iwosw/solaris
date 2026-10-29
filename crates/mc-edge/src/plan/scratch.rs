@@ -11,6 +11,7 @@ pub(super) struct PlanScratch {
     pub chunks: Vec<(i32, i32)>,
     pub touched: HashSet<(i32, i32)>,
     pub blocks: Vec<mc_world::chunk::BlockPos>,
+    pub section_blocks: Vec<SectionBlockChange>,
     pub events: Vec<usize>,
     /// Held, in-window chunks named by this publish's delta.
     pub delta_chunks: Vec<(i32, i32)>,

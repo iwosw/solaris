@@ -10,7 +10,7 @@ import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.state.BlockState;
 
 public final class ExplosionExtractor {
-    private static final String EXPECTED_VERSION = "26.1.2";
+    private static final String EXPECTED_VERSION = "26.3";
 
     private ExplosionExtractor() {}
 

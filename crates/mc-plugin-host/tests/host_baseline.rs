@@ -341,8 +341,16 @@ async fn the_p0_baseline_reports_what_a_callback_compile_and_instance_cost() {
     let host = start_deployment(deployment, limits, queues, Arc::new(Sessions))
         .expect("the bounded deployment starts");
     let boundary = host.boundary().clone();
-    let player = ScriptPlayerContext::try_new(PLAYER, PLAYER_NAME, false, 0.0, 64.0, 0.0)
-        .expect("baseline player context");
+    let player = ScriptPlayerContext::try_new(
+        PLAYER,
+        PLAYER_NAME,
+        false,
+        "minecraft:overworld",
+        0.0,
+        64.0,
+        0.0,
+    )
+    .expect("baseline player context");
     boundary
         .try_enqueue_event(ScriptEvent::player_joined_with_context(
             ScriptPlayerId::new(SESSION),

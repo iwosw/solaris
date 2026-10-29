@@ -17,7 +17,7 @@ pub struct ClientboundSoundEntity {
 impl Packet for ClientboundSoundEntity {
     // GameProtocols.CLIENTBOUND_SOUND_ENTITY, registration index 116.
     // Direct SoundEvent holder: 0, identifier, optional fixed range.
-    const ID: i32 = 0x74;
+    const ID: i32 = 0x76;
 
     fn encode<B: BufMut>(&self, buf: &mut B) -> Result<(), CodecError> {
         buf.write_varint(0);
@@ -71,7 +71,7 @@ pub struct ClientboundSound {
 impl Packet for ClientboundSound {
     // 26.1.2 GameProtocols: CLIENTBOUND_SOUND follows SOUND_ENTITY (116).
     // ClientboundSoundPacket.write: holder, source, xyz ints, volume, pitch, seed.
-    const ID: i32 = 0x75;
+    const ID: i32 = 0x77;
 
     fn encode<B: BufMut>(&self, buf: &mut B) -> Result<(), CodecError> {
         buf.write_varint(0);
@@ -112,18 +112,24 @@ impl Packet for ClientboundSound {
     }
 }
 
-/// Vanilla parameterless sweep particle (26.1.2 ParticleTypes.java:101).
+/// Vanilla parameterless sweep particle (26.3 `minecraft:sweep_attack` = 77).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ClientboundSweepParticle {
     pub position: [f64; 3],
     pub direction: [f32; 3],
 }
 
+/// `minecraft:particle_type` id of `minecraft:sweep_attack` in 26.3.
+const PARTICLE_TYPE_SWEEP_ATTACK: i32 = 77;
+
 impl Packet for ClientboundSweepParticle {
-    // GameProtocols.java:180, including bundle and common packet registrations.
-    const ID: i32 = 0x2F;
+    // 26.3 `ClientboundLevelParticlesPacket.STREAM_CODEC`: particle first,
+    // overrideLimiter, alwaysShow, x/y/z, x/y/z dist, x/y/z max speed,
+    // VarInt count, VarInt randomization type (0 = default).
+    const ID: i32 = 0x30;
 
     fn encode<B: BufMut>(&self, buf: &mut B) -> Result<(), CodecError> {
+        buf.write_varint(PARTICLE_TYPE_SWEEP_ATTACK);
         buf.write_bool(false);
         buf.write_bool(false);
         for coordinate in self.position {
@@ -132,19 +138,25 @@ impl Packet for ClientboundSweepParticle {
         for direction in self.direction {
             buf.write_f32(direction);
         }
-        buf.write_f32(0.0);
-        buf.write_i32(0);
-        buf.write_varint(67); // sweep_attack, vanilla registration order
+        for _ in 0..3 {
+            buf.write_f32(0.0);
+        }
+        buf.write_varint(0);
+        buf.write_varint(0);
         Ok(())
     }
 
     fn decode<B: Buf>(buf: &mut B) -> Result<Self, CodecError> {
+        if buf.read_varint()? != PARTICLE_TYPE_SWEEP_ATTACK {
+            return Err(CodecError::NotSupported("non-sweep particle"));
+        }
         if buf.read_bool()? || buf.read_bool()? {
             return Err(CodecError::NotSupported("forced sweep particle"));
         }
         let position = [buf.read_f64()?, buf.read_f64()?, buf.read_f64()?];
         let direction = [buf.read_f32()?, buf.read_f32()?, buf.read_f32()?];
-        if buf.read_f32()? != 0.0 || buf.read_i32()? != 0 || buf.read_varint()? != 67 {
+        let speeds = [buf.read_f32()?, buf.read_f32()?, buf.read_f32()?];
+        if speeds != [0.0; 3] || buf.read_varint()? != 0 || buf.read_varint()? != 0 {
             return Err(CodecError::NotSupported("non-sweep particle"));
         }
         Ok(Self {
@@ -178,10 +190,12 @@ pub struct ClientboundExplode {
     /// The wire value is this ID plus one; inline holders are unsupported here.
     pub sound_reference_id: i32,
     pub block_particles: Vec<ExplosionBlockParticle>,
+    /// 26.3 `ClientboundExplodePacket.playSound` (trailing bool).
+    pub play_sound: bool,
 }
 
 impl Packet for ClientboundExplode {
-    // Vanilla 26.1.2 `CLIENTBOUND_EXPLODE` at game-CB index 36.
+    // 26.3 `CLIENTBOUND_EXPLODE` (`packets.json` play clientbound 36).
     const ID: i32 = 0x24;
 
     fn encode<B: BufMut>(&self, buf: &mut B) -> Result<(), CodecError> {
@@ -215,6 +229,7 @@ impl Packet for ClientboundExplode {
             }
             buf.write_varint(particle.weight);
         }
+        buf.write_bool(self.play_sound);
         Ok(())
     }
 
@@ -246,6 +261,7 @@ impl Packet for ClientboundExplode {
                 weight,
             })
         })?;
+        let play_sound = buf.read_bool()?;
         Ok(Self {
             center,
             radius,
@@ -254,6 +270,7 @@ impl Packet for ClientboundExplode {
             explosion_particle_id,
             sound_reference_id,
             block_particles,
+            play_sound,
         })
     }
 }
@@ -278,7 +295,7 @@ impl GameEvent {
 impl Packet for GameEvent {
     // Verified against vanilla 26.1.2 wire capture: id 0x26, body
     // `0d 00 00 00 00` = event 13 (start_waiting_for_chunks), value 0.0.
-    const ID: i32 = 0x26;
+    const ID: i32 = 0x27;
 
     fn encode<B: BufMut>(&self, buf: &mut B) -> Result<(), CodecError> {
         buf.write_u8(self.event);
@@ -310,7 +327,7 @@ impl Packet for ClientboundInitializeBorder {
     // `.analysis/protocol-dump.txt` / GameProtocols: game-CB index 43,
     // wire id 0x2B. `ClientboundInitializeBorderPacket` writes doubles for
     // center/size, then VarLong lerp time and three VarInts.
-    const ID: i32 = 0x2B;
+    const ID: i32 = 0x2C;
 
     fn encode<B: BufMut>(&self, buf: &mut B) -> Result<(), CodecError> {
         buf.write_f64(self.center_x);
@@ -451,7 +468,7 @@ impl Packet for ClientboundSetTime {
     // - VarInt-sized map;
     // - `WorldClock.STREAM_CODEC`, a holder-registry VarInt id;
     // - vanilla `ClockNetworkState`: VarLong totalTicks, float partialTick, float rate.
-    const ID: i32 = 0x71;
+    const ID: i32 = 0x73;
 
     fn encode<B: BufMut>(&self, buf: &mut B) -> Result<(), CodecError> {
         buf.write_i64(self.game_time);
@@ -540,7 +557,7 @@ impl Packet for ClientboundSetHealth {
     // Verified from `.analysis/protocol-dump.txt`: CLIENTBOUND_SET_HEALTH is
     // game-CB index 104 = wire id 0x68. `javap -p -c
     // ClientboundSetHealthPacket` shows f32 health, VarInt food, f32 saturation.
-    const ID: i32 = 0x68;
+    const ID: i32 = 0x6A;
 
     fn encode<B: BufMut>(&self, buf: &mut B) -> Result<(), CodecError> {
         buf.write_f32(self.health);
@@ -562,7 +579,7 @@ impl Packet for ClientboundSetExperience {
     // Verified from `.analysis/protocol-dump.txt`: CLIENTBOUND_SET_EXPERIENCE
     // is game-CB index 103 = wire id 0x67. Vanilla 26.1.2 `javap -p -c`
     // shows f32 progress, VarInt level, VarInt total experience.
-    const ID: i32 = 0x67;
+    const ID: i32 = 0x69;
 
     fn encode<B: BufMut>(&self, buf: &mut B) -> Result<(), CodecError> {
         buf.write_f32(self.experience_progress);
@@ -589,7 +606,7 @@ impl Packet for ClientboundPlayerAbilities {
     // ClientboundPlayerAbilitiesPacket` shows one flags byte
     // (1=invulnerable, 2=flying, 4=canFly, 8=instabuild), then f32
     // flying speed and f32 walking speed.
-    const ID: i32 = 0x40;
+    const ID: i32 = 0x41;
 
     fn encode<B: BufMut>(&self, buf: &mut B) -> Result<(), CodecError> {
         let mut flags = 0_u8;
@@ -640,7 +657,31 @@ impl Packet for ClientboundBlockEntityData {
     fn encode<B: BufMut>(&self, buf: &mut B) -> Result<(), CodecError> {
         buf.write_i64(self.position);
         buf.write_varint(self.block_entity_type);
-        mc_nbt::write_network(buf, &self.nbt)?;
+        let mut migrated;
+        let nbt = if self.block_entity_type
+            == mc_data::block_entity_kinds::BlockEntityKind::DecoratedPot.protocol_id() as i32
+            && let Tag::Compound(fields) = &self.nbt
+            && matches!(
+                mc_data::item_nbt::field(fields, "sherds"),
+                Some(Tag::List(_))
+            ) {
+            migrated = self.nbt.clone();
+            let Tag::Compound(fields) = &mut migrated else {
+                unreachable!()
+            };
+            mc_data::item_nbt::upgrade_pot_decorations(
+                &mut fields
+                    .iter_mut()
+                    .find(|(key, _)| key == "sherds")
+                    .unwrap()
+                    .1,
+            )
+            .map_err(|_| CodecError::NotSupported("invalid decorated pot sherds"))?;
+            &migrated
+        } else {
+            &self.nbt
+        };
+        mc_nbt::write_network(buf, nbt)?;
         Ok(())
     }
 
@@ -697,7 +738,7 @@ impl Packet for ClientboundOpenSignEditor {
     // Verified from `.analysis/protocol-dump.txt`: CLIENTBOUND_OPEN_SIGN_EDITOR
     // is game-CB index 60 = wire id 0x3C. Declared field order is BlockPos,
     // then front/back text boolean.
-    const ID: i32 = 0x3C;
+    const ID: i32 = 0x3D;
 
     fn encode<B: BufMut>(&self, buf: &mut B) -> Result<(), CodecError> {
         buf.write_i64(self.position);
@@ -822,7 +863,7 @@ mod positional_sound_tests {
             expected.extend_from_slice(&1.0_f32.to_be_bytes());
             expected.extend_from_slice(&42_i64.to_be_bytes());
             assert_eq!(bytes, expected);
-            assert_eq!(ClientboundSound::ID, 0x75);
+            assert_eq!(ClientboundSound::ID, 0x77);
             assert_eq!(ClientboundSound::decode(&mut &bytes[..]).unwrap(), packet);
         }
     }

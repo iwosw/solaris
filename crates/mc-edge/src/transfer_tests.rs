@@ -18,6 +18,7 @@ fn fixture() -> (EdgeServer, std::path::PathBuf) {
     let server = EdgeServer {
         recipes: crate::recipes::RecipePackets::new(hub.registry()).unwrap(),
         loader_manifest: None,
+        legacy: None,
         wire: WireRegistries {
             dimension_type_ids: crate::dimensions::registry_ids(&data).unwrap(),
             biomes: data.registry("worldgen/biome").unwrap().clone(),

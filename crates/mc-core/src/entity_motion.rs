@@ -34,6 +34,8 @@ pub(crate) struct MotionResult {
     pub rotation: [f32; 3],
     pub air_supply: i32,
     pub drowning: bool,
+    /// Actual loaded-wall contact, including a climb clipped by a ceiling.
+    pub wall_climbing: bool,
 }
 
 fn unit(id: i32, epoch: u64) -> f64 {
@@ -286,6 +288,7 @@ pub(crate) fn step<S: BlockSampler>(
             rotation: input.rotation,
             air_supply: input.air_supply,
             drowning: false,
+            wall_climbing: false,
         };
     }
     let water = matches!(
@@ -314,6 +317,7 @@ pub(crate) fn step<S: BlockSampler>(
             rotation: look(input.rotation, body.position, Vec3::ZERO, input.look_target),
             air_supply,
             drowning,
+            wall_climbing: false,
         };
     }
     let mut config = PhysicsConfig::living_entity();
@@ -375,7 +379,7 @@ pub(crate) fn step<S: BlockSampler>(
     let mut resolved = mc_physics::step_entity(body, sampler, config);
     // Spiders climb only against a real horizontal obstacle; the same swept
     // collision resolver clips climb at ceilings and missing chunk columns.
-    if input.climbs_walls
+    let wall_climbing = input.climbs_walls
         && resolved.horizontal_collision
         && !water
         && loaded(
@@ -389,8 +393,8 @@ pub(crate) fn step<S: BlockSampler>(
                     + requested.z * mc_physics::TICK_SECONDS
                     + requested.z.signum() * body.aabb.half_width,
             ),
-        )
-    {
+        );
+    if wall_climbing {
         let climb = (body.position.y + 0.2 - resolved.body.position.y).max(0.0);
         if let Some(rise) = mc_physics::resolve_collision_displacement(
             sampler,
@@ -443,5 +447,6 @@ pub(crate) fn step<S: BlockSampler>(
         rotation,
         air_supply,
         drowning,
+        wall_climbing,
     }
 }

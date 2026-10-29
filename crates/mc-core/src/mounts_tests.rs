@@ -444,7 +444,7 @@ fn equipped_saddle_and_armor_death_drop_once_and_release_rider_and_leash() {
 }
 
 #[test]
-fn mounted_packet_burst_has_one_displacement_budget_and_one_correction_per_tick() {
+fn mounted_packet_burst_has_one_displacement_budget_without_success_corrections() {
     let (mut state, actor, pos) = fixture();
     let pig = spawn(&mut state, "pig", pos);
     equip(&mut state, actor, pig, "saddle");
@@ -466,7 +466,7 @@ fn mounted_packet_burst_has_one_displacement_budget_and_one_correction_per_tick(
             .flat_map(|(_, changes)| changes)
             .filter(|change| matches!(change, PlayerChange::VehicleCorrected { .. }))
             .count(),
-        1
+        0
     );
     run_tick(&mut state, &[packet(0.5)]);
     assert!((state.entities.pos(slot(&state, pig))[0] - old[0] - 0.5).abs() < 0.001);

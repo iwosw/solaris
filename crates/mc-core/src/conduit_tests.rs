@@ -234,7 +234,7 @@ fn conduit_full_frame_attacks_hostile_and_syncs_exact_target() {
     let target = state.entities.row(slot).uuid;
     assert_eq!(image(&state, POS).unwrap(), Some(target));
     let events = std::mem::take(&mut state.outbox);
-    assert!(events.values().flatten().any(|event|matches!(event,PlayerChange::BlockEntityData{block_entity_type:26,nbt,..} if nbt==&Tag::Compound(mc_data::conduit_nbt::fields(Some(target))))));
+    assert!(events.values().flatten().any(|event|matches!(event,PlayerChange::BlockEntityData{block_entity_type:25,nbt,..} if nbt==&Tag::Compound(mc_data::conduit_nbt::fields(Some(target))))));
     state.opaque_changes.clear();
     state.tick = 80;
     run(&mut state, &mut Vec::new());

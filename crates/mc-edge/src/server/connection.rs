@@ -70,6 +70,7 @@ async fn run_connection(
         let Some(handshake) = (match crate::handshake::read_handshake(
             &mut conn,
             server.cfg.server.accepts_transfers,
+            server.legacy.as_ref(),
         )
         .await
         {
@@ -87,7 +88,9 @@ async fn run_connection(
             let motd = server.cfg.server.motd.clone();
             let max = server.cfg.server.max_players;
             let online = server.connections.len();
-            if let Err(error) = crate::status::handle_status(&mut conn, &motd, max, online).await {
+            if let Err(error) =
+                crate::status::handle_status(&mut conn, &motd, max, online, handshake.legacy).await
+            {
                 warn!(%peer, connection = id.0, stage = "status", %error, "connection closed");
                 return Err(error);
             }
@@ -131,11 +134,17 @@ async fn run_connection(
             return Ok(None);
         };
 
-        // --- Configuration (registries, tags, finish). ---
+        // --- Configuration (registries, tags, finish). A 26.1.2 session
+        // --- announces its own release's registries and tags.
+        let legacy = conn.legacy().cloned();
+        let (data, tags) = match &legacy {
+            Some(profile) => (&profile.data, &profile.tags),
+            None => (&*server.data, &*server.tags),
+        };
         let config_outcome = match crate::configuration::handle_configuration(
             &mut conn,
-            &server.data,
-            &server.tags,
+            data,
+            tags,
             server.loader_manifest.as_ref(),
             server.loader_required,
             &server.cfg.resource_pack,
@@ -242,6 +251,7 @@ async fn run_connection(
             server.admin.level(outcome.uuid)
         },
         plugin_commands: server.hub.plugin_commands(),
+        online_mode: server.cfg.auth.online_mode,
     })
     .await
     {
@@ -302,8 +312,8 @@ async fn run_connection(
         .loader_session
         .as_ref()
         .is_some_and(|session| session.platform() == mc_loader::LoaderPlatform::Native);
-    let mut lod =
-        (server.lod.is_some() && native_client).then(|| crate::lod::LodConnection::new(spawn));
+    let mut lod = (server.lod.is_some() && native_client)
+        .then(|| crate::lod::LodConnection::new(spawn, entity, server.hub.subscribe()));
     if lod.is_some()
         && let Some(handles) = server.connections.get(id)
     {
@@ -362,6 +372,7 @@ async fn run_connection(
     let mut inputs = Vec::new();
     let mut sheds = 0u32;
     let mut packet_limiter = PacketLimiter::new(&server.cfg.anti_cheat);
+    let mut pending_frames = PendingPlayFrames::default();
     let (mut reader, writer) = conn.into_play_halves();
     let (keepalive_tx, keepalive_rx) = mpsc::channel(1);
     lifecycle.writer = Some(tokio::spawn(play_writer(
@@ -393,15 +404,21 @@ async fn run_connection(
             }
             // No read deadline in Play: client silence is governed by
             // keepalive, never by the pre-play 10 s timeout.
-            frame = reader.read_frame() => {
-                let frame = match frame {
+            frame = async {
+                if let Some(frame) = pending_frames.pop_front() {
+                    Ok((frame, true))
+                } else {
+                    reader.read_frame().await.map(|frame| (frame, false))
+                }
+            } => {
+                let (frame, admitted) = match frame {
                     Ok(frame) => frame,
                     Err(error) => {
                         warn!(%peer, connection = id.0, stage = "play-read", name = %outcome.name, %error, "connection closed");
                         break 'play_loop "read-frame";
                     }
                 };
-                if !packet_limiter.allow(frame.id) {
+                if !admitted && !packet_limiter.allow(frame.id) {
                     warn!(%peer, connection = id.0, stage = "play-rate-limit", name = %outcome.name, packet = frame.id, "play packet rate limit exceeded");
                     if let Err(error) = server.kick(id, serde_json::json!({"text":"Too many packets of this type"})) {
                         warn!(%peer, connection = id.0, %error, "rate-limit kick undeliverable; connection closed");
@@ -410,14 +427,8 @@ async fn run_connection(
                     continue;
                 }
                 if frame.id == mc_protocol::packets::play::ServerboundKeepAlive::ID {
-                    let mut body = &frame.body[..];
-                    match mc_protocol::packets::play::ServerboundKeepAlive::decode(&mut body) {
-                        Ok(reply) if body.is_empty() => {
-                            if keepalive_tx.try_send(reply.id).is_err() {
-                                break 'play_loop "keepalive-reply-overflow";
-                            }
-                        }
-                        _ => break 'play_loop "keepalive-malformed",
+                    if let Err(stage) = forward_keepalive(&frame.body, &keepalive_tx) {
+                        break 'play_loop stage;
                     }
                     continue;
                 }
@@ -488,16 +499,6 @@ async fn run_connection(
                     && frame.id == mc_protocol::packets::play::ServerboundCustomPayload::ID
                     && let Some(payload) = crate::lod::request_payload(&frame.body)
                 {
-                    if server.hub.session_locked(id) {
-                        continue;
-                    }
-                    // Native LOD currently serves the root world only. Its
-                    // radius follows committed state, never a rejected Move.
-                    let latest = latest_output(&server);
-                    let Some(player) = latest.snapshot.entities.get(entity) else {
-                        continue;
-                    };
-                    lod.moved(player.position);
                     if let Err(error) = lod.request(&server, id, &payload) {
                         warn!(%peer, connection = id.0, stage = "lod-request", name = %outcome.name, %error, "connection closed");
                         break 'play_loop "lod-request-decode";
@@ -576,7 +577,37 @@ async fn run_connection(
                         } else {
                             server.admin.session_level(id)
                         };
-                        match server.execute_admin_command(id, command, *permission_level).await {
+                        let completed = tokio::select! {
+                            ended = &mut *writer_task => {
+                                writer_finished = true;
+                                match ended {
+                                    Ok((stage, _)) => break 'play_loop stage,
+                                    Err(_) => break 'play_loop "writer-panicked",
+                                }
+                            }
+                            completed = await_play_operation(
+                                server.execute_admin_command(id, command, *permission_level),
+                                &mut reader,
+                                &keepalive_tx,
+                                &mut pending_frames,
+                                &mut packet_limiter,
+                            ) => completed,
+                        };
+                        let completed = match completed {
+                            Ok(completed) => completed,
+                            Err(error) if error.is::<PendingPlayOverflow>() || error.is::<PendingPlayRateLimit>() => {
+                                warn!(%error, connection = id.0, "administrative input rejected; disconnecting");
+                                server.kick(id, serde_json::json!({"text": error.to_string()}))?;
+                                let _ = (&mut *writer_task).await;
+                                writer_finished = true;
+                                break 'play_loop "admin-input-overflow";
+                            }
+                            Err(error) => {
+                                warn!(%error, connection = id.0, "administrative wait read failed");
+                                break 'play_loop "admin-wait-read";
+                            }
+                        };
+                        match completed {
                             Ok(true) => continue,
                             Ok(false) => {}
                             Err(error) => {
@@ -584,7 +615,10 @@ async fn run_connection(
                                 break 'play_loop "admin-command-error";
                             }
                         }
-                        if !crate::command_tree::permitted(
+                        // A locked session always reaches the native gate, which
+                        // answers every non-login command with the login hint.
+                        if !server.hub.session_locked(id)
+                            && !crate::command_tree::permitted(
                             command,
                             *permission_level,
                             server.hub.plugin_commands(),
@@ -623,6 +657,90 @@ async fn run_connection(
     warn!(%peer, connection = id.0, stage = "play", exit = exit_stage, name = %outcome.name, "connection closed");
 
     Ok(())
+}
+
+/// Account frame overhead too, so empty packets cannot grow the queue unbounded.
+const PENDING_PLAY_BYTES: usize = 1024 * 1024;
+
+#[derive(Default)]
+pub(super) struct PendingPlayFrames {
+    frames: std::collections::VecDeque<mc_protocol::frame::RawFrame>,
+    bytes: usize,
+}
+
+#[derive(Debug, thiserror::Error)]
+#[error("Too much pending input while an administrative command is running (1 MiB limit)")]
+struct PendingPlayOverflow;
+
+#[derive(Debug, thiserror::Error)]
+#[error("Too many packets of this type")]
+struct PendingPlayRateLimit;
+
+impl PendingPlayFrames {
+    fn cost(frame: &mc_protocol::frame::RawFrame) -> usize {
+        std::mem::size_of_val(frame) + frame.body.len()
+    }
+
+    fn push(&mut self, frame: mc_protocol::frame::RawFrame) -> Result<(), PendingPlayOverflow> {
+        let cost = Self::cost(&frame);
+        if cost > PENDING_PLAY_BYTES - self.bytes {
+            return Err(PendingPlayOverflow);
+        }
+        self.bytes += cost;
+        self.frames.push_back(frame);
+        Ok(())
+    }
+
+    pub(super) fn pop_front(&mut self) -> Option<mc_protocol::frame::RawFrame> {
+        let frame = self.frames.pop_front()?;
+        self.bytes -= Self::cost(&frame);
+        Some(frame)
+    }
+
+    #[cfg(test)]
+    pub(super) fn is_empty(&self) -> bool {
+        self.frames.is_empty()
+    }
+}
+
+fn forward_keepalive(body: &[u8], replies: &mpsc::Sender<i64>) -> Result<(), &'static str> {
+    let mut body = body;
+    let reply = mc_protocol::packets::play::ServerboundKeepAlive::decode(&mut body)
+        .map_err(|_| "keepalive-malformed")?;
+    if !body.is_empty() {
+        return Err("keepalive-malformed");
+    }
+    replies
+        .try_send(reply.id)
+        .map_err(|_| "keepalive-reply-overflow")
+}
+
+/// Keep reading control frames while ordered administrative completion is pending.
+pub(super) async fn await_play_operation<F: Future>(
+    operation: F,
+    reader: &mut crate::connection::PlayReader,
+    keepalive: &mpsc::Sender<i64>,
+    pending: &mut PendingPlayFrames,
+    limiter: &mut PacketLimiter,
+) -> anyhow::Result<F::Output> {
+    tokio::pin!(operation);
+    loop {
+        tokio::select! {
+            biased;
+            completed = &mut operation => return Ok(completed),
+            frame = reader.read_frame() => {
+                let frame = frame?;
+                if !limiter.allow(frame.id) {
+                    return Err(PendingPlayRateLimit.into());
+                }
+                if frame.id == mc_protocol::packets::play::ServerboundKeepAlive::ID {
+                    forward_keepalive(&frame.body, keepalive).map_err(anyhow::Error::msg)?;
+                } else {
+                    pending.push(frame)?;
+                }
+            }
+        }
+    }
 }
 
 pub(super) struct PlayReceivers {
@@ -738,12 +856,18 @@ pub(super) async fn play_writer(
             .bytes_written
             .fetch_add(batch.len() as u64, Ordering::Relaxed);
         batch.clear();
-        // Core-ordered kick: Disconnect is always the last change, so once
-        // the reliable queue is empty the kick packet has been flushed.
-        if reliable
-            && reliable_rx.is_empty()
-            && let Some(reason) = connections.take_disconnect_reason(id)
-        {
+        // The queue check shares the publication lock with edge-ordered kicks.
+        let terminal_reason = if reliable {
+            let mut inner = connections.inner.lock();
+            if reliable_rx.is_empty() {
+                inner.disconnect_reasons.remove(&id)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        if let Some(reason) = terminal_reason {
             return ("core-disconnect", Some(reason));
         }
     }

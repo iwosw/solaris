@@ -12,11 +12,7 @@ use mc_protocol::packets::play::{
 };
 
 fn interact(target: EntityId, hand: InteractionHand, secondary: bool) -> ServerboundInteract {
-    assert_eq!(
-        ServerboundInteract::ID,
-        0x1a,
-        "26.1.2 GameProtocols ordinal"
-    );
+    assert_eq!(ServerboundInteract::ID, 0x1a, "26.3 GameProtocols ordinal");
     ServerboundInteract {
         entity_id: target.0,
         hand,
@@ -31,8 +27,8 @@ fn interact(target: EntityId, hand: InteractionHand, secondary: bool) -> Serverb
 fn links(packets: &[PlannedPacket], target: EntityId) -> Vec<Option<i32>> {
     assert_eq!(
         ClientboundSetEntityLeash::ID,
-        0x64,
-        "26.1.2 GameProtocols ordinal"
+        0x66,
+        "26.3 GameProtocols ordinal"
     );
     packets
         .iter()

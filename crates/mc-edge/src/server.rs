@@ -244,6 +244,8 @@ pub struct EdgeServer {
     pub data: Arc<VanillaData>,
     /// Resolved vanilla tag set for the Configuration tag packet.
     pub tags: Arc<mc_data::tags::TagsData>,
+    /// 26.1.2 (protocol 775) client profile, when its content cache exists.
+    pub legacy: Option<Arc<crate::legacy::Profile>>,
     /// Chunk-encoding registries (built once at startup; the tick pump
     /// must encode against the real biome/block/item tables, never the
     /// single-biome fallback inside `fanout::publish`).
@@ -429,6 +431,7 @@ impl EdgeServer {
                 crate::dh::Service::new(&hub, &cfg, workers).map(Arc::new)
             })
             .transpose()?;
+        let legacy = crate::legacy::Profile::discover(&data);
         Ok(Self {
             admin,
             console_state: Default::default(),
@@ -449,6 +452,7 @@ impl EdgeServer {
             hub,
             data,
             tags,
+            legacy,
             wire,
             cfg,
             connections,
@@ -534,12 +538,29 @@ impl EdgeServer {
             .collect();
         let mut reason_nbt = Vec::new();
         mc_nbt::write_network(&mut reason_nbt, &mc_nbt::Tag::Compound(fields))?;
-        self.connections
-            .stash_disconnect_reason(id, reason.to_string());
-        self.send(
-            id,
-            &mc_protocol::packets::play::PlayDisconnect { reason_nbt },
-        )
+        let mut body = Vec::new();
+        mc_protocol::packets::play::PlayDisconnect { reason_nbt }.encode(&mut body)?;
+        let mut frame = bytes::BytesMut::new();
+        mc_protocol::frame::append_frame(
+            &mut frame,
+            mc_protocol::packets::play::PlayDisconnect::ID,
+            &body,
+            mc_protocol::frame::Compression::Threshold(256),
+        )?;
+        // Publish the terminal frame and reason atomically with the writer's
+        // terminal-queue check, not before enqueueing the frame.
+        let mut inner = self.connections.inner.lock();
+        let handles = inner
+            .handles
+            .get(&id)
+            .ok_or_else(|| anyhow::anyhow!("connection closed before disconnect"))?;
+        if handles.reliable_tx.try_send(frame.freeze()).is_err() {
+            drop(inner);
+            self.connections.remove(id);
+            anyhow::bail!("reliable command queue full");
+        }
+        inner.disconnect_reasons.insert(id, reason.to_string());
+        Ok(())
     }
 
     /// Vanilla `/transfer <hostname> [port] [players]`: sends the clientbound
@@ -812,8 +833,24 @@ impl EdgeServer {
             self.transfer_command(id, &words.collect::<Vec<_>>())?;
             return Ok(true);
         }
-        let target = words.next();
-        let arguments = words.collect::<Vec<_>>();
+        let (target, arguments) = if matches!(root, "kick" | "ban" | "pardon") {
+            let parsed = match Core::moderation_command_words(command) {
+                Ok(parsed) => parsed,
+                Err(error) => {
+                    self.feedback(id, &format!("Command failed: {error}"))?;
+                    return Ok(true);
+                }
+            };
+            (
+                parsed.get(1).copied(),
+                parsed
+                    .get(2)
+                    .map(|rest| rest.split_whitespace().collect::<Vec<_>>())
+                    .unwrap_or_default(),
+            )
+        } else {
+            (words.next(), words.collect::<Vec<_>>())
+        };
         // `/ban` and `/mute` accept an optional duration as the first argument
         // after the target; anything that does not parse as `1d`/`2h30m`/... is
         // the start of the reason, so vanilla `/ban <player> <reason>` is intact.
@@ -872,15 +909,145 @@ impl EdgeServer {
             .get(&id)
             .cloned()
             .unwrap_or_else(|| "Server".into());
+        if matches!(root, "kick" | "ban" | "pardon") {
+            let targets: Vec<(Option<ConnectionId>, uuid::Uuid, String)> =
+                if target.starts_with('@') {
+                    let selected = match self
+                        .hub
+                        .resolve_moderation_selector(id, target.to_owned())
+                        .await
+                    {
+                        Ok(selected) => selected,
+                        Err(error) => {
+                            self.feedback(id, &format!("Command failed: {error}"))?;
+                            return Ok(true);
+                        }
+                    };
+                    if id != mc_core::command_console::CONNECTION && self.hub.session_locked(id) {
+                        return Ok(false);
+                    }
+                    selected
+                        .into_iter()
+                        .map(|(connection, uuid, name)| (Some(connection), uuid, name))
+                        .collect()
+                } else if let Some((connection, uuid, name, _)) = live.as_ref() {
+                    vec![(Some(*connection), *uuid, name.clone())]
+                } else if root == "kick" {
+                    Vec::new()
+                } else if let Some((uuid, name)) = self.admin.profile(target).or_else(|| {
+                    (!self.cfg.auth.online_mode)
+                        .then(|| (crate::crypto::offline_uuid(target), target.into()))
+                }) {
+                    vec![(None, uuid, name)]
+                } else {
+                    self.feedback(id, "Unknown player")?;
+                    return Ok(true);
+                };
+            let banned = if root == "kick" {
+                Vec::new()
+            } else {
+                self.admin.bans().0
+            };
+            let mut changed = 0;
+            for (connection, uuid, name) in targets {
+                if let Some(connection) = connection
+                    && self.admin.uuid_of(connection) != Some(uuid)
+                {
+                    continue;
+                }
+                if root == "kick" {
+                    if let Some(connection) = connection {
+                        self.kick(
+                            connection,
+                            if reason.is_empty() {
+                                serde_json::json!({"translate":"multiplayer.disconnect.kicked"})
+                            } else {
+                                serde_json::json!({"text":reason.as_str()})
+                            },
+                        )?;
+                        changed += 1;
+                    }
+                    continue;
+                }
+                let suffix = format!(" ({uuid})");
+                let already_banned = banned.iter().any(|entry| entry.ends_with(&suffix));
+                if already_banned == (root == "ban") {
+                    continue;
+                }
+                if let Err(error) = self.admin.ban_player_for(
+                    uuid,
+                    &name,
+                    &source,
+                    if reason.is_empty() {
+                        "Banned by an operator."
+                    } else {
+                        &reason
+                    },
+                    duration,
+                    root == "ban",
+                ) {
+                    self.feedback(id, &format!("Command failed: {error}"))?;
+                    return Ok(true);
+                }
+                if root == "ban"
+                    && let Some(connection) = connection
+                {
+                    self.kick(
+                        connection,
+                        serde_json::json!({"translate":"multiplayer.disconnect.banned"}),
+                    )?;
+                }
+                changed += 1;
+            }
+            if changed == 0 {
+                self.feedback(
+                    id,
+                    if root == "kick" {
+                        "No player was found"
+                    } else {
+                        "Command failed: no applicable player profiles"
+                    },
+                )?;
+            } else {
+                let expiry = duration.map_or_else(String::new, |value| {
+                    format!(" (expires in {}s)", value.as_secs())
+                });
+                self.feedback(
+                    id,
+                    &format!("Command {root} completed for {target}{expiry}"),
+                )?;
+            }
+            return Ok(true);
+        }
         let result =
             if root == "ban-ip" || root == "pardon-ip" {
-                let ip = target
-                    .parse::<std::net::IpAddr>()
-                    .ok()
-                    .or_else(|| live.as_ref().map(|s| s.3));
+                let valid_word = target.bytes().all(|byte| {
+                    byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'+' | b'.' | b'_')
+                });
+                let ip = if valid_word {
+                    target
+                        .parse::<std::net::Ipv4Addr>()
+                        .ok()
+                        .map(std::net::IpAddr::V4)
+                        .or_else(|| {
+                            if root == "ban-ip" {
+                                live.as_ref().map(|session| session.3)
+                            } else {
+                                None
+                            }
+                        })
+                } else {
+                    None
+                };
                 if let Some(ip) = ip {
+                    let ip_text = ip.to_string();
+                    let already_banned = self.admin.bans().1.iter().any(|entry| entry == &ip_text);
+                    if already_banned == (root == "ban-ip") {
+                        self.feedback(id, "Command failed: no applicable IP address")?;
+                        return Ok(true);
+                    }
                     let result = self.admin.ban_ip(
-                        &ip.to_string(),
+                        &ip_text,
                         &source,
                         if reason.is_empty() {
                             "Banned by an operator."
@@ -903,19 +1070,6 @@ impl EdgeServer {
                 } else {
                     self.feedback(id, "Invalid IP address")?;
                     return Ok(true);
-                }
-            } else if root == "kick" {
-                if let Some((other, _, _, _)) = live {
-                    self.kick(
-                        other,
-                        if reason.is_empty() {
-                            serde_json::json!({"translate":"multiplayer.disconnect.kicked"})
-                        } else {
-                            serde_json::json!({"text":reason})
-                        },
-                    )
-                } else {
-                    self.feedback(id, "No player was found")
                 }
             } else {
                 // A locked session never reaches here: the fence above
@@ -975,30 +1129,6 @@ impl EdgeServer {
                                     self.admin.level(uuid),
                                     self.hub.plugin_commands(),
                                 ),
-                            )?;
-                        }
-                        result
-                    }
-                    "ban" | "pardon" => {
-                        let result = self.admin.ban_player_for(
-                            uuid,
-                            &name,
-                            &source,
-                            if reason.is_empty() {
-                                "Banned by an operator."
-                            } else {
-                                &reason
-                            },
-                            duration,
-                            root == "ban",
-                        );
-                        if result.is_ok()
-                            && root == "ban"
-                            && let Some((other, _, _, _)) = live
-                        {
-                            self.kick(
-                                other,
-                                serde_json::json!({"translate":"multiplayer.disconnect.banned"}),
                             )?;
                         }
                         result

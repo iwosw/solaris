@@ -43,6 +43,8 @@ fn older_revision_world_is_refused_then_upgraded_and_opens() {
         .to_string();
     assert!(refusal.starts_with("storage: invalid native record: identity mismatch"));
     assert!(refusal.contains("world upgrade-worldgen"), "{refusal}");
+    // The rejected open leaves the older header identity in place.
+    assert_eq!(stored_identity(&dir), old_identity);
 
     let before = NativeStore::inspect_read_only(&path, old_identity, CACHE).unwrap();
     let report = upgrade_worldgen_revision(&config).unwrap();
@@ -121,4 +123,49 @@ fn running_world_is_refused() {
     assert!(error.contains("already leased"), "{error}");
     core.shutdown();
     std::fs::remove_dir_all(dir).unwrap();
+}
+
+/// A world as v0.0.8 left it: its checkpoint has no `bossbars` global domain.
+fn drop_bossbars(path: &std::path::Path) {
+    let database = redb::Database::open(path).unwrap();
+    let tx = database.begin_write().unwrap();
+    {
+        let mut global = tx
+            .open_table(redb::TableDefinition::<&str, &[u8]>::new("global"))
+            .unwrap();
+        assert!(global.remove("bossbars").unwrap().is_some());
+    }
+    tx.commit().unwrap();
+}
+
+#[test]
+fn older_storage_format_is_refused_with_export_import_guidance_and_not_written() {
+    let (dir, config) = world_at(mc_worldgen::WORLDGEN_REVISION - 1);
+    let path = dir.join("native/state.redb");
+    drop_bossbars(&path);
+
+    let guided = |error: &str| {
+        assert!(error.contains("older Solaris storage format"), "{error}");
+        assert!(error.contains("world export-anvil"), "{error}");
+        assert!(error.contains("world import-anvil"), "{error}");
+        assert!(!error.contains("upgrade-worldgen"), "{error}");
+        assert!(!error.contains("missing required domain"), "{error}");
+    };
+    // The startup hint must not point at the upgrade that would only lead to a dead end.
+    guided(&Core::open(config.clone()).unwrap_err().to_string());
+
+    let before = std::fs::read(&path).unwrap();
+    guided(&upgrade_worldgen_revision(&config).unwrap_err().to_string());
+    assert_eq!(std::fs::read(&path).unwrap(), before, "refusal wrote bytes");
+    assert_eq!(
+        stored_identity(&dir),
+        native_identity_at(&config, mc_worldgen::WORLDGEN_REVISION - 1)
+    );
+
+    // A world already rewritten to the current revision gets the same startup guidance.
+    let (current_dir, current) = world_at(mc_worldgen::WORLDGEN_REVISION);
+    drop_bossbars(&current_dir.join("native/state.redb"));
+    guided(&Core::open(current).unwrap_err().to_string());
+    std::fs::remove_dir_all(dir).unwrap();
+    std::fs::remove_dir_all(current_dir).unwrap();
 }

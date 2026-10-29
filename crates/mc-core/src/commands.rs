@@ -529,7 +529,8 @@ pub(crate) fn command_words(command: &str) -> Result<Vec<&str>, CommandError> {
             if let Some(start) = start.take() {
                 words.push(&command[start..offset]);
                 if matches!(words[0], "say" | "me")
-                    || (words.len() == 2 && matches!(words[0], "msg" | "tell" | "w"))
+                    || (words.len() == 2
+                        && matches!(words[0], "msg" | "tell" | "w" | "kick" | "ban" | "pardon"))
                 {
                     let rest = command[offset..].trim_start();
                     if !rest.is_empty() {

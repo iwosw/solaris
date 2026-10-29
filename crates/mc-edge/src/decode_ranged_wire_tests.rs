@@ -53,7 +53,7 @@ fn raw_stack(state: &TickState, bytes: &mut &[u8], template: bool, depth: usize)
                     bytes.read_varint().unwrap();
                 }
             }
-            49 => {
+            51 => {
                 let count = bytes.read_varint().unwrap();
                 assert!((1..=3).contains(&count));
                 for _ in 0..count {
@@ -203,7 +203,8 @@ fn crossbow(multishot: bool) {
             stack(&state, "minecraft:crossbow", 1)
                 .with_enchantment(Identifier::parse("minecraft:multishot").unwrap(), 1);
     }
-    assert_eq!(state.players[&actor].inventory.slots[1].item_id, 896);
+    let arrow_id = stack(&state, "minecraft:arrow", 1).item_id;
+    assert_eq!(state.players[&actor].inventory.slots[1].item_id, arrow_id);
     begin(&mut state, &mut decoder, actor);
     for _ in 1..25 {
         checked_tick(&mut state, actor, &[]);
@@ -226,7 +227,7 @@ fn crossbow(multishot: bool) {
             .extended()
             .charged_projectiles
             .iter()
-            .all(|stack| stack.item_id == 896 && stack.count == 1)
+            .all(|stack| stack.item_id == arrow_id && stack.count == 1)
     );
     assert!(state.players[&actor].inventory.slots[1].is_empty());
     assert!(owned(&state, actor, ProjectileKind::Arrow).is_empty());

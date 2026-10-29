@@ -545,8 +545,16 @@ fn deployment(root: &Path, ids: &[&str]) -> Vec<LoadedPackage> {
 
 /// The join a live server would hand the host, for one connection.
 fn server_join(session: u64) -> ScriptEvent {
-    let context = ScriptPlayerContext::try_new(PLAYER_UUID, "Ada", false, 0.0, 64.0, 0.0)
-        .expect("player context");
+    let context = ScriptPlayerContext::try_new(
+        PLAYER_UUID,
+        "Ada",
+        false,
+        "minecraft:overworld",
+        0.0,
+        64.0,
+        0.0,
+    )
+    .expect("player context");
     ScriptEvent::player_joined_with_context(ScriptPlayerId::new(session), context)
 }
 

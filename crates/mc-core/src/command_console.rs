@@ -102,7 +102,9 @@ pub(crate) fn execute(
     state
         .plugin_players
         .observe_permission(connection, permission_level);
-    if crate::plugin::route_command(state, connection, command, permission_level) {
+    if connection != CONNECTION
+        && crate::plugin::route_command(state, connection, command, permission_level)
+    {
         return;
     }
     let context =

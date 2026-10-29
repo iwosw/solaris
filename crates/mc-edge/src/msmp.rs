@@ -111,7 +111,7 @@ async fn dispatch(raw: &str, server: &EdgeServer) -> Value {
 
 fn discovery() -> Value {
     json!({
-        "version": {"name":"26.1.2", "protocol":775},
+        "version": {"name": mc_protocol::TARGET_RELEASE, "protocol": mc_protocol::PROTOCOL_VERSION},
         "methods": [
             "minecraft:players", "minecraft:players/kick",
             "minecraft:allowlist", "minecraft:allowlist/add", "minecraft:allowlist/remove", "minecraft:allowlist/set", "minecraft:allowlist/clear",
@@ -173,7 +173,7 @@ fn status(server: &EdgeServer) -> Value {
     json!({
         "started": true,
         "players": players(server),
-        "version": {"name":"26.1.2", "protocol":775},
+        "version": {"name": mc_protocol::TARGET_RELEASE, "protocol": mc_protocol::PROTOCOL_VERSION},
         "tps": stats.tps,
         "tick": stats.simulation_tick,
     })

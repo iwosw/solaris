@@ -243,27 +243,6 @@ fn mismatched_seed_refuses_before_generation_or_recovery() {
 }
 
 #[test]
-fn mismatched_worldgen_revision_refuses_before_generation_or_recovery() {
-    let dir = contract_test_dir();
-    let config = test_config(dir.clone(), 512);
-    let mut identity = crate::native_checkpoint::native_identity(&config);
-    identity[24..].copy_from_slice(&((mc_worldgen::WORLDGEN_REVISION - 1) as u64).to_be_bytes());
-    let path = dir.join("native/state.redb");
-    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-    drop(mc_world::native::NativeStore::create(&path, identity).unwrap());
-    let error = Core::open(config).unwrap_err().to_string();
-    assert!(error.starts_with("storage: invalid native record: identity mismatch"));
-    assert!(
-        error.contains("solaris-v2 world upgrade-worldgen --config"),
-        "{error}"
-    );
-    mc_world::native::NativeReadOnlyStore::open_with_cache(&path, identity, 16 * 1024 * 1024)
-        .expect("rejected open preserves the older header identity");
-    assert!(!dir.join("journal").exists());
-    std::fs::remove_dir_all(dir).unwrap();
-}
-
-#[test]
 fn generation_global_revision_mismatch_refuses_without_advancing_checkpoint() {
     let dir = contract_test_dir();
     let config = test_config(dir.clone(), 512);

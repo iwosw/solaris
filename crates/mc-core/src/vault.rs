@@ -11,11 +11,12 @@ use std::collections::BTreeMap;
 pub(crate) type Vaults = BTreeMap<(i32, i32, i32), VaultData>;
 fn persist(state: &mut TickState, pos: BlockPos, vault: &VaultData) {
     let fields = vault.to_fields(&state.registry.items);
-    let wire = fields
-        .iter()
-        .filter(|(name, _)| name == "shared_data")
-        .cloned()
-        .collect();
+    let wire = Tag::Compound(vec![(
+        "shared_data".into(),
+        field(&fields, "shared_data")
+            .cloned()
+            .unwrap_or_else(|| Tag::Compound(Vec::new())),
+    )]);
     let kind = mc_data::block_entity_kinds::BlockEntityKind::Vault;
     crate::trial_spawner::persist(
         state,

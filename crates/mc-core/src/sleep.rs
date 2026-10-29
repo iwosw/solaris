@@ -151,7 +151,8 @@ pub(crate) fn use_bed(
         return false;
     }
     // Either half sleeps in the head cell.
-    let Some((_, head)) = crate::placement::other_half(&state.registry.blocks, clicked, current)
+    let Some((other, head)) =
+        crate::placement::other_half(&state.registry.blocks, clicked, current)
     else {
         return false;
     };
@@ -179,7 +180,7 @@ pub(crate) fn use_bed(
                 && (f64::from(half.y) - at[1]).abs() <= 2.0
                 && (f64::from(half.z) + 0.5 - at[2]).abs() <= 3.0
         };
-        if !near_half(clicked) && !near_half(head) {
+        if !near_half(clicked) && !near_half(other) {
             say(state, connection, "You are too far away");
             return true;
         }

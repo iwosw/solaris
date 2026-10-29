@@ -1,4 +1,4 @@
-use crate::boundary::{ConnectionId, EntityId, PlayerInput};
+use crate::boundary::{ConnectionId, EntityDataValue, EntityId, PlayerInput};
 use crate::entities::EntityKind;
 use crate::entity_loot::*;
 use crate::intent::DamageSource;
@@ -1057,6 +1057,19 @@ fn slime_sizes_scale_health_attack_hitboxes_and_spawn_only_vanilla_sizes() {
             assert_eq!(body.half_width, bp.half_width * f64::from(size));
             assert_eq!(body.height, bp.height * f64::from(size));
             assert!(
+                row.appearance
+                    .extra
+                    .contains(&(18, EntityDataValue::VarInt(i32::from(size))))
+            );
+            assert!(
+                !row.appearance
+                    .extra
+                    .iter()
+                    .any(|(index, value)| *index == 16
+                        && matches!(value, EntityDataValue::VarInt(_))),
+                "slime size must not overwrite AgeableMob's baby Boolean at index 16"
+            );
+            assert!(
                 to_fields(&row.loot)
                     .contains(&("Size".into(), mc_nbt::Tag::Int(i32::from(size) - 1)))
             );
@@ -1075,6 +1088,29 @@ fn slime_sizes_scale_health_attack_hitboxes_and_spawn_only_vanilla_sizes() {
             seen.insert(size);
         }
         assert_eq!(seen, [1, 2, 4].into_iter().collect());
+    }
+}
+
+/// A cube saved by a 26.1.2 Solaris carries size as a VarInt at index 16;
+/// restoring it on 26.3 must leave only the index-18 size.
+#[test]
+fn restored_cube_drops_its_26_1_2_size_index() {
+    for name in ["minecraft:slime", "minecraft:magma_cube"] {
+        let mut state = state();
+        let entity = mob(&mut state, name, 1.0);
+        let slot = state.entities.slot_of(entity).unwrap();
+        let row = state.entities.row_mut(slot);
+        row.loot.slime_size = Some(2);
+        std::sync::Arc::make_mut(&mut row.appearance)
+            .extra
+            .push((16, EntityDataValue::VarInt(2)));
+        restore(&mut state, slot);
+        let extra = &state.entities.row(slot).appearance.extra;
+        assert!(extra.contains(&(18, EntityDataValue::VarInt(2))), "{name}");
+        assert!(
+            !extra.iter().any(|(index, _)| *index == 16),
+            "{name}: stale 26.1.2 size at index 16 survived restore"
+        );
     }
 }
 

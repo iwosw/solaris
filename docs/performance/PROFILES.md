@@ -84,6 +84,15 @@ bed and composter in the bounded village pens. This is an operator-authored dens
 stress scene, **not** 20,000 independent, naturally generated productive villagers.
 Fixture creation uses distance 8; measured restarts use the distances above.
 
+Spider pens have three blocks of interior headroom (floor top Y=64, roof Y=67);
+the other mixed-mob pens retain their Y=71 roofs. Spiders still take ordinary
+damage after detaching from a wall, so taller pens permit damaging free falls.
+Climb contact also resets retained fall distance in the native movement path:
+ceiling bounces must not accumulate separate short drops into false damage.
+The lower physical ceiling bounds a single unassisted drop without changing AI,
+health or damage rules. The recipe hash changes the fixture-cache key, so old
+tall-pen fixtures are not reused.
+
 Explorers use the existing bot's received-terrain collision checks. They may
 turn when terrain is missing/unwalkable or the height change is too large;
 `--explore` disables the ordinary 200-tick turn, not collision. Read
@@ -203,6 +212,12 @@ binary hashes identify both its producer and current consumer. Use
 receipt is **not** a measurement. The PGO cache is reusable only when the recipe,
 content and fixture parameters match exactly; instrumented PGO timings are never
 published as these release measurements.
+Public input-echo fences during preparation share the bot's total
+`--prepare-seconds` readiness deadline rather than a separate per-batch timeout.
+Regional fixture clients use open-loop readiness to complete their setup before
+Ready; no Run event is issued and their required schedule is never started.
+The bot continues processing packets and replying to heartbeats while waiting
+for a slow `save-all flush` to complete; measured open-loop demand is unchanged.
 
 For a lifecycle-only check outside an exclusive window, add `--smoke`: the same
 full population runs for 2 seconds warmup and 5 seconds observation. Its status

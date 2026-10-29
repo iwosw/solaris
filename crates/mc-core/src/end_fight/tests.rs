@@ -841,3 +841,57 @@ fn native_gateway_int_array_import_preserves_order_and_rejects_invalid_indices()
     }
     assert!(from_nbt(&root(Tag::LongArray(vec![1]))).is_err());
 }
+#[test]
+fn dragon_killed_outside_the_end_finishes_dying_and_is_removed() {
+    let (mut s, _, _) = crate::hostile_tests::setup(8.0);
+    assert_ne!(s.dimension, Dimension::End);
+    let id = s.spawn_mob(
+        type_id(&s, "minecraft:ender_dragon"),
+        [0.5, 90.0, 0.5],
+        200.0,
+    );
+    let slot = s.entities.slot_of(id).unwrap();
+    assert!(begin_death(&mut s, slot));
+    for _ in 0..199 {
+        commit(&mut s, &mut ChangeSet::default());
+    }
+    assert!(
+        s.entities.slot_of(id).is_some(),
+        "death animation runs 200 ticks"
+    );
+    let mut changes = ChangeSet::default();
+    commit(&mut s, &mut changes);
+    assert!(s.entities.slot_of(id).is_none());
+    assert!(changes.entities_removed.contains(&id));
+    assert_eq!(s.end_fight.phase, Phase::Circling);
+    assert_eq!(s.end_fight.death_ticks, 0);
+    assert!(!s.end_fight.dragon_killed, "no fight owns this dragon");
+}
+#[test]
+fn several_dragons_dying_outside_the_end_are_removed_without_stale_slots() {
+    // Without mob drops no xp orb trails the dragons, so they are the last dense slots and
+    // each swap-removal moves another dying dragon.
+    for mob_drops in ["false", "true"] {
+        let (mut s, _, _) = crate::hostile_tests::setup(8.0);
+        s.gamerules.insert("mob_drops".into(), mob_drops.into());
+        let dragon = type_id(&s, "minecraft:ender_dragon");
+        let ids: Vec<_> = (0..3)
+            .map(|i| s.spawn_mob(dragon, [0.5 + f64::from(i), 90.0, 0.5], 200.0))
+            .collect();
+        for &id in &ids {
+            let slot = s.entities.slot_of(id).unwrap();
+            assert!(begin_death(&mut s, slot));
+        }
+        let mut removed = Vec::new();
+        for _ in 0..200 {
+            let mut changes = ChangeSet::default();
+            commit(&mut s, &mut changes);
+            removed.extend(changes.entities_removed);
+        }
+        assert!(ids.iter().all(|&id| s.entities.slot_of(id).is_none()));
+        removed.sort_by_key(|id| id.0);
+        let mut expected = ids.clone();
+        expected.sort_by_key(|id| id.0);
+        assert_eq!(removed, expected, "mob_drops={mob_drops}");
+    }
+}

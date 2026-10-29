@@ -1041,6 +1041,7 @@ pub(crate) fn covered_farmland(state: &TickState, at: BlockPos, id: u32) -> bool
         .block_at(at.x, at.y + 1, at.z)
         .is_some_and(|above| {
             state.registry.materials.classify(above).is_solid()
+                && !is_block(&state.registry.blocks, above, "pitcher_crop")
                 && !prop(&state.registry.blocks, above, "facing").is_some_and(|_| {
                     state
                         .registry

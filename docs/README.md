@@ -1,7 +1,8 @@
 # Solaris documentation
 
-Solaris v0.0.8 is a **draft prerelease** for Minecraft Java 26.1.2. Start with the
-[project README](../README.md) for installation and a source quick start.
+Solaris 1.0.0-rc.1 "Pauline" is the release candidate for Solaris 1.0, for
+Minecraft Java 26.1.2. Start with the [project README](../README.md) for
+installation and a source quick start.
 
 ## Running and extending Solaris
 
@@ -23,7 +24,8 @@ Solaris v0.0.8 is a **draft prerelease** for Minecraft Java 26.1.2. Start with t
   and [scenario index](generated/scenario-index.md): source-derived navigation.
 - [Physics oracles](physics-oracles.md), [core profiling](performance/CORE_PROFILE_MATRIX.md)
   and [entity scale profiling](performance/ENTITY_SCALE_PROFILE.md),
-  [v2 player capacity receipt](performance/PLAYER_CAPACITY.md).
+  [v2 player capacity receipt](performance/PLAYER_CAPACITY.md),
+  [weak-hardware / scaling / worldgen / VPS benchmarks](performance/BENCHMARKS.md).
 - [Settlements owner decisions](settlements/OWNER_DECISIONS.md) and
   [warehouse binding](architecture/pilot-warehouse-binding.md): scoped domain contracts.
 

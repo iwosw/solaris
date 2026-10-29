@@ -18,9 +18,9 @@ while [[ "${1:-}" == --* ]]; do
 done
 
 BUNDLE_JAR="${1:-$REPO_ROOT/.analysis/server.jar}"
-OUT_BIN="$REPO_ROOT/crates/mc-data/data/block_collision_shapes_26_1_2.bin"
+OUT_BIN="$REPO_ROOT/crates/mc-data/data/block_collision_shapes_26_3.bin"
 if [[ "$OUTLINE" -eq 1 ]]; then
-  OUT_BIN="$REPO_ROOT/crates/mc-data/data/block_outline_shapes_26_1_2.bin"
+  OUT_BIN="$REPO_ROOT/crates/mc-data/data/block_outline_shapes_26_3.bin"
 fi
 JAVA="${JAVA:-$REPO_ROOT/.analysis/java/current/bin/java}"
 if [[ ! -x "$JAVA" ]]; then
@@ -53,7 +53,7 @@ mkdir -p "$TMP/classes"
 "$JAVAC" -d "$TMP/classes" -cp "$CP" \
   "$REPO_ROOT/tools/extract-block-collision-shapes/CollisionShapeExtractor.java"
 
-GENERATED="$TMP/block_collision_shapes_26_1_2.bin"
+GENERATED="$TMP/block_collision_shapes_26_3.bin"
 "$JAVA" -cp "$TMP/classes:$CP" CollisionShapeExtractor "${EXTRACTOR_ARGS[@]}" "$GENERATED"
 
 if [[ "$CHECK" -eq 1 ]]; then

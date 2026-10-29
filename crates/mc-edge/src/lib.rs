@@ -44,6 +44,7 @@ mod dh;
 mod dimensions;
 pub mod fanout;
 pub mod handshake;
+pub mod legacy;
 mod light;
 mod lod;
 pub mod login;

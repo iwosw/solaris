@@ -334,7 +334,7 @@ fn validate_globals(
             + map_rows
             + map_sequence_rows
     {
-        return Err(failure("global", "unknown or missing required domain"));
+        return Err(NativeError::GlobalDomains);
     }
     for key in DOMAINS.iter().chain(plugin_domains) {
         let record = globals.get(*key).ok_or_else(|| failure(key, "missing"))?;

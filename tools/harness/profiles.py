@@ -777,7 +777,7 @@ PROFILES: dict[str, dict[str, Any]] = {
     },
     "title-connect": {
         "scope": "real-client",
-        "description": "Native Title screen type-address+name, Connect, disconnect-back-to-Title (--client native, windowed for screenshots)",
+        "description": "Native Title → Multiplayer → Direct Connect, type address+name, join and disconnect back to Title (--client native, windowed for screenshots)",
         "run": run_title_connect,
     },
     "village-qa": {

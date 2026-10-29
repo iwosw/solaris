@@ -2,6 +2,9 @@ use super::super::ItemStackWireCodec;
 use super::*;
 use mc_data::item_stack::PreservedItemComponent;
 
+#[path = "copied_components_26_3_tests.rs"]
+mod v263;
+
 fn text(value: &str) -> Tag {
     Tag::String(value.into())
 }
@@ -33,11 +36,7 @@ fn fixture(name: &str, value: Tag, payload: Vec<u8>) {
     expected.write_varint(1);
     expected.write_varint(0);
     expected.write_varint(
-        ITEM_COMPONENT_CODECS
-            .iter()
-            .find(|(candidate, _)| *candidate == name)
-            .unwrap()
-            .1,
+        mc_data::data_component_types_26_1_2::id(&Identifier::parse(name).unwrap()).unwrap() as i32,
     );
     expected.extend(payload);
     let stored = Tag::Compound(mc_data::item_nbt::stack_to_fields(items(), &stack).unwrap());
@@ -54,14 +53,29 @@ fn fixture(name: &str, value: Tag, payload: Vec<u8>) {
     let mut cursor = actual.as_slice();
     let decoded = ItemStack::decode(&mut cursor).unwrap();
     assert!(cursor.is_empty());
+    // Native inventory snapshots serialize ItemStack; recreate it before the
+    // second publication to catch loss after save/restart, not just on the wire.
+    let saved = serde_json::to_vec(&decoded).unwrap();
+    let restored: ItemStack = serde_json::from_slice(&saved).unwrap();
+    let durable = mc_data::item_nbt::stack_to_fields(items(), &restored).unwrap();
+    let restored = mc_data::item_nbt::stack_from_fields(items(), &durable)
+        .unwrap()
+        .unwrap();
     let mut again = Vec::new();
-    decoded.encode(&mut again).unwrap();
-    assert_eq!(again, expected, "{name} authoritative decode/re-encode");
+    restored.encode(&mut again).unwrap();
+    assert_eq!(again, expected, "{name} decode/save/restart/re-encode");
 }
 fn nbt(value: &Tag) -> Vec<u8> {
     let mut bytes = Vec::new();
     mc_nbt::write_network_value(&mut bytes, value).unwrap();
     bytes
+}
+
+#[test]
+fn copied_shield_base_color_roundtrips_all_dyes() {
+    for (id, color) in mc_data::stations::DYE_COLORS.iter().enumerate() {
+        fixture("minecraft:base_color", text(color), vec![id as u8]);
+    }
 }
 
 #[test]
@@ -271,19 +285,28 @@ fn copied_banner_pattern_is_reference_holder_plus_color() {
     );
 }
 #[test]
-fn copied_pot_decorations_are_four_direct_item_registry_ids() {
-    let mut expected = vec![4];
+fn copied_pot_decorations_are_four_optional_item_templates() {
+    // 26.3 PotDecorations: back, left, right, front, each an optional
+    // ItemStackTemplate (item, count, empty patch).
+    let mut expected = Vec::new();
     for name in [
         "minecraft:angler_pottery_sherd",
         "minecraft:brick",
         "minecraft:brick",
         "minecraft:brick",
     ] {
+        expected.push(1);
         expected.write_varint(registry_id("item", name).unwrap());
+        expected.extend([1, 0, 0]);
     }
     fixture(
         "minecraft:pot_decorations",
-        make_list(vec![text("minecraft:angler_pottery_sherd")]),
+        fields(vec![
+            ("back", text("minecraft:angler_pottery_sherd")),
+            ("left", text("minecraft:brick")),
+            ("right", text("minecraft:brick")),
+            ("front", text("minecraft:brick")),
+        ]),
         expected,
     );
 }
@@ -375,14 +398,13 @@ fn duplicate_preserved_component_fails_loud_even_when_typed_projection_collapses
     ));
 }
 
-// Every other 26.1.2 registered component is deliberately unsupported on the
+// Every other 26.3 registered component is deliberately unsupported on the
 // preserved-component wire path. It is retained durably, but sending it must fail.
 const UNSUPPORTED: &[&str] = &[
     "minecraft:additional_trade_cost",
     "minecraft:attack_range",
     "minecraft:attribute_modifiers",
     "minecraft:axolotl/variant",
-    "minecraft:base_color",
     "minecraft:block_entity_data",
     "minecraft:blocks_attacks",
     "minecraft:break_sound",
@@ -418,9 +440,7 @@ const UNSUPPORTED: &[&str] = &[
     "minecraft:kinetic_weapon",
     "minecraft:llama/variant",
     "minecraft:lodestone_tracker",
-    "minecraft:map_color",
     "minecraft:map_decorations",
-    "minecraft:map_id",
     "minecraft:map_post_processing",
     "minecraft:max_stack_size",
     "minecraft:minimum_attack_charge",
@@ -439,7 +459,6 @@ const UNSUPPORTED: &[&str] = &[
     "minecraft:salmon/size",
     "minecraft:sheep/color",
     "minecraft:shulker/color",
-    "minecraft:swing_animation",
     "minecraft:tool",
     "minecraft:tooltip_style",
     "minecraft:tropical_fish/base_color",
@@ -457,7 +476,10 @@ const UNSUPPORTED: &[&str] = &[
 ];
 #[test]
 fn all_explicitly_unsupported_preserved_components_fail_loud_instead_of_disappearing() {
-    assert_eq!(ITEM_COMPONENT_CODECS.len() + UNSUPPORTED.len(), 110);
+    assert_eq!(
+        ITEM_COMPONENT_CODECS.len() + UNSUPPORTED.len(),
+        mc_data::data_component_types_26_1_2::COUNT
+    );
     for name in UNSUPPORTED {
         assert!(
             !ITEM_COMPONENT_CODECS
@@ -509,7 +531,14 @@ fn explicit_component_removals_use_native_added_then_removed_patch_bytes() {
     .unwrap();
     let mut expected = vec![1];
     expected.write_varint(registry_id("item", "minecraft:stone").unwrap());
-    expected.extend([1, 2, 3, 7, 6, 51]);
+    expected.extend([
+        1,
+        2,
+        mc_data::data_component_types_26_1_2::DAMAGE as u8,
+        7,
+        mc_data::data_component_types_26_1_2::CUSTOM_NAME as u8,
+        mc_data::data_component_types_26_1_2::POTION_CONTENTS as u8,
+    ]);
     let mut bytes = Vec::new();
     value.encode(&mut bytes).unwrap();
     assert_eq!(bytes, expected);
@@ -547,7 +576,10 @@ fn duplicate_and_unknown_removed_components_fail_closed() {
     for (patch, expected) in [
         (vec![0, 2, 6, 6], "duplicate item component"),
         (vec![1, 1, 3, 7, 3], "duplicate item component"),
-        (vec![0, 1, 110], "unknown removed item component"),
+        (
+            vec![0, 1, mc_data::data_component_types_26_1_2::COUNT as u8],
+            "unknown removed item component",
+        ),
     ] {
         let mut bytes = vec![1];
         bytes.write_varint(registry_id("item", "minecraft:stone").unwrap());
@@ -602,7 +634,10 @@ fn crafted_dyed_leather_boots_reach_the_client_with_the_blended_component() {
     assert_eq!(cursor.read_varint().unwrap(), output.item_id as i32);
     assert_eq!(cursor.read_varint().unwrap(), 1); // Added component count.
     assert_eq!(cursor.read_varint().unwrap(), 0); // Removed component count.
-    assert_eq!(cursor.read_varint().unwrap(), 44);
+    assert_eq!(
+        cursor.read_varint().unwrap(),
+        mc_data::data_component_types_26_1_2::DYED_COLOR
+    );
     assert_eq!(cursor.read_i32().unwrap(), 0x9d22d4);
     assert!(cursor.is_empty());
     let decoded = ItemStack::decode(&mut bytes.as_slice()).unwrap();
@@ -614,4 +649,52 @@ fn crafted_dyed_leather_boots_reach_the_client_with_the_blended_component() {
         mc_data::item_nbt::field(components, "minecraft:dyed_color"),
         Some(&Tag::Int(0x9d22d4))
     );
+}
+
+#[test]
+fn map_id_is_a_varint_so_a_filled_map_can_reach_the_client() {
+    // MapId.STREAM_CODEC is a VarInt; 300 needs two bytes.
+    fixture("minecraft:map_id", Tag::Int(300), vec![0xac, 0x02]);
+    fixture("minecraft:map_id", Tag::Int(0), vec![0]);
+}
+
+#[test]
+fn bundle_nesting_encodes_up_to_eight_non_empty_levels_and_no_deeper() {
+    // core's inventory::bundle::MAX_NESTING mirrors this bound.
+    let bundle = |contents: Vec<Tag>| {
+        let mut components = Vec::new();
+        if !contents.is_empty() {
+            components.push((
+                "minecraft:bundle_contents",
+                Tag::List(ListTag {
+                    element_type: tag_type::COMPOUND,
+                    elements: contents,
+                }),
+            ));
+        }
+        let fields = vec![
+            ("id".to_string(), text("minecraft:bundle")),
+            ("count".to_string(), Tag::Int(1)),
+            ("components".to_string(), fields(components)),
+        ];
+        fields
+    };
+    let encodes = |levels: usize| {
+        let mut inner = Vec::new();
+        for _ in 0..levels {
+            let wrapped = if inner.is_empty() {
+                bundle(Vec::new())
+            } else {
+                inner
+            };
+            inner = bundle(vec![Tag::Compound(wrapped)]);
+        }
+        let Ok(Some(stack)) = mc_data::item_nbt::stack_from_fields(items(), &inner) else {
+            return false;
+        };
+        let mut out = Vec::new();
+        stack.encode(&mut out).is_ok()
+    };
+    assert!(encodes(8));
+    assert!(!encodes(9));
 }
