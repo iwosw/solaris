@@ -499,6 +499,10 @@ fn clear_rider(state: &mut TickState, slot: EntitySlot) {
         (Some(state.entities.row(slot).uuid) == uuid).then_some(slot)
     });
     if let Some(rider) = rider {
+        if let Some(player) = state.players.get_mut(&state.entities.body(rider).id) {
+            player.vehicle_airtime_ticks = 0;
+            player.vehicle_last_reported_y = None;
+        }
         let mount = &mut state.entities.row_mut(rider).entity_life.mount;
         mount.vehicle = None;
         mount.input = 0;
@@ -650,6 +654,70 @@ fn controllable(state: &TickState, slot: EntitySlot, actor: EntityId) -> bool {
                 .is_some_and(|n| n.as_str() == stick)
     })
 }
+/// Vanilla's vehicle floating scan: inflated body, extended 0.55 blocks down.
+/// Any non-air block (including water) interrupts floating; missing cells are
+/// conservative obstacles, as they are for native movement collision.
+fn no_blocks_around(state: &TickState, slot: EntitySlot) -> bool {
+    let p = state.entities.pos(slot);
+    let body = state.entities.body(slot);
+    let min = [
+        (p[0] - body.half_width - 0.0625).floor() as i32,
+        (p[1] - 0.0625 - 0.55).floor() as i32,
+        (p[2] - body.half_width - 0.0625).floor() as i32,
+    ];
+    let max = [
+        (p[0] + body.half_width + 0.0625).floor() as i32,
+        (p[1] + body.height + 0.0625).floor() as i32,
+        (p[2] + body.half_width + 0.0625).floor() as i32,
+    ];
+    for x in min[0]..=max[0] {
+        for y in min[1]..=max[1] {
+            for z in min[2]..=max[2] {
+                let air = state
+                    .world
+                    .block_at(x, y, z)
+                    .and_then(|id| state.registry.blocks.by_id(mc_world::BlockStateId(id)))
+                    .is_some_and(|block| {
+                        matches!(block.block.id.path(), "air" | "cave_air" | "void_air")
+                    });
+                if !air {
+                    return false;
+                }
+            }
+        }
+    }
+    true
+}
+
+fn excessive_boat_floating(
+    state: &mut TickState,
+    actor: EntityId,
+    slot: EntitySlot,
+    old_y: f64,
+    reported_y: f64,
+) -> bool {
+    if crate::vehicles::kind(state, slot) != Some(crate::vehicles::VehicleKind::Boat) {
+        return false;
+    }
+    // Native gravity may have moved the body since the previous report. Compare
+    // consecutive client heights, not a descending report to that lower body.
+    let dy = reported_y
+        - state.players[&actor]
+            .vehicle_last_reported_y
+            .unwrap_or(old_y);
+    let floating = state.max_airtime_ticks != 0 && dy >= -0.03125 && no_blocks_around(state, slot);
+    let player = state.players.get_mut(&actor).expect("live rider");
+    player.vehicle_last_reported_y = Some(reported_y);
+    player.vehicle_airtime_ticks = if floating {
+        player.vehicle_airtime_ticks.saturating_add(1)
+    } else {
+        0
+    };
+    // 26.3 getMaximumFlyingTicks: base * max(0.08 / gravity, 1).
+    // Native boats, like AbstractBoat.getDefaultGravity, use 0.04.
+    player.vehicle_airtime_ticks > state.max_airtime_ticks.saturating_mul(2)
+}
+
 pub(crate) fn move_vehicle(
     state: &mut TickState,
     connection: ConnectionId,
@@ -684,6 +752,7 @@ pub(crate) fn move_vehicle(
         && pitch.is_finite()
         && delta.iter().map(|d| d * d).sum::<f64>() <= 100.0
         && controllable(state, slot, actor);
+    let mut floating_too_long = false;
     if valid {
         let body = state.entities.body(slot);
         let sampler = crate::tick::TickSampler {
@@ -707,17 +776,30 @@ pub(crate) fn move_vehicle(
             );
             state.entities.set_rot(slot, yaw, pitch);
             state.entities.set_ground(slot, r.grounded);
-            state.entities.set_vel(slot, [0.0; 3]);
+            // Airborne boats still run native gravity after client admission.
+            // Retain its accumulated vertical momentum across accepted packets.
+            let velocity_y =
+                if crate::vehicles::kind(state, slot) == Some(crate::vehicles::VehicleKind::Boat) {
+                    state.entities.vel(slot)[1]
+                } else {
+                    0.0
+                };
+            state.entities.set_vel(slot, [0.0, velocity_y, 0.0]);
             // Accepted client steering is not a correction. Echoing every
             // accepted boat packet resets prediction and generates an echo loop.
             if r.delta.x == delta[0] && r.delta.y == delta[1] && r.delta.z == delta[2] {
-                state
-                    .players
-                    .get_mut(&actor)
-                    .expect("live rider")
-                    .last_vehicle_motion_tick = Some(state.tick);
-                sync_rider(state, slot);
-                return;
+                if excessive_boat_floating(state, actor, slot, old[1], position[1]) {
+                    state.entities.set_pos(slot, old);
+                    floating_too_long = true;
+                } else {
+                    state
+                        .players
+                        .get_mut(&actor)
+                        .expect("live rider")
+                        .last_vehicle_motion_tick = Some(state.tick);
+                    sync_rider(state, slot);
+                    return;
+                }
             }
         }
     }
@@ -732,6 +814,14 @@ pub(crate) fn move_vehicle(
             pitch: rot[1],
         },
     );
+    if floating_too_long {
+        state.push_player(
+            connection,
+            PlayerChange::Disconnect {
+                reason: "Flying is not enabled on this server".into(),
+            },
+        );
+    }
 }
 pub(crate) fn tick(state: &mut TickState, changes: &mut ChangeSet) {
     let riders: Vec<_> = state.entities.rider_slots().collect();

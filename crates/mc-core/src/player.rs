@@ -68,8 +68,12 @@ pub struct PlayerState {
     pub(crate) airtime_safe_position: Option<[f64; 3]>,
     /// Connection-local fence: vehicle physics/corrections run at most once per tick.
     pub(crate) last_vehicle_move_tick: Option<u64>,
-    /// Successful client steering consumed the vehicle's motion step this tick.
+    /// A client steering packet was accepted this tick.
     pub(crate) last_vehicle_motion_tick: Option<u64>,
+    /// Consecutive unsupported boat hover samples; connection-local, never saved.
+    pub(crate) vehicle_airtime_ticks: u32,
+    /// Last admitted client boat height, before the native gravity step.
+    pub(crate) vehicle_last_reported_y: Option<f64>,
     /// Connection-local chat/communication budget; never persisted.
     pub(crate) chat_spam_ticks: u16,
     /// Connection-local vanilla teleport sequence; retained across respawns
@@ -200,6 +204,8 @@ impl PlayerState {
             airtime_safe_position: None,
             last_vehicle_move_tick: None,
             last_vehicle_motion_tick: None,
+            vehicle_airtime_ticks: 0,
+            vehicle_last_reported_y: None,
             chat_spam_ticks: 0,
             teleport_id: 0,
             awaiting_teleport: None,
