@@ -484,19 +484,23 @@ fn death_tick(state: &mut TickState, changes: &mut ChangeSet, slot: EntitySlot) 
 /// same 200-tick animation (500 xp, no portal, egg or gateway) removes the dragon.
 fn lone_death_tick(state: &mut TickState, changes: &mut ChangeSet) {
     let dragon = type_id(state, "minecraft:ender_dragon");
-    let dying: Vec<EntitySlot> = state
+    // Removal swap-removes dense slots, so address each dragon by its stable id.
+    let dying: Vec<EntityId> = state
         .entities
         .mob_slots(dragon)
         .filter(|&slot| state.entities.row(slot).health <= 0.0)
+        .map(|slot| state.entities.body(slot).id)
         .collect();
     if dying.is_empty() {
         return;
     }
     state.end_fight.death_ticks += 1;
     let time = state.end_fight.death_ticks;
-    for slot in dying {
+    for id in dying {
+        let Some(slot) = state.entities.slot_of(id) else {
+            continue;
+        };
         if animate_death(state, changes, slot, time, 500) {
-            let id = state.entities.body(slot).id;
             state.remove_entity(slot);
             changes.entities_removed.push(id);
         }
