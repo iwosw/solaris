@@ -3248,7 +3248,13 @@ numeric authorization. Plugin-owned roots retain their first routing and
 retirement reservation. Functions inherit the invoking Context, while command
 blocks and load/tick/scheduled functions retain their existing level-two source;
 the trusted console remains level four. This changes neither budgets nor
-execution/commit ordering. The difficulty-query/store gap remains unchanged.
+execution/commit ordering.
+
+`DifficultyQuery` returns the numeric difficulty ID after its unchanged
+translated feedback, matching the official Java 26.1.2 query: peaceful/easy/
+normal/hard produce `Success(0/1/2/3)`. Execute-store success is one even for
+the successful peaceful result zero. The query does not mutate gameplay state;
+the difficulty setter's outcomes and execute-store admission remain unchanged.
 
 `/advancement grant|revoke <targets>` supports `everything`, `only <id>
 [criterion]`, `from <id>`, `through <id>` and `until <id>`. `from` selects the

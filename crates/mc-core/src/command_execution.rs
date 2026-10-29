@@ -722,12 +722,15 @@ pub(crate) fn execute(
                 vec![difficulty_name(*difficulty)],
             );
         }
-        Command::DifficultyQuery => feedback(
-            state,
-            connection,
-            "commands.difficulty.query",
-            vec![difficulty_name(state.difficulty)],
-        ),
+        Command::DifficultyQuery => {
+            feedback(
+                state,
+                connection,
+                "commands.difficulty.query",
+                vec![difficulty_name(state.difficulty)],
+            );
+            return Success(i32::from(state.difficulty.id()));
+        }
         Command::GameRule { name, value } => {
             if let Some(value) = value
                 && state.gamerules.get(name) != Some(value)

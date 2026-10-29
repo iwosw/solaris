@@ -59,6 +59,8 @@ pub mod command_damage;
 mod command_data;
 pub(crate) mod command_debug;
 pub(crate) use command_debug::{Profiler as DebugProfiler, TraceArtifact as DebugTraceArtifact};
+#[cfg(test)]
+mod command_difficulty_tests;
 pub mod command_enchant;
 mod command_execution;
 mod command_feedback;
