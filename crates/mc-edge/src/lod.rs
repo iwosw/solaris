@@ -3,7 +3,7 @@
 //! Only a connection whose Loader session was negotiated as the native
 //! platform gets `solaris:lod/hello` and may ask for tiles. Requests are
 //! bounded per connection (`max_inflight_tiles`), by distance from the
-//! player's last reported position (`max_distance`) and globally by
+//! player's last committed position (`max_distance`) and globally by
 //! `workers` blocking threads. A tile that does not fit the connection's
 //! world queue is dropped; the client asks again.
 //!
@@ -217,25 +217,49 @@ pub(crate) fn frame(channel: Identifier, payload: Vec<u8>) -> anyhow::Result<byt
 /// Per-connection LOD state on the Play read loop.
 pub(crate) struct LodConnection {
     inflight: Arc<AtomicUsize>,
+    /// This connection's player in the root world's committed snapshots.
+    entity: mc_core::boundary::EntityId,
+    /// Committed tick outputs since the last request. Long-lived: a fresh
+    /// subscriber sees only later outputs, never the current position.
+    ticks: tokio::sync::broadcast::Receiver<mc_core::boundary::TickOutput>,
     /// Last committed native position (x, z); tiles are served around it.
     anchor: [f64; 2],
 }
 
 impl LodConnection {
-    pub(crate) fn new(spawn: [f64; 3]) -> Self {
+    pub(crate) fn new(
+        spawn: [f64; 3],
+        entity: mc_core::boundary::EntityId,
+        ticks: tokio::sync::broadcast::Receiver<mc_core::boundary::TickOutput>,
+    ) -> Self {
         Self {
             inflight: Arc::default(),
+            entity,
+            ticks,
             anchor: [spawn[0], spawn[2]],
         }
     }
 
-    pub(crate) fn moved(&mut self, position: [f64; 3]) {
-        self.anchor = [position[0], position[2]];
+    /// Move the anchor to the newest committed position, never a rejected
+    /// Move. Outputs without the player (another dimension) keep the anchor.
+    fn follow(&mut self) {
+        use tokio::sync::broadcast::error::TryRecvError;
+        loop {
+            match self.ticks.try_recv() {
+                Ok(output) => {
+                    if let Some(player) = output.snapshot.entities.get(self.entity) {
+                        self.anchor = [player.position[0], player.position[2]];
+                    }
+                }
+                Err(TryRecvError::Lagged(_)) => {}
+                Err(TryRecvError::Empty | TryRecvError::Closed) => break,
+            }
+        }
     }
 
     /// Queue every admissible tile of one request; refused tiles are dropped.
     pub(crate) fn request(
-        &self,
+        &mut self,
         server: &Arc<EdgeServer>,
         connection: mc_core::boundary::ConnectionId,
         payload: &[u8],
@@ -243,6 +267,7 @@ impl LodConnection {
         if server.hub.session_locked(connection) {
             return Ok(());
         }
+        self.follow();
         let Some(service) = server.lod.as_ref() else {
             return Ok(());
         };
@@ -390,7 +415,8 @@ mod tests {
 
     #[test]
     fn distance_bound_measures_the_nearest_tile_point() {
-        let lod = LodConnection::new([0.0, 64.0, 0.0]);
+        let (_, ticks) = tokio::sync::broadcast::channel(1);
+        let lod = LodConnection::new([0.0, 64.0, 0.0], mc_core::boundary::EntityId(1), ticks);
         let tile = |tile_x, level| TileRequest {
             tile_x,
             tile_z: 0,
@@ -402,6 +428,58 @@ mod tests {
         assert!(!lod.near(tile(9, 4), 2048));
         assert!(lod.near(tile(-9, 4), 2048));
         assert!(!lod.near(tile(-10, 4), 2048));
+    }
+
+    /// Tiles are served around the player's newest committed position, read
+    /// from outputs published after the connection opened (a subscriber made
+    /// per request saw none and refused every tile).
+    #[test]
+    fn anchor_follows_committed_outputs_published_after_open() {
+        use mc_core::boundary::{ChangeSet, EntityId, EntityView, TickOutput, WorldSnapshot};
+        let output = |entities: Vec<EntityView>| TickOutput {
+            tick: 1,
+            snapshot: Arc::new(WorldSnapshot {
+                entities: entities.into(),
+                ..Default::default()
+            }),
+            changes: Arc::new(ChangeSet::default()),
+            times: Default::default(),
+        };
+        let player = |x: f64| EntityView {
+            id: EntityId(7),
+            uuid: uuid::Uuid::nil(),
+            type_id: 1,
+            position: [x, 64.0, 0.0],
+            velocity: [0.0; 3],
+            yaw: 0.0,
+            pitch: 0.0,
+            head_yaw: 0.0,
+            on_ground: true,
+            appearance: Arc::default(),
+        };
+        let (tx, ticks) = tokio::sync::broadcast::channel(4);
+        let mut lod = LodConnection::new([0.0, 64.0, 0.0], EntityId(7), ticks);
+        let tile = |tile_x| TileRequest {
+            tile_x,
+            tile_z: 0,
+            level: 4,
+            stored_only: false,
+        };
+        tx.send(output(vec![player(10_000.0)])).unwrap();
+        lod.follow();
+        assert!(
+            lod.near(tile(39), 2048),
+            "served around the committed position"
+        );
+        assert!(!lod.near(tile(0), 2048), "no longer around spawn");
+        // An output without the player (another dimension) keeps the anchor;
+        // a lagged receiver skips to the newest output it still holds.
+        tx.send(output(vec![])).unwrap();
+        for x in [20_000.0, 30_000.0, 40_000.0, 50_000.0, 60_000.0] {
+            tx.send(output(vec![player(x)])).unwrap();
+        }
+        lod.follow();
+        assert!(lod.near(tile(234), 2048), "newest committed position wins");
     }
 
     #[test]

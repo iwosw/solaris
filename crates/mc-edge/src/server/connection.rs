@@ -312,8 +312,8 @@ async fn run_connection(
         .loader_session
         .as_ref()
         .is_some_and(|session| session.platform() == mc_loader::LoaderPlatform::Native);
-    let mut lod =
-        (server.lod.is_some() && native_client).then(|| crate::lod::LodConnection::new(spawn));
+    let mut lod = (server.lod.is_some() && native_client)
+        .then(|| crate::lod::LodConnection::new(spawn, entity, server.hub.subscribe()));
     if lod.is_some()
         && let Some(handles) = server.connections.get(id)
     {
@@ -499,16 +499,6 @@ async fn run_connection(
                     && frame.id == mc_protocol::packets::play::ServerboundCustomPayload::ID
                     && let Some(payload) = crate::lod::request_payload(&frame.body)
                 {
-                    if server.hub.session_locked(id) {
-                        continue;
-                    }
-                    // Native LOD currently serves the root world only. Its
-                    // radius follows committed state, never a rejected Move.
-                    let latest = latest_output(&server);
-                    let Some(player) = latest.snapshot.entities.get(entity) else {
-                        continue;
-                    };
-                    lod.moved(player.position);
                     if let Err(error) = lod.request(&server, id, &payload) {
                         warn!(%peer, connection = id.0, stage = "lod-request", name = %outcome.name, %error, "connection closed");
                         break 'play_loop "lod-request-decode";
